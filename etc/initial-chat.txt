@@ -1,0 +1,1861 @@
+╭─── Claude Code v2.1.205 ─────────────────────────────────────────────────────╮
+│                                                    │ Tips for getting        │
+│                 Welcome back Geoff!                │ started                 │
+│                                                    │ Run /init to create a … │
+│                      ▗ ▗   ▖ ▖                     │ ─────────────────────── │
+│                                                    │ What's new              │
+│                        ▘▘ ▝▝                       │ Added directory path s… │
+│   Sonnet 5 · Claude Pro · gaudreault@gmail.com's   │ Added a `/doctor` chec… │
+│   Organization                                     │ `/commit-push-pr` now … │
+│                   ~/dev/voxpaint                   │ /release-notes for more │
+╰──────────────────────────────────────────────────────────────────────────────╯
+
+ ▎ Extended: Fable 5 is included in your weekly limit
+ ▎ Through July 12, you can use up to 50% of your weekly usage limit on Fable 5. If you hit your limit, you can continue on Fable 5 with usage credits. Fable 5 draws down usage faster than Opus 4.8. Run /model and select Fable to use it. Learn more (https://support.claude.com/en/articles/15424964-claude-fable-5-promotional-access)
+
+❯ /model                                                                        
+  ⎿  Set model to Sonnet 5 (default) and saved as your default for new sessions
+
+❯ I would like to spec out an idea for a new game-development app for creatingg 
+  low-poly 3d models. It will be a "voxel plus" modeler in that it will         
+  support normal cubic voxels but also simple 45 degree chamfer profile. I want 
+  the primary drawing surface to be a standard 2d pixel editor. It would also   
+  have a 3d model view, which the user would use to both preview their model    
+  and choose a construction plane. The construction plane is a combination of   
+  axis, orientation (+/-) and offset. Plane origin is always 0,0 in other 2     
+  axes. Offset is parallel to plane normal. Construction plane offset is        
+  integer. The construction plane defines the 2d slice we see in the 2d editor. 
+  User can draw colored pixels on the 2d view, which translate to voxels in     
+  the 3d view. User can also paint on a "chamfer layer" which will define       
+  chamfered voxels, ramped outward into the construction plane. So, if a user   
+  flips the plane orientation, they can ramp in the opposite direction.         
+  Chamfering does not look at other layers and is set at the time of drawing,   
+  not dynamically. The app should support typical 2d pixel art operations like  
+  paint, eyedropper, selection area, copy-paste, fill and clone as well as      
+  transforms like selection move, rotate, mirror. It should also support        
+  constrained painting with shift click to ortho draw. It should support        
+  point-in-time snapshots for atomic undo-redo. 3d view should have a central   
+  axis widget for selecting a construction plane. User should be able to click  
+  on a voxel face to establish a construction plane axis, orientation and       
+  offset. User should be able to click and drag on the 3d model to orbit.       
+  Canvas should be "infinite" with a practical limit of 64x64x64. We should use 
+  instance meshes for the 3d model and Three.js as the 3d library. React,       
+  radix-ui, tailwind, lucide for the app. We should be able to save and load    
+  projects and model state should save to localstorage. Models should be        
+  exportable as gltf using CSG mesh optimization. Color palette should be basic 
+  slightly desaturated "vintage retro" colors, max 16 base colors + 4 emissive  
+  + 4 blinking emissive + 4 pulsing emissive. App should be dark-mode only and  
+  support fullscreen. Mouse, touchpad gestures like pinch to zoom and           
+  two-finger pan necessary. Bonus will be mobile support with touch/stylus      
+  support. This app should be very accessible and intuitive, but professional   
+  looking. This is a greenfield project. Please create a spec.                  
+
+  Searched for 1 pattern, read 1 file (ctrl+o to expand)
+
+⏺ User declined to answer questions
+  ⎿  · What is the exact 3D shape of a "chamfered" voxel? This is foundational 
+     to the mesh-instancing design, so I want to get it precise. Since chamfer 
+     state is baked in at draw time using only (axis, orientation) — not 
+     neighboring voxels — which of these direction-agnostic shapes matches your 
+     intent? (Square pyramid / spike / Symmetric corner bevel (CAD chamfer) / 
+     Directional wedge/ramp)
+     · Beyond autosaving model state to localStorage, should the app support 
+     explicit project file export/import (e.g. downloadable JSON) for backup and
+     moving projects between devices/browsers? (localStorage only (Recommended 
+     for v1) / localStorage + JSON export/import)
+     · Any preference on core web stack details beyond what you specified 
+     (React, Radix UI, Tailwind, lucide, Three.js)? These affect how precisely I
+     can spec module boundaries and state shape. (Vite + TypeScript + Zustand 
+     (Recommended) / Let me specify)
+     · You called mobile/touch support a "bonus." Should the spec treat it as a 
+     fully-designed first-class requirement (input handling, layout, gesture 
+     design all specified up front), or as a documented future phase so v1 scope
+     stays focused on desktop? (Future phase (Recommended) / First-class in v1)
+
+⏺ What would you like to clarify?
+
+✻ Brewed for 1m 53s
+
+❯ 1) a chamfered voxel can only be a ramp/wedge shape OR a chamfered corner     
+  ramp. It's almost like a "beveled edges" layer modifier on a photo editing    
+  application. So the tool would look at the eight neighbors, and choose simple 
+  ramp, concave corner ramp or convex corner ramp. no mid-line ramps allowed    
+  or pyramids. 2) we should support a JSON project format 3) Vite + TypeScript  
+  + Zustand 3) Future phase                                                     
+
+⏺ Good, that clarifies the model — it's a "bevel autotile" pattern (like the
+  3-piece slope/inner-corner/outer-corner sets used in block-building games),
+  driven purely by the 8-neighborhood within the chamfer layer itself, computed
+  once at paint time.
+
+  Here's the concrete rule I'd propose for the spec — want to confirm before I
+  lock it in:
+
+  Classification from the 4 orthogonal neighbors (N/E/S/W) within the chamfer 
+  layer, where "filled" = also has a chamfer pixel:
+
+  - 3 of 4 filled, 1 empty → simple ramp, sloping down toward the one empty side
+  (flat/vertical on the other 3 edges).
+  - 2 adjacent filled (L-shape), 2 empty → convex corner (outer corner) — slopes
+  down on both open sides, meeting at a diagonal ridge, like a pyramid corner
+  cut.
+  - 4 of 4 orthogonal filled, but one diagonal neighbor empty → concave corner
+  (inner corner) — flat/full on all 4 straight edges, but notched diagonally
+  where two ramps would meet.
+
+  Degenerate cases that don't cleanly match (isolated pixel with 0 neighbors,
+  opposite-pair-only like N+S filled with E/W empty, 3-4 diagonals missing at
+  once, etc.) need a fallback. My instinct: treat these as painting mistakes and
+  fall back to the nearest sensible case (e.g. pick one arbitrary open side for
+  a ramp) rather than adding a 4th shape — but I want your call here since "no
+  pyramids" was explicit.
+
+  A few follow-ups this raises:
+  1. Does the concave-corner check need all 4 orthogonal neighbors filled, or
+  just the 2 adjacent to that diagonal?
+  2. For degenerate/malformed neighbor patterns, should I spec a defined
+  fallback rule, or should the editor just prevent painting chamfer pixels that
+  would produce an invalid configuration (i.e. only allow chamfer paint where a
+  clean 1-of-3 shape resolves)?
+
+✻ Sautéed for 1m 33s
+
+❯ 1. yes 2. prevent                                                             
+
+⏺ This confirms a clean, well-defined system: 3-piece autotile (ramp / convex
+  corner / concave corner) driven by 8-neighbor matching, computed once at paint
+  time, with invalid configurations simply blocked from being painted rather
+  than needing a fallback shape.
+
+  I now have what I need to design the technical architecture. Since this is a
+  greenfield repo (just a README and LICENSE — nothing to explore), I'll skip
+  straight to design.
+
+⏺ Plan(Design voxel-plus modeler architecture)
+  ⎿  Backgrounded agent (↓ to manage · ctrl+o to expand)
+
+⏺ The architecture design is running in the background. I'll let you know once
+  it's back — should take a few minutes.
+
+✻ Cogitated for 1m 0s
+
+⏺ Agent "Design voxel-plus modeler architecture" finished · 3m 58s
+
+⏺ The architecture design is solid and confirms the technical approach is sound.
+  It flagged a few genuine product decisions I should get your call on before
+  finalizing the spec — the rest of its open questions I can resolve with
+  sensible defaults.
+
+⏺ User answered Claude's questions:
+  ⎿  · When a user paints a chamfer cell, where does its color come from? → 
+     Chamfer paint also sets color (Recommended)
+     · When you click a voxel face in the 3D view to set the construction plane,
+     what should the resulting plane's offset be? → The clicked cell's own 
+     layer (Recommended)
+     · How should the 64x64x64 practical limit be enforced? → Hard block 
+     (Recommended)
+     · Should undo/redo history survive a page reload (i.e. persist the undo 
+     stack itself to localStorage, not just the current model state)? → No — 
+     reset on reload (Recommended)
+
+⏺ All four recommended defaults confirmed. I now have everything needed to write
+  the final spec.
+
+⏺ Updated plan
+  ⎿  /plan to preview
+
+⏺ User approved Claude's plan
+  ⎿  Plan saved to: ~/.claude/plans/i-would-like-to-playful-sprout.md · /plan to
+     edit
+     VoxPaint — Product & Technical Spec
+
+     Context
+
+     VoxPaint is a new, greenfield web app for creating low-poly 3D models for
+     games. Unlike a typical cubic-voxel editor, it's "voxel plus": it supports
+     plain cubic voxels and voxels with a 45° chamfer (ramp/corner bevel), all
+     authored through a familiar 2D pixel-art editing surface rather than direct
+     3D sculpting. The 2D-first workflow is the key differentiator — the 3D
+     view is a live preview and a navigation tool (pick which slice you're
+     editing), not the primary input surface. The goal is a tool that feels as
+     approachable as a pixel-art editor but outputs clean, exportable low-poly
+     3D meshes.
+
+     The repo is currently empty (README + LICENSE only) — this spec defines the
+     full v1 build from scratch.
+
+     ---
+     1. Core Concepts
+
+     1.1 Voxel grid
+
+     - Conceptually infinite, centered at the origin; practical limit is a 
+     hard-enforced 64×64×64 bounding box. Painting outside the box is blocked.
+     The box is user-repositionable/resizable (UI affordance: a visible bounds
+     gizmo in the 3D view + numeric bounds control), but never exceeded — this
+     keeps rendering, undo snapshotting, and CSG export time bounded and
+     predictable.
+     - Two independent per-cell layers, keyed by the same (x,y,z):
+       - Color layer — a plain cubic voxel, indexed into the palette.
+       - Chamfer layer — marks the cell as a chamfered shape instead of a cube
+     (see §2). Painting a chamfer cell always simultaneously writes the color 
+     layer with the currently active palette slot — one paint gesture produces
+     one fully-colored result. There is no independently-colored or uncolored
+     chamfer state.
+
+     1.2 Construction plane
+
+     - Defined by { axis: x|y|z, orientation: +1|-1, offset: integer }. Origin
+     on the other two axes is always 0,0.
+     - Determines the 2D (u,v) slice shown in the 2D editor, via a fixed cyclic
+     basis (x→u=y,v=z; y→u=z,v=x; z→u=x,v=y). orientation doesn't change which
+     grid cell a pixel maps to — it only affects which direction is "outward"
+     for chamfer geometry and flips the on-screen (u) axis so painting always
+     feels like looking at the slab from outside.
+     - Set via: (a) the central axis widget/gizmo in the 3D view (click a cap to
+     set axis+orientation, offset unchanged), or (b) clicking a voxel face in
+     the 3D view — this sets axis+orientation from the face normal and offset = 
+     the clicked cell's own coordinate (you land on the slice that cell lives
+     on, viewed from the side you clicked).
+     - Click-drag in the 3D view orbits the camera (desktop OrbitControls);
+     wheel/trackpad pinch zooms, two-finger trackpad pans. No touch/stylus
+     gesture design in v1 (see §9).
+
+     1.3 Chamfer shape system
+
+     A chamfer cell's 3D shape is a 3-piece autotile system — ramp, convex
+     corner, or concave corner — resolved once, at paint time, from the
+     8-neighborhood of the chamfer layer only (never the color layer), and then
+     frozen: later edits to neighboring cells never retroactively reclassify an
+     already-painted cell.
+
+     Classification, using orthogonal neighbors N/E/S/W and diagonals
+     NE/NW/SE/SW (all within the chamfer layer, at the plane's u/v projection):
+
+     - 3 of 4 orthogonal filled, 1 empty → ramp, sloping down toward the empty
+     side.
+     - Exactly 2 adjacent orthogonal filled (L-shape) → convex corner, sloping
+     down on both open sides, meeting at a diagonal ridge.
+     - All 4 orthogonal filled AND exactly one relevant diagonal empty → concave
+     corner, flat on all 4 straight edges, notched at that diagonal.
+     - Any other configuration is invalid — no pyramid/spike fallback exists.
+     The editor must prevent painting a chamfer cell wherever it would resolve
+     to an invalid configuration (live-validated per cell as the user
+     paints/drags, cursor shows a blocked state over invalid cells).
+
+     Flipping the construction plane's orientation changes which way newly 
+     painted ramps/corners slope (their planeAxis/planeOrientation is baked in
+     at paint time); it never affects already-baked cells.
+
+     Each baked chamfer cell stores { shapeKind: ramp|convex|concave, rotation: 
+     0-3, planeAxis, planeOrientation } — exactly 3 shapes × 4 rotations,
+     realized as a small fixed library of mesh prefabs (rotation applied via
+     instance transform, not separate geometries).
+
+     ---
+     2. 2D Editor
+
+     Primary drawing surface: a plain <canvas> (2D context,
+     imageSmoothingEnabled=false) rendering the current construction plane's
+     (u,v) slice.
+
+     Tools: paint, eyedropper, rectangular + lasso selection, copy/paste, flood
+     fill (color layer only — chamfer fill is excluded, since wholesale-filling
+     chamfer cells would almost always produce invalid configurations),
+     clone/stamp, selection transforms (move, rotate, mirror), shift-click
+     ortho-constrained line drawing (Bresenham, snapped to 0/45/90°).
+
+     - A layer toggle (color vs. chamfer) determines what the active tool
+     paints; chamfer paint always writes color too (§1.1).
+     - Paste and re-stamped transforms re-run live chamfer validation against
+     the destination's neighbors; invalid chamfer cells in the
+     pasted/transformed data are dropped (with a toast) while color-only data
+     still applies.
+     - All 2D tools address the grid exclusively through the plane's
+     (u,v)→(x,y,z) projection — no tool touches (x,y,z) directly, keeping tool
+     logic plane-agnostic.
+
+     ---
+     3. 3D View
+
+     - Renders via @react-three/fiber + @react-three/drei, Three.js underneath.
+     - Instancing: 4 InstancedMesh pools total — cube, ramp, convex-corner,
+     concave-corner. Each of the 3 chamfer shapes needs only 1 base geometry;
+     all 4 rotations and all 6 (axis, orientation) bases are expressed via each
+     instance's transform matrix, not separate geometries. This keeps draw calls
+     constant (4) regardless of model complexity up to the 64³ cap.
+     - Per-instance color/emissive: built-in instanceColor for base RGB; a
+     custom instanceEmissiveClass + instanceEmissiveColor attribute pair drives
+     emissive/blink/pulse behavior through one shared custom ShaderMaterial
+     (extending MeshStandardMaterial via onBeforeCompile) reused across all 4
+     pools, animated by a single global uClock uniform (updated once per frame)
+     — no per-instance material overrides, all animation is GPU-driven.
+     - Buffer updates: an InstancingManager class (outside React) maintains
+     dense per-pool arrays + a CellKey ⇄ instanceIndex map, applies grid diffs
+     via swap-remove/append, and flushes only dirty instance ranges per frame —
+     never a full-buffer rebuild on every paint stroke, and never routes
+     paint-time updates through React re-renders.
+     - Raycasting: InstancedMesh's built-in instanceId resolution + the
+     manager's index→cell map drives both face-click plane selection (§1.2) and
+     future 3D-view interactions.
+     - Gizmo: central axis widget (based on drei's GizmoHelper, reskinned) with
+     6 clickable caps for ±X/±Y/±Z plane selection; a visible bounds box shows
+     the current 64³ working volume.
+
+     ---
+     4. Undo/Redo
+
+     - Atomic, point-in-time whole-model snapshots — one snapshot per completed
+     user gesture (pointer-up ending a stroke/select/fill/transform), not per
+     intermediate cell edit within a drag.
+     - Backed by Immer-managed persistent structures so snapshots are cheap
+     (structural sharing; a snapshot only allocates for touched keys, not a deep
+     clone of the whole grid).
+     - History stack capped (e.g. 50–100 steps) and does not persist across 
+     reload — autosave restores model state only; the undo stack resets on a
+     fresh load.
+
+     ---
+     5. Persistence & Export
+
+     Project persistence
+
+     - Single versioned JSON schema (schemaVersion, palette, sparse
+     colorCells/chamferCells arrays) used identically for localStorage autosave
+     and explicit JSON export/import (download/upload) — one
+     serialize/deserialize/migrate code path regardless of source, avoiding
+     autosave/import divergence.
+     - Migration registry pattern is in place from day one (empty/identity for
+     v1) so future schema bumps don't require retrofitting.
+     - Autosave debounced; QuotaExceededError on localStorage.setItem surfaces a
+     toast rather than silently failing.
+
+     GLTF export (CSG-optimized)
+
+     - three-bvh-csg unions every occupied cell's resolved geometry (cube or
+     chamfer prefab, same transform-resolution function the renderer uses) into
+     one manifold mesh — this is what removes internal/hidden faces between
+     adjacent voxels.
+     - Post-union: vertex welding (BufferGeometryUtils.mergeVertices) to close
+     CSG seams. Explicit coplanar-quad merging (greedy meshing) is a v1.1
+     stretch goal, not a v1 blocker — union + weld already gives a clean,
+     non-overlapping mesh far smaller than raw instanced-cube soup.
+     - Per-cell color is baked as vertex colors on the merged geometry
+     (universally supported by GLTF, no material-count bloat).
+     - Export runs in a Web Worker with a progress indicator, since CSG union
+     cost scales with cell count and shouldn't freeze the UI on large models.
+
+     ---
+     6. Palette
+
+     - 16 base "vintage retro" desaturated colors + 4 emissive + 4
+     blinking-emissive + 4 pulsing-emissive = 28 total slots.
+     - Cells store a palette slot reference ({kind, index}), not a resolved hex
+     value — editing a swatch's color recolors every cell using that slot,
+     standard indexed-palette behavior.
+     - Blink = hard on/off square wave, pulse = smooth sine, both driven by the
+     shared shader clock uniform (§3).
+
+     ---
+     7. State Management (Zustand)
+
+     One root store, typed slices: project (the model itself, Immer +
+     persistent-map backed), history (undo/redo stacks), tool (active tool +
+     options), plane (construction plane), selection (region + clipboard),
+     palette, view (ephemeral UI state, not persisted/snapshotted), persistence
+     (autosave/dirty state).
+
+     ---
+     8. Module Breakdown
+
+     Non-UI engine modules (pure, framework-agnostic, unit-testable):
+     - engine/grid/GridStore.ts — sparse color+chamfer maps, bounds tracking
+     - engine/plane/constructionPlane.ts — plane↔grid mapping, face-hit→plane
+     derivation
+     - engine/chamfer/chamferResolver.ts — classification + live validation
+     - engine/instancing/InstancingManager.ts — dense buffers, diffing,
+     dirty-range flushing
+     - engine/csg/CsgExporter.ts — union/weld/bake/GLTF pipeline, worker wrapper
+     - engine/persistence/{schema,migrations,serialize,autosave}.ts
+     - engine/tools/*.ts — one module per tool, sharing a common Tool interface
+     - engine/input/PointerInputController.ts — normalized Pointer Events
+     abstraction (mouse-only behavior in v1, but shaped to add touch/stylus
+     without a rewrite)
+
+     React tree: App → MainLayout (TopToolbar, LeftPanel [tools + options],
+     CenterSplit [Editor2D + Viewport3D], RightPanel [palette, layer toggle,
+     model stats]) → dialogs (export progress, etc.) and toast region via Radix
+     primitives. Components stay thin — they read Zustand slices and forward
+     events into engine modules; no business logic lives in .tsx files.
+
+     Stack: Vite, React, TypeScript, Zustand, Tailwind CSS, Radix UI,
+     lucide-react, Three.js + @react-three/fiber + @react-three/drei,
+     three-bvh-csg. Dark-mode only, fullscreen support.
+
+     ---
+     9. Explicitly Out of Scope for v1
+
+     - Touch/stylus input and mobile layout — desktop mouse/trackpad only for
+     now. The pointer-event abstraction (§8) and plane/tool architecture are
+     shaped so this is additive later, not a rewrite.
+     - Coplanar-quad mesh simplification beyond CSG union + vertex weld (v1.1
+     stretch).
+     - Cross-session undo history persistence.
+
+     ---
+     Verification
+
+     Since this is a spec (no implementation yet), verification for the next
+     phase (implementation) should include:
+     1. Unit tests for chamferResolver.classify() covering every valid case
+     (ramp ×4 rotations, convex ×4, concave ×4) and representative invalid
+     configurations.
+     2. A manual pass painting a small closed loop of chamfer cells and
+     confirming the 2D editor blocks invalid cells and the 3D view renders the
+     expected ramp/corner shapes with correct rotation.
+     3. Round-trip test: export project JSON → reload from that JSON → model
+     matches (including palette slot references, not resolved colors).
+     4. GLTF export of a small (~20-cell) mixed cube+chamfer model, opened in an
+     external viewer, to confirm a clean manifold mesh with correct vertex
+     colors.
+
+⏺ The spec is approved. Since this was a "create a spec" request for a
+  greenfield repo, I'll save it into the project itself as SPEC.md rather than
+  leaving it only in the plan file.
+
+  Ran 1 shell command (ctrl+o to expand)
+
+⏺ SPEC.md is now in the repo (untracked — not committed, since you didn't ask me
+  to commit). It covers:
+
+  - Core model: sparse color + chamfer layers, hard-capped 64³ grid,
+  construction-plane mechanics
+  - Chamfer autotile system: the ramp/convex/concave classification rule, baked
+  at paint time, invalid configs blocked
+  - 2D editor: full tool set, layer toggle, plane-relative addressing
+  - 3D view: 4-pool InstancedMesh rendering, shared shader for
+  emissive/blink/pulse, diffed buffer updates
+  - Undo/redo: atomic snapshots via structural sharing, no cross-reload
+  persistence
+  - Persistence & export: unified JSON schema for localStorage/import/export,
+  CSG-based GLTF export pipeline
+  - Palette, state management, module breakdown, stack, and v1 scope boundaries
+
+  Want me to start scaffolding the project (Vite + React + TS setup, engine
+  module skeletons) next, or would you rather review the spec first?
+✻ Cooked for 28m 1s
+
+❯ yes, start scaffolding.                                                       
+
+  Read 1 file, ran 1 shell command (ctrl+o to expand)
+
+⏺ Good, this already has a solid Node/Vite-ready .gitignore. Let me scaffold the
+  Vite + React + TS app.
+  ⎿  Invalid tool parameters
+
+⏺ I'll skip the formal task tracker overhead and just proceed directly with the
+  scaffolding, giving progress updates as I go.
+
+  Ran 1 shell command (ctrl+o to expand)
+
+⏺ Non-interactive create-vite won't run against a non-empty directory. I'll
+  scaffold in a temp dir and merge in, preserving the existing
+  README/LICENSE/SPEC.md.
+
+  Ran 3 shell commands (ctrl+o to expand)
+
+⏺ Good, README and .gitignore restored to originals. Now let's clean out the
+  template boilerplate and install dependencies.
+
+  Listed 1 directory, ran 1 shell command (ctrl+o to expand)
+
+⏺ I'll clear out all the template boilerplate (icons, demo App content) and
+  replace with the real project skeleton.
+
+  Read 1 file, ran 3 shell commands (ctrl+o to expand)
+
+⏺ Update(vite.config.ts)
+  ⎿  Added 11 lines, removed 1 line
+       1  import { defineConfig } from 'vite'
+       2  import react from '@vitejs/plugin-react'
+       3 +import tailwindcss from '@tailwindcss/vite'                    
+       4 +import path from 'node:path'                                   
+       5  
+       6  // https://vite.dev/config/
+       7  export default defineConfig({
+       6 -  plugins: [react()],                                          
+       8 +  plugins: [react(), tailwindcss()],                           
+       9 +  resolve: {                                                   
+      10 +    alias: {                                                   
+      11 +      '@': path.resolve(__dirname, './src'),                   
+      12 +    },                                                         
+      13 +  },                                                           
+      14 +  worker: {                                                    
+      15 +    format: 'es',                                              
+      16 +  },                                                           
+      17  })
+
+  Read 1 file (ctrl+o to expand)
+
+⏺ Update(tsconfig.app.json)
+  ⎿  Added 6 lines
+      16      "noEmit": true,
+      17      "jsx": "react-jsx",
+      18  
+      19 +    /* Path aliases */                                         
+      20 +    "baseUrl": ".",                                            
+      21 +    "paths": {                                                 
+      22 +      "@/*": ["./src/*"]                                       
+      23 +    },                                                         
+      24 +                                                               
+      25      /* Linting */
+      26      "noUnusedLocals": true,
+      27      "noUnusedParameters": true,
+
+⏺ Now let's set up the dark-mode-only Tailwind entry CSS and clean up
+  index.html/package.json naming.
+
+  Read 1 file (ctrl+o to expand)
+
+⏺ Full template CSS — replacing with a minimal dark-only Tailwind base.
+
+⏺ Write(src/index.css)
+  ⎿  Added 12 lines, removed 101 lines
+        1 -:root {                                                       
+        2 -  --text: #6b6375;                                            
+        3 -  --text-h: #08060d;                                          
+        4 -  --bg: #fff;                                                 
+        5 -  --border: #e5e4e7;                                          
+        6 -  --code-bg: #f4f3ec;                                         
+        7 -  --accent: #aa3bff;                                          
+        8 -  --accent-bg: rgba(170, 59, 255, 0.1);                       
+        9 -  --accent-border: rgba(170, 59, 255, 0.5);                   
+       10 -  --social-bg: rgba(244, 243, 236, 0.5);                      
+       11 -  --shadow:                                                   
+       12 -    rgba(0, 0, 0, 0.1) 0 10px 15px -3px, rgba(0, 0, 0, 0.05) 0
+          - 4px 6px -2px;                                                
+        1 +@import 'tailwindcss';                                        
+        2  
+       14 -  --sans: system-ui, 'Segoe UI', Roboto, sans-serif;          
+       15 -  --heading: system-ui, 'Segoe UI', Roboto, sans-serif;       
+       16 -  --mono: ui-monospace, Consolas, monospace;                  
+       17 -                                                              
+       18 -  font: 18px/145% var(--sans);                                
+       19 -  letter-spacing: 0.18px;                                     
+       20 -  color-scheme: light dark;                                   
+       21 -  color: var(--text);                                         
+       22 -  background: var(--bg);                                      
+       23 -  font-synthesis: none;                                       
+       24 -  text-rendering: optimizeLegibility;                         
+       25 -  -webkit-font-smoothing: antialiased;                        
+       26 -  -moz-osx-font-smoothing: grayscale;                         
+       27 -                                                              
+       28 -  @media (max-width: 1024px) {                                
+       29 -    font-size: 16px;                                          
+       30 -  }                                                           
+        3 +:root {                                                       
+        4 +  color-scheme: dark;                                         
+        5  }
+        6  
+       33 -@media (prefers-color-scheme: dark) {                         
+       34 -  :root {                                                     
+       35 -    --text: #9ca3af;                                          
+       36 -    --text-h: #f3f4f6;                                        
+       37 -    --bg: #16171d;                                            
+       38 -    --border: #2e303a;                                        
+       39 -    --code-bg: #1f2028;                                       
+       40 -    --accent: #c084fc;                                        
+       41 -    --accent-bg: rgba(192, 132, 252, 0.15);                   
+       42 -    --accent-border: rgba(192, 132, 252, 0.5);                
+       43 -    --social-bg: rgba(47, 48, 58, 0.5);                       
+       44 -    --shadow:                                                 
+       45 -      rgba(0, 0, 0, 0.4) 0 10px 15px -3px, rgba(0, 0, 0, 0.25)
+          - 0 4px 6px -2px;                                              
+       46 -  }                                                           
+       47 -                                                              
+       48 -  #social .button-icon {                                      
+       49 -    filter: invert(1) brightness(2);                          
+       50 -  }                                                           
+       51 -}                                                             
+       52 -                                                              
+        7 +html,                                                         
+        8 +body,                                                         
+        9  #root {
+       54 -  width: 1126px;                                              
+       55 -  max-width: 100%;                                            
+       56 -  margin: 0 auto;                                             
+       57 -  text-align: center;                                         
+       58 -  border-inline: 1px solid var(--border);                     
+       59 -  min-height: 100svh;                                         
+       60 -  display: flex;                                              
+       61 -  flex-direction: column;                                     
+       62 -  box-sizing: border-box;                                     
+       10 +  height: 100%;                                               
+       11 +  margin: 0;                                                  
+       12  }
+       13  
+       14  body {
+       66 -  margin: 0;                                                  
+       15 +  @apply bg-neutral-950 text-neutral-200 antialiased;         
+       16 +  font: 14px/1.4 system-ui, 'Segoe UI', Roboto, sans-serif;   
+       17 +  overscroll-behavior: none;                                  
+       18  }
+       19  
+       69 -h1,                                                           
+       70 -h2 {                                                          
+       71 -  font-family: var(--heading);                                
+       72 -  font-weight: 500;                                           
+       73 -  color: var(--text-h);                                       
+       20 +* {                                                           
+       21 +  box-sizing: border-box;                                     
+       22  }
+       75 -                                                              
+       76 -h1 {                                                          
+       77 -  font-size: 56px;                                            
+       78 -  letter-spacing: -1.68px;                                    
+       79 -  margin: 32px 0;                                             
+       80 -  @media (max-width: 1024px) {                                
+       81 -    font-size: 36px;                                          
+       82 -    margin: 20px 0;                                           
+       83 -  }                                                           
+       84 -}                                                             
+       85 -h2 {                                                          
+       86 -  font-size: 24px;                                            
+       87 -  line-height: 118%;                                          
+       88 -  letter-spacing: -0.24px;                                    
+       89 -  margin: 0 0 8px;                                            
+       90 -  @media (max-width: 1024px) {                                
+       91 -    font-size: 20px;                                          
+       92 -  }                                                           
+       93 -}                                                             
+       94 -p {                                                           
+       95 -  margin: 0;                                                  
+       96 -}                                                             
+       97 -                                                              
+       98 -code,                                                         
+       99 -.counter {                                                    
+      100 -  font-family: var(--mono);                                   
+      101 -  display: inline-flex;                                       
+      102 -  border-radius: 4px;                                         
+      103 -  color: var(--text-h);                                       
+      104 -}                                                             
+      105 -                                                              
+      106 -code {                                                        
+      107 -  font-size: 15px;                                            
+      108 -  line-height: 135%;                                          
+      109 -  padding: 4px 8px;                                           
+      110 -  background: var(--code-bg);                                 
+      111 -}                                                             
+
+  Read 1 file (ctrl+o to expand)
+
+⏺ Write(index.html)
+  ⎿  Added 4 lines, removed 4 lines
+       1  <!doctype html>
+       2 -<html lang="en">                                               
+       2 +<html lang="en" class="dark">                                  
+       3    <head>
+       4      <meta charset="UTF-8" />
+       5 -    <link rel="icon" type="image/svg+xml" href="/favicon.svg" /
+         ->                                                              
+       6 -    <meta name="viewport" content="width=device-width, initial-
+         -scale=1.0" />                                                  
+       7 -    <title>vite-scaffold</title>                               
+       5 +    <meta name="viewport" content="width=device-width, initial-
+         +scale=1.0, maximum-scale=1.0, user-scalable=no" />             
+       6 +    <meta name="color-scheme" content="dark" />                
+       7 +    <title>VoxPaint</title>                                    
+       8    </head>
+       9    <body>
+      10      <div id="root"></div>
+
+  Read 1 file (ctrl+o to expand)
+
+⏺ Update(package.json)
+  ⎿  Added 1 line, removed 1 line
+      1  {
+      2 -  "name": "vite-scaffold",                                      
+      2 +  "name": "voxpaint",                                           
+      3    "private": true,
+      4    "version": "0.0.0",
+      5    "type": "module",
+⏺ Now I'll build out the engine module skeletons, starting with the pure-logic
+  layers (grid, plane math, chamfer resolver, palette) since those are fully
+  specified and testable in isolation.
+
+  Ran 1 shell command (ctrl+o to expand)
+
+⏺ Write(src/engine/grid/types.ts)
+  ⎿  Wrote 37 lines to src/engine/grid/types.ts
+      1 import type { PaletteSlotRef } from '@/engine/palette/types'
+      2 
+      3 export type Axis = 'x' | 'y' | 'z'
+      4 export type Orientation = 1 | -1
+      5 export type Rotation = 0 | 1 | 2 | 3
+      6 export type ChamferShapeKind = 'ramp' | 'convex' | 'concave'
+      7 
+      8 /** Grid coordinate, always integer. */
+      9 export type Coord = readonly [x: number, y: number, z: number]
+     … +30 lines (ctrl+o to expand)
+
+⏺ Write(src/engine/palette/types.ts)
+  ⎿  Wrote 14 lines to src/engine/palette/types.ts
+       1 export type PaletteSlotKind = 'base' | 'emissive' | 'blink' | 'p
+         ulse'
+       2 
+       3 export type PaletteSlotRef = {
+       4   kind: PaletteSlotKind
+       6   index: number
+       7 }
+       8 
+       9 export type PaletteState = {
+      10   base: string[] // 16 hex colors
+     … +5 lines (ctrl+o to expand)
+
+⏺ Write(src/engine/palette/defaultPalette.ts)
+  ⎿  Wrote 26 lines to src/engine/palette/defaultPalette.ts
+       1 import type { PaletteState } from './types'
+       2 
+       3 /** Slightly desaturated "vintage retro" default palette. Fully 
+         user-editable at runtime. */
+       4 export const DEFAULT_PALETTE: PaletteState = {
+       6     '#2b2530', // near-black plum
+       7     '#4a4358', // muted violet-gray
+       8     '#7c7583', // dusty lavender gray
+       9     '#b8b2c2', // pale lilac gray
+      10     '#e8e3ed', // off white
+     … +17 lines (ctrl+o to expand)
+
+⏺ Write(src/engine/palette/palette.ts)
+  ⎿  Wrote 31 lines to src/engine/palette/palette.ts
+       1 import type { PaletteSlotRef, PaletteState, PaletteSlotKind } fr
+         om './types'
+       3 export const PALETTE_SLOT_COUNTS: Record<PaletteSlotKind, number
+         > = {
+       4   base: 16,
+       6   blink: 4,
+       7   pulse: 4,
+       8 }
+      10 /** Emissive "class" id consumed by the shared instanced shader 
+         (0 = none). */
+     … +28 lines (ctrl+o to expand)
+
+⏺ Now the grid store — key encoding, cell access, bounds tracking.
+
+⏺ Write(src/engine/grid/GridStore.ts)
+  ⎿  Wrote 57 lines to src/engine/grid/GridStore.ts
+       1 import type { BBox, CellKey, ChamferCell, ColorCell, Coord, Voxe
+         lModel } from './types'
+       2 
+         Key {
+       4   return `${x},${y},${z}`
+       5 }
+       6 
+       7 export function decodeKey(key: CellKey): Coord {
+       9   return [x, y, z]
+      10 }
+     … +59 lines (ctrl+o to expand)
+
+⏺ Now the construction-plane math.
+
+⏺ Write(src/engine/plane/types.ts)
+  ⎿  Wrote 7 lines to src/engine/plane/types.ts
+      1 import type { Axis, Orientation } from '@/engine/grid/types'
+      2 
+      3 export type ConstructionPlane = {
+      4   axis: Axis
+      5   orientation: Orientation
+      6   offset: number
+      7 }
+
+⏺ Write(src/engine/plane/constructionPlane.ts)
+  ⎿  Wrote 59 lines to src/engine/plane/constructionPlane.ts
+       1 import type { Axis, Coord } from '@/engine/grid/types'
+       2 import type { ConstructionPlane } from './types'
+       4 /**
+       5  * Fixed cyclic (u,v) basis per axis (x -> y,z ; y -> z,x ; z ->
+          x,y).
+         with no special-casing.
+       7  */
+       8 export function gridCoordFromPixel(plane: ConstructionPlane, u: 
+       9   switch (plane.axis) {
+      10     case 'x':
+     … +61 lines (ctrl+o to expand)
+
+⏺ Write(src/engine/chamfer/types.ts)
+  ⎿  Wrote 17 lines to src/engine/chamfer/types.ts
+       1 import type { ChamferShapeKind, Rotation } from '@/engine/grid/t
+         ypes'
+       2 
+       3 export type NeighborSample = {
+       4   N: boolean
+       6   S: boolean
+       7   W: boolean
+       8   NE: boolean
+       9   SE: boolean
+      10   SW: boolean
+     … +8 lines (ctrl+o to expand)
+
+⏺ Write(src/engine/chamfer/chamferResolver.ts)
+  ⎿  Wrote 74 lines to src/engine/chamfer/chamferResolver.ts
+       1 import type { VoxelModel } from '@/engine/grid/types'
+       3 import type { ConstructionPlane } from '@/engine/plane/types'
+       4 import { gridCoordFromPixel } from '@/engine/plane/constructionP
+         lane'
+         pes'
+       6 
+       8  * Samples the chamfer layer's 8-neighborhood around a (u,v) pix
+         el on the active plane.
+       9  * Excludes the target cell itself (it isn't painted yet when va
+      10  */
+     … +81 lines (ctrl+o to expand)
+
+⏺ Write(src/engine/persistence/schema.ts)
+  ⎿  Wrote 34 lines to src/engine/persistence/schema.ts
+       1 import type { Axis, BBox, ChamferShapeKind, Orientation, Rotatio
+         n } from '@/engine/grid/types'
+       2 import type { PaletteSlotRef, PaletteState } from '@/engine/pale
+       3 
+       4 export const CURRENT_SCHEMA_VERSION = 1 as const
+       5 
+       6 export type ProjectMeta = {
+       7   name: string
+       9   modifiedAt: string
+      10 }
+     … +27 lines (ctrl+o to expand)
+
+⏺ Write(src/engine/persistence/serialize.ts)
+  ⎿  Wrote 42 lines to src/engine/persistence/serialize.ts
+       1 import { decodeKey, emptyModel, encodeKey, recomputeBounds } fro
+       2 import type { VoxelModel } from '@/engine/grid/types'
+       3 import type { PaletteState } from '@/engine/palette/types'
+       4 import { CURRENT_SCHEMA_VERSION, type ProjectMeta, type VoxPaint
+       5 
+       6 export function serializeProject(model: VoxelModel, palette: Pal
+       7   const colorCells = Array.from(model.color.entries()).map(([key
+         , cell]) => {
+       8     const [x, y, z] = decodeKey(key)
+      10   })
+     … +41 lines (ctrl+o to expand)
+
+⏺ Write(src/engine/persistence/migrations.ts)
+  ⎿  Wrote 34 lines to src/engine/persistence/migrations.ts
+       1 import { CURRENT_SCHEMA_VERSION, type VoxPaintProjectFile } from
+          './schema'
+       3 type Migration = (json: any) => any
+       4 
+       5 /**
+          there is nothing to migrate
+       7  * from yet — but the pattern exists from day one so future sche
+         ma bumps are additive, not a
+       9  */
+      10 const MIGRATIONS: Migration[] = []
+     … +29 lines (ctrl+o to expand)
+
+⏺ Write(src/engine/persistence/autosave.ts)
+  ⎿  Wrote 40 lines to src/engine/persistence/autosave.ts
+       1 import { migrateToCurrent } from './migrations'
+       2 import type { VoxPaintProjectFile } from './schema'
+       3 
+       4 const AUTOSAVE_KEY = 'voxpaint:autosave:v1'
+       5 
+       6 export class QuotaExceededErrorWrapped extends Error {
+       7   constructor() {
+       8     super('Autosave failed: browser storage quota exceeded.')
+       9     this.name = 'QuotaExceededErrorWrapped'
+      10   }
+     … +32 lines (ctrl+o to expand)
+
+⏺ Write(src/engine/persistence/projectFile.ts)
+  ⎿  Wrote 17 lines to src/engine/persistence/projectFile.ts
+       1 import { migrateToCurrent } from './migrations'
+       2 import type { VoxPaintProjectFile } from './schema'
+       4 export function downloadProjectFile(file: VoxPaintProjectFile, f
+         ilename = `${file.meta.name || 'voxpaint-project'}.json`): void 
+         {
+          'application/json' })
+       6   const url = URL.createObjectURL(blob)
+       7   const a = document.createElement('a')
+       9   a.download = filename
+      10   a.click()
+     … +10 lines (ctrl+o to expand)
+⏺ Now the Zustand store. I'll compose it from typed slices per the spec, using
+  Immer for structural-sharing snapshots.
+
+⏺ Write(src/store/types.ts)
+  ⎿  Wrote 87 lines to src/store/types.ts
+       1 import type { Coord, VoxelModel } from '@/engine/grid/types'
+       2 import type { PaletteSlotRef, PaletteState } from '@/engine/pale
+         tte/types'
+       4 import type { ProjectMeta } from '@/engine/persistence/schema'
+       5 
+       6 export type ToolId = 'paint' | 'eyedropper' | 'select' | 'fill' 
+         | 'clone' | 'move'
+       7 export type ActiveLayer = 'color' | 'chamfer'
+       9 export type SelectionRegion = {
+      10   originU: number
+     … +82 lines (ctrl+o to expand)
+
+⏺ Write(src/store/projectSlice.ts)
+  ⎿  Wrote 37 lines to src/store/projectSlice.ts
+       1 import type { StateCreator } from 'zustand'
+       2 import { emptyModel } from '@/engine/grid/GridStore'
+       3 import { DEFAULT_PALETTE } from '@/engine/palette/defaultPalette
+       4 import type { AppState, ProjectSlice } from './types'
+       5 
+       6 type Slice = StateCreator<AppState, [['zustand/immer', never]], 
+         [], ProjectSlice>
+       7 
+       9   model: emptyModel(),
+      10   palette: DEFAULT_PALETTE,
+     … +29 lines (ctrl+o to expand)
+
+⏺ Update(src/store/types.ts)
+  ⎿  Added 20 lines, removed 1 line
+       84    setError: (message: string | null) => void
+       85  }
+       86  
+       87 -export type AppState = ProjectSlice & HistorySlice & PlaneSlic
+          -e & ToolSlice & SelectionSlice & ViewSlice & PersistenceSlice 
+       87 +export type PaintActionsSlice = {                             
+       88 +  /** Writes a color-layer cell. Returns false (no-op) if outs
+          +ide the 64^3 working bounds. */                               
+       89 +  paintColorCell: (coord: Coord) => boolean                   
+       90 +  /**                                                         
+       91 +   * Validates + writes a chamfer-layer cell at plane-space (u
+          +,v), plus the color layer at the                              
+       92 +   * same cell using the active palette slot (spec: chamfer pa
+          +int always also sets color).                                  
+       93 +   * Returns false (no-op) if the neighbor configuration is in
+          +valid or out of bounds.                                       
+       94 +   */                                                         
+       95 +  paintChamferCell: (u: number, v: number) => boolean         
+       96 +  eraseCell: (coord: Coord, layer: ActiveLayer) => void       
+       97 +}                                                             
+       98 +                                                              
+       99 +export type AppState = ProjectSlice &                         
+      100 +  HistorySlice &                                              
+      101 +  PlaneSlice &                                                
+      102 +  ToolSlice &                                                 
+      103 +  SelectionSlice &                                            
+      104 +  ViewSlice &                                                 
+      105 +  PersistenceSlice &                                          
+      106 +  PaintActionsSlice                                           
+
+⏺ Now the remaining slices:
+
+⏺ Write(src/store/historySlice.ts)
+  ⎿  Wrote 48 lines to src/store/historySlice.ts
+       1 import type { StateCreator } from 'zustand'
+       2 import type { VoxelModel } from '@/engine/grid/types'
+       4 
+       5 type Slice = StateCreator<AppState, [['zustand/immer', never]], 
+         [], HistorySlice>
+       7 const MAX_HISTORY = 100
+       8 
+       9 // Transient, not part of observable state — the model reference
+      10 // Reading `get().model` outside of a producer returns the real 
+         (non-draft) current value, so
+     … +42 lines (ctrl+o to expand)
+
+⏺ Write(src/store/planeSlice.ts)
+  ⎿  Wrote 19 lines to src/store/planeSlice.ts
+       1 import type { StateCreator } from 'zustand'
+       2 import type { AppState, PlaneSlice } from './types'
+       3 
+       4 type Slice = StateCreator<AppState, [['zustand/immer', never]], 
+         [], PlaneSlice>
+       6 export const createPlaneSlice: Slice = (set) => ({
+       7   plane: { axis: 'z', orientation: 1, offset: 0 },
+       8 
+       9   setPlaneAxisOrientation: (axis, orientation) =>
+      10     set((state) => {
+     … +10 lines (ctrl+o to expand)
+
+⏺ Write(src/store/toolSlice.ts)
+  ⎿  Wrote 14 lines to src/store/toolSlice.ts
+      1 import type { StateCreator } from 'zustand'
+      2 import type { AppState, ToolSlice } from './types'
+      3 
+      4 type Slice = StateCreator<AppState, [['zustand/immer', never]], [
+        ], ToolSlice>
+      5 
+      6 export const createToolSlice: Slice = (set) => ({
+      7   activeTool: 'paint',
+      8   activeLayer: 'color',
+      9   activePaletteSlot: { kind: 'base', index: 0 },
+     … +8 lines (ctrl+o to expand)
+
+⏺ Write(src/store/selectionSlice.ts)
+  ⎿  Wrote 12 lines to src/store/selectionSlice.ts
+       1 import type { StateCreator } from 'zustand'
+       2 import type { AppState, SelectionSlice } from './types'
+       3 
+         [], SelectionSlice>
+       5 
+       6 export const createSelectionSlice: Slice = (set) => ({
+       7   selection: null,
+       8   clipboard: null,
+      10   setSelection: (region) => set((state) => { state.selection = r
+         egion }),
+     … +5 lines (ctrl+o to expand)
+
+⏺ Write(src/store/viewSlice.ts)
+  ⎿  Wrote 17 lines to src/store/viewSlice.ts
+      1 import type { StateCreator } from 'zustand'
+      2 import type { AppState, ViewSlice } from './types'
+      3 
+      4 type Slice = StateCreator<AppState, [['zustand/immer', never]], [
+        ], ViewSlice>
+      5 
+      6 export const createViewSlice: Slice = (set) => ({
+      7   fullscreen: false,
+      8   hoverCell: null,
+      9   chamferHoverValid: null,
+     … +8 lines (ctrl+o to expand)
+
+⏺ Write(src/store/persistenceSlice.ts)
+  ⎿  Wrote 19 lines to src/store/persistenceSlice.ts
+      1 import type { StateCreator } from 'zustand'
+      2 import type { AppState, PersistenceSlice } from './types'
+      3 
+      4 type Slice = StateCreator<AppState, [['zustand/immer', never]], [
+        ], PersistenceSlice>
+      5 
+      6 export const createPersistenceSlice: Slice = (set) => ({
+      7   dirty: false,
+      8   lastSavedAt: null,
+      9   lastError: null,
+     … +11 lines (ctrl+o to expand)
+
+⏺ Write(src/store/paintActions.ts)
+  ⎿  Wrote 63 lines to src/store/paintActions.ts
+       1 import type { StateCreator } from 'zustand'
+         engine/grid/GridStore'
+       3 import type { Coord } from '@/engine/grid/types'
+       4 import { classify, sampleNeighbors } from '@/engine/chamfer/cham
+       5 import { gridCoordFromPixel } from '@/engine/plane/constructionP
+         lane'
+       7 
+       8 type Slice = StateCreator<AppState, [['zustand/immer', never]], 
+         [], PaintActionsSlice>
+      10 export const createPaintActionsSlice: Slice = (set, get) => ({
+     … +63 lines (ctrl+o to expand)
+
+⏺ Now compose the root store:
+
+⏺ Write(src/store/useAppStore.ts)
+  ⎿  Wrote 27 lines to src/store/useAppStore.ts
+       1 import { enableMapSet } from 'immer'
+       2 import { create } from 'zustand'
+       3 import { immer } from 'zustand/middleware/immer'
+       4 import { createHistorySlice } from './historySlice'
+       5 import { createPaintActionsSlice } from './paintActions'
+       6 import { createPersistenceSlice } from './persistenceSlice'
+       7 import { createPlaneSlice } from './planeSlice'
+       8 import { createProjectSlice } from './projectSlice'
+       9 import { createSelectionSlice } from './selectionSlice'
+      10 import { createToolSlice } from './toolSlice'
+     … +17 lines (ctrl+o to expand)
+
+⏺ Write(src/store/wireAutosave.ts)
+  ⎿  Wrote 40 lines to src/store/wireAutosave.ts
+       1 import { debounce, loadAutosave, saveAutosave } from '@/engine/p
+         ersistence/autosave'
+         ersistence/serialize'
+       3 import { useAppStore } from './useAppStore'
+       4 
+       6 
+       7 /** Restores the last autosaved project on load, if any. Call on
+         ce at app startup. */
+       9   try {
+      10     const file = loadAutosave()
+     … +36 lines (ctrl+o to expand)
+
+⏺ Now the chamfer mesh geometry — the actual ramp/convex/concave prefab shapes
+  derived from the spec's 45° chamfer rule.
+
+⏺ Write(src/engine/chamfer/chamferGeometry.ts)
+  ⎿  Wrote 115 lines to src/engine/chamfer/chamferGeometry.ts
+      1 import * as THREE from 'three'
+      2 
+      3 /**
+      5  * x = u, y = v (the plane's in-plane axes), z = outward extent
+      6  * (z=1 is flush with the construction plane / full height, z=0 i
+        s the inward base).
+      7  * Per-instance placement (world axis mapping + orientation flip 
+        + baked rotation) is applied
+        sis.ts.
+      9  */
+     … +126 lines (ctrl+o to expand)
+
+⏺ Update(src/engine/chamfer/chamferGeometry.ts)
+  ⎿  Added 30 lines, removed 14 lines
+       92    ])
+       93  }
+       94  
+       95 -/** Inverse of convex: full height everywhere except a notch c
+          -ut down at `emptyDiagonal`. */                                
+       95 +/**                                                           
+       96 + * Inverse of convex: full height along all 4 edges, notched d
+          +own to the base only at the                                   
+       97 + * point where `emptyDiagonal` sits. Approximated as two flat 
+          +triangular facets (a shallow                                  
+       98 + * fold), rather than a curved bilinear "scoop" — a standard l
+          +ow-poly simplification.                                       
+       99 + */                                                           
+      100  export function concaveCornerGeometry(emptyDiagonal: 0 | 1 | 2
+            | 3): THREE.BufferGeometry {
+       97 -  const others = ([0, 1, 2, 3] as const).filter((c) => c !== e
+          -mptyDiagonal) as [                                            
+       98 -    0 | 1 | 2 | 3,                                            
+       99 -    0 | 1 | 2 | 3,                                            
+      100 -    0 | 1 | 2 | 3,                                            
+      101 -  ]                                                           
+      102 -  // `others` is already in clockwise order starting from empt
+          -yDiagonal+1.                                                  
+      103 -  const [a, b, c] = others                                    
+      101 +  const e = emptyDiagonal                                     
+      102 +  // The 3 non-empty corners, in clockwise order starting afte
+          +r the notch.                                                  
+      103 +  const c1 = ((e + 1) % 4) as 0 | 1 | 2 | 3                   
+      104 +  const c2 = ((e + 2) % 4) as 0 | 1 | 2 | 3                   
+      105 +  const c3 = ((e + 3) % 4) as 0 | 1 | 2 | 3                   
+      106  
+      105 -  return buildGeometry([                                      
+      107 +  const triangles: number[][][] = [                           
+      108      // bottom (full footprint, z=0)
+      109      [base(0), base(1), base(2)],
+      110      [base(0), base(2), base(3)],
+      111      // folded roof: flat full-height triangle + sloped triangl
+           e down to the notch
+      110 -    [top(a), top(b), top(c)],                                 
+      111 -    [top(a), top(c), base(emptyDiagonal)],                    
+      112 -    // two closed walls (full height, at the two non-adjacent-
+          -to-notch sides)                                               
+      113 -    [base(a), base(b), top(b), ].slice(0, 0), // placeholder r
+          -emoved below                                                  
+      114 -  ]).clone()                                                  
+      112 +    [top(c1), top(c2), top(c3)],                              
+      113 +    [top(c3), base(e), top(c1)],                              
+      114 +  ]                                                           
+      115 +                                                              
+      116 +  // The 2 sides not touching the notch get a full-height wall
+          +; the 2 sides touching it                                     
+      117 +  // get a triangular wall tapering down to the notch corner. 
+      118 +  for (let side = 0 as 0 | 1 | 2 | 3, i = 0; i < 4; i++, side 
+          += ((side + 1) % 4) as 0 | 1 | 2 | 3) {                        
+      119 +    const [s0, s1] = SIDE_CORNERS[side]                       
+      120 +    if (s0 === e) {                                           
+      121 +      triangles.push([base(s0), base(s1), top(s1)])           
+      122 +    } else if (s1 === e) {                                    
+      123 +      triangles.push([base(s0), base(s1), top(s0)])           
+      124 +    } else {                                                  
+      125 +      triangles.push([base(s0), base(s1), top(s1)])           
+      126 +      triangles.push([base(s0), top(s1), top(s0)])            
+      127 +    }                                                         
+      128 +  }                                                           
+      129 +                                                              
+      130 +  return buildGeometry(triangles)                             
+      131  }
+
+⏺ Write(src/engine/instancing/basis.ts)  ⎿  Wrote 62 lines to src/engine/instancing/basis.ts
+       1 import * as THREE from 'three'
+       2 import type { Axis, Coord, Orientation } from '@/engine/grid/typ
+         es'
+       4 const AXIS_UNIT: Record<Axis, THREE.Vector3> = {
+       5   x: new THREE.Vector3(1, 0, 0),
+       6   y: new THREE.Vector3(0, 1, 0),
+       7   z: new THREE.Vector3(0, 0, 1),
+       8 }
+      10 // Mirrors the cyclic (u,v) basis in engine/plane/constructionPl
+         ane.ts.
+     … +61 lines (ctrl+o to expand)
+
+⏺ Update(src/engine/instancing/basis.ts)
+  ⎿  Added 3 lines, removed 1 line
+      19    z: new THREE.Vector3(0, 1, 0),
+      20  }
+      21  
+      22 -const scratchRot = new THREE.Matrix4()                         
+      22  const scratchBasis = new THREE.Matrix4()
+      23 +const scratchCentered = new THREE.Matrix4()                    
+      24 +const scratchRotZ = new THREE.Matrix4()                        
+      25 +const scratchTranslate = new THREE.Matrix4()                   
+      26  
+      27  /** Placement matrix for a plain cube: axis-aligned, no plane b
+          asis needed. */
+      28  export function cubeInstanceMatrix(coord: Coord, out = new THRE
+          E.Matrix4()): THREE.Matrix4 {
+
+⏺ Update(src/engine/instancing/basis.ts)
+  ⎿  Added 6 lines, removed 9 lines
+      51    const tz = coord[2] + (planeOrientation === -1 ? axisUnit.z :
+           0)
+      52    scratchBasis.setPosition(tx, ty, tz)
+      53  
+      54 -  scratchRot.makeRotationZ((rotation * Math.PI) / 2)           
+      55 -  scratchRot.setPosition(0.5, 0.5, 0)                          
+      56 -  // Pre/post translate so the rotation happens about the footp
+         -rint's center (0.5, 0.5), not the origin.                      
+      57 -  scratchRot.premultiply(new THREE.Matrix4().makeTranslation(0,
+         - 0, 0)) // no-op, keeps intent explicit                        
+      58 -  const centered = new THREE.Matrix4()                         
+      59 -    .makeTranslation(0.5, 0.5, 0)                              
+      60 -    .multiply(new THREE.Matrix4().makeRotationZ((rotation * Mat
+         -h.PI) / 2))                                                    
+      61 -    .multiply(new THREE.Matrix4().makeTranslation(-0.5, -0.5, 0
+         -))                                                             
+      54 +  // Pre/post translate so the baked rotation happens about the
+         + footprint's center (0.5, 0.5), not the origin.                
+      55 +  scratchRotZ.makeRotationZ((rotation * Math.PI) / 2)          
+      56 +  scratchCentered.makeTranslation(0.5, 0.5, 0).multiply(scratch
+         +RotZ)                                                          
+      57 +  scratchTranslate.makeTranslation(-0.5, -0.5, 0)              
+      58 +  scratchCentered.multiply(scratchTranslate)                   
+      59  
+      63 -  return out.copy(scratchBasis).multiply(centered)             
+      60 +  return out.copy(scratchBasis).multiply(scratchCentered)      
+      61  }
+
+⏺ Now the shared instanced shader material (emissive/blink/pulse) and the
+  InstancingManager.
+
+⏺ Write(src/engine/instancing/sharedMaterial.ts)
+  ⎿  Wrote 60 lines to src/engine/instancing/sharedMaterial.ts
+      1 import * as THREE from 'three'
+      2 
+      3 /**
+         emissive behavior (none /
+      5  * solid / blink / pulse) rides on instanced buffer attributes, a
+        nimated by a single global
+      6  * clock uniform — no per-instance material overrides, all animat
+        ion is GPU-driven.
+      8 export function createSharedVoxelMaterial() {
+      9   const uniforms = { uClock: { value: 0 } }
+     … +54 lines (ctrl+o to expand)
+
+⏺ Write(src/engine/instancing/InstancingManager.ts)
+  ⎿  Wrote 157 lines to src/engine/instancing/InstancingManager.ts
+       1 import * as THREE from 'three'
+       2 import { decodeKey } from '@/engine/grid/GridStore'
+       4 import { concaveCornerGeometry, convexCornerGeometry, rampGeomet
+         ry, unitCubeGeometry } from '@/engine/chamfer/chamferGeometry'
+       5 import { emissiveClassFor, resolveSlotColor } from '@/engine/pal
+       6 import type { PaletteState } from '@/engine/palette/types'
+       7 import { chamferInstanceMatrix, cubeInstanceMatrix } from './bas
+         is'
+       9 
+      10 export type PoolId = 'cube' | 'ramp' | 'convex' | 'concave'
+     … +169 lines (ctrl+o to expand)
+
+⏺ Update(src/engine/instancing/InstancingManager.ts)
+  ⎿  Added 1 line, removed 1 line
+      52    }
+      53  
+      54    private attachEmissiveAttributes(mesh: THREE.InstancedMesh) {
+      55 -    const capacity = mesh.count === 0 ? mesh.instanceMatrix.cou
+         -nt : mesh.instanceMatrix.count                                 
+      55 +    const capacity = mesh.instanceMatrix.count                 
+      56      mesh.geometry.setAttribute(
+      57        'instanceEmissiveClass',
+      58        new THREE.InstancedBufferAttribute(new Float32Array(capac
+          ity), 1),
+
+⏺ Update(src/engine/instancing/InstancingManager.ts)
+  ⎿  Added 1 line, removed 1 line
+      89      const byPool: Record<PoolId, CellKey[]> = { cube: [], ramp:
+           [], convex: [], concave: [] }
+      90      for (const key of model.color.keys()) {
+      91        const chamfer = model.chamfer.get(key)
+      92 -      byPool[chamfer ? (chamfer.shapeKind === 'ramp' ? 'ramp' :
+         - chamfer.shapeKind) : 'cube'].push(key)                        
+      92 +      byPool[chamfer ? chamfer.shapeKind : 'cube'].push(key)   
+      93      }
+      94  
+      95      for (const id of POOL_IDS) {
+
+⏺ Write(src/engine/tools/lineUtils.ts)
+  ⎿  Wrote 36 lines to src/engine/tools/lineUtils.ts
+       1 /** Bresenham line, inclusive of both endpoints. */
+       2 export function bresenhamLine(u0: number, v0: number, u1: number
+         , v1: number): Array<[number, number]> {
+       3   const points: Array<[number, number]> = []
+       4   let x0 = u0
+       6   const dx = Math.abs(u1 - u0)
+       7   const dy = -Math.abs(v1 - v0)
+       8   const sx = u0 < u1 ? 1 : -1
+       9   const sy = v0 < v1 ? 1 : -1
+      10   let err = dx + dy
+     … +30 lines (ctrl+o to expand)
+
+⏺ Now the 2D pixel canvas component:
+
+⏺ Write(src/components/editor2d/PixelCanvas.tsx)
+  ⎿  Wrote 194 lines to src/components/editor2d/PixelCanvas.tsx
+       1 import { useCallback, useEffect, useRef, useState } from 'react'
+       2 import { encodeKey } from '@/engine/grid/GridStore'
+       4 import { gridCoordFromPixel } from '@/engine/plane/constructionP
+         lane'
+       5 import { canPaintChamfer } from '@/engine/chamfer/chamferResolve
+       6 import { resolveSlotColor } from '@/engine/palette/palette'
+       7 import { bresenhamLine, snapToOrtho } from '@/engine/tools/lineU
+         tils'
+       9 
+      10 const CELL_PX = 12
+     … +201 lines (ctrl+o to expand)
+
+⏺ Update(src/components/editor2d/PixelCanvas.tsx)
+  ⎿  Removed 1 line
+      2  import { encodeKey } from '@/engine/grid/GridStore'
+      3  import { MAX_GRID_EXTENT } from '@/engine/grid/GridStore'
+      4  import { gridCoordFromPixel } from '@/engine/plane/constructionP
+         lane'
+      5 -import { canPaintChamfer } from '@/engine/chamfer/chamferResolve
+        -r'                                                              
+      5  import { resolveSlotColor } from '@/engine/palette/palette'
+      6  import { bresenhamLine, snapToOrtho } from '@/engine/tools/lineU
+         tils'
+      7  import { useAppStore } from '@/store/useAppStore'
+
+⏺ Write(src/components/editor2d/Editor2D.tsx)
+  ⎿  Wrote 36 lines to src/components/editor2d/Editor2D.tsx
+       1 import { ChevronLeft, ChevronRight } from 'lucide-react'
+       2 import { useAppStore } from '@/store/useAppStore'
+       3 import { PixelCanvas } from './PixelCanvas'
+       4 
+       5 export function Editor2D() {
+       7   const setPlaneOffset = useAppStore((s) => s.setPlaneOffset)
+       8 
+       9   return (
+      10     <div className="flex h-full min-w-0 flex-col bg-neutral-950"
+         >
+     … +30 lines (ctrl+o to expand)
+
+⏺ Now the 3D viewport — instancing mount, lighting, camera controls, and the
+  axis gizmo.
+
+⏺ Write(src/components/viewport3d/VoxelInstancedMeshes.tsx)
+  ⎿  Wrote 28 lines to src/components/viewport3d/VoxelInstancedMeshes.tsx
+      1 import { useFrame } from '@react-three/fiber'
+      2 import { forwardRef, useEffect, useMemo } from 'react'
+      3 import { InstancingManager } from '@/engine/instancing/Instancing
+        Manager'
+      4 import { useAppStore } from '@/store/useAppStore'
+      6 export const VoxelInstancedMeshes = forwardRef<InstancingManager>
+        ((_props, ref) => {
+      7   const manager = useMemo(() => new InstancingManager(), [])
+      8   const model = useAppStore((s) => s.model)
+      9   const palette = useAppStore((s) => s.palette)
+     … +20 lines (ctrl+o to expand)
+
+⏺ Write(src/components/viewport3d/SceneLighting.tsx)
+  ⎿  Wrote 9 lines to src/components/viewport3d/SceneLighting.tsx
+      1 export function SceneLighting() {
+      2   return (
+      3     <>
+      4       <ambientLight intensity={0.55} />
+      5       <directionalLight position={[8, 12, 6]} intensity={1.1} />
+      6       <directionalLight position={[-6, -4, -8]} intensity={0.25} 
+        />
+      7     </>
+      8   )
+      9 }
+
+⏺ Write(src/components/viewport3d/ConstructionPlaneGizmo.tsx)
+  ⎿  Wrote 38 lines to src/components/viewport3d/ConstructionPlaneGizmo.tsx
+       1 import { useAppStore } from '@/store/useAppStore'
+       3 
+         on: [number, number, number]; color: string }> = [
+       5   { axis: 'x', orientation: 1, position: [2.2, 0, 0], color: '#c
+       6   { axis: 'x', orientation: -1, position: [-2.2, 0, 0], color: '
+       7   { axis: 'y', orientation: 1, position: [0, 2.2, 0], color: '#5
+       8   { axis: 'y', orientation: -1, position: [0, -2.2, 0], color: '
+         #3a6046' },
+         a7ec9' },
+         #2f4f7a' },
+     … +39 lines (ctrl+o to expand)
+⏺ Write(src/components/viewport3d/Viewport3D.tsx)
+  ⎿  Wrote 84 lines to src/components/viewport3d/Viewport3D.tsx
+       1 import { Canvas, useThree } from '@react-three/fiber'
+       2 import { OrbitControls } from '@react-three/drei'
+       4 import * as THREE from 'three'
+       5 import type { InstancingManager } from '@/engine/instancing/Inst
+         ancingManager'
+         ne'
+       7 import { useAppStore } from '@/store/useAppStore'
+       8 import { ConstructionPlaneGizmo } from './ConstructionPlaneGizmo
+       9 import { SceneLighting } from './SceneLighting'
+      10 import { VoxelInstancedMeshes } from './VoxelInstancedMeshes'
+     … +86 lines (ctrl+o to expand)
+
+⏺ Now the surrounding UI chrome — toolbar, panels, palette.
+
+⏺ Write(src/components/panels/ToolPalette.tsx)
+  ⎿  Wrote 50 lines to src/components/panels/ToolPalette.tsx
+       1 import * as ToggleGroup from '@radix-ui/react-toggle-group'
+       2 import * as Tooltip from '@radix-ui/react-tooltip'
+         aintBucket } from 'lucide-react'
+       4 import { useAppStore } from '@/store/useAppStore'
+       5 import type { ToolId } from '@/store/types'
+       7 const TOOLS: Array<{ id: ToolId; label: string; icon: typeof Bru
+         sh }> = [
+       8   { id: 'paint', label: 'Paint', icon: Brush },
+      10   { id: 'select', label: 'Select', icon: SquareDashedMousePointe
+         r },
+     … +47 lines (ctrl+o to expand)
+
+⏺ Write(src/components/panels/LayerToggle.tsx)
+  ⎿  Wrote 33 lines to src/components/panels/LayerToggle.tsx
+       1 import * as ToggleGroup from '@radix-ui/react-toggle-group'
+       2 import { useAppStore } from '@/store/useAppStore'
+       3 import type { ActiveLayer } from '@/store/types'
+       4 
+       5 export function LayerToggle() {
+       6   const activeLayer = useAppStore((s) => s.activeLayer)
+       7   const setActiveLayer = useAppStore((s) => s.setActiveLayer)
+       8 
+       9   return (
+      10     <div className="px-3 py-2">
+     … +29 lines (ctrl+o to expand)
+
+⏺ Write(src/components/panels/PaletteGrid.tsx)
+  ⎿  Wrote 43 lines to src/components/panels/PaletteGrid.tsx
+      1 import { useAppStore } from '@/store/useAppStore'
+      2 import type { PaletteSlotKind } from '@/engine/palette/types'
+      3 
+      4 const SECTIONS: Array<{ kind: PaletteSlotKind; label: string }> =
+         [
+      5   { kind: 'base', label: 'Base' },
+      6   { kind: 'emissive', label: 'Emissive' },
+      7   { kind: 'blink', label: 'Blink' },
+      8   { kind: 'pulse', label: 'Pulse' },
+      9 ]
+     … +39 lines (ctrl+o to expand)
+
+⏺ Write(src/components/panels/ModelStats.tsx)
+  ⎿  Wrote 25 lines to src/components/panels/ModelStats.tsx
+       1 import { MAX_GRID_EXTENT } from '@/engine/grid/GridStore'
+       2 import { useAppStore } from '@/store/useAppStore'
+       3 
+       4 export function ModelStats() {
+       5   const model = useAppStore((s) => s.model)
+       6   const dirty = useAppStore((s) => s.dirty)
+       7   const lastSavedAt = useAppStore((s) => s.lastSavedAt)
+       8 
+       9   const cellCount = model.color.size
+      10   const bounds = model.bounds
+     … +18 lines (ctrl+o to expand)
+
+⏺ Write(src/components/panels/UndoRedoControls.tsx)
+  ⎿  Wrote 30 lines to src/components/panels/UndoRedoControls.tsx
+       1 import { Redo2, Undo2 } from 'lucide-react'
+       2 import { useAppStore } from '@/store/useAppStore'
+       3 
+       4 export function UndoRedoControls() {
+       5   const past = useAppStore((s) => s.past)
+       6   const future = useAppStore((s) => s.future)
+       7   const undo = useAppStore((s) => s.undo)
+       8   const redo = useAppStore((s) => s.redo)
+       9 
+      10   return (
+     … +24 lines (ctrl+o to expand)
+
+⏺ Write(src/components/ui/toastBus.ts)
+  ⎿  Wrote 12 lines to src/components/ui/toastBus.ts
+       1 type Listener = (message: string) => void
+       2 
+       3 const listeners = new Set<Listener>()
+       4 
+       5 export function showToast(message: string): void {
+       6   for (const listener of listeners) listener(message)
+       7 }
+       8 
+       9 export function subscribeToast(listener: Listener): () => void {
+      10   listeners.add(listener)
+     … +2 lines (ctrl+o to expand)
+
+⏺ Write(src/components/ui/ToastRegion.tsx)
+  ⎿  Wrote 30 lines to src/components/ui/ToastRegion.tsx
+       1 import * as Toast from '@radix-ui/react-toast'
+       2 import { useEffect, useState } from 'react'
+       3 import { subscribeToast } from './toastBus'
+       4 
+       5 type ToastItem = { id: number; message: string }
+       6 
+       7 let nextId = 0
+       8 
+       9 export function ToastRegion() {
+      10   const [toasts, setToasts] = useState<ToastItem[]>([])
+     … +26 lines (ctrl+o to expand)
+
+⏺ Update(src/components/ui/ToastRegion.tsx)
+  ⎿  Added 1 line, removed 1 line
+      19            onOpenChange={(open) => {
+      20              if (!open) setToasts((prev) => prev.filter((x) => x
+          .id !== t.id))
+      21            }}
+      22 -          className="rounded-md border border-neutral-800 bg-ne
+         -utral-900 px-3 py-2 text-sm text-neutral-200 shadow-lg data-[st
+         -ate=open]:animate-in data-[state=open]:fade-in data-[state=clos
+         -ed]:animate-out data-[state=closed]:fade-out"                  
+      22 +          className="rounded-md border border-neutral-800 bg-ne
+         +utral-900 px-3 py-2 text-sm text-neutral-200 shadow-lg"        
+      23          >
+      24            <Toast.Description>{t.message}</Toast.Description>
+      25          </Toast.Root>
+
+⏺ Now the File menu:
+
+⏺ Write(src/components/panels/FileMenu.tsx)
+  ⎿  Wrote 96 lines to src/components/panels/FileMenu.tsx
+       1 import * as DropdownMenu from '@radix-ui/react-dropdown-menu'
+       2 import { ChevronDown, FileDown, FilePlus, FileUp, Package } from
+       3 import { useRef } from 'react'
+       4 import { readProjectFile, downloadProjectFile } from '@/engine/p
+         ersistence/projectFile'
+         ersistence/serialize'
+       6 import { useAppStore } from '@/store/useAppStore'
+       7 import { showToast } from '@/components/ui/toastBus'
+       9 export function FileMenu() {
+      10   const fileInputRef = useRef<HTMLInputElement>(null)
+     … +98 lines (ctrl+o to expand)
+
+⏺ Write(src/components/panels/FullscreenToggle.tsx)
+  ⎿  Wrote 32 lines to src/components/panels/FullscreenToggle.tsx
+       1 import { Maximize, Minimize } from 'lucide-react'
+       2 import { useEffect } from 'react'
+       3 import { useAppStore } from '@/store/useAppStore'
+       4 
+       5 export function FullscreenToggle() {
+       7   const setFullscreen = useAppStore((s) => s.setFullscreen)
+       8 
+       9   useEffect(() => {
+      10     const handler = () => setFullscreen(Boolean(document.fullscr
+         eenElement))
+     … +26 lines (ctrl+o to expand)
+
+⏺ Write(src/components/layout/TopToolbar.tsx)
+  ⎿  Wrote 16 lines to src/components/layout/TopToolbar.tsx
+       1 import { FileMenu } from '@/components/panels/FileMenu'
+         Toggle'
+       3 import { UndoRedoControls } from '@/components/panels/UndoRedoCo
+         ntrols'
+       5 export function TopToolbar() {
+       6   return (
+         -neutral-800 bg-neutral-925 px-2">
+       8       <span className="px-1 text-sm font-semibold tracking-tight
+          text-neutral-100">VoxPaint</span>
+      10       <div className="h-5 w-px bg-neutral-800" />
+     … +10 lines (ctrl+o to expand)
+
+⏺ Update(src/components/layout/TopToolbar.tsx)
+  ⎿  Added 1 line, removed 1 line
+       4  
+       5  export function TopToolbar() {
+       6    return (
+       7 -    <div className="flex h-11 items-center gap-3 border-b borde
+         -r-neutral-800 bg-neutral-925 px-2">                            
+       7 +    <div className="flex h-11 items-center gap-3 border-b borde
+         +r-neutral-800 bg-neutral-900 px-2">                            
+       8        <span className="px-1 text-sm font-semibold tracking-tigh
+          t text-neutral-100">VoxPaint</span>
+       9        <FileMenu />
+      10        <div className="h-5 w-px bg-neutral-800" />
+
+⏺ Write(src/components/layout/LeftPanel.tsx)
+  ⎿  Wrote 9 lines to src/components/layout/LeftPanel.tsx
+      1 import { ToolPalette } from '@/components/panels/ToolPalette'
+      2 
+      3 export function LeftPanel() {
+      4   return (
+      5     <div className="flex w-14 flex-col border-r border-neutral-80
+        0 bg-neutral-900">
+      6       <ToolPalette />
+      7     </div>
+      8   )
+      9 }
+
+⏺ Write(src/components/layout/RightPanel.tsx)
+  ⎿  Wrote 15 lines to src/components/layout/RightPanel.tsx
+       1 import { LayerToggle } from '@/components/panels/LayerToggle'
+       2 import { ModelStats } from '@/components/panels/ModelStats'
+       3 import { PaletteGrid } from '@/components/panels/PaletteGrid'
+       4 
+       5 export function RightPanel() {
+       7     <div className="flex w-64 flex-col border-l border-neutral-8
+         00 bg-neutral-900">
+       8       <LayerToggle />
+       9       <div className="min-h-0 flex-1 overflow-y-auto">
+      10         <PaletteGrid />
+     … +6 lines (ctrl+o to expand)
+
+⏺ Write(src/components/layout/MainLayout.tsx)
+  ⎿  Wrote 21 lines to src/components/layout/MainLayout.tsx
+       1 import { Editor2D } from '@/components/editor2d/Editor2D'
+       2 import { Viewport3D } from '@/components/viewport3d/Viewport3D'
+       3 import { LeftPanel } from './LeftPanel'
+       4 import { RightPanel } from './RightPanel'
+       5 import { TopToolbar } from './TopToolbar'
+       6 
+       7 export function MainLayout() {
+       8   return (
+       9     <div className="flex h-full flex-col">
+      10       <TopToolbar />
+     … +11 lines (ctrl+o to expand)
+⏺ Now App.tsx and main.tsx wiring everything together:
+
+⏺ Write(src/App.tsx)
+  ⎿  Error writing file
+
+  Read 1 file (ctrl+o to expand)
+
+⏺ Right, forgot this still had template content — now rewriting it fully.
+
+⏺ Write(src/App.tsx)
+  ⎿  Added 23 lines, removed 114 lines
+        1 -import { useState } from 'react'                              
+        2 -import reactLogo from './assets/react.svg'                    
+        3 -import viteLogo from './assets/vite.svg'                      
+        4 -import heroImg from './assets/hero.png'                       
+        5 -import './App.css'                                            
+        1 +import { useEffect } from 'react'                             
+        2 +import { MainLayout } from '@/components/layout/MainLayout'   
+        3 +import { ToastRegion } from '@/components/ui/ToastRegion'     
+        4 +import { showToast } from '@/components/ui/toastBus'          
+        5 +import { useAppStore } from '@/store/useAppStore'             
+        6 +import { restoreAutosave, wireAutosave } from '@/store/wireAut
+          +osave'                                                        
+        7  
+        8  function App() {
+        8 -  const [count, setCount] = useState(0)                       
+        9 +  useEffect(() => {                                           
+       10 +    restoreAutosave()                                         
+       11 +    const unsubscribe = wireAutosave()                        
+       12 +    return unsubscribe                                        
+       13 +  }, [])                                                      
+       14  
+       10 -  return (                                                    
+       11 -    <>                                                        
+       12 -      <section id="center">                                   
+       13 -        <div className="hero">                                
+       14 -          <img src={heroImg} className="base" width="170" heig
+          -ht="179" alt="" />                                            
+       15 -          <img src={reactLogo} className="framework" alt="Reac
+          -t logo" />                                                    
+       16 -          <img src={viteLogo} className="vite" alt="Vite logo"
+          - />                                                           
+       17 -        </div>                                                
+       18 -        <div>                                                 
+       19 -          <h1>Get started</h1>                                
+       20 -          <p>                                                 
+       21 -            Edit <code>src/App.tsx</code> and save to test <co
+          -de>HMR</code>                                                 
+       22 -          </p>                                                
+       23 -        </div>                                                
+       24 -        <button                                               
+       25 -          type="button"                                       
+       26 -          className="counter"                                 
+       27 -          onClick={() => setCount((count) => count + 1)}      
+       28 -        >                                                     
+       29 -          Count is {count}                                    
+       30 -        </button>                                             
+       31 -      </section>                                              
+       15 +  useEffect(                                                  
+       16 +    () =>                                                     
+       17 +      useAppStore.subscribe((state, prev) => {                
+       18 +        if (state.lastError && state.lastError !== prev.lastEr
+          +ror) showToast(state.lastError)                               
+       19 +      }),                                                     
+       20 +    [],                                                       
+       21 +  )                                                           
+       22  
+       33 -      <div className="ticks"></div>                           
+       34 -                                                              
+       35 -      <section id="next-steps">                               
+       36 -        <div id="docs">                                       
+       37 -          <svg className="icon" role="presentation" aria-hidde
+          -n="true">                                                     
+       38 -            <use href="/icons.svg#documentation-icon"></use>  
+       39 -          </svg>                                              
+       40 -          <h2>Documentation</h2>                              
+       41 -          <p>Your questions, answered</p>                     
+       42 -          <ul>                                                
+       43 -            <li>                                              
+       44 -              <a href="https://vite.dev/" target="_blank">    
+       45 -                <img className="logo" src={viteLogo} alt="" />
+       46 -                Explore Vite                                  
+       47 -              </a>                                            
+       48 -            </li>                                             
+       49 -            <li>                                              
+       50 -              <a href="https://react.dev/" target="_blank">   
+       51 -                <img className="button-icon" src={reactLogo} a
+          -lt="" />                                                      
+       52 -                Learn more                                    
+       53 -              </a>                                            
+       54 -            </li>                                             
+       55 -          </ul>                                               
+       56 -        </div>                                                
+       57 -        <div id="social">                                     
+       58 -          <svg className="icon" role="presentation" aria-hidde
+          -n="true">                                                     
+       59 -            <use href="/icons.svg#social-icon"></use>         
+       60 -          </svg>                                              
+       61 -          <h2>Connect with us</h2>                            
+       62 -          <p>Join the Vite community</p>                      
+       63 -          <ul>                                                
+       64 -            <li>                                              
+       65 -              <a href="https://github.com/vitejs/vite" target=
+          -"_blank">                                                     
+       66 -                <svg                                          
+       67 -                  className="button-icon"                     
+       68 -                  role="presentation"                         
+       69 -                  aria-hidden="true"                          
+       70 -                >                                             
+       71 -                  <use href="/icons.svg#github-icon"></use>   
+       72 -                </svg>                                        
+       73 -                GitHub                                        
+       74 -              </a>                                            
+       75 -            </li>                                             
+       76 -            <li>                                              
+       77 -              <a href="https://chat.vite.dev/" target="_blank"
+          ->                                                             
+       78 -                <svg                                          
+       79 -                  className="button-icon"                     
+       80 -                  role="presentation"                         
+       81 -                  aria-hidden="true"                          
+       82 -                >                                             
+       83 -                  <use href="/icons.svg#discord-icon"></use>  
+       84 -                </svg>                                        
+       85 -                Discord                                       
+       86 -              </a>                                            
+       87 -            </li>                                             
+       88 -            <li>                                              
+       89 -              <a href="https://x.com/vite_js" target="_blank">
+       90 -                <svg                                          
+       91 -                  className="button-icon"                     
+       92 -                  role="presentation"                         
+       93 -                  aria-hidden="true"                          
+       94 -                >                                             
+       95 -                  <use href="/icons.svg#x-icon"></use>        
+       96 -                </svg>                                        
+       97 -                X.com                                         
+       98 -              </a>                                            
+       99 -            </li>                                             
+      100 -            <li>                                              
+      101 -              <a href="https://bsky.app/profile/vite.dev" targ
+          -et="_blank">                                                  
+      102 -                <svg                                          
+      103 -                  className="button-icon"                     
+      104 -                  role="presentation"                         
+      105 -                  aria-hidden="true"                          
+      106 -                >                                             
+      107 -                  <use href="/icons.svg#bluesky-icon"></use>  
+      108 -                </svg>                                        
+      109 -                Bluesky                                       
+      110 -              </a>                                            
+      111 -            </li>                                             
+      112 -          </ul>                                               
+      113 -        </div>                                                
+      114 -      </section>                                              
+      115 -                                                              
+      116 -      <div className="ticks"></div>                           
+      117 -      <section id="spacer"></section>                         
+      118 -    </>                                                       
+       23 +  return (                                                    
+       24 +    <div className="h-screen w-screen overflow-hidden">       
+       25 +      <MainLayout />                                          
+       26 +      <ToastRegion />                                         
+       27 +    </div>                                                    
+       28    )
+       29  }
+       30  
+
+⏺ main.tsx is already clean (just imports index.css + App). Let's typecheck and
+  build now.
+
+  Ran 1 shell command (ctrl+o to expand)
+
+⏺ Update(tsconfig.app.json)
+  ⎿  Removed 1 line
+      17      "jsx": "react-jsx",
+      18  
+      19      /* Path aliases */
+      20 -    "baseUrl": ".",                                            
+      20      "paths": {
+      21        "@/*": ["./src/*"]
+      22      },
+
+  Ran 1 shell command (ctrl+o to expand)
+
+⏺ Update(src/engine/grid/types.ts)
+  ⎿  Added 2 lines, removed 2 lines
+       5  export type Rotation = 0 | 1 | 2 | 3
+       6  export type ChamferShapeKind = 'ramp' | 'convex' | 'concave'
+       7  
+       8 -/** Grid coordinate, always integer. */                        
+       9 -export type Coord = readonly [x: number, y: number, z: number] 
+       8 +/** Grid coordinate, always integer. Mutable tuple (not readonl
+         +y) so Immer drafts accept it directly. */                      
+       9 +export type Coord = [x: number, y: number, z: number]          
+      10  
+      11  /** Sparse-map key for a grid coordinate. See `encodeKey`/`deco
+          deKey`. */
+      12  export type CellKey = string
+
+⏺ Update(src/engine/grid/types.ts)
+  ⎿  Added 3 lines, removed 3 lines
+      29  }
+      30  
+      31  export type VoxelModel = {
+      32 -  /** Plain cubic voxels, keyed by CellKey. */                 
+      33 -  color: ReadonlyMap<CellKey, ColorCell>                       
+      32 +  /** Plain cubic voxels, keyed by CellKey. Treat as immutable 
+         +outside of Immer producers. */                                 
+      33 +  color: Map<CellKey, ColorCell>                               
+      34    /** Chamfered voxels, keyed by CellKey. A chamfer cell always
+           has a matching color cell. */
+      35 -  chamfer: ReadonlyMap<CellKey, ChamferCell>                   
+      35 +  chamfer: Map<CellKey, ChamferCell>                           
+      36    bounds: BBox | null
+      37  }
+
+⏺ Update(src/components/editor2d/PixelCanvas.tsx)
+  ⎿  Removed 1 line
+      22    const plane = useAppStore((s) => s.plane)
+      23    const activeTool = useAppStore((s) => s.activeTool)
+      24    const activeLayer = useAppStore((s) => s.activeLayer)
+      25 -  const activePaletteSlot = useAppStore((s) => s.activePaletteS
+         -lot)                                                           
+      25  
+      26    const draw = useCallback(() => {
+      27      const canvas = canvasRef.current
+
+  Ran 1 shell command (ctrl+o to expand)
+
+⏺ Typecheck is clean. Now let's build and run the dev server to verify it
+  actually works.
+
+  Ran 1 shell command (ctrl+o to expand)
+
+⏺ Build succeeds (the chunk-size warning is expected from Three.js and not a
+  blocker). Let's run the dev server and check it in a browser.
+
+  Ran 1 shell command (ctrl+o to expand)
+
+⏺ Skill(run)
+  ⎿  Successfully loaded skill
+
+  Searched for 2 patterns, read 1 file, ran 4 shell commands (ctrl+o to expand)
+
+⏺ Chromium is installed. Now let's write a small driver script to load the app,
+  screenshot it, and paint some cells.
+
+  Made 1 scratchpad edit +54, ran 1 shell command (ctrl+o to expand)
+
+⏺ No console/page errors. Let's look at the screenshots.
+
+  Read 3 files, ran 1 shell command (ctrl+o to expand)  ⎿  You've hit your monthly spend limit.
+     /usage-credits to adjust your monthly spend limit.
+
+✻ Cogitated for 25m 54s
