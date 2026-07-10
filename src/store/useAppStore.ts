@@ -1,0 +1,27 @@
+import { enableMapSet } from 'immer'
+import { create } from 'zustand'
+import { immer } from 'zustand/middleware/immer'
+import { createHistorySlice } from './historySlice'
+import { createPaintActionsSlice } from './paintActions'
+import { createPersistenceSlice } from './persistenceSlice'
+import { createPlaneSlice } from './planeSlice'
+import { createProjectSlice } from './projectSlice'
+import { createSelectionSlice } from './selectionSlice'
+import { createToolSlice } from './toolSlice'
+import type { AppState } from './types'
+import { createViewSlice } from './viewSlice'
+
+enableMapSet()
+
+export const useAppStore = create<AppState>()(
+  immer((...a) => ({
+    ...createProjectSlice(...a),
+    ...createHistorySlice(...a),
+    ...createPlaneSlice(...a),
+    ...createToolSlice(...a),
+    ...createSelectionSlice(...a),
+    ...createViewSlice(...a),
+    ...createPersistenceSlice(...a),
+    ...createPaintActionsSlice(...a),
+  })),
+)
