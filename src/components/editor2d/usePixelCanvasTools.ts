@@ -1,8 +1,9 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { gridCoordFromPixel } from '@/engine/plane/constructionPlane'
+import { gridCoordFromPixel, toDisplayU } from '@/engine/plane/constructionPlane'
 import { toNormalizedPointerEvent } from '@/engine/input/PointerInputController'
 import { toolMap } from '@/engine/tools'
 import type { ToolContext, ToolDragState } from '@/engine/tools/types'
+import type { ConstructionPlane } from '@/engine/plane/types'
 import { useAppStore } from '@/store/useAppStore'
 import type { SelectionRegion } from '@/store/types'
 import type { CanvasPan, CanvasSize } from './cameraTransform'
@@ -11,10 +12,21 @@ import { BASE_CELL_PX, clampZoom, PINCH_ZOOM_SENSITIVITY, WHEEL_ZOOM_SENSITIVITY
 
 const PAN_DRAG_THRESHOLD_PX = 3
 
-function pixelToCell(canvas: HTMLCanvasElement, clientX: number, clientY: number, size: CanvasSize, pan: CanvasPan, zoom: number): [number, number] {
+/** Screen pixel -> logical (model-space) grid cell. `toDisplayU` is involutory, so applying it
+ * again here converts the *displayed* u (what's visually under the cursor, post-mirroring) back
+ * to the logical u the rest of the app (tool handlers, gridCoordFromPixel) expects. */
+function pixelToCell(
+  canvas: HTMLCanvasElement,
+  clientX: number,
+  clientY: number,
+  size: CanvasSize,
+  pan: CanvasPan,
+  zoom: number,
+  plane: ConstructionPlane,
+): [number, number] {
   const rect = canvas.getBoundingClientRect()
   const [wu, wv] = screenToWorld(clientX - rect.left, clientY - rect.top, size, pan, zoom)
-  return [Math.floor(wu), Math.floor(wv)]
+  return [toDisplayU(plane, Math.floor(wu)), Math.floor(wv)]
 }
 
 /**
@@ -155,7 +167,7 @@ export function usePixelCanvasTools(canvasRef: React.RefObject<HTMLCanvasElement
         return
       }
 
-      const cell = pixelToCell(canvas, e.clientX, e.clientY, size, pan, zoom)
+      const cell = pixelToCell(canvas, e.clientX, e.clientY, size, pan, zoom, ctxRef.current.plane)
       hoverCellRef.current = cell
       setHoverCell(gridCoordFromPixel(ctxRef.current.plane, cell[0], cell[1]), null)
       canvas.setPointerCapture(e.pointerId)
@@ -181,7 +193,7 @@ export function usePixelCanvasTools(canvasRef: React.RefObject<HTMLCanvasElement
         return
       }
 
-      const cell = pixelToCell(canvas, e.clientX, e.clientY, size, pan, zoom)
+      const cell = pixelToCell(canvas, e.clientX, e.clientY, size, pan, zoom, ctxRef.current.plane)
       const prevCell = hoverCellRef.current
       hoverCellRef.current = cell
       // Only push a store update when the hovered *cell* actually changes, not on every mousemove
@@ -211,7 +223,7 @@ export function usePixelCanvasTools(canvasRef: React.RefObject<HTMLCanvasElement
         // A stationary right-click (no drag) erases the cell under the cursor — a quick-erase
         // shortcut on the paint/erase tools now that right-click-drag means "pan the camera."
         if (!panDrag.hasMoved && (activeToolRef.current === 'paint' || activeToolRef.current === 'erase')) {
-          const cell = pixelToCell(canvas, e.clientX, e.clientY, size, pan, zoom)
+          const cell = pixelToCell(canvas, e.clientX, e.clientY, size, pan, zoom, ctxRef.current.plane)
           const c = ctxRef.current
           c.bakeFloatIfAny()
           c.beginStroke()
@@ -221,7 +233,7 @@ export function usePixelCanvasTools(canvasRef: React.RefObject<HTMLCanvasElement
         return
       }
 
-      const cell = pixelToCell(canvas, e.clientX, e.clientY, size, pan, zoom)
+      const cell = pixelToCell(canvas, e.clientX, e.clientY, size, pan, zoom, ctxRef.current.plane)
       toolMap[activeToolRef.current].onUp?.(ctxRef.current, toNormalizedPointerEvent(e, cell))
       canvas.releasePointerCapture(e.pointerId)
     },

@@ -41,9 +41,15 @@ export function pixelFromGridCoord(plane: ConstructionPlane, coord: Coord): { u:
  * Orientation never changes which grid cell a pixel maps to — it only flips the on-screen
  * u axis (display-only) so painting always feels like looking at the slab from outside,
  * and it flips which way chamfer geometry ramps "outward". Use this for canvas display only.
+ *
+ * Same corner-index correction as gridCoordFromPixel's `-v - 1`: cell `u` is corner-anchored
+ * (spans [u, u+1)), so mirroring it needs `-u - 1`, not bare `-u` — and that makes this function
+ * involutory (`toDisplayU(toDisplayU(u)) === u`), so it's also its own inverse: this same
+ * function converts a *displayed* u back to the logical/model u (see usePixelCanvasTools.ts's
+ * `pixelToCell`).
  */
 export function toDisplayU(plane: ConstructionPlane, u: number): number {
-  return plane.orientation === -1 ? -u : u
+  return plane.orientation === -1 ? -u - 1 : u
 }
 
 const AXES: Axis[] = ['x', 'y', 'z']

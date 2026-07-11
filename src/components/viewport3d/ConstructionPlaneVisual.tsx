@@ -27,12 +27,22 @@ export function ConstructionPlaneVisual({ orbitControlsRef }: { orbitControlsRef
   const draggingRef = useRef(false)
 
   const axisVec = AXIS_UNIT[plane.axis]
-  const position = useMemo(() => axisVec.clone().multiplyScalar(plane.offset), [axisVec, plane.offset])
+  // Cells are corner-anchored ([offset, offset+1) along the plane axis — see constructionPlane.ts),
+  // and orientation picks which boundary of that layer the plane visually sits flush against: the
+  // far one (offset+1) for orientation 1, the near one (offset) for orientation -1 — unchanged.
+  // Same formula as VoxelFaceHighlight.tsx and chamferInstanceMatrix's "flush with plane" face.
+  const orientationAdjust = plane.orientation === 1 ? 1 : 0
+  const position = useMemo(
+    () => axisVec.clone().multiplyScalar(plane.offset + orientationAdjust),
+    [axisVec, plane.offset, orientationAdjust],
+  )
   const quaternion = useMemo(() => new THREE.Quaternion().setFromUnitVectors(UP, axisVec), [axisVec])
   const arrowDir = useMemo(() => axisVec.clone().multiplyScalar(plane.orientation), [axisVec, plane.orientation])
   const arrowQuaternion = useMemo(() => new THREE.Quaternion().setFromUnitVectors(UP, arrowDir), [arrowDir])
 
-  function offsetFromPointer(clientX: number, clientY: number): number {
+  /** Returns the sheet's *visual* world position along the axis (not the stored `plane.offset` —
+   * see `position` above for the orientation adjustment between the two). */
+  function sheetPositionFromPointer(clientX: number, clientY: number): number {
     const rect = gl.domElement.getBoundingClientRect()
     const ndc = new THREE.Vector2(((clientX - rect.left) / rect.width) * 2 - 1, -((clientY - rect.top) / rect.height) * 2 + 1)
     const raycaster = new THREE.Raycaster()
@@ -48,7 +58,7 @@ export function ConstructionPlaneVisual({ orbitControlsRef }: { orbitControlsRef
     const d = L.dot(O)
     const e = D.dot(O)
     const denom = a * c - b * b
-    if (Math.abs(denom) < 1e-6) return plane.offset // camera looking straight down the axis — degenerate
+    if (Math.abs(denom) < 1e-6) return plane.offset + orientationAdjust // camera looking straight down the axis — degenerate
     return (b * e - c * d) / denom
   }
 
@@ -56,7 +66,7 @@ export function ConstructionPlaneVisual({ orbitControlsRef }: { orbitControlsRef
     const dom = gl.domElement
     function onMove(ev: PointerEvent) {
       if (!draggingRef.current) return
-      setPlaneOffset(Math.round(offsetFromPointer(ev.clientX, ev.clientY)))
+      setPlaneOffset(Math.round(sheetPositionFromPointer(ev.clientX, ev.clientY)) - orientationAdjust)
     }
     function onUp() {
       if (!draggingRef.current) return
@@ -70,7 +80,7 @@ export function ConstructionPlaneVisual({ orbitControlsRef }: { orbitControlsRef
       dom.removeEventListener('pointerup', onUp)
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [gl, camera, plane.axis, plane.offset, orbitControlsRef, setPlaneOffset])
+  }, [gl, camera, plane.axis, plane.offset, plane.orientation, orbitControlsRef, setPlaneOffset])
 
   return (
     <group>
