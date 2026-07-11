@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { encodeKey } from '@/engine/grid/GridStore'
-import { gridCoordFromPixel, toDisplayU, toDisplayV } from '@/engine/plane/constructionPlane'
+import { gridCoordFromPixel } from '@/engine/plane/constructionPlane'
+import { toDisplayU, toDisplayV } from '@/engine/plane/planeDisplay'
 import { resolveSlotColor } from '@/engine/palette/palette'
 import { forEachSelectedCell, traceSelectionOutline } from '@/engine/tools/selectionMask'
 import { useAppStore } from '@/store/useAppStore'

@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { gridCoordFromPixel, toDisplayU, toDisplayV } from '@/engine/plane/constructionPlane'
+import { gridCoordFromPixel } from '@/engine/plane/constructionPlane'
+import { toDisplayU, toDisplayV } from '@/engine/plane/planeDisplay'
 import { toNormalizedPointerEvent } from '@/engine/input/PointerInputController'
 import { toolMap } from '@/engine/tools'
 import type { ToolContext, ToolDragState } from '@/engine/tools/types'

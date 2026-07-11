@@ -3,15 +3,9 @@ import { useEffect, useMemo, useRef } from 'react'
 import * as THREE from 'three'
 import type { OrbitControls as OrbitControlsImpl } from 'three-stdlib'
 import { DEFAULT_GRID_EXTENT } from '@/engine/grid/GridStore'
-import type { Axis } from '@/engine/grid/types'
+import { flushFaceValue, outwardNormal } from '@/engine/plane/planeGeometry'
 import { useAppStore } from '@/store/useAppStore'
-
-const UP = new THREE.Vector3(0, 1, 0)
-const AXIS_UNIT: Record<Axis, THREE.Vector3> = {
-  x: new THREE.Vector3(1, 0, 0),
-  y: new THREE.Vector3(0, 1, 0),
-  z: new THREE.Vector3(0, 0, 1),
-}
+import { AXIS_UNIT_VECTOR, UP, toVector3 } from './axisVectors'
 
 /**
  * Visualizes the active construction plane as a plane-aligned grid (replacing a static
@@ -26,18 +20,21 @@ export function ConstructionPlaneVisual({ orbitControlsRef }: { orbitControlsRef
   const { gl, camera } = useThree()
   const draggingRef = useRef(false)
 
-  const axisVec = AXIS_UNIT[plane.axis]
+  const axisVec = AXIS_UNIT_VECTOR[plane.axis]
   // Cells are corner-anchored ([offset, offset+1) along the plane axis — see constructionPlane.ts),
-  // and orientation picks which boundary of that layer the plane visually sits flush against: the
-  // far one (offset+1) for orientation 1, the near one (offset) for orientation -1 — unchanged.
-  // Same formula as VoxelFaceHighlight.tsx and chamferInstanceMatrix's "flush with plane" face.
-  const orientationAdjust = plane.orientation === 1 ? 1 : 0
+  // and orientation picks which boundary of that layer the plane visually sits flush against.
+  // Derived from planeGeometry.ts's flushFaceValue — same primitive VoxelFaceHighlight.tsx and
+  // chamferInstanceMatrix (engine/instancing/basis.ts) use.
+  const orientationAdjust = flushFaceValue(0, plane.orientation)
   const position = useMemo(
     () => axisVec.clone().multiplyScalar(plane.offset + orientationAdjust),
     [axisVec, plane.offset, orientationAdjust],
   )
   const quaternion = useMemo(() => new THREE.Quaternion().setFromUnitVectors(UP, axisVec), [axisVec])
-  const arrowDir = useMemo(() => axisVec.clone().multiplyScalar(plane.orientation), [axisVec, plane.orientation])
+  const arrowDir = useMemo(
+    () => toVector3(outwardNormal(plane.axis, plane.orientation)),
+    [plane.axis, plane.orientation],
+  )
   const arrowQuaternion = useMemo(() => new THREE.Quaternion().setFromUnitVectors(UP, arrowDir), [arrowDir])
 
   /** Returns the sheet's *visual* world position along the axis (not the stored `plane.offset` —

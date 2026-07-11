@@ -62,48 +62,75 @@ type VoxelModel = {
 ### Cells are corner-anchored — the recurring `-1` correction
 
 Cell `n` occupies the continuous span `[n, n+1)` along each axis — its coordinate is its "floor"
-corner, not its center. This one fact is the source of a correction that shows up in three
-independent places, all solving the same underlying problem (mirroring or offsetting a
-corner-anchored index is not a bare negation/addition):
+corner, not its center. This one fact is the source of a correction that used to show up as three
+independently hand-derived copies of the same rule (see "Construction plane geometry mediator"
+below for why that was a problem and how it's now consolidated):
 
 - `engine/plane/constructionPlane.ts`'s `gridCoordFromPixel`/`pixelFromGridCoord` — flipping 2D
   canvas-row `v` into world-Y uses `-v - 1`, not `-v` (mirroring continuous range `[v, v+1)` about
   0 lands on cell index `-v-1`).
-- `engine/plane/constructionPlane.ts`'s `toDisplayU` — same correction, `-u - 1`, for mirroring the
-  on-screen u-axis when an x- or z-axis construction plane's orientation is `-1` (the y-axis plane
-  is exempt — see the "Construction plane" section below). Involutory (its own inverse), which is
-  what lets `components/editor2d/usePixelCanvasTools.ts`'s `pixelToCell` reuse it to convert a
-  displayed (mirrored) screen cell back to the logical model cell.
-- `components/viewport3d/ConstructionPlaneVisual.tsx` and `components/viewport3d/VoxelFaceHighlight.tsx`
-  both add `+1` to a layer's offset when orientation is `+1` (and leave it unchanged for `-1`) to
-  find which physical face of that layer to render flush against — matching
-  `engine/instancing/basis.ts`'s `chamferInstanceMatrix`, which independently derives the same
-  "flush with the construction plane" face from its own translation math.
+- `engine/plane/planeDisplay.ts`'s `toDisplayU`/`toDisplayV` — same correction, `-u - 1`/`-v - 1`,
+  for mirroring the on-screen axis that flips with a construction plane's orientation (2D-canvas
+  display only — see "Construction plane geometry mediator" below for which axis flips for which
+  plane). Both are involutory (their own inverse), which is what lets
+  `components/editor2d/usePixelCanvasTools.ts`'s `pixelToCell` reuse them to convert a displayed
+  (mirrored) screen cell back to the logical model cell.
+- `engine/plane/planeGeometry.ts`'s `flushFaceValue`/`flushFaceCoord` — add `+1` to a layer's
+  coordinate when orientation is `+1` (leave unchanged for `-1`) to find which physical face of
+  that layer is "flush" with the plane. The single shared implementation of what used to be three
+  independently hand-derived copies (`ConstructionPlaneVisual.tsx`, `VoxelFaceHighlight.tsx`,
+  `engine/instancing/basis.ts`'s `chamferInstanceMatrix`).
 
 ---
 
-## Construction plane
+## Construction plane geometry mediator
+
+The construction plane's axis/orientation math is needed by both the 2D pixel editor and the 3D
+viewport, which used to each hand-derive their own copy — `engine/instancing/basis.ts` hand-copied
+a `WORLD_U`/`WORLD_V` table that had to be kept in sync with `gridCoordFromPixel`'s cyclic basis by
+eye, and `ConstructionPlaneVisual.tsx`/`VoxelFaceHighlight.tsx` each hand-derived the same
+"flush face" rule independently. Every one of these had to be edited in lockstep whenever the
+mapping changed, which is exactly what made this system fragile. It's now consolidated:
+
+- **`engine/plane/planeGeometry.ts`** — the single source of axis/orientation geometry, in plain
+  `Coord` tuples (no THREE — `engine/` stays render-agnostic). `AXIS_UNIT`, `axisIndex`,
+  `outwardNormal`, `flushFaceValue`/`flushFaceCoord`. Both 2D and 3D code derive from this instead
+  of hand-copying it.
+- **`engine/plane/constructionPlane.ts`** — `gridCoordFromPixel`/`pixelFromGridCoord` (the
+  canonical, orientation-independent u/v↔world mapping) and `planeFromFaceHit`. Also
+  `planeLogicalBasis(axis)`, which *derives* (rather than hand-maintains) a plane's world-space u/v
+  basis vectors by probing `gridCoordFromPixel` itself — `engine/instancing/basis.ts` computes its
+  per-axis chamfer-placement basis from this at module load, so it's now structurally impossible
+  for the 3D chamfer basis to drift out of sync with the 2D u/v mapping the way the old hand-copied
+  `WORLD_U`/`WORLD_V` table repeatedly did.
+- **`engine/plane/planeDisplay.ts`** — `toDisplayU`/`toDisplayV`, the 2D-canvas-only
+  display-mirroring transforms (see below). Split into its own file specifically so nothing outside
+  `components/editor2d/` has a reason to import it — 3D code has no display-mirroring concept.
+- **`components/viewport3d/axisVectors.ts`** — the one place `Coord`→`THREE.Vector3` conversion
+  happens for 3D view components (`AXIS_UNIT_VECTOR`, `toVector3`, `UP`), consumed by
+  `ConstructionPlaneVisual.tsx` and `VoxelFaceHighlight.tsx` instead of each keeping its own
+  `AXIS_UNIT` copy.
 
 `engine/plane/types.ts`: `{ axis: 'x'|'y'|'z', orientation: 1|-1, offset: number }`, stored at
 `store.plane` (`store/planeSlice.ts`). Determines which 2D (u,v) slice the pixel canvas shows, via
-a fixed cyclic basis (`gridCoordFromPixel`): `x → u=-z-ish,v=-y-ish` / `y → u=-x-ish,v=-z-ish` /
+a fixed cyclic basis (`gridCoordFromPixel`): `x → u=-z,v=-y-ish` / `y → u=x,v=-z-ish` /
 `z → u=x,v=-y-ish` (see the corner-anchoring note above for the exact `-v-1`/`-u-1` form). The
 x-axis case negates u (not just v) because a naive `u=z` assignment has the opposite handedness
 from the z-axis case's `u=x` — without the negation, east/west-facing planes render as a mirror
 image of the model along the u-axis (colors and chamfer geometry both), even though north/south is
 correct.
 
-The y-axis case negates *both* u and v, and — unlike x/z, where flipping exactly one in-plane axis
-via `toDisplayU` at orientation `-1` is what makes both orientations of a wall-facing plane read
-correctly (they're related by a yaw around world-Y) — top and bottom render **identically** to each
-other: `toDisplayU` is identity for the y-axis plane, and there's no per-orientation flip at all for
-it. This was arrived at empirically after a couple of physically-derived guesses (top/bottom
-relate by flipping which side of a horizontal sheet you view from, which seemed like it should
-require *some* orientation-dependent flip) were each contradicted by what the app actually showed
-— see git history on this file if revisiting. `basis.ts`'s `WORLD_U`/`WORLD_V` mirror the same
-fixed, orientation-independent y-axis values for chamfer instance placement. `orientation` never
-changes which cell a pixel maps to — for x/z it flips the on-screen u-axis for display (`toDisplayU`)
-and picks which side is "outward" for chamfer geometry; for y it only does the latter.
+The y-axis case is the odd one out, and not just by a different constant: x and z relate to each
+other by a yaw around world-Y (spinning 180° to face the opposite wall), which is why flipping
+exactly one in-plane axis via `toDisplayU` at orientation `-1` is what makes both orientations of a
+wall-facing plane read correctly. Top and bottom don't relate that way, and empirically (arrived at
+after a couple of physically-derived guesses were each contradicted by what the app actually
+showed — see git history if revisiting) it's `u` that stays fixed across both y-axis orientations
+(`toDisplayU` is identity for this axis) and `v` that flips instead, via a separate `toDisplayV`
+triggered at orientation `1`, not `-1` — the mirror image of `toDisplayU`'s x/z trigger.
+`orientation` never changes which cell a pixel maps to — it only flips the on-screen mirroring axis
+for display (`toDisplayU` or `toDisplayV`, whichever applies to the plane's axis) and picks which
+side is "outward" for chamfer geometry.
 
 **Setting the plane** — three ways, all converging on `store/planeSlice.ts`:
 

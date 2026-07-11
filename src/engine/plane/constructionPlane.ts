@@ -1,5 +1,6 @@
 import type { Axis, Coord } from '@/engine/grid/types'
 import type { ConstructionPlane } from './types'
+import { ALL_AXES, axisIndex } from './planeGeometry'
 
 /**
  * Cyclic (u,v) basis per axis (x -> -z,-y ; y -> x,-z ; z -> x,-y). Whenever world-Y is one of
@@ -16,13 +17,13 @@ import type { ConstructionPlane } from './types'
  * negation, east/west-facing planes render as a mirror image of the model (x/y/z all correct
  * individually, but u increasing the "wrong" way relative to what north/south planes do).
  *
- * The y-axis case is u -> x direct, with NO orientation-dependent flip ever (`toDisplayU` is
- * identity for this axis — confirmed empirically: top and bottom were found to be wrong in u the
- * *same* way, not mirrored relative to each other, so the fix is a plain constant, not a
- * `toDisplayU`-driven flip). Its v -> -z *does* still flip with orientation, like x/z's u does,
- * but the flip is carried by a separate `toDisplayV` (below, triggered at orientation `1`, not
- * `-1` — determined empirically, not by symmetry with x/z) rather than `toDisplayU`, since it's v,
- * not u, that's the axis varying with orientation on this plane.
+ * The y-axis case is u -> x direct, with NO orientation-dependent flip ever (`toDisplayU` in
+ * planeDisplay.ts is identity for this axis — confirmed empirically: top and bottom were found to
+ * be wrong in u the *same* way, not mirrored relative to each other, so the fix is a plain
+ * constant, not a `toDisplayU`-driven flip). Its v -> -z *does* still flip with orientation, like
+ * x/z's u does, but the flip is carried by a separate `toDisplayV` (triggered at orientation `1`,
+ * not `-1` — determined empirically, not by symmetry with x/z) rather than `toDisplayU`, since
+ * it's v, not u, that's the axis varying with orientation on this plane.
  *
  * The flip is `-v - 1` (and, for x, `-u - 1`), not bare `-v`/`-u`: cells are corner-anchored (cell
  * n spans world [n, n+1)), so mirroring a corner index needs the -1 correction (mirroring
@@ -52,38 +53,24 @@ export function pixelFromGridCoord(plane: ConstructionPlane, coord: Coord): { u:
 }
 
 /**
- * Orientation never changes which grid cell a pixel maps to — it only flips the on-screen
- * u axis (display-only) so painting always feels like looking at the slab from outside,
- * and it flips which way chamfer geometry ramps "outward". Use this for canvas display only.
- *
- * Same corner-index correction as gridCoordFromPixel's `-v - 1`: cell `u` is corner-anchored
- * (spans [u, u+1)), so mirroring it needs `-u - 1`, not bare `-u` — and that makes this function
- * involutory (`toDisplayU(toDisplayU(u)) === u`), so it's also its own inverse: this same
- * function converts a *displayed* u back to the logical/model u (see usePixelCanvasTools.ts's
- * `pixelToCell`).
- *
- * The y-axis plane is exempt (identity, regardless of orientation) — confirmed empirically that
- * its u doesn't flip between top and bottom; `toDisplayV` (below) carries the orientation-dependent
- * flip for that axis instead.
+ * Derives the world-space direction of a plane's logical u and v axes by probing
+ * gridCoordFromPixel at (1,0) and (0,1) vs (0,0) on a canonical orientation:1, offset:0 plane and
+ * taking the componentwise difference — valid because gridCoordFromPixel is orientation- and
+ * offset-independent in its u/v handling by construction (see its doc comment above). This is the
+ * single source of truth 3D-side code (engine/instancing/basis.ts) derives its world-axis basis
+ * from, so it can never drift out of sync with this function the way a hand-copied table could —
+ * which is exactly what caused the mirrored/backwards-axis bugs this module exists to prevent.
  */
-export function toDisplayU(plane: ConstructionPlane, u: number): number {
-  if (plane.axis === 'y') return u
-  return plane.orientation === -1 ? -u - 1 : u
+export function planeLogicalBasis(axis: Axis): { uDir: Coord; vDir: Coord } {
+  const probe: ConstructionPlane = { axis, orientation: 1, offset: 0 }
+  const origin = gridCoordFromPixel(probe, 0, 0)
+  const uProbe = gridCoordFromPixel(probe, 1, 0)
+  const vProbe = gridCoordFromPixel(probe, 0, 1)
+  return {
+    uDir: [uProbe[0] - origin[0], uProbe[1] - origin[1], uProbe[2] - origin[2]],
+    vDir: [vProbe[0] - origin[0], vProbe[1] - origin[1], vProbe[2] - origin[2]],
+  }
 }
-
-/**
- * The y-axis counterpart to `toDisplayU` — see the comment there and on `gridCoordFromPixel`.
- * Identity for x/z-axis planes (their v never flips with orientation); for the y-axis plane, flips
- * (same `-v - 1` correction) at orientation `1`, not `-1` — the opposite trigger from `toDisplayU`'s
- * x/z case, determined empirically rather than by symmetry. Involutory, so also its own inverse
- * (`pixelToCell`).
- */
-export function toDisplayV(plane: ConstructionPlane, v: number): number {
-  if (plane.axis !== 'y') return v
-  return plane.orientation === 1 ? -v - 1 : v
-}
-
-const AXES: Axis[] = ['x', 'y', 'z']
 
 /**
  * Derives a construction plane from a 3D face-click: axis + orientation come from the
@@ -93,14 +80,14 @@ const AXES: Axis[] = ['x', 'y', 'z']
 export function planeFromFaceHit(cellCoord: Coord, worldNormal: Coord): ConstructionPlane {
   let axis: Axis = 'x'
   let maxAbs = -Infinity
-  AXES.forEach((a, i) => {
-    const abs = Math.abs(worldNormal[i])
+  for (const a of ALL_AXES) {
+    const abs = Math.abs(worldNormal[axisIndex(a)])
     if (abs > maxAbs) {
       maxAbs = abs
       axis = a
     }
-  })
-  const axisIndex = AXES.indexOf(axis)
-  const orientation = worldNormal[axisIndex] >= 0 ? 1 : -1
-  return { axis, orientation, offset: cellCoord[axisIndex] }
+  }
+  const i = axisIndex(axis)
+  const orientation = worldNormal[i] >= 0 ? 1 : -1
+  return { axis, orientation, offset: cellCoord[i] }
 }
