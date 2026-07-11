@@ -1,6 +1,7 @@
 # CLAUDE.md
 
 > See `CODEMAP.md` for an auto-generated source map of all modules and exports. Run `npm run map` to regenerate.
+> See `docs/ARCHITECTURE.md` for the full architecture writeup (data model, construction plane, chamfer system, 3D instancing/rendering, state slices, persistence) with file references, plus known deviations from `SPEC.md`.
 
 ## Build / Run
 ```bash
