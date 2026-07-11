@@ -1,4 +1,4 @@
-import type { Coord, VoxelModel } from '@/engine/grid/types'
+import type { Axis, CellKey, Coord, Orientation, VoxelModel } from '@/engine/grid/types'
 import type { PaletteSlotRef, PaletteState } from '@/engine/palette/types'
 import type { ConstructionPlane } from '@/engine/plane/types'
 import type { ProjectMeta } from '@/engine/persistence/schema'
@@ -45,10 +45,21 @@ export type HistorySlice = {
   redo: () => void
 }
 
+/** The voxel/face last landed on via a 3D face-click, while still eligible for a same-voxel
+ * second click to advance the plane through that face. Cleared by any other plane change. */
+export type ObjectModeTarget = { cellKey: CellKey; axis: Axis; orientation: Orientation; offset: number }
+
 export type PlaneSlice = {
   plane: ConstructionPlane
+  objectModeTarget: ObjectModeTarget | null
   setPlaneAxisOrientation: (axis: ConstructionPlane['axis'], orientation: ConstructionPlane['orientation']) => void
   setPlaneOffset: (offset: number) => void
+  /**
+   * Handles a 3D face-click on a voxel (spec: first click lands the construction plane on the
+   * clicked voxel's own slice; clicking the SAME voxel again advances the plane one step forward
+   * through that same face, into the adjacent empty slice).
+   */
+  handleVoxelFaceClick: (cellKey: CellKey, axis: Axis, orientation: Orientation, offset: number) => void
 }
 
 export type ToolSlice = {
@@ -73,12 +84,19 @@ export type SelectionSlice = {
   setClipboard: (clipboard: ClipboardData | null) => void
 }
 
+/** The specific voxel face currently under the pointer in the 3D view — live, updates on every
+ * hover move (including between faces of the same voxel). Drives VoxelFaceHighlight; a click
+ * commits the plane to whichever face is current at click time (see handleVoxelFaceClick). */
+export type HoveredFace = { cellKey: CellKey; axis: Axis; orientation: Orientation }
+
 export type ViewSlice = {
   fullscreen: boolean
   hoverCell: Coord | null
   chamferHoverValid: boolean | null
+  hoveredFace: HoveredFace | null
   setFullscreen: (v: boolean) => void
   setHoverCell: (coord: Coord | null, chamferValid: boolean | null) => void
+  setHoveredFace: (face: HoveredFace | null) => void
 }
 
 export type PersistenceSlice = {

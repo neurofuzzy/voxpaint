@@ -12,6 +12,8 @@ const POOL_IDS: PoolId[] = ['cube', 'ramp', 'convex', 'concave']
 const INITIAL_CAPACITY = 4096
 
 type AnimatedInstance = { index: number; baseColor: THREE.Color; emissiveClass: 2 | 3 }
+type InstanceRef = { poolId: PoolId; index: number }
+type HoverTarget = InstanceRef & { cellKey: CellKey }
 
 /**
  * Owns the 4 InstancedMesh pools (cube + 3 chamfer shapes), diffs them against the current
@@ -34,6 +36,9 @@ export class InstancingManager {
   private capacities: Record<PoolId, number>
   private indexToCellKey: Record<PoolId, CellKey[]> = { cube: [], ramp: [], convex: [], concave: [] }
   private animatedInstances: Record<PoolId, AnimatedInstance[]> = { cube: [], ramp: [], convex: [], concave: [] }
+  private baseColors: Record<PoolId, THREE.Color[]> = { cube: [], ramp: [], convex: [], concave: [] }
+  private cellKeyToInstance = new Map<CellKey, InstanceRef>()
+  private hoverTarget: HoverTarget | null = null
   private material: THREE.MeshLambertMaterial
   private lastSyncedModel: VoxelModel | null = null
   private scratchColor = new THREE.Color()
@@ -88,15 +93,17 @@ export class InstancingManager {
       byPool[chamfer ? chamfer.shapeKind : 'cube'].push(key)
     }
 
+    this.cellKeyToInstance.clear()
+
     for (const id of POOL_IDS) {
       const keys = byPool[id]
       this.ensureCapacity(id, keys.length)
       const mesh = this.meshes[id]
       this.indexToCellKey[id] = keys
       const animated: AnimatedInstance[] = []
+      const baseColors: THREE.Color[] = []
 
       const matrix = new THREE.Matrix4()
-      const color = new THREE.Color()
       keys.forEach((key, i) => {
         const coord = decodeKey(key)
         const colorCell = model.color.get(key)!
@@ -110,19 +117,29 @@ export class InstancingManager {
         mesh.setMatrixAt(i, matrix)
 
         const hex = resolveSlotColor(palette, colorCell.paletteSlot)
-        color.set(hex)
+        const color = new THREE.Color(hex)
+        baseColors.push(color)
         mesh.setColorAt(i, color)
+        this.cellKeyToInstance.set(key, { poolId: id, index: i })
 
         const emissiveClass = emissiveClassFor(colorCell.paletteSlot.kind)
         if (emissiveClass === 2 || emissiveClass === 3) {
-          animated.push({ index: i, baseColor: color.clone(), emissiveClass })
+          animated.push({ index: i, baseColor: color, emissiveClass })
         }
       })
 
       this.animatedInstances[id] = animated
+      this.baseColors[id] = baseColors
       mesh.count = keys.length
       mesh.instanceMatrix.needsUpdate = true
       if (mesh.instanceColor) mesh.instanceColor.needsUpdate = true
+    }
+
+    // Model rebuild may have moved/removed the hovered cell's instance index — re-resolve rather
+    // than risk pointing at a stale/out-of-range slot.
+    if (this.hoverTarget) {
+      const resolved = this.cellKeyToInstance.get(this.hoverTarget.cellKey)
+      this.hoverTarget = resolved ? { cellKey: this.hoverTarget.cellKey, ...resolved } : null
     }
   }
 
@@ -143,6 +160,41 @@ export class InstancingManager {
       }
       if (mesh.instanceColor) mesh.instanceColor.needsUpdate = true
     }
+
+    // Hover highlight: pulses the hovered instance between slightly darker and slightly lighter
+    // than its own painted color. Applied after (so it wins over) the emissive animation above if
+    // the hovered cell happens to also be a blink/pulse cell.
+    if (this.hoverTarget) {
+      const { poolId, index } = this.hoverTarget
+      const base = this.baseColors[poolId][index]
+      if (base) {
+        const factor = 1 + 0.22 * Math.sin(elapsedSeconds * 6)
+        this.scratchColor.copy(base).multiplyScalar(factor)
+        const mesh = this.meshes[poolId]
+        mesh.setColorAt(index, this.scratchColor)
+        if (mesh.instanceColor) mesh.instanceColor.needsUpdate = true
+      }
+    }
+  }
+
+  /** Sets (or clears, on `null`) the cell that should render the hover blink. Restores the
+   * previously-hovered instance to its resting color first — for a non-animated cell this is the
+   * only thing that will ever restore it (tick() only touches animated + hovered instances). */
+  setHoveredCell(key: CellKey | null) {
+    const resolved = key ? this.cellKeyToInstance.get(key) : undefined
+    const next: HoverTarget | null = resolved ? { cellKey: key!, ...resolved } : null
+
+    if (this.hoverTarget && (!next || next.poolId !== this.hoverTarget.poolId || next.index !== this.hoverTarget.index)) {
+      const { poolId, index } = this.hoverTarget
+      const base = this.baseColors[poolId][index]
+      if (base) {
+        const mesh = this.meshes[poolId]
+        mesh.setColorAt(index, base)
+        if (mesh.instanceColor) mesh.instanceColor.needsUpdate = true
+      }
+    }
+
+    this.hoverTarget = next
   }
 
   /** Resolves a raycast hit's (mesh, instanceId) back to a grid CellKey, for face-click plane picking. */

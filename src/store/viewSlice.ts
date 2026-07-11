@@ -7,6 +7,7 @@ export const createViewSlice: Slice = (set) => ({
   fullscreen: false,
   hoverCell: null,
   chamferHoverValid: null,
+  hoveredFace: null,
 
   setFullscreen: (v) => set((state) => { state.fullscreen = v }),
   setHoverCell: (coord, chamferValid) =>
@@ -14,4 +15,5 @@ export const createViewSlice: Slice = (set) => ({
       state.hoverCell = coord
       state.chamferHoverValid = chamferValid
     }),
+  setHoveredFace: (face) => set((state) => { state.hoveredFace = face }),
 })
