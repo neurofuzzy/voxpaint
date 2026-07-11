@@ -22,6 +22,28 @@ function snapPx(v: number): number {
   return Math.round(v - 0.5) + 0.5
 }
 
+/**
+ * Lightweight stipple fill for a screen-space rect: only every other pixel on both axes gets
+ * painted (a 25%-density dot lattice), so it reads as a hint of fill rather than solid paint.
+ * Dots align to an absolute canvas-pixel lattice (not cell-relative), so adjacent cells' patterns
+ * connect seamlessly regardless of pan/zoom.
+ */
+function fillDither(ctx: CanvasRenderingContext2D, sx: number, sy: number, size: number, color: string) {
+  ctx.fillStyle = color
+  const endX = sx + size
+  const endY = sy + size
+  let startX = Math.ceil(sx)
+  if (startX % 2 !== 0) startX++
+  for (let px = startX; px < endX; px += 2) {
+    let startY = Math.ceil(sy)
+    if (startY % 2 !== 0) startY++
+    for (let py = startY; py < endY; py += 2) {
+      if ((px + py) % 4 == 0) continue;
+      ctx.fillRect(px, py, 1, 1)
+    }
+  }
+}
+
 export function PixelCanvas() {
   const canvasRef = useRef<HTMLCanvasElement>(null)
 
@@ -77,31 +99,12 @@ export function PixelCanvas() {
       }
     }
 
-    for (let u = -HALF; u < HALF; u++) {
-      for (let v = -HALF; v < HALF; v++) {
-        const coord = gridCoordFromPixel(plane, u, v)
-        const key = encodeKey(...coord)
-        const colorCell = model.color.get(key)
-        if (!colorCell) continue
-        const [sx, sy] = worldToScreen(toDisplayU(plane, u), toDisplayV(plane, v), size, pan, zoom)
-        ctx.fillStyle = resolveSlotColor(palette, colorCell.paletteSlot)
-        ctx.fillRect(sx, sy, cellPx, cellPx)
-
-        if (model.chamfer.has(key)) {
-          ctx.strokeStyle = 'rgba(255,255,255,0.6)'
-          ctx.lineWidth = 1
-          ctx.beginPath()
-          ctx.moveTo(sx, sy + cellPx)
-          ctx.lineTo(sx + cellPx, sy)
-          ctx.stroke()
-        }
-      }
-    }
-
     // Grid lines — fine per-cell, bolder every 8 cells, and a lighter (toned-down, not stark)
     // origin crosshair, clipped to the grid's own screen-space bounds (not the full viewport, so
     // panned-out empty space beyond the working area stays plain). Mirrors trixelart's grid
-    // visual hierarchy, adapted from its triangular lattice to a plain rectangular one.
+    // visual hierarchy, adapted from its triangular lattice to a plain rectangular one. Drawn
+    // before any content so painted cells, behind-layer outlines, and overlays all sit on top of
+    // it instead of the grid cutting through them.
     const [gridLeft] = worldToScreen(-HALF, 0, size, pan, zoom)
     const [gridRight] = worldToScreen(HALF, 0, size, pan, zoom)
     const [, gridTop] = worldToScreen(0, -HALF, size, pan, zoom)
@@ -136,6 +139,47 @@ export function PixelCanvas() {
     strokeGridLines(fineLines, '#22303a')
     strokeGridLines(subdivLines, '#3d6d8a')
     strokeGridLines([0], '#7ac8ff')
+
+    // Architectural-drawing-style reference: the layer immediately behind the active plane (one
+    // step further from the viewer along the plane's own normal — offset - orientation), shown as
+    // a single-pixel outline plus a light dithered fill per voxel, in that voxel's own color.
+    // Drawn before the active layer's own content so it reads as sitting "behind" it (any cell
+    // painted on both layers at the same (u,v) has its behind-layer marks fully covered by the
+    // active layer's opaque fill).
+    const behindPlane = { ...plane, offset: plane.offset - plane.orientation }
+    ctx.lineWidth = 2
+    for (let u = -HALF; u < HALF; u++) {
+      for (let v = -HALF; v < HALF; v++) {
+        const behindCell = model.color.get(encodeKey(...gridCoordFromPixel(behindPlane, u, v)))
+        if (!behindCell) continue
+        const [sx, sy] = worldToScreen(toDisplayU(plane, u), toDisplayV(plane, v), size, pan, zoom)
+        const color = resolveSlotColor(palette, behindCell.paletteSlot)
+        fillDither(ctx, sx, sy, cellPx, color)
+        ctx.strokeStyle = color
+        ctx.strokeRect(sx + 0.5, sy + 0.5, cellPx - 1, cellPx - 1)
+      }
+    }
+
+    for (let u = -HALF; u < HALF; u++) {
+      for (let v = -HALF; v < HALF; v++) {
+        const coord = gridCoordFromPixel(plane, u, v)
+        const key = encodeKey(...coord)
+        const colorCell = model.color.get(key)
+        if (!colorCell) continue
+        const [sx, sy] = worldToScreen(toDisplayU(plane, u), toDisplayV(plane, v), size, pan, zoom)
+        ctx.fillStyle = resolveSlotColor(palette, colorCell.paletteSlot)
+        ctx.fillRect(sx, sy, cellPx, cellPx)
+
+        if (model.chamfer.has(key)) {
+          ctx.strokeStyle = 'rgba(255,255,255,0.6)'
+          ctx.lineWidth = 1
+          ctx.beginPath()
+          ctx.moveTo(sx, sy + cellPx)
+          ctx.lineTo(sx + cellPx, sy)
+          ctx.stroke()
+        }
+      }
+    }
 
     // paint-tool shift-line preview
     if (linePreview) {
