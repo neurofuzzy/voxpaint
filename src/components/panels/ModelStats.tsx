@@ -14,12 +14,16 @@ export function ModelStats() {
   const nearCap = span >= MAX_GRID_EXTENT - 4
 
   return (
-    <div className="border-t border-neutral-800 px-3 py-2 text-xs text-neutral-500">
-      <div>{cellCount} cell{cellCount === 1 ? '' : 's'}</div>
-      <div className={nearCap ? 'text-amber-400' : undefined}>
-        bounds span: {span}/{MAX_GRID_EXTENT}
-      </div>
-      <div>{dirty ? 'unsaved changes…' : lastSavedAt ? `saved ${new Date(lastSavedAt).toLocaleTimeString()}` : 'not saved yet'}</div>
+    <div className="flex items-center gap-1.5 whitespace-nowrap text-xs text-neutral-500">
+      <span>
+        {cellCount} cell{cellCount === 1 ? '' : 's'}
+      </span>
+      <span className="text-neutral-700">·</span>
+      <span className={nearCap ? 'text-amber-400' : undefined}>
+        {span}/{MAX_GRID_EXTENT}
+      </span>
+      <span className="text-neutral-700">·</span>
+      <span>{dirty ? 'unsaved changes…' : lastSavedAt ? `saved ${new Date(lastSavedAt).toLocaleTimeString()}` : 'not saved yet'}</span>
     </div>
   )
 }

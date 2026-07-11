@@ -3,7 +3,7 @@ import type { PaletteSlotRef, PaletteState } from '@/engine/palette/types'
 import type { ConstructionPlane } from '@/engine/plane/types'
 import type { ProjectMeta } from '@/engine/persistence/schema'
 
-export type ToolId = 'paint' | 'eyedropper' | 'select' | 'fill' | 'clone' | 'move'
+export type ToolId = 'paint' | 'erase' | 'eyedropper' | 'select' | 'fill' | 'clone' | 'move'
 export type ActiveLayer = 'color' | 'chamfer'
 
 export type SelectionRegion = {
@@ -60,9 +60,15 @@ export type ToolSlice = {
   setActivePaletteSlot: (slot: PaletteSlotRef) => void
 }
 
+export type FloatOrigin = { originU: number; originV: number }
+
 export type SelectionSlice = {
   selection: SelectionRegion | null
   clipboard: ClipboardData | null
+  /** Non-null while a Move-lift or paste is pending, uncommitted, and still movable/transformable. */
+  floatContent: ClipboardData | null
+  /** Current placement of `floatContent`. Always non-null exactly when `floatContent` is. */
+  floatOrigin: FloatOrigin | null
   setSelection: (region: SelectionRegion | null) => void
   setClipboard: (clipboard: ClipboardData | null) => void
 }
@@ -96,6 +102,33 @@ export type PaintActionsSlice = {
   eraseCell: (coord: Coord, layer: ActiveLayer) => void
 }
 
+export type SelectionTransformKind = 'rotate' | 'mirror-h' | 'mirror-v'
+
+export type ToolActionsSlice = {
+  /** Flood fill (color layer only, spec §2) starting at plane-space (u,v). One undo stroke. */
+  floodFill: (u: number, v: number) => void
+  /** Clones whatever is at (srcU,srcV) onto (destU,destV), both layers, re-validating chamfer. */
+  cloneStampCell: (srcU: number, srcV: number, destU: number, destV: number) => void
+  copySelection: () => void
+  cutSelection: () => void
+  deleteSelection: () => void
+  /** Pastes the clipboard as a new floating selection at (u,v) — does not commit to the model. */
+  pasteClipboardAt: (u: number, v: number) => void
+  /** Lifts the current selection into a floating buffer: copies it out, clears the source cells,
+   * and opens an undo stroke that stays uncommitted until `bakeFloatIfAny()`. No-op if nothing is
+   * selected or a float is already pending. */
+  liftSelectionToFloat: () => void
+  /** Repositions the pending float. Pure — no model writes, no undo-stroke activity. */
+  moveFloatTo: (originU: number, originV: number) => void
+  /** Rotates/mirrors the pending float in place (auto-lifting first if nothing is floating yet).
+   * Pure — no model writes. */
+  transformFloat: (kind: SelectionTransformKind) => void
+  /** Bakes the pending float into the model (re-validating chamfer at its destination) and closes
+   * the undo stroke opened by the lift/paste. No-op if nothing is floating. Call this before any
+   * other action that touches `model` or reads it for a "current" snapshot. */
+  bakeFloatIfAny: () => void
+}
+
 export type AppState = ProjectSlice &
   HistorySlice &
   PlaneSlice &
@@ -103,4 +136,5 @@ export type AppState = ProjectSlice &
   SelectionSlice &
   ViewSlice &
   PersistenceSlice &
-  PaintActionsSlice
+  PaintActionsSlice &
+  ToolActionsSlice

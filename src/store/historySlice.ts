@@ -30,19 +30,27 @@ export const createHistorySlice: Slice = (set, get) => ({
     })
   },
 
-  undo: () =>
+  undo: () => {
+    // A pending float holds an open undo stroke (beginStroke() already captured a baseline) —
+    // popping `past` out from under it would leave that baseline dangling. Baking first pushes
+    // the pre-lift state onto `past`, so this pop then immediately restores it: one Undo press
+    // cleanly reverts the whole lift/move/rotate/mirror gesture, recoverable via Redo.
+    get().bakeFloatIfAny()
     set((state) => {
       const prev = state.past.pop()
       if (!prev) return
       state.future.unshift(state.model as VoxelModel)
       state.model = prev
-    }),
+    })
+  },
 
-  redo: () =>
+  redo: () => {
+    get().bakeFloatIfAny()
     set((state) => {
       const next = state.future.shift()
       if (!next) return
       state.past.push(state.model as VoxelModel)
       state.model = next
-    }),
+    })
+  },
 })

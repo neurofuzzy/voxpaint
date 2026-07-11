@@ -9,6 +9,7 @@ type Slice = StateCreator<AppState, [['zustand/immer', never]], [], PaintActions
 
 export const createPaintActionsSlice: Slice = (set, get) => ({
   paintColorCell: (coord: Coord) => {
+    get().bakeFloatIfAny()
     const { model } = get()
     if (model.bounds && !withinWorkingBounds(model.bounds, coord)) return false
     const slot = get().activePaletteSlot
@@ -22,6 +23,7 @@ export const createPaintActionsSlice: Slice = (set, get) => ({
   },
 
   paintChamferCell: (u: number, v: number) => {
+    get().bakeFloatIfAny()
     const { model, plane } = get()
     const coord = gridCoordFromPixel(plane, u, v)
     if (model.bounds && !withinWorkingBounds(model.bounds, coord)) return false
@@ -47,7 +49,8 @@ export const createPaintActionsSlice: Slice = (set, get) => ({
     return true
   },
 
-  eraseCell: (coord: Coord, layer) =>
+  eraseCell: (coord: Coord, layer) => {
+    get().bakeFloatIfAny()
     set((state) => {
       const key = encodeKey(...coord)
       if (layer === 'chamfer') {
@@ -59,5 +62,6 @@ export const createPaintActionsSlice: Slice = (set, get) => ({
       }
       state.meta.modifiedAt = new Date().toISOString()
       state.dirty = true
-    }),
+    })
+  },
 })

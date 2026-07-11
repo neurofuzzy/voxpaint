@@ -7,6 +7,7 @@ import { createPersistenceSlice } from './persistenceSlice'
 import { createPlaneSlice } from './planeSlice'
 import { createProjectSlice } from './projectSlice'
 import { createSelectionSlice } from './selectionSlice'
+import { createToolActionsSlice } from './toolActionsSlice'
 import { createToolSlice } from './toolSlice'
 import type { AppState } from './types'
 import { createViewSlice } from './viewSlice'
@@ -23,5 +24,6 @@ export const useAppStore = create<AppState>()(
     ...createViewSlice(...a),
     ...createPersistenceSlice(...a),
     ...createPaintActionsSlice(...a),
+    ...createToolActionsSlice(...a),
   })),
 )

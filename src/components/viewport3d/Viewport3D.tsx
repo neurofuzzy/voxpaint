@@ -2,10 +2,12 @@ import { Canvas, useThree } from '@react-three/fiber'
 import { OrbitControls } from '@react-three/drei'
 import { useEffect, useRef } from 'react'
 import * as THREE from 'three'
+import type { OrbitControls as OrbitControlsImpl } from 'three-stdlib'
 import type { InstancingManager } from '@/engine/instancing/InstancingManager'
 import { planeFromFaceHit } from '@/engine/plane/constructionPlane'
 import { useAppStore } from '@/store/useAppStore'
 import { ConstructionPlaneGizmo } from './ConstructionPlaneGizmo'
+import { ConstructionPlaneVisual } from './ConstructionPlaneVisual'
 import { SceneLighting } from './SceneLighting'
 import { VoxelInstancedMeshes } from './VoxelInstancedMeshes'
 
@@ -65,20 +67,19 @@ function FaceClickHandler({ managerRef }: { managerRef: React.RefObject<Instanci
 
 export function Viewport3D() {
   const managerRef = useRef<InstancingManager | null>(null)
+  const orbitControlsRef = useRef<OrbitControlsImpl | null>(null)
 
   return (
     <div className="h-full min-w-0 bg-neutral-900">
       <Canvas camera={{ position: [18, 16, 20], fov: 45 }} gl={{ antialias: true }}>
         <color attach="background" args={['#111114']} />
         <SceneLighting />
-        <gridHelper args={[MAX_GRID_SIZE, MAX_GRID_SIZE, '#2a2a30', '#1c1c20']} />
+        <ConstructionPlaneVisual orbitControlsRef={orbitControlsRef} />
         <VoxelInstancedMeshes ref={managerRef} />
         <ConstructionPlaneGizmo />
         <FaceClickHandler managerRef={managerRef} />
-        <OrbitControls makeDefault enableDamping dampingFactor={0.12} />
+        <OrbitControls ref={orbitControlsRef} makeDefault enableDamping dampingFactor={0.12} />
       </Canvas>
     </div>
   )
 }
-
-const MAX_GRID_SIZE = 64

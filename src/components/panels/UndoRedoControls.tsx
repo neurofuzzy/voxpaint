@@ -4,13 +4,14 @@ import { useAppStore } from '@/store/useAppStore'
 export function UndoRedoControls() {
   const past = useAppStore((s) => s.past)
   const future = useAppStore((s) => s.future)
+  const floatContent = useAppStore((s) => s.floatContent)
   const undo = useAppStore((s) => s.undo)
   const redo = useAppStore((s) => s.redo)
 
   return (
     <div className="flex items-center gap-1">
       <button
-        disabled={past.length === 0}
+        disabled={past.length === 0 && !floatContent}
         onClick={undo}
         aria-label="Undo"
         className="flex h-8 w-8 items-center justify-center rounded-md text-neutral-400 hover:bg-neutral-800 hover:text-neutral-100 disabled:opacity-30 disabled:hover:bg-transparent"

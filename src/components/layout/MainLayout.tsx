@@ -1,7 +1,7 @@
 import { Editor2D } from '@/components/editor2d/Editor2D'
 import { Viewport3D } from '@/components/viewport3d/Viewport3D'
+import { BottomBar } from './BottomBar'
 import { LeftPanel } from './LeftPanel'
-import { RightPanel } from './RightPanel'
 import { TopToolbar } from './TopToolbar'
 
 export function MainLayout() {
@@ -14,8 +14,8 @@ export function MainLayout() {
           <Editor2D />
           <Viewport3D />
         </div>
-        <RightPanel />
       </div>
+      <BottomBar />
     </div>
   )
 }

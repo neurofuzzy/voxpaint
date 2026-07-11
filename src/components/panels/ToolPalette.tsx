@@ -1,11 +1,12 @@
 import * as ToggleGroup from '@radix-ui/react-toggle-group'
 import * as Tooltip from '@radix-ui/react-tooltip'
-import { Brush, Copy, Move, Pipette, SquareDashedMousePointer, PaintBucket } from 'lucide-react'
+import { Brush, Copy, Eraser, Move, Pipette, SquareDashedMousePointer, PaintBucket } from 'lucide-react'
 import { useAppStore } from '@/store/useAppStore'
 import type { ToolId } from '@/store/types'
 
 const TOOLS: Array<{ id: ToolId; label: string; icon: typeof Brush }> = [
   { id: 'paint', label: 'Paint', icon: Brush },
+  { id: 'erase', label: 'Erase', icon: Eraser },
   { id: 'eyedropper', label: 'Eyedropper', icon: Pipette },
   { id: 'select', label: 'Select', icon: SquareDashedMousePointer },
   { id: 'fill', label: 'Fill', icon: PaintBucket },
