@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { encodeKey } from '@/engine/grid/GridStore'
-import { gridCoordFromPixel, toDisplayU } from '@/engine/plane/constructionPlane'
+import { gridCoordFromPixel, toDisplayU, toDisplayV } from '@/engine/plane/constructionPlane'
 import { resolveSlotColor } from '@/engine/palette/palette'
 import { forEachSelectedCell, traceSelectionOutline } from '@/engine/tools/selectionMask'
 import { useAppStore } from '@/store/useAppStore'
@@ -82,7 +82,7 @@ export function PixelCanvas() {
         const key = encodeKey(...coord)
         const colorCell = model.color.get(key)
         if (!colorCell) continue
-        const [sx, sy] = worldToScreen(toDisplayU(plane, u), v, size, pan, zoom)
+        const [sx, sy] = worldToScreen(toDisplayU(plane, u), toDisplayV(plane, v), size, pan, zoom)
         ctx.fillStyle = resolveSlotColor(palette, colorCell.paletteSlot)
         ctx.fillRect(sx, sy, cellPx, cellPx)
 
@@ -138,8 +138,20 @@ export function PixelCanvas() {
 
     // paint-tool shift-line preview
     if (linePreview) {
-      const [ax, ay] = worldToScreen(toDisplayU(plane, linePreview.anchor[0]) + 0.5, linePreview.anchor[1] + 0.5, size, pan, zoom)
-      const [ex, ey] = worldToScreen(toDisplayU(plane, linePreview.end[0]) + 0.5, linePreview.end[1] + 0.5, size, pan, zoom)
+      const [ax, ay] = worldToScreen(
+        toDisplayU(plane, linePreview.anchor[0]) + 0.5,
+        toDisplayV(plane, linePreview.anchor[1]) + 0.5,
+        size,
+        pan,
+        zoom,
+      )
+      const [ex, ey] = worldToScreen(
+        toDisplayU(plane, linePreview.end[0]) + 0.5,
+        toDisplayV(plane, linePreview.end[1]) + 0.5,
+        size,
+        pan,
+        zoom,
+      )
       ctx.strokeStyle = '#ffffff'
       ctx.lineWidth = 2
       ctx.beginPath()
@@ -154,7 +166,7 @@ export function PixelCanvas() {
       for (const cell of floatContent.cells) {
         const u = floatOrigin.originU + cell.du
         const v = floatOrigin.originV + cell.dv
-        const [sx, sy] = worldToScreen(toDisplayU(plane, u), v, size, pan, zoom)
+        const [sx, sy] = worldToScreen(toDisplayU(plane, u), toDisplayV(plane, v), size, pan, zoom)
         if (cell.color) {
           ctx.fillStyle = resolveSlotColor(palette, cell.color.paletteSlot)
           ctx.fillRect(sx, sy, cellPx, cellPx)
@@ -176,7 +188,7 @@ export function PixelCanvas() {
     if (activeRegion) {
       ctx.fillStyle = 'rgba(34, 211, 238, 0.25)'
       forEachSelectedCell(activeRegion, (u, v) => {
-        const [sx, sy] = worldToScreen(toDisplayU(plane, u), v, size, pan, zoom)
+        const [sx, sy] = worldToScreen(toDisplayU(plane, u), toDisplayV(plane, v), size, pan, zoom)
         ctx.fillRect(sx, sy, cellPx, cellPx)
       })
 
@@ -185,8 +197,8 @@ export function PixelCanvas() {
       ctx.setLineDash([8, 6])
       ctx.lineDashOffset = -antPhase
       for (const [[au, av], [bu, bv]] of traceSelectionOutline(activeRegion)) {
-        const [ax, ay] = worldToScreen(toDisplayU(plane, au), av, size, pan, zoom)
-        const [bx, by] = worldToScreen(toDisplayU(plane, bu), bv, size, pan, zoom)
+        const [ax, ay] = worldToScreen(toDisplayU(plane, au), toDisplayV(plane, av), size, pan, zoom)
+        const [bx, by] = worldToScreen(toDisplayU(plane, bu), toDisplayV(plane, bv), size, pan, zoom)
         // Every outline edge is axis-aligned (traceSelectionOutline only emits unit cell edges),
         // so snap the shared coordinate for the same crisp-line reason as the grid.
         ctx.beginPath()

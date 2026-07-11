@@ -8,15 +8,22 @@ const AXIS_UNIT: Record<Axis, THREE.Vector3> = {
 }
 
 // Mirrors the cyclic (u,v) basis in engine/plane/constructionPlane.ts (v is negated wherever it
-// maps to world-Y, since the 2D editor's v increases downward but three.js's Y increases upward).
+// maps to world-Y, since the 2D editor's v increases downward but three.js's Y increases upward;
+// u is also negated for the x-axis case, since a naive +z assignment has the opposite handedness
+// from the z-axis case's u->+x — see the comment on constructionPlane.ts's gridCoordFromPixel).
+// The y-axis case is u->-x (fixed, orientation-independent, like toDisplayU's y-axis identity)
+// and v->+z at orientation -1 / v->-z at orientation +1 (mirroring toDisplayV) — unlike the other
+// two axes, its v depends on orientation, so WORLD_V.y here is only the orientation===-1 base
+// value; chamferInstanceMatrix negates it for orientation===1 (see toDisplayV's doc comment for
+// why the y-axis's two orientations flip v instead of u).
 const WORLD_U: Record<Axis, THREE.Vector3> = {
-  x: new THREE.Vector3(0, 0, 1),
-  y: new THREE.Vector3(0, 0, 1),
+  x: new THREE.Vector3(0, 0, -1),
+  y: new THREE.Vector3(-1, 0, 0),
   z: new THREE.Vector3(1, 0, 0),
 }
 const WORLD_V: Record<Axis, THREE.Vector3> = {
   x: new THREE.Vector3(0, -1, 0),
-  y: new THREE.Vector3(1, 0, 0),
+  y: new THREE.Vector3(0, 0, 1),
   z: new THREE.Vector3(0, -1, 0),
 }
 
@@ -43,7 +50,7 @@ export function chamferInstanceMatrix(
 ): THREE.Matrix4 {
   const axisUnit = AXIS_UNIT[planeAxis]
   const worldU = WORLD_U[planeAxis]
-  const worldV = WORLD_V[planeAxis]
+  const worldV = planeAxis === 'y' && planeOrientation === 1 ? WORLD_V[planeAxis].clone().negate() : WORLD_V[planeAxis]
   const zColumn = planeOrientation === 1 ? axisUnit : axisUnit.clone().negate()
 
   scratchBasis.makeBasis(worldU, worldV, zColumn)

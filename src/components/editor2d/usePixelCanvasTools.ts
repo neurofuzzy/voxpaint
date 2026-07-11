@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { gridCoordFromPixel, toDisplayU } from '@/engine/plane/constructionPlane'
+import { gridCoordFromPixel, toDisplayU, toDisplayV } from '@/engine/plane/constructionPlane'
 import { toNormalizedPointerEvent } from '@/engine/input/PointerInputController'
 import { toolMap } from '@/engine/tools'
 import type { ToolContext, ToolDragState } from '@/engine/tools/types'
@@ -12,9 +12,10 @@ import { BASE_CELL_PX, clampZoom, PINCH_ZOOM_SENSITIVITY, WHEEL_ZOOM_SENSITIVITY
 
 const PAN_DRAG_THRESHOLD_PX = 3
 
-/** Screen pixel -> logical (model-space) grid cell. `toDisplayU` is involutory, so applying it
- * again here converts the *displayed* u (what's visually under the cursor, post-mirroring) back
- * to the logical u the rest of the app (tool handlers, gridCoordFromPixel) expects. */
+/** Screen pixel -> logical (model-space) grid cell. `toDisplayU`/`toDisplayV` are involutory, so
+ * applying them again here converts the *displayed* u/v (what's visually under the cursor,
+ * post-mirroring) back to the logical u/v the rest of the app (tool handlers, gridCoordFromPixel)
+ * expects. */
 function pixelToCell(
   canvas: HTMLCanvasElement,
   clientX: number,
@@ -26,7 +27,7 @@ function pixelToCell(
 ): [number, number] {
   const rect = canvas.getBoundingClientRect()
   const [wu, wv] = screenToWorld(clientX - rect.left, clientY - rect.top, size, pan, zoom)
-  return [toDisplayU(plane, Math.floor(wu)), Math.floor(wv)]
+  return [toDisplayU(plane, Math.floor(wu)), toDisplayV(plane, Math.floor(wv))]
 }
 
 /**

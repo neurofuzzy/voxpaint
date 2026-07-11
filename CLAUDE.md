@@ -30,3 +30,6 @@ npm run lint      # oxlint
 ## Behavior Rules
 - NEVER stop a process you did not start (no running dev servers yourself)
 - NEVER browser-test. That is the human's job
+- IF you need to use an explore agent to find code and it's difficult to locate, make sure you update the function's JSDoc so that it appears in CODEMAP.md
+- BEFORE updating docs, run `npm run map` to update the code map.
+- ONLY update the docs (`./docs` folder md files and CLAUDE.md) when the user requests it.
