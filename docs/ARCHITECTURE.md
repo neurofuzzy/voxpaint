@@ -69,13 +69,11 @@ corner-anchored index is not a bare negation/addition):
 - `engine/plane/constructionPlane.ts`'s `gridCoordFromPixel`/`pixelFromGridCoord` — flipping 2D
   canvas-row `v` into world-Y uses `-v - 1`, not `-v` (mirroring continuous range `[v, v+1)` about
   0 lands on cell index `-v-1`).
-- `engine/plane/constructionPlane.ts`'s `toDisplayU`/`toDisplayV` — same correction, `-u - 1` /
-  `-v - 1`, for mirroring the on-screen axis that flips with a construction plane's orientation
-  (`toDisplayU` at orientation `-1` for x/z-axis planes; `toDisplayV` at orientation `+1` for the
-  y-axis plane instead — see the "Construction plane" section below for why it's the other axis and
-  the other orientation sign there). Both are involutory (their own inverse), which is what lets
-  `components/editor2d/usePixelCanvasTools.ts`'s `pixelToCell` reuse them to convert a displayed
-  (mirrored) screen cell back to the logical model cell.
+- `engine/plane/constructionPlane.ts`'s `toDisplayU` — same correction, `-u - 1`, for mirroring the
+  on-screen u-axis when an x- or z-axis construction plane's orientation is `-1` (the y-axis plane
+  is exempt — see the "Construction plane" section below). Involutory (its own inverse), which is
+  what lets `components/editor2d/usePixelCanvasTools.ts`'s `pixelToCell` reuse it to convert a
+  displayed (mirrored) screen cell back to the logical model cell.
 - `components/viewport3d/ConstructionPlaneVisual.tsx` and `components/viewport3d/VoxelFaceHighlight.tsx`
   both add `+1` to a layer's offset when orientation is `+1` (and leave it unchanged for `-1`) to
   find which physical face of that layer to render flush against — matching
@@ -88,26 +86,24 @@ corner-anchored index is not a bare negation/addition):
 
 `engine/plane/types.ts`: `{ axis: 'x'|'y'|'z', orientation: 1|-1, offset: number }`, stored at
 `store.plane` (`store/planeSlice.ts`). Determines which 2D (u,v) slice the pixel canvas shows, via
-a fixed cyclic basis (`gridCoordFromPixel`): `x → u=-z-ish,v=-y-ish` / `y → u=-x,v=z` / `z → u=x,v=-y-ish`
-(see the corner-anchoring note above for the exact `-v-1`/`-u-1` form). The x-axis case negates u
-(not just v) because a naive `u=z` assignment has the opposite handedness from the z-axis case's
-`u=x` — without the negation, east/west-facing planes render as a mirror image of the model along
-the u-axis (colors and chamfer geometry both), even though north/south is correct.
+a fixed cyclic basis (`gridCoordFromPixel`): `x → u=-z-ish,v=-y-ish` / `y → u=-x-ish,v=-z-ish` /
+`z → u=x,v=-y-ish` (see the corner-anchoring note above for the exact `-v-1`/`-u-1` form). The
+x-axis case negates u (not just v) because a naive `u=z` assignment has the opposite handedness
+from the z-axis case's `u=x` — without the negation, east/west-facing planes render as a mirror
+image of the model along the u-axis (colors and chamfer geometry both), even though north/south is
+correct.
 
-The y-axis case is structurally different from x/z, not just a different constant: x and z relate
-to each other by a yaw around world-Y (spinning 180° to face the opposite wall), which is why
-flipping exactly one in-plane axis (`toDisplayU`, triggered at orientation `-1`) makes both of
-their orientations correct. Top and bottom don't relate that way — they're two views of a
-*horizontal* sheet, and empirically (confirmed by fixing an inverted top-facing plane against a
-correct bottom-facing one) it's `v`, not `u`, that needs to flip between them, and it flips at
-orientation `+1`, not `-1`. So the y-axis plane fixes `u` at a constant `-x` (`toDisplayU` is
-identity for it) and instead flips `v` via a separate `toDisplayV` (identity for x/z, since their v
-never flips). `basis.ts`'s `WORLD_U`/`WORLD_V` mirror these same choices for chamfer instance
-placement — `chamferInstanceMatrix` special-cases the y-axis to negate `WORLD_V` at orientation `1`
-instead of reading a fixed per-axis table, since the other two axes never need this. `orientation`
-never changes which cell a pixel maps to — it only flips the on-screen mirroring axis for display
-(`toDisplayU` or `toDisplayV`, depending on the plane's axis) and picks which side is "outward" for
-chamfer geometry.
+The y-axis case negates *both* u and v, and — unlike x/z, where flipping exactly one in-plane axis
+via `toDisplayU` at orientation `-1` is what makes both orientations of a wall-facing plane read
+correctly (they're related by a yaw around world-Y) — top and bottom render **identically** to each
+other: `toDisplayU` is identity for the y-axis plane, and there's no per-orientation flip at all for
+it. This was arrived at empirically after a couple of physically-derived guesses (top/bottom
+relate by flipping which side of a horizontal sheet you view from, which seemed like it should
+require *some* orientation-dependent flip) were each contradicted by what the app actually showed
+— see git history on this file if revisiting. `basis.ts`'s `WORLD_U`/`WORLD_V` mirror the same
+fixed, orientation-independent y-axis values for chamfer instance placement. `orientation` never
+changes which cell a pixel maps to — for x/z it flips the on-screen u-axis for display (`toDisplayU`)
+and picks which side is "outward" for chamfer geometry; for y it only does the latter.
 
 **Setting the plane** — three ways, all converging on `store/planeSlice.ts`:
 
