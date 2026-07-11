@@ -5,31 +5,39 @@ import { concaveCornerGeometry, convexCornerGeometry, rampGeometry, unitCubeGeom
 import { emissiveClassFor, resolveSlotColor } from '@/engine/palette/palette'
 import type { PaletteState } from '@/engine/palette/types'
 import { chamferInstanceMatrix, cubeInstanceMatrix } from './basis'
-import { createSharedVoxelMaterial } from './sharedMaterial'
 
 export type PoolId = 'cube' | 'ramp' | 'convex' | 'concave'
 const POOL_IDS: PoolId[] = ['cube', 'ramp', 'convex', 'concave']
 
 const INITIAL_CAPACITY = 4096
 
+type AnimatedInstance = { index: number; baseColor: THREE.Color; emissiveClass: 2 | 3 }
+
 /**
  * Owns the 4 InstancedMesh pools (cube + 3 chamfer shapes), diffs them against the current
  * model, and exposes instanceId -> CellKey lookups for raycasting (face-click plane picking).
  * Lives outside React — the R3F component just mounts `.group` and calls `sync()`/`tick()`.
+ *
+ * Plain unlit `MeshBasicMaterial` with `vertexColors` — no custom shaders. Blink/pulse animation
+ * (palette kinds 'blink'/'pulse', emissiveClass 2/3) is driven from JS in `tick()`, recoloring
+ * just those instances via `setColorAt` each frame — not a GPU shader. Only a small subset of
+ * cells typically use these palette kinds, so the per-frame JS cost is negligible, and it's far
+ * easier to reason about/debug than an `onBeforeCompile` shader patch.
  */
 export class InstancingManager {
   readonly group = new THREE.Group()
   private meshes: Record<PoolId, THREE.InstancedMesh>
   private capacities: Record<PoolId, number>
   private indexToCellKey: Record<PoolId, CellKey[]> = { cube: [], ramp: [], convex: [], concave: [] }
-  private material: THREE.MeshStandardMaterial
-  private uniforms: { uClock: { value: number } }
+  private animatedInstances: Record<PoolId, AnimatedInstance[]> = { cube: [], ramp: [], convex: [], concave: [] }
+  private material: THREE.MeshBasicMaterial
   private lastSyncedModel: VoxelModel | null = null
+  private scratchColor = new THREE.Color()
 
   constructor() {
-    const { material, uniforms } = createSharedVoxelMaterial()
-    this.material = material
-    this.uniforms = uniforms
+    // TEMP DIAGNOSTIC: hard-coded red, vertexColors off — if this still isn't visibly solid red,
+    // the bug isn't instance-coloring at all, it's the geometry/mesh/camera/scene not rendering.
+    this.material = new THREE.MeshBasicMaterial({ color: 0xff0000 })
 
     const geometries: Record<PoolId, THREE.BufferGeometry> = {
       cube: unitCubeGeometry(),
@@ -44,23 +52,10 @@ export class InstancingManager {
       const mesh = new THREE.InstancedMesh(geometries[id], this.material, this.capacities[id])
       mesh.count = 0
       mesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage)
-      this.attachEmissiveAttributes(mesh)
       mesh.frustumCulled = false
       this.group.add(mesh)
       this.meshes[id] = mesh
     }
-  }
-
-  private attachEmissiveAttributes(mesh: THREE.InstancedMesh) {
-    const capacity = mesh.instanceMatrix.count
-    mesh.geometry.setAttribute(
-      'instanceEmissiveClass',
-      new THREE.InstancedBufferAttribute(new Float32Array(capacity), 1),
-    )
-    mesh.geometry.setAttribute(
-      'instanceEmissiveColor',
-      new THREE.InstancedBufferAttribute(new Float32Array(capacity * 3), 3),
-    )
   }
 
   private ensureCapacity(id: PoolId, needed: number) {
@@ -72,7 +67,6 @@ export class InstancingManager {
     const old = this.meshes[id]
     const mesh = new THREE.InstancedMesh(old.geometry, this.material, newCapacity)
     mesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage)
-    this.attachEmissiveAttributes(mesh)
     mesh.frustumCulled = false
 
     this.group.remove(old)
@@ -96,9 +90,8 @@ export class InstancingManager {
       const keys = byPool[id]
       this.ensureCapacity(id, keys.length)
       const mesh = this.meshes[id]
-      const emissiveClassAttr = mesh.geometry.getAttribute('instanceEmissiveClass') as THREE.InstancedBufferAttribute
-      const emissiveColorAttr = mesh.geometry.getAttribute('instanceEmissiveColor') as THREE.InstancedBufferAttribute
       this.indexToCellKey[id] = keys
+      const animated: AnimatedInstance[] = []
 
       const matrix = new THREE.Matrix4()
       const color = new THREE.Color()
@@ -119,24 +112,35 @@ export class InstancingManager {
         mesh.setColorAt(i, color)
 
         const emissiveClass = emissiveClassFor(colorCell.paletteSlot.kind)
-        emissiveClassAttr.setX(i, emissiveClass)
-        if (emissiveClass > 0) {
-          emissiveColorAttr.setXYZ(i, color.r, color.g, color.b)
-        } else {
-          emissiveColorAttr.setXYZ(i, 0, 0, 0)
+        if (emissiveClass === 2 || emissiveClass === 3) {
+          animated.push({ index: i, baseColor: color.clone(), emissiveClass })
         }
       })
 
+      this.animatedInstances[id] = animated
       mesh.count = keys.length
       mesh.instanceMatrix.needsUpdate = true
       if (mesh.instanceColor) mesh.instanceColor.needsUpdate = true
-      emissiveClassAttr.needsUpdate = true
-      emissiveColorAttr.needsUpdate = true
     }
   }
 
   tick(elapsedSeconds: number) {
-    this.uniforms.uClock.value = elapsedSeconds
+    for (const id of POOL_IDS) {
+      const animated = this.animatedInstances[id]
+      if (animated.length === 0) continue
+      const mesh = this.meshes[id]
+      for (const { index, baseColor, emissiveClass } of animated) {
+        const factor =
+          emissiveClass === 2
+            ? Math.floor(elapsedSeconds * 1.5) % 2 === 0
+              ? 1
+              : 0.15 // blink: hard on/off square wave
+            : 0.4 + 0.6 * (0.5 + 0.5 * Math.sin(elapsedSeconds * 3)) // pulse: smooth sine
+        this.scratchColor.copy(baseColor).multiplyScalar(factor)
+        mesh.setColorAt(index, this.scratchColor)
+      }
+      if (mesh.instanceColor) mesh.instanceColor.needsUpdate = true
+    }
   }
 
   /** Resolves a raycast hit's (mesh, instanceId) back to a grid CellKey, for face-click plane picking. */

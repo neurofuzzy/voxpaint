@@ -71,14 +71,17 @@ export function Viewport3D() {
 
   return (
     <div className="h-full min-w-0 bg-neutral-900">
-      <Canvas camera={{ position: [18, 16, 20], fov: 45 }} gl={{ antialias: true }}>
+      {/* flat disables R3F's default ACESFilmicToneMapping — that curve compresses/rolls off
+          brightness at moderate light intensities, which was fighting every lighting change.
+          With it off, on-screen brightness maps linearly and predictably to light intensity. */}
+      <Canvas flat camera={{ position: [18, 16, 20], fov: 45 }} gl={{ antialias: true }}>
         <color attach="background" args={['#111114']} />
         <SceneLighting />
         <ConstructionPlaneVisual orbitControlsRef={orbitControlsRef} />
         <VoxelInstancedMeshes ref={managerRef} />
         <ConstructionPlaneGizmo />
         <FaceClickHandler managerRef={managerRef} />
-        <OrbitControls ref={orbitControlsRef} makeDefault enableDamping dampingFactor={0.12} />
+        <OrbitControls ref={orbitControlsRef} makeDefault enableDamping dampingFactor={0.12} minDistance={2} maxDistance={150} />
       </Canvas>
     </div>
   )

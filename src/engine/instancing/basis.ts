@@ -7,16 +7,17 @@ const AXIS_UNIT: Record<Axis, THREE.Vector3> = {
   z: new THREE.Vector3(0, 0, 1),
 }
 
-// Mirrors the cyclic (u,v) basis in engine/plane/constructionPlane.ts.
+// Mirrors the cyclic (u,v) basis in engine/plane/constructionPlane.ts (v is negated wherever it
+// maps to world-Y, since the 2D editor's v increases downward but three.js's Y increases upward).
 const WORLD_U: Record<Axis, THREE.Vector3> = {
-  x: new THREE.Vector3(0, 1, 0),
+  x: new THREE.Vector3(0, 0, 1),
   y: new THREE.Vector3(0, 0, 1),
   z: new THREE.Vector3(1, 0, 0),
 }
 const WORLD_V: Record<Axis, THREE.Vector3> = {
-  x: new THREE.Vector3(0, 0, 1),
+  x: new THREE.Vector3(0, -1, 0),
   y: new THREE.Vector3(1, 0, 0),
-  z: new THREE.Vector3(0, 1, 0),
+  z: new THREE.Vector3(0, -1, 0),
 }
 
 const scratchBasis = new THREE.Matrix4()

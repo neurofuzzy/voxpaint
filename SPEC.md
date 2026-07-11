@@ -18,7 +18,7 @@ The repo is currently empty (README + LICENSE only) — this spec defines the fu
 
 ### 1.2 Construction plane
 - Defined by `{ axis: x|y|z, orientation: +1|-1, offset: integer }`. Origin on the other two axes is always 0,0.
-- Determines the 2D (u,v) slice shown in the 2D editor, via a fixed cyclic basis (x→u=y,v=z; y→u=z,v=x; z→u=x,v=y). `orientation` doesn't change which grid cell a pixel maps to — it only affects which direction is "outward" for chamfer geometry and flips the on-screen (u) axis so painting always feels like looking at the slab from outside.
+- Determines the 2D (u,v) slice shown in the 2D editor, via a fixed cyclic basis (x→u=z,v=-y; y→u=z,v=x; z→u=x,v=-y). Wherever world-Y is one of the two in-plane axes (the x- and z-axis planes), it's assigned to v and negated, since the 2D editor's v increases downward (standard canvas convention) while three.js world-Y increases upward — without the flip, content painted lower on the 2D canvas would render higher in the 3D view. `orientation` doesn't change which grid cell a pixel maps to — it only affects which direction is "outward" for chamfer geometry and flips the on-screen (u) axis so painting always feels like looking at the slab from outside.
 - **Set via**: (a) the central axis widget/gizmo in the 3D view (click a cap to set axis+orientation, offset unchanged), or (b) clicking a voxel face in the 3D view — this sets axis+orientation from the face normal and **offset = the clicked cell's own coordinate** (you land on the slice that cell lives on, viewed from the side you clicked).
 - Click-drag in the 3D view orbits the camera (desktop `OrbitControls`); wheel/trackpad pinch zooms, two-finger trackpad pans. No touch/stylus gesture design in v1 (see §9).
 
