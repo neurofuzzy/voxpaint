@@ -53,7 +53,7 @@ export function applyClipboardAt(
     const u = destOriginU + cell.du
     const v = destOriginV + cell.dv
     const coord = gridCoordFromPixel(plane, u, v)
-    if (model.bounds && !withinWorkingBounds(model.bounds, coord)) continue
+    if (!withinWorkingBounds(coord)) continue
 
     const key = encodeKey(...coord)
 

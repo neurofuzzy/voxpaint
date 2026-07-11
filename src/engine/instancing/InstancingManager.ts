@@ -18,11 +18,15 @@ type AnimatedInstance = { index: number; baseColor: THREE.Color; emissiveClass: 
  * model, and exposes instanceId -> CellKey lookups for raycasting (face-click plane picking).
  * Lives outside React — the R3F component just mounts `.group` and calls `sync()`/`tick()`.
  *
- * Plain unlit `MeshBasicMaterial` with `vertexColors` — no custom shaders. Blink/pulse animation
- * (palette kinds 'blink'/'pulse', emissiveClass 2/3) is driven from JS in `tick()`, recoloring
- * just those instances via `setColorAt` each frame — not a GPU shader. Only a small subset of
- * cells typically use these palette kinds, so the per-frame JS cost is negligible, and it's far
- * easier to reason about/debug than an `onBeforeCompile` shader patch.
+ * `MeshLambertMaterial` (lit by `SceneLighting.tsx`'s ambient + 2 directional lights), per-instance
+ * colored via `mesh.setColorAt()` — no custom shaders. Base `material.color` MUST stay white
+ * (0xffffff): three.js always multiplies `instanceColor` against `material.color` in the shader
+ * (gated on `object.instanceColor` being set, NOT on `material.vertexColors`), so any non-white
+ * base color tints/distorts every painted color. Blink/pulse animation (palette kinds
+ * 'blink'/'pulse', emissiveClass 2/3) is driven from JS in `tick()`, recoloring just those
+ * instances via `setColorAt` each frame — not a GPU shader. Only a small subset of cells typically
+ * use these palette kinds, so the per-frame JS cost is negligible, and it's far easier to reason
+ * about/debug than an `onBeforeCompile` shader patch.
  */
 export class InstancingManager {
   readonly group = new THREE.Group()
@@ -30,13 +34,11 @@ export class InstancingManager {
   private capacities: Record<PoolId, number>
   private indexToCellKey: Record<PoolId, CellKey[]> = { cube: [], ramp: [], convex: [], concave: [] }
   private animatedInstances: Record<PoolId, AnimatedInstance[]> = { cube: [], ramp: [], convex: [], concave: [] }
-  private material: THREE.MeshBasicMaterial
+  private material: THREE.MeshLambertMaterial
   private lastSyncedModel: VoxelModel | null = null
   private scratchColor = new THREE.Color()
 
   constructor() {
-    // TEMP DIAGNOSTIC: hard-coded red, vertexColors off — if this still isn't visibly solid red,
-    // the bug isn't instance-coloring at all, it's the geometry/mesh/camera/scene not rendering.
     this.material = new THREE.MeshLambertMaterial({ color: 0xffffff })
 
     const geometries: Record<PoolId, THREE.BufferGeometry> = {

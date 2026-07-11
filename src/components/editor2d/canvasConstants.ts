@@ -1,4 +1,4 @@
-import { MAX_GRID_EXTENT } from '@/engine/grid/GridStore'
+import { DEFAULT_GRID_EXTENT } from '@/engine/grid/GridStore'
 
 /** Grid-cell size in CSS px at 100% zoom (1.0). Centralized here for easy tuning. */
 export const BASE_CELL_PX = 20
@@ -11,8 +11,9 @@ export const WHEEL_ZOOM_SENSITIVITY = 100
  * click, so it needs a much smaller divisor to feel comparably responsive. */
 export const PINCH_ZOOM_SENSITIVITY = 15
 
-/** Logical drawable span (cells), centered on 0,0 — matches the 64^3 hard cap (spec §1.1). */
-export const GRID_SPAN = MAX_GRID_EXTENT
+/** Logical drawable span (cells), centered on 0,0 — matches the default working extent; not the
+ * MAX_GRID_EXTENT technical ceiling (spec §1.1), which is reserved for future project options. */
+export const GRID_SPAN = DEFAULT_GRID_EXTENT
 export const HALF = GRID_SPAN / 2
 
 export function clampZoom(zoom: number): number {

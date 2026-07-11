@@ -44,7 +44,7 @@ export const createToolActionsSlice: Slice = (set, get) => ({
     get().bakeFloatIfAny()
     const { model, plane } = get()
     const destCoord = gridCoordFromPixel(plane, destU, destV)
-    if (model.bounds && !withinWorkingBounds(model.bounds, destCoord)) return
+    if (!withinWorkingBounds(destCoord)) return
     const srcKey = encodeKey(...gridCoordFromPixel(plane, srcU, srcV))
     const srcColor = model.color.get(srcKey)
     const srcChamfer = model.chamfer.get(srcKey)

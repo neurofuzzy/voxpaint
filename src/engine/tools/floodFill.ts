@@ -1,7 +1,7 @@
 import type { VoxelModel } from '@/engine/grid/types'
 import type { PaletteSlotRef } from '@/engine/palette/types'
 import type { ConstructionPlane } from '@/engine/plane/types'
-import { encodeKey, MAX_GRID_EXTENT, withinWorkingBounds } from '@/engine/grid/GridStore'
+import { DEFAULT_GRID_EXTENT, encodeKey, withinWorkingBounds } from '@/engine/grid/GridStore'
 import { gridCoordFromPixel } from '@/engine/plane/constructionPlane'
 
 function slotsEqual(a: PaletteSlotRef | undefined, b: PaletteSlotRef | undefined): boolean {
@@ -21,7 +21,7 @@ export function floodFillRegion(
   startU: number,
   startV: number,
 ): Array<[number, number]> {
-  const half = MAX_GRID_EXTENT / 2
+  const half = DEFAULT_GRID_EXTENT / 2
   const inSpan = (u: number, v: number) => u >= -half && u < half && v >= -half && v < half
   const colorAt = (u: number, v: number) => model.color.get(encodeKey(...gridCoordFromPixel(plane, u, v)))?.paletteSlot
 
@@ -39,7 +39,7 @@ export function floodFillRegion(
     if (!slotsEqual(colorAt(u, v), target)) continue
 
     const coord = gridCoordFromPixel(plane, u, v)
-    if (model.bounds && !withinWorkingBounds(model.bounds, coord)) continue
+    if (!withinWorkingBounds(coord)) continue
 
     result.push([u, v])
     stack.push([u + 1, v], [u - 1, v], [u, v + 1], [u, v - 1])

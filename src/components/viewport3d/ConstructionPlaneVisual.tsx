@@ -2,7 +2,7 @@ import { useThree } from '@react-three/fiber'
 import { useEffect, useMemo, useRef } from 'react'
 import * as THREE from 'three'
 import type { OrbitControls as OrbitControlsImpl } from 'three-stdlib'
-import { MAX_GRID_EXTENT } from '@/engine/grid/GridStore'
+import { DEFAULT_GRID_EXTENT } from '@/engine/grid/GridStore'
 import type { Axis } from '@/engine/grid/types'
 import { useAppStore } from '@/store/useAppStore'
 
@@ -77,15 +77,15 @@ export function ConstructionPlaneVisual({ orbitControlsRef }: { orbitControlsRef
       <group position={position} quaternion={quaternion}>
         {/* Faint fill so the plane reads as a surface, not just lines. */}
         <mesh rotation-x={-Math.PI / 2}>
-          <planeGeometry args={[MAX_GRID_EXTENT, MAX_GRID_EXTENT]} />
+          <planeGeometry args={[DEFAULT_GRID_EXTENT, DEFAULT_GRID_EXTENT]} />
           <meshBasicMaterial color="#4ad9ff" transparent opacity={0.035} depthWrite={false} side={THREE.DoubleSide} />
         </mesh>
         {/* Fine per-cell + bolder every-8-cell tiers, mirroring the 2D canvas's grid hierarchy.
             GridHelper's "center line" pair conveniently lands exactly on the plane's own (0,0)
             origin (spec: origin on the other two axes is always 0,0), so it doubles as the
             brighter "origin" tier without a third geometry. */}
-        <gridHelper args={[MAX_GRID_EXTENT, MAX_GRID_EXTENT, '#3a5a70', '#22303a']} />
-        <gridHelper args={[MAX_GRID_EXTENT, MAX_GRID_EXTENT / 8, '#7ac8ff', '#3d6d8a']} />
+        <gridHelper args={[DEFAULT_GRID_EXTENT, DEFAULT_GRID_EXTENT, '#3a5a70', '#22303a']} />
+        <gridHelper args={[DEFAULT_GRID_EXTENT, DEFAULT_GRID_EXTENT / 8, '#7ac8ff', '#3d6d8a']} />
       </group>
 
       <group position={position} quaternion={arrowQuaternion}>

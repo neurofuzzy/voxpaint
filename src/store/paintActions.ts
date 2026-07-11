@@ -10,8 +10,7 @@ type Slice = StateCreator<AppState, [['zustand/immer', never]], [], PaintActions
 export const createPaintActionsSlice: Slice = (set, get) => ({
   paintColorCell: (coord: Coord) => {
     get().bakeFloatIfAny()
-    const { model } = get()
-    if (model.bounds && !withinWorkingBounds(model.bounds, coord)) return false
+    if (!withinWorkingBounds(coord)) return false
     const slot = get().activePaletteSlot
     set((state) => {
       state.model.color.set(encodeKey(...coord), { paletteSlot: slot })
@@ -26,7 +25,7 @@ export const createPaintActionsSlice: Slice = (set, get) => ({
     get().bakeFloatIfAny()
     const { model, plane } = get()
     const coord = gridCoordFromPixel(plane, u, v)
-    if (model.bounds && !withinWorkingBounds(model.bounds, coord)) return false
+    if (!withinWorkingBounds(coord)) return false
 
     const classification = classify(sampleNeighbors(model, plane, u, v))
     if (!classification) return false

@@ -131,9 +131,10 @@ export function PixelCanvas() {
       if (i % 8 === 0) subdivLines.push(i)
       else fineLines.push(i)
     }
-    strokeGridLines(fineLines, 'rgba(255,255,255,0.05)')
-    strokeGridLines(subdivLines, 'rgba(255,255,255,0.12)')
-    strokeGridLines([0], 'rgba(255,255,255,0.22)')
+    // Colors match the 3D construction plane's gridHelper tiers exactly (ConstructionPlaneVisual.tsx).
+    strokeGridLines(fineLines, '#22303a')
+    strokeGridLines(subdivLines, '#3d6d8a')
+    strokeGridLines([0], '#7ac8ff')
 
     // paint-tool shift-line preview
     if (linePreview) {

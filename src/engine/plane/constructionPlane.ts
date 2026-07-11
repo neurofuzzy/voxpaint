@@ -9,26 +9,31 @@ import type { ConstructionPlane } from './types'
  * world-Y increases *upward* — without this flip, content painted lower on the 2D canvas would
  * render higher in the 3D view (and vice versa). The y-axis plane has no in-plane Y at all (it
  * *is* the offset axis there), so it's unaffected.
+ *
+ * The flip is `-v - 1`, not bare `-v`: cells are corner-anchored (cell n spans world [n, n+1)),
+ * so mirroring a corner index needs the -1 correction (mirroring continuous range [v, v+1) about
+ * 0 lands on (-v-1, -v], i.e. cell index -v-1) — a bare `-v` silently shifts every cell one unit
+ * up in world-Y.
  */
 export function gridCoordFromPixel(plane: ConstructionPlane, u: number, v: number): Coord {
   switch (plane.axis) {
     case 'x':
-      return [plane.offset, -v, u]
+      return [plane.offset, -v - 1, u]
     case 'y':
       return [v, plane.offset, u]
     case 'z':
-      return [u, -v, plane.offset]
+      return [u, -v - 1, plane.offset]
   }
 }
 
 export function pixelFromGridCoord(plane: ConstructionPlane, coord: Coord): { u: number; v: number } {
   switch (plane.axis) {
     case 'x':
-      return { u: coord[2], v: -coord[1] }
+      return { u: coord[2], v: -coord[1] - 1 }
     case 'y':
       return { u: coord[2], v: coord[0] }
     case 'z':
-      return { u: coord[0], v: -coord[1] }
+      return { u: coord[0], v: -coord[1] - 1 }
   }
 }
 

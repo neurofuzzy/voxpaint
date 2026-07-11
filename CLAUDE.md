@@ -23,3 +23,7 @@ npm run lint      # oxlint
 - Palette is indexed (28 slots, cells store slot refs not hex).
 - 64×64×64 hard cap (`MAX_GRID_EXTENT`).
 - Dark-mode only, Tailwind v4 (plugin-based, no config file).
+
+## Behavior Rules
+- NEVER stop a process you did not start (no running dev servers yourself)
+- NEVER browser-test. That is the human's job

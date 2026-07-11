@@ -1,46 +1,27 @@
-# HANDOFF — VoxPaint session end (out of tokens)
+# HANDOFF — VoxPaint
 
-## ACTIVE BUG: 3D voxel materials render wrong
+## RESOLVED: 3D voxel materials rendered wrong
 
-**Symptom history:** non-emissive voxels rendered "dark gray"/black regardless of assigned
-palette color (only emissive-class cells showed correct color). Tried and ruled out, in order:
+**Root cause found:** three.js always multiplies `InstancedMesh.instanceColor` (set via
+`mesh.setColorAt()`) against the shared `material.color` in the shader. This is gated on whether
+`object.instanceColor` is present — **not** on `material.vertexColors` — so turning
+`vertexColors` off (as earlier diagnostics did) never actually disabled the multiply. The
+diagnostic material was hardcoded to solid red (`0xff0000`); every painted color was therefore
+computed as `red * paletteColor`, which zeroes out the G/B channels and explains the "brightness
+tracked the red channel" symptom and the "dark gray/black for non-red colors" original bug.
 
-1. Point-light photometric units, ACES tone mapping, ambient/directional intensity tuning —
-   none of it fixed it. (Left in place: `flat` on `<Canvas>`, ambient + 2 directional lights in
-   `SceneLighting.tsx` — these are fine/reasonable but were NOT the actual bug.)
-2. Suspected `MeshStandardMaterial` + custom `onBeforeCompile` shader (emissive glow injection)
-   breaking the `USE_COLOR`/instance-color path. Switched to `MeshBasicMaterial` (unlit) — still
-   broken, all black.
-3. **Removed all custom shader code entirely.** `InstancingManager` now uses plain
-   `MeshBasicMaterial` + `mesh.setColorAt()`, blink/pulse animation driven from JS in `tick()`
-   (recolors just those instances per-frame, no GPU shader). Still reported black.
-4. Suspected fog (`near=15,far=95`, color == background, `OrbitControls` had no zoom limit —
-   zooming out past 95 units fogs everything to background color = looks black). **Removed fog
-   entirely**, added `minDistance={2} maxDistance={150}` to OrbitControls. Still reported black.
-5. **Current diagnostic (live in code right now):** hard-coded the shared material to
-   `new THREE.MeshBasicMaterial({ color: 0xff0000 })` — no vertexColors, no instanceColor at all,
-   every voxel should be flat solid red. Result: **renders red, but NOT a uniform shade** —
-   varies across faces/instances. This is the new, unexplained clue — a truly unlit
-   `MeshBasicMaterial` with a hard-coded color should be pixel-identical everywhere, no lighting
-   can affect it. Something is still modulating per-fragment/per-instance brightness.
+**Fix:** `src/engine/instancing/InstancingManager.ts` — shared material's base `color` is white
+(`0xffffff`), making the `material.color * instanceColor` multiply an identity op. Material is
+now `MeshLambertMaterial` (intentional choice: real per-face lighting from `SceneLighting.tsx`'s
+ambient + 2 directional lights, not flat/unlit). **Base color must stay white** — this is called
+out in the class docstring so it doesn't regress.
 
-**Hypotheses for next session, untested:**
-- Antialiasing edge-blending against the dark background on small on-screen cubes (optical
-  illusion, not a real bug) — check on a large/zoomed-in cube first, cheapest thing to rule out.
-- `ConstructionPlaneVisual.tsx`'s translucent plane (opacity 0.035, cyan) or its two stacked
-  `gridHelper`s blending over the voxels depending on transparency sort order/depth.
-- Leftover per-instance state from the old shader-attribute era (`instanceEmissiveClass`/
-  `instanceEmissiveColor` buffers) — should be fully removed, but verify no stale attribute is
-  still bound/interpolating into color.
-- Screenshot/compression artifact — ask user to sample exact pixel values, not eyeball it.
-
-**File to un-revert once root cause is found:** `src/engine/instancing/InstancingManager.ts`
-constructor — swap the hard-coded red `material` back to
-`new THREE.MeshBasicMaterial({ vertexColors: true })`.
+Ruled out along the way (left in place, all fine): point-light units/ACES tone mapping/intensity
+tuning, `onBeforeCompile` shader patching, fog, antialiasing/optical illusion.
 
 ---
 
-## Everything else this session (stable, not in question)
+## Everything else (stable, not in question)
 
 - **Tool-dispatch refactor** (SPEC §8): table-driven `toolMap`/`ToolHandler` in `engine/tools/`,
   `usePixelCanvasTools.ts` adapter hook. Tools: paint, erase, eyedropper, select, fill, clone,
@@ -67,3 +48,4 @@ constructor — swap the hard-coded red `material` back to
 ## Do NOT re-litigate
 - Palette default active swatch (`base[0]`) is intentionally near-black (`#2b2530`) — not a bug.
 - Right-click = pan (drag) / quick-erase (click-no-drag) — intentional, replaces old drag-erase.
+- Voxel material base color must be white (`0xffffff`) — see resolved bug above.
