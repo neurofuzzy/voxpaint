@@ -351,3 +351,130 @@ describe('end-to-end: block-out-then-chamfer workflow converges to the steady-st
     expect(model.chamfer.get(key)!.resolvedTo).toEqual(resolvedEarly)
   })
 })
+
+describe('resolveChamferCellsOnPlane — bulk resolution of the steady-state grid', () => {
+  it('bulk-resolves all Y cells to the expected shape grid when all color cells are painted first', () => {
+    const model = buildSteadyStateModel()
+    // All Y cells start with resolvedTo: null — verify a couple are indeed unresolved.
+    const unresolvedKey = encodeKey(...gridCoordFromPixel(PLANE, 2, 0))
+    expect(model.chamfer.get(unresolvedKey)!.resolvedTo).toBeNull()
+
+    // One call should resolve every chamfer cell in the footprint, exactly matching
+    // the classify-only grid tests above.
+    resolveChamferCellsOnPlane(model, PLANE)
+
+    for (let v = 0; v < SHAPE_GRID.length; v++) {
+      for (let u = 0; u < SHAPE_GRID[v].length; u++) {
+        if (SHAPE_GRID[v][u] !== 'Y') continue
+        const key = encodeKey(...gridCoordFromPixel(PLANE, u, v))
+        const resolved = model.chamfer.get(key)!.resolvedTo
+        expect(resolved, `(u=${u}, v=${v})`).not.toBeNull()
+        expect(SHAPE_LETTER[resolved!.shapeKind], `(u=${u}, v=${v}) shape`).toBe(EXPECTED_SHAPE_GRID[v][u])
+        expect(resolved!.rotation, `(u=${u}, v=${v}) rotation`).toBe(Number(EXPECTED_ROTATION_GRID[v][u]))
+      }
+    }
+  })
+
+  it('bulk resolution and incremental paint-by-paint produce the same final shapes (for the color-first pattern)', () => {
+    const bulkModel = buildSteadyStateModel()
+    resolveChamferCellsOnPlane(bulkModel, PLANE)
+
+    const incrementalModel = emptyModel()
+    for (let v = 0; v < SHAPE_GRID.length; v++) {
+      for (let u = 0; u < SHAPE_GRID[v].length; u++) {
+        if (SHAPE_GRID[v][u] === '-') continue
+        paintColor(incrementalModel, PLANE, u, v)
+      }
+    }
+    for (let v = 0; v < SHAPE_GRID.length; v++) {
+      for (let u = 0; u < SHAPE_GRID[v].length; u++) {
+        if (SHAPE_GRID[v][u] === 'Y') paintChamfer(incrementalModel, PLANE, u, v)
+      }
+    }
+
+    for (let v = 0; v < SHAPE_GRID.length; v++) {
+      for (let u = 0; u < SHAPE_GRID[v].length; u++) {
+        if (SHAPE_GRID[v][u] !== 'Y') continue
+        const key = encodeKey(...gridCoordFromPixel(PLANE, u, v))
+        expect(bulkModel.chamfer.get(key)!.resolvedTo, `(u=${u}, v=${v})`).toEqual(
+          incrementalModel.chamfer.get(key)!.resolvedTo,
+        )
+      }
+    }
+  })
+})
+
+describe('multi-plane resolution — cells on different construction planes resolve independently', () => {
+  const PLANE_YZ: ConstructionPlane = { axis: 'x', orientation: 1, offset: 0 }
+  const PLANE_XY: ConstructionPlane = { axis: 'z', orientation: 1, offset: 0 }
+
+  it('a chamfer cell on the x-plane does not get resolved by a resolve pass for the z-plane', () => {
+    const model = emptyModel()
+    // Paint one chamfer cell on the x-plane, unresolved.
+    const xKey = encodeKey(...gridCoordFromPixel(PLANE_YZ, 0, 0))
+    model.color.set(xKey, { paletteSlot: SLOT })
+    model.chamfer.set(xKey, { planeAxis: PLANE_YZ.axis, planeOrientation: PLANE_YZ.orientation, resolvedTo: null })
+
+    // Resolve on the z-plane — should not touch the x-plane cell.
+    resolveChamferCellsOnPlane(model, PLANE_XY)
+    expect(model.chamfer.get(xKey)!.resolvedTo).toBeNull()
+  })
+
+  it('cells on different planes with unrelated coords do not interfere', () => {
+    // A z-plane cell at offset 0 and an x-plane cell at offset 0, at different world positions.
+    const model = emptyModel()
+
+    // Z-plane cell at pixel (0,0) → coord (0, -1, 0)
+    const zKey = encodeKey(0, -1, 0)
+    model.color.set(zKey, { paletteSlot: SLOT })
+    model.chamfer.set(zKey, { planeAxis: 'z', planeOrientation: 1, resolvedTo: null })
+
+    // X-plane cell at pixel (0,0) → coord (0, -1, -1)
+    const xKey = encodeKey(0, -1, -1)
+    model.color.set(xKey, { paletteSlot: SLOT })
+    model.chamfer.set(xKey, { planeAxis: 'x', planeOrientation: 1, resolvedTo: null })
+
+    // Provide 3 orthogonal neighbors on the z-plane only (for ramp resolution).
+    paintColor(model, PLANE, 1, 0) // east
+    paintColor(model, PLANE, 0, -1) // north
+    paintColor(model, PLANE, 0, 1) // south
+
+    resolveChamferCellsOnPlane(model, PLANE)
+    expect(model.chamfer.get(zKey)!.resolvedTo).not.toBeNull()
+    // x-plane cell is not even on PLANE's axis, so untouched
+    expect(model.chamfer.get(xKey)!.resolvedTo).toBeNull()
+  })
+
+  it('resolution on each plane independently converges both cell groups', () => {
+    const model = emptyModel()
+
+    // Z-plane cells: an L-shape at (0,0), (1,0), (0,1) so (0,0) resolves to convex.
+    const zPlane0: ConstructionPlane = { axis: 'z', orientation: 1, offset: 0 }
+    paintColor(model, zPlane0, 0, 0)
+    paintColor(model, zPlane0, 1, 0)
+    paintColor(model, zPlane0, 0, 1)
+    const zKey = encodeKey(...gridCoordFromPixel(zPlane0, 0, 0))
+    model.chamfer.set(zKey, { planeAxis: 'z', planeOrientation: 1, resolvedTo: null })
+    model.chamfer.set(encodeKey(...gridCoordFromPixel(zPlane0, 1, 0)), { planeAxis: 'z', planeOrientation: 1, resolvedTo: null })
+    model.chamfer.set(encodeKey(...gridCoordFromPixel(zPlane0, 0, 1)), { planeAxis: 'z', planeOrientation: 1, resolvedTo: null })
+
+    // X-plane cells: a separate L-shape at (-10,-10) on the x-plane.
+    const xPlane0: ConstructionPlane = { axis: 'x', orientation: 1, offset: 0 }
+    paintColor(model, xPlane0, -10, -10)
+    paintColor(model, xPlane0, -9, -10)
+    paintColor(model, xPlane0, -10, -9)
+    const xKey = encodeKey(...gridCoordFromPixel(xPlane0, -10, -10))
+    model.chamfer.set(xKey, { planeAxis: 'x', planeOrientation: 1, resolvedTo: null })
+    model.chamfer.set(encodeKey(...gridCoordFromPixel(xPlane0, -9, -10)), { planeAxis: 'x', planeOrientation: 1, resolvedTo: null })
+    model.chamfer.set(encodeKey(...gridCoordFromPixel(xPlane0, -10, -9)), { planeAxis: 'x', planeOrientation: 1, resolvedTo: null })
+
+    // Resolve on z-plane — only the z-plane cell should resolve.
+    resolveChamferCellsOnPlane(model, zPlane0)
+    expect(model.chamfer.get(zKey)!.resolvedTo).not.toBeNull()
+    expect(model.chamfer.get(xKey)!.resolvedTo).toBeNull()
+
+    // Resolve on x-plane — now the x-plane cell resolves too.
+    resolveChamferCellsOnPlane(model, xPlane0)
+    expect(model.chamfer.get(xKey)!.resolvedTo).not.toBeNull()
+  })
+})

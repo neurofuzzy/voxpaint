@@ -4,7 +4,7 @@ import type { ConstructionPlane } from '@/engine/plane/types'
 import type { ProjectMeta } from '@/engine/persistence/schema'
 
 export type ToolId = 'paint' | 'erase' | 'eyedropper' | 'select' | 'fill' | 'clone' | 'move'
-export type ActiveLayer = 'color' | 'chamfer'
+export type VoxelKind = 'cube' | 'ramp'
 
 export type SelectionRegion = {
   originU: number
@@ -67,10 +67,10 @@ export type PlaneSlice = {
 
 export type ToolSlice = {
   activeTool: ToolId
-  activeLayer: ActiveLayer
+  activeVoxelKind: VoxelKind
   activePaletteSlot: PaletteSlotRef
   setActiveTool: (tool: ToolId) => void
-  setActiveLayer: (layer: ActiveLayer) => void
+  setActiveVoxelKind: (kind: VoxelKind) => void
   setActivePaletteSlot: (slot: PaletteSlotRef) => void
 }
 
@@ -112,15 +112,14 @@ export type PersistenceSlice = {
 }
 
 export type PaintActionsSlice = {
-  /** Writes a color-layer cell. Returns false (no-op) if outside the 64^3 working bounds. */
-  paintColorCell: (coord: Coord) => boolean
   /**
-   * Validates + writes a chamfer-layer cell at plane-space (u,v), plus the color layer at the
-   * same cell using the active palette slot (spec: chamfer paint always also sets color).
-   * Returns false (no-op) if the neighbor configuration is invalid or out of bounds.
+   * Paints a cell at plane-space (u,v) using the active vault kind and palette slot.
+   * 'cube' writes only color (deletes any existing chamfer). 'ramp' writes both color and chamfer
+   * (auto-resolved from neighbors). Returns false if out of bounds.
    */
-  paintChamferCell: (u: number, v: number) => boolean
-  eraseCell: (coord: Coord, layer: ActiveLayer) => void
+  paintCell: (u: number, v: number) => boolean
+  /** Erases both color and chamfer layers at a cell. */
+  eraseCell: (coord: Coord) => void
 }
 
 export type SelectionTransformKind = 'rotate' | 'mirror-h' | 'mirror-v'

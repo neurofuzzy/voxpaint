@@ -117,7 +117,7 @@ export function usePixelCanvasTools(canvasRef: React.RefObject<HTMLCanvasElement
 
   const model = useAppStore((s) => s.model)
   const plane = useAppStore((s) => s.plane)
-  const activeLayer = useAppStore((s) => s.activeLayer)
+  const activeVoxelKind = useAppStore((s) => s.activeVoxelKind)
   const activePaletteSlot = useAppStore((s) => s.activePaletteSlot)
   const selection = useAppStore((s) => s.selection)
   const floatContent = useAppStore((s) => s.floatContent)
@@ -132,9 +132,8 @@ export function usePixelCanvasTools(canvasRef: React.RefObject<HTMLCanvasElement
   const setHoverCell = store.setHoverCell // pulled out so it can be a genuine, listable useCallback dep
 
   const ctx: ToolContext = {
-    model, plane, activeLayer, activePaletteSlot, selection, floatContent, floatOrigin, clipboard,
-    paintColorCell: store.paintColorCell,
-    paintChamferCell: store.paintChamferCell,
+    model, plane, activeVoxelKind, activePaletteSlot, selection, floatContent, floatOrigin, clipboard,
+    paintCell: store.paintCell,
     eraseCell: store.eraseCell,
     floodFill: store.floodFill,
     cloneStampCell: store.cloneStampCell,
@@ -229,7 +228,7 @@ export function usePixelCanvasTools(canvasRef: React.RefObject<HTMLCanvasElement
           const c = ctxRef.current
           c.bakeFloatIfAny()
           c.beginStroke()
-          c.eraseCell(gridCoordFromPixel(c.plane, cell[0], cell[1]), c.activeLayer)
+          c.eraseCell(gridCoordFromPixel(c.plane, cell[0], cell[1]))
           c.commitStroke()
         }
         return

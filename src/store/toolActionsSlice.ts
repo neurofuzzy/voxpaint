@@ -12,7 +12,7 @@ type Slice = StateCreator<AppState, [['zustand/immer', never]], [], ToolActionsS
 
 // Invariant: every model-mutating action in this store must call `get().bakeFloatIfAny()` as its
 // first line (before its own beginStroke()), so a pending float never gets silently dropped or
-// desynced from the model. `undo`/`redo` (historySlice.ts) and `paintColorCell`/`paintChamferCell`/
+// desynced from the model. `undo`/`redo` (historySlice.ts) and `paintCell`/
 // `eraseCell` (paintActions.ts) follow the same rule.
 export const createToolActionsSlice: Slice = (set, get) => ({
   floodFill: (u, v) => {

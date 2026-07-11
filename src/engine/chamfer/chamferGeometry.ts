@@ -67,9 +67,10 @@ export function rampGeometry(openSide: 0 | 1 | 2 | 3): THREE.BufferGeometry {
     // sloped roof, from the open (knife) edge up to the closed top edge
     [base(bc0), base(bc1), top(tc1)],
     [base(bc0), top(tc1), top(tc0)],
-    // two triangular end caps
-    [base(bc1), base(tc1), top(tc1)],
-    [base(bc0), top(tc0), base(tc0)],
+    // two triangular end caps — each connects one open-side corner to the closed-side
+    // corner on the same side of the ramp (bc1↔tc0, bc0↔tc1), not diagonally across.
+    [base(bc1), base(tc0), top(tc0)],
+    [base(bc0), top(tc1), base(tc1)],
   ])
 }
 
