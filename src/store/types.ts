@@ -18,7 +18,10 @@ export type ClipboardCell = {
   du: number
   dv: number
   color?: { paletteSlot: PaletteSlotRef }
-  chamfer?: { rotation: number }
+  /** Just a flag ("this cell was a chamfer cell") — the destination always reclassifies fresh
+   * against its own neighbors on paste (engine/tools/clipboard.ts), so no shape/rotation is
+   * carried over from the source. */
+  chamfer?: true
 }
 
 export type ClipboardData = {

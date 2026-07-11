@@ -30,10 +30,9 @@ export function deserializeProject(file: VoxPaintProjectFile): { model: VoxelMod
   }
   for (const cell of file.model.chamferCells) {
     chamfer.set(encodeKey(cell.x, cell.y, cell.z), {
-      shapeKind: cell.shapeKind,
-      rotation: cell.rotation,
       planeAxis: cell.planeAxis,
       planeOrientation: cell.planeOrientation,
+      resolvedTo: cell.resolvedTo,
     })
   }
 

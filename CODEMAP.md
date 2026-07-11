@@ -1,8 +1,8 @@
 ```
 # Auto-generated project map
-# Last updated: 2026-07-11 19:04:02
+# Last updated: 2026-07-11 20:23:50
 # Files: 76
-# Lines of code: ~4160
+# Lines of code: ~4237
 ```
 - **/components**
   - **/editor2d**
@@ -89,10 +89,9 @@
     - [chamferResolver.ts](../src/engine/chamfer/chamferResolver.ts)
       - Function: `sampleNeighbors` - Samples the chamfer layer's 8-neighborhood arou...
       - Function: `classify` - Classifies a chamfer cell's shape from its 8-ne...
-      - Function: `canPaintChamfer` - Live validation used to gate the paint cursor/b...
+      - Function: `resolveChamferCellsOnPlane` - Re-attempts resolution for every still-unresolv...
     - [types.ts](../src/engine/chamfer/types.ts)
       - Type: `NeighborSample`
-      - Type: `ChamferClassification`
   - **/csg**
   - **/grid**
     - [GridStore.ts](../src/engine/grid/GridStore.ts)
@@ -114,6 +113,7 @@
       - Type: `Coord` - Grid coordinate, always integer. Mutable tuple ...
       - Type: `CellKey` - Sparse-map key for a grid coordinate. See `enco...
       - Type: `ColorCell`
+      - Type: `ChamferClassification`
       - Type: `ChamferCell`
       - Type: `BBox`
       - Type: `VoxelModel`
@@ -136,6 +136,7 @@
       - Function: `emissiveClassFor` - Emissive "class" id consumed by the shared inst...
       - Function: `resolveSlotColor`
       - Function: `isValidSlotRef`
+      - Function: `shadeColor` - Shifts a `#rrggbb` color's RGB channels by a fl...
     - [types.ts](../src/engine/palette/types.ts)
       - Type: `PaletteSlotKind`
       - Type: `PaletteSlotRef`
@@ -185,7 +186,6 @@
     - [clipboard.ts](../src/engine/tools/clipboard.ts)
       - Function: `copyRegionToClipboard`
       - Function: `clearRegion` - Erases both layers under a selection mask (used...
-      - Type: `PasteResult`
       - Function: `applyClipboardAt` - Stamps clipboard data at a destination origin. ...
     - [cloneTool.ts](../src/engine/tools/cloneTool.ts)
       - Variable: `cloneTool`

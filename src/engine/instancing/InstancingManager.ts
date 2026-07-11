@@ -90,7 +90,8 @@ export class InstancingManager {
     const byPool: Record<PoolId, CellKey[]> = { cube: [], ramp: [], convex: [], concave: [] }
     for (const key of model.color.keys()) {
       const chamfer = model.chamfer.get(key)
-      byPool[chamfer ? chamfer.shapeKind : 'cube'].push(key)
+      // Unresolved chamfer cells (resolvedTo: null) render as a plain cube until they resolve.
+      byPool[chamfer?.resolvedTo ? chamfer.resolvedTo.shapeKind : 'cube'].push(key)
     }
 
     this.cellKeyToInstance.clear()
@@ -109,8 +110,8 @@ export class InstancingManager {
         const colorCell = model.color.get(key)!
         const chamferCell = model.chamfer.get(key)
 
-        if (chamferCell) {
-          chamferInstanceMatrix(coord, chamferCell.planeAxis, chamferCell.planeOrientation, chamferCell.rotation, matrix)
+        if (chamferCell?.resolvedTo) {
+          chamferInstanceMatrix(coord, chamferCell.planeAxis, chamferCell.planeOrientation, chamferCell.resolvedTo.rotation, matrix)
         } else {
           cubeInstanceMatrix(coord, matrix)
         }

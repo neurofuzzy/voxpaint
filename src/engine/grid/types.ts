@@ -15,12 +15,25 @@ export type ColorCell = {
   paletteSlot: PaletteSlotRef
 }
 
-export type ChamferCell = {
+export type ChamferClassification = {
   shapeKind: ChamferShapeKind
   rotation: Rotation
+}
+
+export type ChamferCell = {
   /** Construction plane active at paint time — frozen, never reinterpreted later. */
   planeAxis: Axis
   planeOrientation: Orientation
+  /**
+   * The resolved shape, or `null` if this cell's neighbor configuration doesn't (yet) resolve to
+   * a valid ramp/convex/concave shape. Painting a chamfer cell always succeeds even when
+   * unresolved — it renders as a plain cube until it resolves. Resolution is (re-)attempted
+   * whenever a chamfer paint happens on the same (axis, offset) plane slice
+   * (`engine/chamfer/chamferResolver.ts`'s `resolveChamferCellsOnPlane`); once non-null, it's
+   * frozen forever, same as the old "resolved once at paint time" rule just deferred until it's
+   * actually resolvable.
+   */
+  resolvedTo: ChamferClassification | null
 }
 
 export type BBox = {

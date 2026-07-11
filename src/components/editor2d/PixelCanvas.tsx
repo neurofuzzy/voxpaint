@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import { encodeKey } from '@/engine/grid/GridStore'
 import { gridCoordFromPixel } from '@/engine/plane/constructionPlane'
 import { toDisplayU, toDisplayV } from '@/engine/plane/planeDisplay'
-import { resolveSlotColor } from '@/engine/palette/palette'
+import { resolveSlotColor, shadeColor } from '@/engine/palette/palette'
 import { forEachSelectedCell, traceSelectionOutline } from '@/engine/tools/selectionMask'
 import { useAppStore } from '@/store/useAppStore'
 import { worldToScreen } from './cameraTransform'
@@ -42,6 +42,35 @@ function fillDither(ctx: CanvasRenderingContext2D, sx: number, sy: number, size:
       ctx.fillRect(px, py, 1, 1)
     }
   }
+}
+
+const CHAMFER_STRIPE_WIDTH = 2
+const CHAMFER_SHADE_DELTA = 24
+
+/**
+ * 2px-wide 45° diagonal stripes alternating between a slightly darker and slightly lighter shade
+ * of the voxel's own color — the active-plane marker for a chamfered cell, replacing a flat fill.
+ * Only ever called for the active plane's own cells (see the draw loop below) — behind-layer
+ * reference cells always use the flat dithered fill regardless of chamfer status.
+ */
+function fillDiagonalStripes(ctx: CanvasRenderingContext2D, sx: number, sy: number, size: number, color: string) {
+  const colorA = shadeColor(color, CHAMFER_SHADE_DELTA)
+  const colorB = shadeColor(color, -CHAMFER_SHADE_DELTA)
+  ctx.save()
+  ctx.beginPath()
+  ctx.rect(sx, sy, size, size)
+  ctx.clip()
+  ctx.translate(sx + size / 2, sy + size / 2)
+  ctx.rotate(Math.PI / 4)
+  const span = size * Math.SQRT2
+  const half = span / 2
+  let i = 0
+  for (let x = -half; x < half; x += CHAMFER_STRIPE_WIDTH) {
+    ctx.fillStyle = i % 2 === 0 ? colorA : colorB
+    ctx.fillRect(x, -half, CHAMFER_STRIPE_WIDTH, span)
+    i++
+  }
+  ctx.restore()
 }
 
 export function PixelCanvas() {
@@ -167,16 +196,14 @@ export function PixelCanvas() {
         const colorCell = model.color.get(key)
         if (!colorCell) continue
         const [sx, sy] = worldToScreen(toDisplayU(plane, u), toDisplayV(plane, v), size, pan, zoom)
-        ctx.fillStyle = resolveSlotColor(palette, colorCell.paletteSlot)
-        ctx.fillRect(sx, sy, cellPx, cellPx)
-
-        if (model.chamfer.has(key)) {
-          ctx.strokeStyle = 'rgba(255,255,255,0.6)'
-          ctx.lineWidth = 1
-          ctx.beginPath()
-          ctx.moveTo(sx, sy + cellPx)
-          ctx.lineTo(sx + cellPx, sy)
-          ctx.stroke()
+        const color = resolveSlotColor(palette, colorCell.paletteSlot)
+        // Unresolved chamfer cells (still waiting on neighbors) render as a flat fill, same as a
+        // plain cube — the stripe pattern is reserved for cells that actually resolved a shape.
+        if (model.chamfer.get(key)?.resolvedTo) {
+          fillDiagonalStripes(ctx, sx, sy, cellPx, color)
+        } else {
+          ctx.fillStyle = color
+          ctx.fillRect(sx, sy, cellPx, cellPx)
         }
       }
     }
@@ -213,16 +240,13 @@ export function PixelCanvas() {
         const v = floatOrigin.originV + cell.dv
         const [sx, sy] = worldToScreen(toDisplayU(plane, u), toDisplayV(plane, v), size, pan, zoom)
         if (cell.color) {
-          ctx.fillStyle = resolveSlotColor(palette, cell.color.paletteSlot)
-          ctx.fillRect(sx, sy, cellPx, cellPx)
-        }
-        if (cell.chamfer) {
-          ctx.strokeStyle = 'rgba(255,255,255,0.6)'
-          ctx.lineWidth = 1
-          ctx.beginPath()
-          ctx.moveTo(sx, sy + cellPx)
-          ctx.lineTo(sx + cellPx, sy)
-          ctx.stroke()
+          const color = resolveSlotColor(palette, cell.color.paletteSlot)
+          if (cell.chamfer) {
+            fillDiagonalStripes(ctx, sx, sy, cellPx, color)
+          } else {
+            ctx.fillStyle = color
+            ctx.fillRect(sx, sy, cellPx, cellPx)
+          }
         }
       }
     }

@@ -2,7 +2,7 @@ import type { VoxelModel } from '@/engine/grid/types'
 import type { ConstructionPlane } from '@/engine/plane/types'
 import { encodeKey, expandBounds, withinWorkingBounds } from '@/engine/grid/GridStore'
 import { gridCoordFromPixel } from '@/engine/plane/constructionPlane'
-import { classify, sampleNeighbors } from '@/engine/chamfer/chamferResolver'
+import { classify, resolveChamferCellsOnPlane, sampleNeighbors } from '@/engine/chamfer/chamferResolver'
 import { forEachSelectedCell } from './selectionMask'
 import type { ClipboardCell, ClipboardData, SelectionRegion } from '@/store/types'
 
@@ -17,7 +17,7 @@ export function copyRegionToClipboard(model: VoxelModel, plane: ConstructionPlan
       du: u - region.originU,
       dv: v - region.originV,
       color: color ? { paletteSlot: color.paletteSlot } : undefined,
-      chamfer: chamfer ? { rotation: chamfer.rotation } : undefined,
+      chamfer: chamfer ? true : undefined,
     })
   })
   return { width: region.width, height: region.height, cells }
@@ -32,11 +32,12 @@ export function clearRegion(model: VoxelModel, plane: ConstructionPlane, region:
   })
 }
 
-export type PasteResult = { applied: number; droppedChamfer: number }
-
 /**
- * Stamps clipboard data at a destination origin. Chamfer cells are re-validated against the
- * destination's neighbors (spec §2) — invalid ones are dropped but their color still applies.
+ * Stamps clipboard data at a destination origin. Chamfer cells always paste (never dropped) —
+ * each gets classified fresh against the destination's neighbors, same as a live chamfer paint;
+ * `resolvedTo` is null if that doesn't (yet) resolve to a shape. A final `resolveChamferCellsOnPlane`
+ * pass catches any cell whose required neighbor was pasted *later* in this same clipboard (paste
+ * order within one operation shouldn't matter for whether a loop shape fully resolves).
  * Mutates the given (draft) model directly.
  */
 export function applyClipboardAt(
@@ -45,10 +46,7 @@ export function applyClipboardAt(
   clipboard: ClipboardData,
   destOriginU: number,
   destOriginV: number,
-): PasteResult {
-  let applied = 0
-  let droppedChamfer = 0
-
+): void {
   for (const cell of clipboard.cells) {
     const u = destOriginU + cell.du
     const v = destOriginV + cell.dv
@@ -58,22 +56,8 @@ export function applyClipboardAt(
     const key = encodeKey(...coord)
 
     if (cell.chamfer) {
-      const classification = classify(sampleNeighbors(model, plane, u, v))
-      if (classification) {
-        model.chamfer.set(key, {
-          shapeKind: classification.shapeKind,
-          rotation: classification.rotation,
-          planeAxis: plane.axis,
-          planeOrientation: plane.orientation,
-        })
-        if (cell.color) model.color.set(key, { paletteSlot: cell.color.paletteSlot })
-        model.bounds = expandBounds(model.bounds, coord)
-        applied++
-        continue
-      }
-      droppedChamfer++
-      model.chamfer.delete(key)
-      // fall through — the cell's color still applies below
+      const resolvedTo = classify(sampleNeighbors(model, plane, u, v))
+      model.chamfer.set(key, { planeAxis: plane.axis, planeOrientation: plane.orientation, resolvedTo })
     } else {
       model.chamfer.delete(key)
     }
@@ -81,9 +65,8 @@ export function applyClipboardAt(
     if (cell.color) {
       model.color.set(key, { paletteSlot: cell.color.paletteSlot })
       model.bounds = expandBounds(model.bounds, coord)
-      applied++
     }
   }
 
-  return { applied, droppedChamfer }
+  resolveChamferCellsOnPlane(model, plane)
 }

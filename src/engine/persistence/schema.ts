@@ -1,4 +1,4 @@
-import type { Axis, BBox, ChamferShapeKind, Orientation, Rotation } from '@/engine/grid/types'
+import type { Axis, BBox, ChamferClassification, Orientation } from '@/engine/grid/types'
 import type { PaletteSlotRef, PaletteState } from '@/engine/palette/types'
 
 export const CURRENT_SCHEMA_VERSION = 1 as const
@@ -14,10 +14,11 @@ export type SerializedChamferCell = {
   x: number
   y: number
   z: number
-  shapeKind: ChamferShapeKind
-  rotation: Rotation
   planeAxis: Axis
   planeOrientation: Orientation
+  /** Null if this cell hadn't resolved a shape yet when the project was saved — it stays
+   * unresolved (rendered as a plain cube) until enough neighbors are painted around it. */
+  resolvedTo: ChamferClassification | null
 }
 
 export type VoxPaintProjectFileV1 = {

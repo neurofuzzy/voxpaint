@@ -169,20 +169,42 @@ the 2D canvas drives the exact same 3D feedback as hovering the 3D view directly
 `engine/chamfer/`:
 
 - `chamferResolver.ts` — `sampleNeighbors` reads the chamfer layer's 8-neighborhood (N/E/S/W +
-  diagonals) around a (u,v) pixel; `classify` resolves that into a `{shapeKind, rotation}` or
-  `null` (invalid — 3-of-4 orthogonal → ramp, 2 adjacent → convex corner, 4 orthogonal + exactly
-  one empty diagonal → concave corner, everything else blocked). `canPaintChamfer` is the live-gate
-  used by the paint cursor.
+  diagonals) around a (u,v) pixel (a neighbor counts as "filled" if it's marked as a chamfer cell
+  at all, regardless of whether *its own* shape has resolved — see below); `classify` resolves
+  that into a `ChamferClassification` (`{shapeKind, rotation}`) or `null` (3-of-4 orthogonal →
+  ramp, 2 adjacent → convex corner, 4 orthogonal + exactly one empty diagonal → concave corner,
+  everything else — including the 0-or-1-filled case every fresh cell starts at — unresolved, not
+  blocked).
 - `chamferGeometry.ts` — the actual mesh builders (`unitCubeGeometry`, `rampGeometry`,
   `convexCornerGeometry`, `concaveCornerGeometry`), all in a shared local prefab space `[0,1]^3`
   (x=u, y=v, z=outward extent; z=1 is flush with the construction plane).
 
-Classification happens **once, at paint time**, from the chamfer layer only, and is frozen forever
-— `store/paintActions.ts`'s `paintChamferCell` bakes `{shapeKind, rotation, planeAxis,
-planeOrientation}` into the cell; later edits to neighbors never retroactively reclassify it.
-`engine/instancing/basis.ts`'s `chamferInstanceMatrix` turns that baked data into a world-space
-transform for the shared instanced geometry (rotation applied via the instance matrix, not
-separate geometries per rotation).
+**Painting a chamfer cell always succeeds**, even when it can't resolve a shape yet — there's no
+paint-blocking validation (an earlier design gated the paint itself on `classify` succeeding,
+which meant the very first chamfer cell painted anywhere — always 0 filled neighbors — could never
+succeed; nothing could ever be painted). `ChamferCell` (`engine/grid/types.ts`) is
+`{planeAxis, planeOrientation, resolvedTo}`, where `resolvedTo: ChamferClassification | null`.
+`store/paintActions.ts`'s `paintChamferCell` always writes the cell (`resolvedTo` set to whatever
+`classify` currently returns, possibly `null`), then calls `chamferResolver.ts`'s
+`resolveChamferCellsOnPlane(model, plane)`, which re-attempts resolution for every other
+still-unresolved chamfer cell on that exact (axis, offset) slice — the newly-painted cell may be
+the missing neighbor they were waiting on. This is cheap (scans one plane's worth of already-
+chamfered cells, not the whole model) and is the only place re-resolution happens: erasing a
+neighbor can only ever reduce a fill count, never newly satisfy one, so erase never needs to
+trigger it. **Once `resolvedTo` is set, it's frozen forever** — matching the original "resolved
+once, never reclassified" invariant, just deferred until a cell actually has enough neighbors
+rather than blocking the paint that couldn't yet resolve it. `cloneStampCell`
+(`store/toolActionsSlice.ts`) and `applyClipboardAt` (`engine/tools/clipboard.ts`, paste/re-stamp)
+follow the identical pattern: always write, classify fresh against the destination's current
+neighbors, then `resolveChamferCellsOnPlane`.
+
+Cells with `resolvedTo: null` render as a plain cube in both the 2D editor (flat fill, not the
+diagonal-stripe chamfer marker — see below) and the 3D view (`InstancingManager.sync()` buckets a
+cell into the `cube` pool unless `chamfer?.resolvedTo` is set) until they resolve.
+`engine/instancing/basis.ts`'s `chamferInstanceMatrix` turns a resolved cell's baked
+`{planeAxis, planeOrientation, resolvedTo.rotation}` into a world-space transform for the shared
+instanced geometry (rotation applied via the instance matrix, not separate geometries per
+rotation).
 
 ---
 
@@ -191,11 +213,19 @@ separate geometries per rotation).
 `components/editor2d/`:
 
 - `PixelCanvas.tsx` — the actual `<canvas>` (2D context, `imageSmoothingEnabled=false`). Draws, in
-  order: checkerboard for empty cells → painted content → grid lines (fine/8-cell/origin tiers,
-  colors matching the 3D `gridHelper` exactly) → line-draw preview → floating selection content →
-  selection fill/marching-ants outline. Every content-related draw call routes its u-coordinate
-  through `toDisplayU` for orientation mirroring; the checkerboard and grid lines don't need it
-  (already symmetric about the origin).
+  order: checkerboard for empty cells → grid lines (fine/8-cell/origin tiers, colors matching the
+  3D `gridHelper` exactly) → the layer immediately behind the active plane (`offset - orientation`
+  along the plane's own axis — an architectural-drawing-style reference: a light pixel-level dither
+  fill plus a 1px outline per voxel, both in that voxel's own color; never chamfer-striped,
+  regardless of the behind cell's own chamfer/resolution status) → the active plane's own content
+  (flat fill, or `fillDiagonalStripes` — 2px 45°-diagonal bands alternating a lighter/darker shade
+  of the cell's color via `engine/palette/palette.ts`'s `shadeColor` — for a *resolved* chamfer
+  cell only) → line-draw preview → floating selection content → selection fill/marching-ants
+  outline. The grid is deliberately drawn before all content (not last) so painted cells and
+  overlays sit on top of it. Every content-related draw call routes its u-coordinate through
+  `toDisplayU` and its v-coordinate through `toDisplayV` (both from `planeDisplay.ts`) for
+  orientation mirroring; the checkerboard and grid lines don't need it (already symmetric about
+  the origin).
 - `usePixelCanvasTools.ts` — pointer-input adapter. Builds a fresh `ToolContext` every render
   (mirrored into a ref so stable pointer callbacks never read a stale closure) and dispatches to
   `engine/tools/index.ts`'s `toolMap[activeTool]`. Also owns pan/zoom camera state and forwards

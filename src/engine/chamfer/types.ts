@@ -1,5 +1,3 @@
-import type { ChamferShapeKind, Rotation } from '@/engine/grid/types'
-
 export type NeighborSample = {
   N: boolean
   E: boolean
@@ -9,9 +7,4 @@ export type NeighborSample = {
   SE: boolean
   SW: boolean
   NW: boolean
-}
-
-export type ChamferClassification = {
-  shapeKind: ChamferShapeKind
-  rotation: Rotation
 }

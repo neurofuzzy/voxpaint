@@ -23,18 +23,20 @@ The repo is currently empty (README + LICENSE only) — this spec defines the fu
 - Click-drag in the 3D view orbits the camera (desktop `OrbitControls`); wheel/trackpad pinch zooms, two-finger trackpad pans. No touch/stylus gesture design in v1 (see §9).
 
 ### 1.3 Chamfer shape system
-A chamfer cell's 3D shape is a **3-piece autotile system** — ramp, convex corner, or concave corner — resolved **once, at paint time**, from the 8-neighborhood of the chamfer layer only (never the color layer), and then frozen: later edits to neighboring cells never retroactively reclassify an already-painted cell.
+A chamfer cell's 3D shape is a **3-piece autotile system** — ramp, convex corner, or concave corner — resolved from the 8-neighborhood of the chamfer layer only (never the color layer).
 
 Classification, using orthogonal neighbors N/E/S/W and diagonals NE/NW/SE/SW (all within the chamfer layer, at the plane's u/v projection):
 
 - **3 of 4 orthogonal filled, 1 empty** → **ramp**, sloping down toward the empty side.
 - **Exactly 2 adjacent orthogonal filled (L-shape)** → **convex corner**, sloping down on both open sides, meeting at a diagonal ridge.
 - **All 4 orthogonal filled AND exactly one relevant diagonal empty** → **concave corner**, flat on all 4 straight edges, notched at that diagonal.
-- **Any other configuration is invalid** — no pyramid/spike fallback exists. The editor must **prevent** painting a chamfer cell wherever it would resolve to an invalid configuration (live-validated per cell as the user paints/drags, cursor shows a blocked state over invalid cells).
+- **Any other configuration doesn't resolve to a shape yet** — most notably 0 or 1 filled orthogonal neighbors, which every chamfer cell starts at the moment it's painted in a fresh area. No pyramid/spike fallback exists for this case.
+
+**Painting a chamfer cell always succeeds**, even when its neighbor configuration doesn't resolve to a shape — the paint action never blocks. Each chamfer cell stores `{ planeAxis, planeOrientation, resolvedTo }`, where `resolvedTo` is `{ shapeKind: ramp|convex|concave, rotation: 0-3 } | null`. A cell with `resolvedTo: null` renders as a plain cube (it still has a color, per §1.1) until it resolves. Resolution is re-attempted for every still-unresolved chamfer cell on a given (axis, offset) plane slice whenever a *new* chamfer cell is painted on that same slice (the only kind of edit that could newly satisfy a neighbor requirement) — cheap, since it only scans that one slice's already-chamfered cells, not the whole model. **Once resolved, a cell's shape is frozen forever** — later neighbor edits (including erasing a neighbor) never retroactively reclassify an already-resolved cell, only ever move a cell from unresolved to resolved, never the reverse or between shapes.
 
 Flipping the construction plane's orientation changes which way *newly painted* ramps/corners slope (their `planeAxis`/`planeOrientation` is baked in at paint time); it never affects already-baked cells.
 
-Each baked chamfer cell stores `{ shapeKind: ramp|convex|concave, rotation: 0-3, planeAxis, planeOrientation }` — exactly 3 shapes × 4 rotations, realized as a small fixed library of mesh prefabs (rotation applied via instance transform, not separate geometries).
+Realized as a small fixed library of mesh prefabs — exactly 3 shapes × 4 rotations, rotation applied via instance transform, not separate geometries.
 
 ---
 
@@ -45,7 +47,7 @@ Primary drawing surface: a plain `<canvas>` (2D context, `imageSmoothingEnabled=
 **Tools**: paint, eyedropper, rectangular + lasso selection, copy/paste, flood fill (color layer only — chamfer fill is excluded, since wholesale-filling chamfer cells would almost always produce invalid configurations), clone/stamp, selection transforms (move, rotate, mirror), shift-click ortho-constrained line drawing (Bresenham, snapped to 0/45/90°).
 
 - A **layer toggle** (color vs. chamfer) determines what the active tool paints; chamfer paint always writes color too (§1.1).
-- Paste and re-stamped transforms re-run live chamfer validation against the destination's neighbors; invalid chamfer cells in the pasted/transformed data are dropped (with a toast) while color-only data still applies.
+- Paste and re-stamped transforms always apply (never dropped) — each chamfer cell is reclassified fresh against the destination's neighbors (§1.3), landing on `resolvedTo: null` if that doesn't yet resolve, same as a live chamfer paint.
 - All 2D tools address the grid exclusively through the plane's (u,v)→(x,y,z) projection — no tool touches (x,y,z) directly, keeping tool logic plane-agnostic.
 
 ---
@@ -128,6 +130,6 @@ One root store, typed slices: `project` (the model itself, Immer + persistent-ma
 
 Since this is a spec (no implementation yet), verification for the *next* phase (implementation) should include:
 1. Unit tests for `chamferResolver.classify()` covering every valid case (ramp ×4 rotations, convex ×4, concave ×4) and representative invalid configurations.
-2. A manual pass painting a small closed loop of chamfer cells and confirming the 2D editor blocks invalid cells and the 3D view renders the expected ramp/corner shapes with correct rotation.
+2. A manual pass painting a small closed loop of chamfer cells one at a time and confirming: each paint succeeds immediately regardless of order, cells render as plain cubes until their neighbors complete a valid shape, and the 3D view renders the expected ramp/corner shapes with correct rotation once resolved.
 3. Round-trip test: export project JSON → reload from that JSON → model matches (including palette slot references, not resolved colors).
 4. GLTF export of a small (~20-cell) mixed cube+chamfer model, opened in an external viewer, to confirm a clean manifold mesh with correct vertex colors.

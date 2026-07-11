@@ -1,21 +1,14 @@
 import type { StateCreator } from 'zustand'
 import { encodeKey, expandBounds, withinWorkingBounds } from '@/engine/grid/GridStore'
 import { gridCoordFromPixel } from '@/engine/plane/constructionPlane'
-import { classify, sampleNeighbors } from '@/engine/chamfer/chamferResolver'
+import { classify, resolveChamferCellsOnPlane, sampleNeighbors } from '@/engine/chamfer/chamferResolver'
 import { floodFillRegion } from '@/engine/tools/floodFill'
-import { applyClipboardAt, clearRegion, copyRegionToClipboard, type PasteResult } from '@/engine/tools/clipboard'
+import { applyClipboardAt, clearRegion, copyRegionToClipboard } from '@/engine/tools/clipboard'
 import { mirrorClipboard, rotateClipboard90 } from '@/engine/tools/transform'
 import { mirrorRegion, rotateRegion90 } from '@/engine/tools/selectionMask'
-import { showToast } from '@/components/ui/toastBus'
 import type { AppState, ToolActionsSlice } from './types'
 
 type Slice = StateCreator<AppState, [['zustand/immer', never]], [], ToolActionsSlice>
-
-function reportDrops(action: string, result: PasteResult): void {
-  if (result.droppedChamfer === 0) return
-  const n = result.droppedChamfer
-  showToast(`${action}: ${n} chamfer cell${n === 1 ? '' : 's'} skipped (invalid neighbors)`)
-}
 
 // Invariant: every model-mutating action in this store must call `get().bakeFloatIfAny()` as its
 // first line (before its own beginStroke()), so a pending float never gets silently dropped or
@@ -34,6 +27,9 @@ export const createToolActionsSlice: Slice = (set, get) => ({
         state.model.color.set(encodeKey(...coord), { paletteSlot: activePaletteSlot })
         state.model.bounds = expandBounds(state.model.bounds, coord)
       }
+      // Any of these newly-filled cells could be the missing neighbor an unresolved chamfer
+      // cell on this same plane slice was waiting on (chamfer adjacency counts color cells too).
+      resolveChamferCellsOnPlane(state.model, state.plane)
       state.meta.modifiedAt = new Date().toISOString()
       state.dirty = true
     })
@@ -61,20 +57,14 @@ export const createToolActionsSlice: Slice = (set, get) => ({
 
       state.model.color.set(destKey, { paletteSlot: srcColor.paletteSlot })
       if (srcChamfer) {
-        const classification = classify(sampleNeighbors(state.model, state.plane, destU, destV))
-        if (classification) {
-          state.model.chamfer.set(destKey, {
-            shapeKind: classification.shapeKind,
-            rotation: classification.rotation,
-            planeAxis: state.plane.axis,
-            planeOrientation: state.plane.orientation,
-          })
-        } else {
-          state.model.chamfer.delete(destKey)
-        }
+        const resolvedTo = classify(sampleNeighbors(state.model, state.plane, destU, destV))
+        state.model.chamfer.set(destKey, { planeAxis: state.plane.axis, planeOrientation: state.plane.orientation, resolvedTo })
       } else {
         state.model.chamfer.delete(destKey)
       }
+      // Either branch may be the missing neighbor an unresolved chamfer cell on this plane slice
+      // was waiting on (chamfer adjacency counts color cells too, not just other chamfer cells).
+      resolveChamferCellsOnPlane(state.model, state.plane)
       state.model.bounds = expandBounds(state.model.bounds, destCoord)
       state.meta.modifiedAt = new Date().toISOString()
       state.dirty = true
@@ -170,9 +160,8 @@ export const createToolActionsSlice: Slice = (set, get) => ({
   bakeFloatIfAny: () => {
     const { floatContent, floatOrigin, plane } = get()
     if (!floatContent || !floatOrigin) return
-    let result: PasteResult = { applied: 0, droppedChamfer: 0 }
     set((state) => {
-      result = applyClipboardAt(state.model, plane, floatContent, floatOrigin.originU, floatOrigin.originV)
+      applyClipboardAt(state.model, plane, floatContent, floatOrigin.originU, floatOrigin.originV)
       state.meta.modifiedAt = new Date().toISOString()
       state.dirty = true
     })
@@ -181,6 +170,5 @@ export const createToolActionsSlice: Slice = (set, get) => ({
       state.floatContent = null
       state.floatOrigin = null
     })
-    reportDrops('Move', result)
   },
 })
