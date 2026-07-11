@@ -31,7 +31,7 @@ export function PixelCanvas() {
   const floatContent = useAppStore((s) => s.floatContent)
   const floatOrigin = useAppStore((s) => s.floatOrigin)
 
-  const { onPointerDown, onPointerMove, onPointerUp, linePreview, selectPreview, hoverCellRef, size, pan, zoom } =
+  const { onPointerDown, onPointerMove, onPointerUp, onPointerLeave, linePreview, selectPreview, hoverCellRef, size, pan, zoom } =
     usePixelCanvasTools(canvasRef)
   useKeyboardShortcuts(hoverCellRef)
 
@@ -216,6 +216,7 @@ export function PixelCanvas() {
       onPointerDown={onPointerDown}
       onPointerMove={onPointerMove}
       onPointerUp={onPointerUp}
+      onPointerLeave={onPointerLeave}
       onContextMenu={(e) => e.preventDefault()}
     />
   )

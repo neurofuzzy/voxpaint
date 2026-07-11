@@ -11,6 +11,7 @@ import { ConstructionPlaneGizmo } from './ConstructionPlaneGizmo'
 import { ConstructionPlaneVisual } from './ConstructionPlaneVisual'
 import { SceneLighting } from './SceneLighting'
 import { VoxelFaceHighlight } from './VoxelFaceHighlight'
+import { VoxelGhostPreview } from './VoxelGhostPreview'
 import { VoxelInstancedMeshes } from './VoxelInstancedMeshes'
 
 const CLICK_DRAG_THRESHOLD_PX = 4
@@ -123,6 +124,7 @@ export function Viewport3D() {
         <ConstructionPlaneVisual orbitControlsRef={orbitControlsRef} />
         <VoxelInstancedMeshes ref={managerRef} />
         <VoxelFaceHighlight />
+        <VoxelGhostPreview />
         <ConstructionPlaneGizmo />
         <VoxelInteractionHandler managerRef={managerRef} />
         <OrbitControls ref={orbitControlsRef} makeDefault enableDamping dampingFactor={0.12} minDistance={2} maxDistance={150} />

@@ -115,6 +115,7 @@ export function usePixelCanvasTools(canvasRef: React.RefObject<HTMLCanvasElement
   activeToolRef.current = activeTool
 
   const store = useAppStore.getState() // action references are stable for the store's lifetime
+  const setHoverCell = store.setHoverCell // pulled out so it can be a genuine, listable useCallback dep
 
   const ctx: ToolContext = {
     model, plane, activeLayer, activePaletteSlot, selection, floatContent, floatOrigin, clipboard,
@@ -156,10 +157,11 @@ export function usePixelCanvasTools(canvasRef: React.RefObject<HTMLCanvasElement
 
       const cell = pixelToCell(canvas, e.clientX, e.clientY, size, pan, zoom)
       hoverCellRef.current = cell
+      setHoverCell(gridCoordFromPixel(ctxRef.current.plane, cell[0], cell[1]), null)
       canvas.setPointerCapture(e.pointerId)
       toolMap[activeToolRef.current].onDown?.(ctxRef.current, toNormalizedPointerEvent(e, cell))
     },
-    [canvasRef, size, pan, zoom],
+    [canvasRef, size, pan, zoom, setHoverCell],
   )
 
   const onPointerMove = useCallback(
@@ -180,11 +182,22 @@ export function usePixelCanvasTools(canvasRef: React.RefObject<HTMLCanvasElement
       }
 
       const cell = pixelToCell(canvas, e.clientX, e.clientY, size, pan, zoom)
+      const prevCell = hoverCellRef.current
       hoverCellRef.current = cell
+      // Only push a store update when the hovered *cell* actually changes, not on every mousemove
+      // tick within it — mirrors the same dedup on the 3D side (Viewport3D.tsx).
+      if (!prevCell || prevCell[0] !== cell[0] || prevCell[1] !== cell[1]) {
+        setHoverCell(gridCoordFromPixel(ctxRef.current.plane, cell[0], cell[1]), null)
+      }
       toolMap[activeToolRef.current].onMove?.(ctxRef.current, toNormalizedPointerEvent(e, cell))
     },
-    [canvasRef, size, pan, zoom],
+    [canvasRef, size, pan, zoom, setHoverCell],
   )
+
+  const onPointerLeave = useCallback(() => {
+    hoverCellRef.current = null
+    setHoverCell(null, null)
+  }, [setHoverCell])
 
   const onPointerUp = useCallback(
     (e: React.PointerEvent<HTMLCanvasElement>) => {
@@ -215,5 +228,5 @@ export function usePixelCanvasTools(canvasRef: React.RefObject<HTMLCanvasElement
     [canvasRef, size, pan, zoom],
   )
 
-  return { onPointerDown, onPointerMove, onPointerUp, linePreview, selectPreview, hoverCellRef, size, pan, zoom }
+  return { onPointerDown, onPointerMove, onPointerUp, onPointerLeave, linePreview, selectPreview, hoverCellRef, size, pan, zoom }
 }
