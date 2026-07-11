@@ -37,7 +37,7 @@ export class InstancingManager {
   constructor() {
     // TEMP DIAGNOSTIC: hard-coded red, vertexColors off — if this still isn't visibly solid red,
     // the bug isn't instance-coloring at all, it's the geometry/mesh/camera/scene not rendering.
-    this.material = new THREE.MeshBasicMaterial({ color: 0xff0000 })
+    this.material = new THREE.MeshLambertMaterial({ color: 0xffffff })
 
     const geometries: Record<PoolId, THREE.BufferGeometry> = {
       cube: unitCubeGeometry(),
