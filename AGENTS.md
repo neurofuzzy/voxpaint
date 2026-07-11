@@ -1,5 +1,7 @@
 # AGENTS.md
 
+> See `CODEMAP.md` for an auto-generated source map of all modules and exports. Run `npm run map` to regenerate.
+
 ## Commands
 
 ```bash

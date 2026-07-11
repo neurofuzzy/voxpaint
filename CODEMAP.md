@@ -1,0 +1,261 @@
+```
+# Auto-generated project map
+# Last updated: 2026-07-11 07:37:13
+# Files: 73
+# Lines of code: ~4028
+```
+- **/components**
+  - **/editor2d**
+    - [cameraTransform.ts](../src/components/editor2d/cameraTransform.ts)
+      - Interface: `CanvasSize`
+      - Interface: `CanvasPan`
+      - Function: `worldToScreen` - World (grid-cell) coordinates to screen (CSS px...
+      - Function: `screenToWorld` - Inverse of `worldToScreen` — screen (CSS px) to...
+      - Function: `clampPan` - Clamps pan so the grid's bounding box ([-HALF,H...
+    - [canvasConstants.ts](../src/components/editor2d/canvasConstants.ts)
+      - Variable: `BASE_CELL_PX` - Grid-cell size in CSS px at 100% zoom (1.0). Ce...
+      - Variable: `ZOOM_MIN`
+      - Variable: `ZOOM_MAX`
+      - Variable: `WHEEL_ZOOM_SENSITIVITY` - Larger = gentler zoom per wheel tick (divisor o...
+      - Variable: `PINCH_ZOOM_SENSITIVITY` - Trackpad pinch (ctrl/meta+wheel) reports much s...
+      - Variable: `GRID_SPAN` - Logical drawable span (cells), centered on 0,0 ...
+      - Variable: `HALF`
+      - Function: `clampZoom`
+      - Variable: `PAN_PADDING_PX` - Minimum on-screen px of the grid's bounding box...
+    - [Editor2D.tsx](../src/components/editor2d/Editor2D.tsx)
+      - Function: `Editor2D`
+    - [PixelCanvas.tsx](../src/components/editor2d/PixelCanvas.tsx)
+      - Function: `PixelCanvas`
+    - [useKeyboardShortcuts.ts](../src/components/editor2d/useKeyboardShortcuts.ts)
+      - Function: `useKeyboardShortcuts` - Global keyboard shortcuts — undo/redo, copy/cut...
+    - [usePixelCanvasTools.ts](../src/components/editor2d/usePixelCanvasTools.ts)
+      - Function: `usePixelCanvasTools` - Owns pointer-input wiring for the 2D canvas: bu...
+  - **/layout**
+    - [BottomBar.tsx](../src/components/layout/BottomBar.tsx)
+      - Function: `BottomBar` - Bottom status bar, matching trixelart's Footer....
+    - [LeftPanel.tsx](../src/components/layout/LeftPanel.tsx)
+      - Function: `LeftPanel`
+    - [MainLayout.tsx](../src/components/layout/MainLayout.tsx)
+      - Function: `MainLayout`
+    - [TopToolbar.tsx](../src/components/layout/TopToolbar.tsx)
+      - Function: `TopToolbar`
+  - **/panels**
+    - [FileMenu.tsx](../src/components/panels/FileMenu.tsx)
+      - Function: `FileMenu`
+    - [FloatingPalette.tsx](../src/components/panels/FloatingPalette.tsx)
+      - Function: `FloatingPalette` - Bottom-center frosted palette pill (trixelart-s...
+    - [FullscreenToggle.tsx](../src/components/panels/FullscreenToggle.tsx)
+      - Function: `FullscreenToggle`
+    - [LayerToggle.tsx](../src/components/panels/LayerToggle.tsx)
+      - Function: `LayerToggle`
+    - [ModelStats.tsx](../src/components/panels/ModelStats.tsx)
+      - Function: `ModelStats`
+    - [ToolPalette.tsx](../src/components/panels/ToolPalette.tsx)
+      - Function: `ToolPalette`
+    - [UndoRedoControls.tsx](../src/components/panels/UndoRedoControls.tsx)
+      - Function: `UndoRedoControls`
+  - **/ui**
+    - [toastBus.ts](../src/components/ui/toastBus.ts)
+      - Function: `showToast`
+      - Function: `subscribeToast`
+    - [ToastRegion.tsx](../src/components/ui/ToastRegion.tsx)
+      - Function: `ToastRegion`
+  - **/viewport3d**
+    - [ConstructionPlaneGizmo.tsx](../src/components/viewport3d/ConstructionPlaneGizmo.tsx)
+      - Function: `ConstructionPlaneGizmo` - Minimal central axis widget — click a cap to se...
+    - [ConstructionPlaneVisual.tsx](../src/components/viewport3d/ConstructionPlaneVisual.tsx)
+      - Function: `ConstructionPlaneVisual` - Visualizes the active construction plane as a p...
+    - [SceneLighting.tsx](../src/components/viewport3d/SceneLighting.tsx)
+      - Function: `SceneLighting` - Lights live in a rig `<group>` synced to the ca...
+    - [Viewport3D.tsx](../src/components/viewport3d/Viewport3D.tsx)
+      - Function: `Viewport3D`
+    - [VoxelFaceHighlight.tsx](../src/components/viewport3d/VoxelFaceHighlight.tsx)
+      - Function: `VoxelFaceHighlight` - Live hover preview of the voxel face under the ...
+    - [VoxelGhostPreview.tsx](../src/components/viewport3d/VoxelGhostPreview.tsx)
+      - Function: `VoxelGhostPreview` - Semi-transparent placeholder cube at the hovere...
+    - [VoxelInstancedMeshes.tsx](../src/components/viewport3d/VoxelInstancedMeshes.tsx)
+      - Variable: `VoxelInstancedMeshes`
+- **/engine**
+  - **/chamfer**
+    - [chamferGeometry.ts](../src/engine/chamfer/chamferGeometry.ts)
+      - Function: `unitCubeGeometry`
+      - Function: `rampGeometry` - Wedge: full height along the side opposite `ope...
+      - Function: `convexCornerGeometry` - Single flat 45° corner cut: full height only at...
+      - Function: `concaveCornerGeometry` - Inverse of convex: full height along all 4 edge...
+    - [chamferResolver.ts](../src/engine/chamfer/chamferResolver.ts)
+      - Function: `sampleNeighbors` - Samples the chamfer layer's 8-neighborhood arou...
+      - Function: `classify` - Classifies a chamfer cell's shape from its 8-ne...
+      - Function: `canPaintChamfer` - Live validation used to gate the paint cursor/b...
+    - [types.ts](../src/engine/chamfer/types.ts)
+      - Type: `NeighborSample`
+      - Type: `ChamferClassification`
+  - **/csg**
+  - **/grid**
+    - [GridStore.ts](../src/engine/grid/GridStore.ts)
+      - Function: `encodeKey`
+      - Function: `decodeKey`
+      - Function: `emptyModel`
+      - Function: `getColorCell`
+      - Function: `getChamferCell`
+      - Function: `expandBounds`
+      - Function: `recomputeBounds` - Recomputes bounds from scratch by scanning both...
+      - Variable: `MAX_GRID_EXTENT` - Absolute technical ceiling per spec §1.1 — neve...
+      - Variable: `DEFAULT_GRID_EXTENT` - Default working span for new projects — the act...
+      - Function: `withinWorkingBounds` - Absolute box centered on the origin (spec §1.1:...
+    - [types.ts](../src/engine/grid/types.ts)
+      - Type: `Axis`
+      - Type: `Orientation`
+      - Type: `Rotation`
+      - Type: `ChamferShapeKind`
+      - Type: `Coord` - Grid coordinate, always integer. Mutable tuple ...
+      - Type: `CellKey` - Sparse-map key for a grid coordinate. See `enco...
+      - Type: `ColorCell`
+      - Type: `ChamferCell`
+      - Type: `BBox`
+      - Type: `VoxelModel`
+  - **/input**
+    - [PointerInputController.ts](../src/engine/input/PointerInputController.ts) - Normalized pointer event shape consumed by `eng...
+      - Interface: `NormalizedPointerEvent` - Normalized pointer event shape consumed by `eng...
+      - Function: `toNormalizedPointerEvent`
+  - **/instancing**
+    - [basis.ts](../src/engine/instancing/basis.ts)
+      - Function: `cubeInstanceMatrix` - Placement matrix for a plain cube: axis-aligned...
+      - Function: `chamferInstanceMatrix` - Placement matrix for a chamfer prefab (local sp...
+    - [InstancingManager.ts](../src/engine/instancing/InstancingManager.ts)
+      - Type: `PoolId`
+      - Class: `InstancingManager` (Methods: ensureCapacity, sync, tick, setHoveredCell, cellKeyForHit, dispose) - Owns the 4 InstancedMesh pools (cube + 3 chamfe...
+  - **/palette**
+    - [defaultPalette.ts](../src/engine/palette/defaultPalette.ts)
+      - Variable: `DEFAULT_PALETTE` - Slightly desaturated "vintage retro" default pa...
+    - [palette.ts](../src/engine/palette/palette.ts)
+      - Variable: `PALETTE_SLOT_COUNTS`
+      - Function: `emissiveClassFor` - Emissive "class" id consumed by the shared inst...
+      - Function: `resolveSlotColor`
+      - Function: `isValidSlotRef`
+    - [types.ts](../src/engine/palette/types.ts)
+      - Type: `PaletteSlotKind`
+      - Type: `PaletteSlotRef`
+      - Type: `PaletteState`
+  - **/persistence**
+    - [autosave.ts](../src/engine/persistence/autosave.ts)
+      - Class: `QuotaExceededErrorWrapped`
+      - Function: `saveAutosave`
+      - Function: `loadAutosave`
+      - Function: `clearAutosave`
+      - Function: `debounce`
+    - [migrations.ts](../src/engine/persistence/migrations.ts)
+      - Class: `UnsupportedSchemaVersionError`
+      - Function: `migrateToCurrent`
+    - [projectFile.ts](../src/engine/persistence/projectFile.ts)
+      - Function: `downloadProjectFile`
+      - Function: `readProjectFile`
+    - [schema.ts](../src/engine/persistence/schema.ts)
+      - Variable: `CURRENT_SCHEMA_VERSION`
+      - Type: `ProjectMeta`
+      - Type: `SerializedColorCell`
+      - Type: `SerializedChamferCell`
+      - Type: `VoxPaintProjectFileV1`
+      - Type: `VoxPaintProjectFile`
+    - [serialize.ts](../src/engine/persistence/serialize.ts)
+      - Function: `serializeProject`
+      - Function: `deserializeProject`
+  - **/plane**
+    - [constructionPlane.ts](../src/engine/plane/constructionPlane.ts)
+      - Function: `gridCoordFromPixel` - Cyclic (u,v) basis per axis (x -> z,-y ; y -> z...
+      - Function: `pixelFromGridCoord`
+      - Function: `toDisplayU` - Orientation never changes which grid cell a pix...
+      - Function: `planeFromFaceHit` - Derives a construction plane from a 3D face-cli...
+    - [types.ts](../src/engine/plane/types.ts)
+      - Type: `ConstructionPlane`
+  - **/tools**
+    - [clipboard.ts](../src/engine/tools/clipboard.ts)
+      - Function: `copyRegionToClipboard`
+      - Function: `clearRegion` - Erases both layers under a selection mask (used...
+      - Type: `PasteResult`
+      - Function: `applyClipboardAt` - Stamps clipboard data at a destination origin. ...
+    - [cloneTool.ts](../src/engine/tools/cloneTool.ts)
+      - Variable: `cloneTool`
+    - [editToolFactory.ts](../src/engine/tools/editToolFactory.ts)
+      - Function: `makeEditTool` - Shared shell for paint/erase: both follow the s...
+    - [eraseTool.ts](../src/engine/tools/eraseTool.ts)
+      - Variable: `eraseTool`
+    - [eyedropperTool.ts](../src/engine/tools/eyedropperTool.ts)
+      - Variable: `eyedropperTool`
+    - [fillTool.ts](../src/engine/tools/fillTool.ts)
+      - Variable: `fillTool`
+    - [floodFill.ts](../src/engine/tools/floodFill.ts)
+      - Function: `floodFillRegion` - 4-connected flood fill over the active plane's ...
+    - [index.ts](../src/engine/tools/index.ts)
+      - Variable: `toolMap`
+    - [lineUtils.ts](../src/engine/tools/lineUtils.ts) - Bresenham line, inclusive of both endpoints.
+      - Function: `bresenhamLine` - Bresenham line, inclusive of both endpoints.
+      - Function: `snapToOrtho` - Snaps (u1,v1) so the vector from (u0,v0) lands ...
+    - [moveTool.ts](../src/engine/tools/moveTool.ts)
+      - Variable: `moveTool` - Move shifts every pixel visible on the current ...
+    - [paintTool.ts](../src/engine/tools/paintTool.ts)
+      - Variable: `paintTool`
+    - [selectionMask.ts](../src/engine/tools/selectionMask.ts)
+      - Function: `fullCanvasRegion` - A selection covering the entire working span — ...
+      - Function: `rectRegion`
+      - Function: `lassoRegion` - Builds a selection mask from a freehand (lasso)...
+      - Function: `isCellSelected`
+      - Function: `forEachSelectedCell`
+      - Function: `rotateRegion90` - Rotates a selection mask 90° clockwise in place...
+      - Type: `OutlineEdge` - A single boundary edge in grid-corner coordinat...
+      - Function: `traceSelectionOutline` - Traces a selection mask's true boundary (handle...
+      - Function: `mirrorRegion`
+    - [selectTool.ts](../src/engine/tools/selectTool.ts)
+      - Variable: `selectTool`
+    - [transform.ts](../src/engine/tools/transform.ts)
+      - Function: `rotateClipboard90` - Rotates clipboard content 90° clockwise around ...
+      - Function: `mirrorClipboard`
+    - [types.ts](../src/engine/tools/types.ts)
+      - Interface: `ToolContext` - Everything a tool module needs, bundled into on...
+      - Type: `ToolDragState`
+      - Interface: `ToolHandler`
+- **/store**
+  - [historySlice.ts](../src/store/historySlice.ts)
+    - Function: `createHistorySlice`
+  - [paintActions.ts](../src/store/paintActions.ts)
+    - Function: `createPaintActionsSlice`
+  - [persistenceSlice.ts](../src/store/persistenceSlice.ts)
+    - Function: `createPersistenceSlice`
+  - [planeSlice.ts](../src/store/planeSlice.ts)
+    - Function: `createPlaneSlice`
+  - [projectSlice.ts](../src/store/projectSlice.ts)
+    - Function: `createProjectSlice`
+  - [selectionSlice.ts](../src/store/selectionSlice.ts)
+    - Function: `createSelectionSlice`
+  - [toolActionsSlice.ts](../src/store/toolActionsSlice.ts)
+    - Function: `createToolActionsSlice` - // `eraseCell` (paintActions.ts) follow the sam...
+  - [toolSlice.ts](../src/store/toolSlice.ts)
+    - Function: `createToolSlice`
+  - [types.ts](../src/store/types.ts)
+    - Type: `ToolId`
+    - Type: `ActiveLayer`
+    - Type: `SelectionRegion`
+    - Type: `ClipboardCell`
+    - Type: `ClipboardData`
+    - Type: `ProjectSlice`
+    - Type: `HistorySlice`
+    - Type: `ObjectModeTarget` - The voxel/face last landed on via a 3D face-cli...
+    - Type: `PlaneSlice`
+    - Type: `ToolSlice`
+    - Type: `FloatOrigin`
+    - Type: `SelectionSlice`
+    - Type: `HoveredFace` - The specific voxel face currently under the poi...
+    - Type: `ViewSlice`
+    - Type: `PersistenceSlice`
+    - Type: `PaintActionsSlice`
+    - Type: `SelectionTransformKind`
+    - Type: `ToolActionsSlice`
+    - Type: `AppState`
+  - [useAppStore.ts](../src/store/useAppStore.ts)
+    - Variable: `useAppStore`
+  - [viewSlice.ts](../src/store/viewSlice.ts)
+    - Function: `createViewSlice`
+  - [wireAutosave.ts](../src/store/wireAutosave.ts)
+    - Function: `restoreAutosave` - Restores the last autosaved project on load, if...
+    - Function: `wireAutosave` - Subscribes to dirty-flagging store changes and ...
+- [App.tsx](../src/App.tsx)
+- [main.tsx](../src/main.tsx)

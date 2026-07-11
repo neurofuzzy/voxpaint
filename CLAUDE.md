@@ -1,5 +1,7 @@
 # CLAUDE.md
 
+> See `CODEMAP.md` for an auto-generated source map of all modules and exports. Run `npm run map` to regenerate.
+
 ## Build / Run
 ```bash
 npm run dev       # dev server (HMR)
