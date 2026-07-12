@@ -3,6 +3,7 @@ import { ChevronDown, FileDown, FilePlus, FileUp, Package } from 'lucide-react'
 import { useRef } from 'react'
 import { readProjectFile, downloadProjectFile } from '@/engine/persistence/projectFile'
 import { deserializeProject, serializeProject } from '@/engine/persistence/serialize'
+import { exportModelToGlb, downloadGlb } from '@/engine/export/gltfExport'
 import { useAppStore } from '@/store/useAppStore'
 import { showToast } from '@/components/ui/toastBus'
 
@@ -35,8 +36,20 @@ export function FileMenu() {
     }
   }
 
-  function handleExportGltf() {
-    showToast('GLTF export (CSG pipeline) is not implemented yet.')
+  async function handleExportGltf() {
+    const { model, palette, meta } = useAppStore.getState()
+    if (model.color.size === 0) {
+      showToast('Nothing to export — the model is empty.')
+      return
+    }
+    try {
+      showToast('Exporting GLTF…')
+      const glb = await exportModelToGlb(model, palette)
+      downloadGlb(glb, meta.name || 'voxpaint-model')
+      showToast('GLTF exported.')
+    } catch (err) {
+      showToast(err instanceof Error ? err.message : 'GLTF export failed.')
+    }
   }
 
   return (
@@ -73,7 +86,7 @@ export function FileMenu() {
           </DropdownMenu.Item>
           <DropdownMenu.Separator className="my-1 h-px bg-neutral-800" />
           <DropdownMenu.Item
-            onSelect={handleExportGltf}
+            onSelect={() => void handleExportGltf()}
             className="flex cursor-pointer items-center gap-2 rounded px-2 py-1.5 outline-none hover:bg-neutral-800"
           >
             <Package size={14} /> Export GLTF…

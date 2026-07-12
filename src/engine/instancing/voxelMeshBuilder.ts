@@ -2,7 +2,7 @@ import * as THREE from 'three'
 import { decodeKey } from '@/engine/grid/GridStore'
 import type { Coord, VoxelModel } from '@/engine/grid/types'
 import { concaveCornerGeometry, convexCornerGeometry, mirrorVGeometry, rampGeometry } from '@/engine/chamfer/chamferGeometry'
-import { resolveSlotColor } from '@/engine/palette/palette'
+import { emissiveClassFor, resolveSlotColor } from '@/engine/palette/palette'
 import type { PaletteState } from '@/engine/palette/types'
 import { chamferBasisIsReflected, chamferInstanceMatrix } from './basis'
 import { optimizeGeometry, triangleCount } from './meshOptimizer'
@@ -22,12 +22,21 @@ import { optimizeGeometry, triangleCount } from './meshOptimizer'
  * canonical one, leaving a visible X of two facing quads. Genuinely triangular/folded faces remain.
  */
 
+/** Per-cell material identity carried onto every face: RGB `colorKey` (packed sRGB hex) plus the
+ * palette slot's `emissiveClass` (0 = none, 1/2/3 = emissive/blink/pulse). Two faces belong to the
+ * same export material only when both match. */
+interface Mat {
+  colorKey: number
+  emissiveClass: number
+}
+
 interface Face {
   a: THREE.Vector3
   b: THREE.Vector3
   c: THREE.Vector3
   normal: THREE.Vector3
   colorKey: number
+  emissiveClass: number
 }
 
 const QUANT = 1e6
@@ -54,36 +63,36 @@ function faceNormal(a: THREE.Vector3, b: THREE.Vector3, c: THREE.Vector3): THREE
 }
 
 /** Add one triangle, orienting its winding so its normal agrees with `outward` (if given). */
-function addTri(faces: Face[], a: THREE.Vector3, b: THREE.Vector3, c: THREE.Vector3, colorKey: number, outward?: THREE.Vector3) {
+function addTri(faces: Face[], a: THREE.Vector3, b: THREE.Vector3, c: THREE.Vector3, mat: Mat, outward?: THREE.Vector3) {
   let n = faceNormal(a, b, c)
   if (n.lengthSq() === 0) return // degenerate
   if (outward && n.dot(outward) < 0) {
     ;[b, c] = [c, b]
     n = n.negate()
   }
-  faces.push({ a, b, c, normal: n, colorKey })
+  faces.push({ a, b, c, normal: n, colorKey: mat.colorKey, emissiveClass: mat.emissiveClass })
 }
 
 /** Emit a quad as two triangles split on a canonical diagonal (min→max corner), so coincident
  * faces from adjacent cells produce identical vertex-triples for the shell pass. */
-function pushQuad(faces: Face[], corners: THREE.Vector3[], outward: THREE.Vector3, colorKey: number) {
+function pushQuad(faces: Face[], corners: THREE.Vector3[], outward: THREE.Vector3, mat: Mat) {
   const s = [...corners].sort((p, q) => qkey(p).localeCompare(qkey(q), undefined, { numeric: true }))
-  addTri(faces, s[0], s[1], s[3], colorKey, outward)
-  addTri(faces, s[0], s[3], s[2], colorKey, outward)
+  addTri(faces, s[0], s[1], s[3], mat, outward)
+  addTri(faces, s[0], s[3], s[2], mat, outward)
 }
 
-function emitCube(faces: Face[], [x, y, z]: Coord, colorKey: number) {
+function emitCube(faces: Face[], [x, y, z]: Coord, mat: Mat) {
   const x1 = x + 1
   const y1 = y + 1
   const z1 = z + 1
   const P = (px: number, py: number, pz: number) => new THREE.Vector3(px, py, pz)
   // 6 axis-aligned faces, each with its outward normal.
-  pushQuad(faces, [P(x, y, z), P(x, y1, z), P(x, y1, z1), P(x, y, z1)], new THREE.Vector3(-1, 0, 0), colorKey)
-  pushQuad(faces, [P(x1, y, z), P(x1, y1, z), P(x1, y1, z1), P(x1, y, z1)], new THREE.Vector3(1, 0, 0), colorKey)
-  pushQuad(faces, [P(x, y, z), P(x1, y, z), P(x1, y, z1), P(x, y, z1)], new THREE.Vector3(0, -1, 0), colorKey)
-  pushQuad(faces, [P(x, y1, z), P(x1, y1, z), P(x1, y1, z1), P(x, y1, z1)], new THREE.Vector3(0, 1, 0), colorKey)
-  pushQuad(faces, [P(x, y, z), P(x1, y, z), P(x1, y1, z), P(x, y1, z)], new THREE.Vector3(0, 0, -1), colorKey)
-  pushQuad(faces, [P(x, y, z1), P(x1, y, z1), P(x1, y1, z1), P(x, y1, z1)], new THREE.Vector3(0, 0, 1), colorKey)
+  pushQuad(faces, [P(x, y, z), P(x, y1, z), P(x, y1, z1), P(x, y, z1)], new THREE.Vector3(-1, 0, 0), mat)
+  pushQuad(faces, [P(x1, y, z), P(x1, y1, z), P(x1, y1, z1), P(x1, y, z1)], new THREE.Vector3(1, 0, 0), mat)
+  pushQuad(faces, [P(x, y, z), P(x1, y, z), P(x1, y, z1), P(x, y, z1)], new THREE.Vector3(0, -1, 0), mat)
+  pushQuad(faces, [P(x, y1, z), P(x1, y1, z), P(x1, y1, z1), P(x, y1, z1)], new THREE.Vector3(0, 1, 0), mat)
+  pushQuad(faces, [P(x, y, z), P(x1, y, z), P(x1, y1, z), P(x, y1, z)], new THREE.Vector3(0, 0, -1), mat)
+  pushQuad(faces, [P(x, y, z1), P(x1, y, z1), P(x1, y1, z1), P(x, y1, z1)], new THREE.Vector3(0, 0, 1), mat)
 }
 
 /** If two triangles share exactly one edge (2 coincident corners) return the 4 distinct corners of
@@ -109,7 +118,7 @@ function sharedEdgeQuad(t1: THREE.Vector3[], t2: THREE.Vector3[]): THREE.Vector3
  * interior faces — fixing the X-pattern stragglers on ramp/concave back walls. Genuinely triangular
  * or folded faces (sloped sides, hip/folded roofs — different normals) emit as-is.
  */
-function emitChamfer(faces: Face[], base: THREE.BufferGeometry, matrix: THREE.Matrix4, colorKey: number) {
+function emitChamfer(faces: Face[], base: THREE.BufferGeometry, matrix: THREE.Matrix4, mat: Mat) {
   const pos = base.getAttribute('position')
   const tris: THREE.Vector3[][] = []
   for (let i = 0; i < pos.count; i += 3) {
@@ -130,13 +139,13 @@ function emitChamfer(faces: Face[], base: THREE.BufferGeometry, matrix: THREE.Ma
       if (used[j] || normals[i].dot(normals[j]) < COPLANAR_DOT) continue // must be coplanar (same-facing)
       const quad = sharedEdgeQuad(tris[i], tris[j])
       if (!quad) continue
-      pushQuad(faces, quad, normals[i], colorKey)
+      pushQuad(faces, quad, normals[i], mat)
       used[i] = used[j] = true
       paired = true
       break
     }
     // Unpaired triangle: prefab is CCW-outward and the matrix is det+1, so winding holds.
-    if (!paired) addTri(faces, tris[i][0], tris[i][1], tris[i][2], colorKey)
+    if (!paired) addTri(faces, tris[i][0], tris[i][1], tris[i][2], mat)
   }
 }
 
@@ -191,29 +200,74 @@ export interface OptimizedVoxelMesh {
   optimizedTriangles: number // faces after shell cull + coplanar merge
 }
 
-/** Build the merged, shell-culled, coplanar-optimized mesh for the whole model. */
-export function buildOptimizedVoxelGeometry(model: VoxelModel, palette: PaletteState): OptimizedVoxelMesh {
+/**
+ * Accumulate every cell's faces and run the shell pass. Shared by the single-mesh (preview) and
+ * per-color (export) builders. The shell pass runs across all colors together — interior faces
+ * between differently-coloured cells must still cancel — so grouping by colour happens afterward.
+ * Returns the surviving faces plus the pre-shell triangle total (for the overlay's raw stat).
+ */
+function buildShellFaces(model: VoxelModel, palette: PaletteState): { faces: Face[]; rawTriangles: number } {
   const faces: Face[] = []
   const matrix = new THREE.Matrix4()
   const color = new THREE.Color()
 
   for (const key of model.color.keys()) {
     const coord = decodeKey(key)
-    const colorKey = color.set(resolveSlotColor(palette, model.color.get(key)!.paletteSlot)).getHex()
+    const slot = model.color.get(key)!.paletteSlot
+    const mat: Mat = { colorKey: color.set(resolveSlotColor(palette, slot)).getHex(), emissiveClass: emissiveClassFor(slot.kind) }
     const chamfer = model.chamfer.get(key)
 
     if (chamfer?.resolvedTo) {
       const variant = chamferBasisIsReflected(chamfer.planeAxis, chamfer.planeOrientation) ? 'M' : ''
       const base = CHAMFER_BASE[`${chamfer.resolvedTo.shapeKind}${variant}`]
       chamferInstanceMatrix(coord, chamfer.planeAxis, chamfer.planeOrientation, chamfer.resolvedTo.rotation, matrix)
-      emitChamfer(faces, base, matrix, colorKey)
+      emitChamfer(faces, base, matrix, mat)
     } else {
-      emitCube(faces, coord, colorKey)
+      emitCube(faces, coord, mat)
     }
   }
 
   const rawTriangles = faces.length
-  const shell = removeInteriorFaces(faces)
-  const geometry = optimizeGeometry(geometryFromFaces(shell))
+  return { faces: removeInteriorFaces(faces), rawTriangles }
+}
+
+/** Build the merged, shell-culled, coplanar-optimized mesh for the whole model (single geometry with
+ * per-vertex `color`, used by the live 3D preview). */
+export function buildOptimizedVoxelGeometry(model: VoxelModel, palette: PaletteState): OptimizedVoxelMesh {
+  const { faces, rawTriangles } = buildShellFaces(model, palette)
+  const geometry = optimizeGeometry(geometryFromFaces(faces))
   return { geometry, rawTriangles, optimizedTriangles: triangleCount(geometry) }
+}
+
+export interface ColorGroupGeometry {
+  /** Packed `0xRRGGBB` (sRGB) — the group's single material colour. */
+  colorKey: number
+  /** Palette slot's emissive class: 0 = none, 1 = emissive, 2 = blink, 3 = pulse. Groups with the
+   * same colour but different classes stay separate materials; the exporter sets `material.emissive`
+   * for the non-zero classes (steadily — static glTF can't animate blink/pulse). */
+  emissiveClass: number
+  geometry: THREE.BufferGeometry
+}
+
+/**
+ * Like `buildOptimizedVoxelGeometry` but split into one optimized geometry per **(colour, emissive
+ * class)** — for GLTF export as separate, per-material meshes (rather than one vertex-coloured blob
+ * that DCC tools import under a single default material). Same shell + coplanar-merge pipeline; only
+ * the final assembly differs. Each geometry still carries a `color` attribute (all one colour); the
+ * exporter drops it in favour of a solid material colour + emissive.
+ */
+export function buildOptimizedVoxelGeometryByColor(model: VoxelModel, palette: PaletteState): ColorGroupGeometry[] {
+  const { faces } = buildShellFaces(model, palette)
+  const byMaterial = new Map<string, Face[]>()
+  for (const f of faces) {
+    const matKey = `${f.colorKey}:${f.emissiveClass}`
+    const group = byMaterial.get(matKey)
+    if (group) group.push(f)
+    else byMaterial.set(matKey, [f])
+  }
+  const out: ColorGroupGeometry[] = []
+  for (const group of byMaterial.values()) {
+    out.push({ colorKey: group[0].colorKey, emissiveClass: group[0].emissiveClass, geometry: optimizeGeometry(geometryFromFaces(group)) })
+  }
+  return out
 }

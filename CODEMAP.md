@@ -1,8 +1,8 @@
 ```
 # Auto-generated project map
-# Last updated: 2026-07-12 00:27:11
-# Files: 80
-# Lines of code: ~5221
+# Last updated: 2026-07-12 05:21:00
+# Files: 85
+# Lines of code: ~6102
 ```
 - **/components**
   - **/editor2d**
@@ -69,8 +69,13 @@
       - Function: `ConstructionPlaneGizmo` - Minimal central axis widget — click a cap to se...
     - [ConstructionPlaneVisual.tsx](../src/components/viewport3d/ConstructionPlaneVisual.tsx)
       - Function: `ConstructionPlaneVisual` - Visualizes the active construction plane as a p...
+    - [OptimizedMeshView.tsx](../src/components/viewport3d/OptimizedMeshView.tsx)
+      - Type: `OptimizedMeshStats`
+      - Function: `OptimizedMeshView` - Renders the whole model as one merged, shell-cu...
     - [SceneLighting.tsx](../src/components/viewport3d/SceneLighting.tsx)
       - Function: `SceneLighting` - Lights live in a rig `<group>` synced to the ca...
+    - [ViewOptionsOverlay.tsx](../src/components/viewport3d/ViewOptionsOverlay.tsx)
+      - Function: `ViewOptionsOverlay` - Frosted overlay pinned to the top-right of the ...
     - [Viewport3D.tsx](../src/components/viewport3d/Viewport3D.tsx)
       - Function: `Viewport3D`
     - [VoxelFaceHighlight.tsx](../src/components/viewport3d/VoxelFaceHighlight.tsx)
@@ -96,6 +101,10 @@
     - [types.ts](../src/engine/chamfer/types.ts)
       - Type: `NeighborSample`
   - **/csg**
+  - **/export**
+    - [gltfExport.ts](../src/engine/export/gltfExport.ts)
+      - Function: `exportModelToGlb` - Build the optimized per-colour meshes and seria...
+      - Function: `downloadGlb` - Trigger a browser download of a .glb ArrayBuffer.
   - **/grid**
     - [GridStore.ts](../src/engine/grid/GridStore.ts)
       - Function: `encodeKey`
@@ -133,7 +142,16 @@
     - [InstancingManager.test.ts](../src/engine/instancing/InstancingManager.test.ts)
     - [InstancingManager.ts](../src/engine/instancing/InstancingManager.ts)
       - Type: `PoolId` - // See basis.ts's chamferBasisIsReflected and c...
-      - Class: `InstancingManager` (Methods: makePickMesh, ensureCapacity, ensurePickCapacity, syncPickMesh, sync, tick, setHoveredCell, cellKeyForPick, dispose) - Owns the 4 InstancedMesh pools (cube + 3 chamfe...
+      - Class: `InstancingManager` (Methods: makePickMesh, ensureCapacity, ensurePickCapacity, syncPickMesh, sync, tick, setHoveredCell, setWireframe, setRenderVisible, cellKeyForPick, dispose) - Owns the 4 InstancedMesh pools (cube + 3 chamfe...
+    - [meshOptimizer.ts](../src/engine/instancing/meshOptimizer.ts)
+      - Function: `triangleCount` - Triangle count of a (non-indexed or indexed) ge...
+      - Function: `optimizeGeometry` - Merge coplanar, connected, same-`colorKey` face...
+    - [voxelMeshBuilder.ts](../src/engine/instancing/voxelMeshBuilder.ts)
+      - Function: `removeInteriorFaces` - Shell pass: drop back-to-back interior face pai...
+      - Interface: `OptimizedVoxelMesh`
+      - Function: `buildOptimizedVoxelGeometry` - Build the merged, shell-culled, coplanar-optimi...
+      - Interface: `ColorGroupGeometry`
+      - Function: `buildOptimizedVoxelGeometryByColor` - Like `buildOptimizedVoxelGeometry` but split in...
   - **/palette**
     - [defaultPalette.ts](../src/engine/palette/defaultPalette.ts)
       - Variable: `DEFAULT_PALETTE` - Slightly desaturated "vintage retro" default pa...
