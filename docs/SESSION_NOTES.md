@@ -124,3 +124,81 @@ Every chamfer cell on the active plane now shows the diagonal-stripe marker (pre
 ## Updated Documentation
 
 - **`docs/ARCHITECTURE.md`** — Added two SPEC deviations (chamfer resolution rule, GLTF export). Updated chamfer system and 2D editor sections. Added mesh optimization and GLTF export subsection.
+
+---
+
+## 2026-07-12 — Texture Authoring (Box-Mapped Surface Texturing)
+
+VoxPaint gained a second top-level authoring mode. The app now has **two modes**: `model` (original voxel modeler) and `texture` (paint a 6-sided, box-mapped grayscale texture onto the whole model).
+
+### Design: Modular, Loosely Coupled
+
+- Single top-level `mode` switch (`store/modeSlice.ts`), whole-subtree gating in components (never `if (texture)` sprinkled throughout).
+- Separate undo/redo history for texturing (`store/textureSlice.ts`'s `texturePast`/`textureFuture`).
+- Reuse of only pure leaf helpers between stacks (e.g., `bresenhamLine`, `selectionMask`, voxelMeshBuilder UV injection).
+
+### Key Technical Decisions
+
+- **Texture resolution**: 4× the voxel resolution (each texel = 0.25 voxel). At the default 16³ working volume: 64×64 texel grid per face.
+- **Grayscale palette**: 8 evenly-spaced values (indices 0–7 map to `index/7`, deliberately skipping 0.5 so no neutral no-op swatch).
+- **Blend mode**: OVERLAY (not multiply) — chosen specifically because multiply can only darken, whereas overlay can lighten. Computed in sRGB space (neutral pivot at 0.5).
+- **Chamfer projection**: sloped normals disambiguated by projecting along the axis the chamfer was authored in (`ChamferCell.planeAxis`/`planeOrientation`).
+- **Box-map wrapping**: opposite faces mirror one in-plane axis (standard box-map wrap). Per-face flips (`nx`/`nz` flip U, `py` flip V) ensure the texture reads correctly viewed from outside.
+- **Immer + Uint8Array**: every texel edit builds the next model outside the producer via copy-on-write (`cloneTextureModel`), since Immer treats typed arrays as opaque.
+
+### Files Added
+
+**Engine** (`src/engine/texture/`):
+- `types.ts` — `BoxFace`, `TextureModel`, `TEXEL_SCALE`, `GRAYSCALE`, `EMPTY` sentinel.
+- `TextureStore.ts` — helpers (`getTexel`, `cloneTextureModel`, `hasTextureContent`).
+- `boxMapping.ts` — core: `worldToTexel`, `boxFaceForCell`, `buildBlendAtlas`, `FLIP_U`/`FLIP_V` per-face corrections.
+- `overlay.ts` — `overlayChannel` (JS) + GLSL fragments (`OVERLAY_MAP_FRAGMENT`/`OVERLAY_COLOR_FRAGMENT`, inlined to avoid compiler issues).
+- `textureTools.ts` — parallel tool set (`textureToolMap`), reusing pure leaf helpers, over `TextureToolContext`.
+- `texelOps.ts` — flat-grid ops (flood fill, copy/paste, rotate/mirror).
+- `texturedGeometry.ts` — `buildTexturedGeometry` / `buildTexturedGeometryByColor` (voxel mesh with box-map UVs).
+- `projection.ts` — `projectModelToFace` (render model silhouette onto texture face as paint-alignment guide).
+- Tests: `boxMapping.test.ts`, `overlay.test.ts`, `store/textureSlice.test.ts`, `serialize.test.ts`.
+
+**Store** (`src/store/`):
+- `modeSlice.ts` — `mode: 'model'|'texture'`, `setMode`.
+- `textureSlice.ts` — full parallel texture stack: `texture`, `activeBoxFace`, `activeGrayIndex`, own history (`texturePast`/`textureFuture`), selection/float/clipboard, all texture-editing actions.
+
+**Components** (`src/components/`):
+- `editor2d/TextureCanvas.tsx` — 2D drawing surface (texels + projection guide, no grid).
+- `editor2d/useTextureCanvasTools.ts` — pointer adapter, texel-scaled camera.
+- `editor2d/textureCanvasConstants.ts` — texel coordinate math.
+- `viewport3d/TexturedModelView.tsx` — 3D preview with overlay shader (patched via `onBeforeCompile`).
+- `viewport3d/BoundingBoxFaceSelector.tsx` — clickable emissive wireframe box for face selection.
+- `panels/ModeTabs.tsx` — Model/Texture mode tabs (TopToolbar).
+
+### Files Modified
+
+- **`engine/instancing/voxelMeshBuilder.ts`** — `Face.chamfer` optional ref, new `buildTexturedShellGeometry` / `buildTexturedShellGeometryByColor` (shell faces, per-vertex UVs via injected callback, per-vertex color). Coplanar-merge optimizer intentionally skipped for textured output.
+- **`engine/export/gltfExport.ts`** — `exportModelToGlb(model, palette, texture?)` bakes overlay into per-(color, emissiveClass) texture atlases (192×128 RGBA each) when texture present. Export uses standard glTF `baseColor × map`, so preview matches export exactly.
+- **`engine/persistence/schema.ts`** — `CURRENT_SCHEMA_VERSION` bumped 1 → 2. `VoxPaintProjectFileV2` adds optional `texture: SerializedTexture` (base64 per face).
+- **`engine/persistence/serialize.ts`** — `serializeProject` / `deserializeProject` now include texture (base64 serialization, faceSize validation).
+- **`engine/persistence/migrations.ts`** — `MIGRATIONS[1]` (v1 → v2 sets schemaVersion; optional texture loads empty).
+- **`store/types.ts`** — added `EditorMode`, `ModeSlice`, `TextureSlice` types; `AppState` now intersects both.
+- **`store/useAppStore.ts`** — composes `createModeSlice` + `createTextureSlice`.
+- **`store/projectSlice.ts`** — `newProject` resets texture stack.
+- **`store/wireAutosave.ts`** — serialize/restore include texture; autosave flushes on `state.texture` change.
+- **`components/panels/FileMenu.tsx`** — export/import/GLTF pass texture through.
+- **`components/editor2d/Editor2D.tsx`** — branches `mode === 'texture' ? <TextureCanvas/> : <PixelCanvas/> + <PlaneControlsOverlay/>`.
+- **`components/editor2d/useKeyboardShortcuts.ts`** — mode-aware (texture history/selection/clipboard if texture mode; `hoverCellRef` made optional).
+- **`components/editor2d/PixelCanvas.tsx`** — unchanged behavior; still calls `useKeyboardShortcuts`.
+- **`components/viewport3d/Viewport3D.tsx`** — gates whole subtrees on mode: model = existing scene; texture = `<TexturedModelView/>` + `<BoundingBoxFaceSelector/>`.
+- **`components/layout/TopToolbar.tsx`** — added `<ModeTabs/>` right of FileMenu.
+- **`components/panels/FloatingPalette.tsx`** — branches on mode: texture shows 8 grayscale swatches (dark/light split); model shows 28-slot palette.
+- **`components/panels/LayerToggle.tsx`** — disabled/greyed in texture mode.
+- **`components/panels/UndoRedoControls.tsx`** — mode-aware (texture history vs voxel history).
+
+### Verification
+
+- tsc clean, oxlint clean, 116 unit tests pass, production build succeeds.
+- NOT browser-verified (per project rule — user verifies in browser).
+
+### Open Items / Known Limitations
+
+- Browser verification pending: confirm all 6 face orientations read right-side-up, overlay levels look right across the 8 grays, projection guide aligns with model, exported .glb matches preview in Blender.
+- Perf note: each texel stroke rebuilds blend DataTexture in preview (geometry cached). Fine at current scale; later could update only changed atlas sub-rect.
+- Existing projects load with empty texture (backwards-compatible v1 → v2 migration).
