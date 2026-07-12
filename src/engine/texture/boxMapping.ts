@@ -49,17 +49,28 @@ const AXIS_BASIS: Record<Axis, { uDir: Coord; vDir: Coord }> = {
 const dot = (a: Coord, b: Coord) => a[0] * b[0] + a[1] * b[1] + a[2] * b[2]
 
 /**
+ * Per-face in-plane flips applied on top of the shared axis basis. `planeLogicalBasis` gives one
+ * consistent basis per axis, but the two faces of an axis view their shared plane from opposite
+ * sides, so exactly one of each pair must mirror an in-plane axis to read correctly from outside
+ * (the standard box-map "wrap around"). With the basis's default (u = right, v = down-on-canvas),
+ * the faces needing a flip are: `nx` (U ← +z), `nz` (U ← -x), `py` (V ← +z). Their partners
+ * (`px`, `pz`, `ny`) — and every cube's normal-derived face — keep the basis unflipped.
+ */
+const FLIP_U: Record<BoxFace, boolean> = { px: false, nx: true, py: false, ny: false, pz: false, nz: true }
+const FLIP_V: Record<BoxFace, boolean> = { px: false, nx: false, py: true, ny: false, pz: false, nz: false }
+
+/**
  * Projects a world vertex onto a box face's two in-plane axes, returning **continuous** texel
  * coordinates in `[0, FACE_SIZE]`. Reuses `planeLogicalBasis` so the projection matches the 2D
- * canvas's u/v convention by construction. Orientation-independent (both faces of an axis share the
- * same in-plane mapping) — only `boxFaceForCell` picks which of the two faces a triangle lands on.
+ * canvas's u/v convention, plus the per-face `FLIP_U`/`FLIP_V` correction so each face reads the
+ * same way it was painted when viewed from outside the model.
  */
 export function worldToTexel(face: BoxFace, x: number, y: number, z: number): [number, number] {
   const { axis } = BOX_FACE_AXIS[face]
   const { uDir, vDir } = AXIS_BASIS[axis]
   const p: Coord = [x, y, z]
-  const pu = dot(p, uDir)
-  const pv = dot(p, vDir)
+  const pu = FLIP_U[face] ? -dot(p, uDir) : dot(p, uDir)
+  const pv = FLIP_V[face] ? -dot(p, vDir) : dot(p, vDir)
   return [(pu + HALF_WORLD) * TEXEL_SCALE, (pv + HALF_WORLD) * TEXEL_SCALE]
 }
 

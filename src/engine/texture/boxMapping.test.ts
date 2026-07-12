@@ -11,11 +11,25 @@ describe('worldToTexel', () => {
     expect(worldToTexel('pz', HALF_WORLD, -HALF_WORLD, 0)).toEqual([FACE_SIZE, FACE_SIZE])
   })
 
-  it('is orientation-independent along an axis (front/back share the in-plane mapping)', () => {
+  it('flips exactly one in-plane axis on the far face of each pair (box-map wrap)', () => {
     const at = [3, -2, 5] as const
-    expect(worldToTexel('px', ...at)).toEqual(worldToTexel('nx', ...at))
-    expect(worldToTexel('py', ...at)).toEqual(worldToTexel('ny', ...at))
-    expect(worldToTexel('pz', ...at)).toEqual(worldToTexel('nz', ...at))
+    // x pair: same V, U mirrored (nx flips U).
+    const [pxU, pxV] = worldToTexel('px', ...at)
+    const [nxU, nxV] = worldToTexel('nx', ...at)
+    expect(nxV).toBe(pxV)
+    expect(nxU).toBe(FACE_SIZE - pxU)
+
+    // z pair: same V, U mirrored (nz flips U).
+    const [pzU, pzV] = worldToTexel('pz', ...at)
+    const [nzU, nzV] = worldToTexel('nz', ...at)
+    expect(nzV).toBe(pzV)
+    expect(nzU).toBe(FACE_SIZE - pzU)
+
+    // y pair: same U, V mirrored (py flips V).
+    const [pyU, pyV] = worldToTexel('py', ...at)
+    const [nyU, nyV] = worldToTexel('ny', ...at)
+    expect(pyU).toBe(nyU)
+    expect(pyV).toBe(FACE_SIZE - nyV)
   })
 })
 
