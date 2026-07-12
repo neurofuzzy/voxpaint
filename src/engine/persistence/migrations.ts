@@ -3,11 +3,12 @@ import { CURRENT_SCHEMA_VERSION, type VoxPaintProjectFile } from './schema'
 type Migration = (json: any) => any
 
 /**
- * Ordered, one-step-per-version migration chain. Empty for v1 — there is nothing to migrate
- * from yet — but the pattern exists from day one so future schema bumps are additive, not a
- * retrofit against real user data.
+ * Ordered, one-step-per-version migration chain: `MIGRATIONS[v]` upgrades a `schemaVersion === v`
+ * doc to `v + 1`. v1 → v2 just stamps the new version — the `texture` field is optional, so a v1
+ * project simply loads with no texture (an empty one is supplied at deserialize time).
  */
 const MIGRATIONS: Migration[] = []
+MIGRATIONS[1] = (doc) => ({ ...doc, schemaVersion: 2 })
 
 export class UnsupportedSchemaVersionError extends Error {
   constructor(foundVersion: unknown) {

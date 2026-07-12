@@ -1,6 +1,7 @@
 import type { StateCreator } from 'zustand'
 import { emptyModel } from '@/engine/grid/GridStore'
 import { DEFAULT_PALETTE } from '@/engine/palette/defaultPalette'
+import { emptyTextureModel } from '@/engine/texture/TextureStore'
 import type { AppState, ProjectSlice } from './types'
 
 type Slice = StateCreator<AppState, [['zustand/immer', never]], [], ProjectSlice>
@@ -33,5 +34,13 @@ export const createProjectSlice: Slice = (set) => ({
       }
       state.past = []
       state.future = []
+      // Reset the parallel texture stack too, so a new project starts fully blank.
+      state.texture = emptyTextureModel()
+      state.texturePast = []
+      state.textureFuture = []
+      state.textureSelection = null
+      state.textureFloat = null
+      state.textureFloatOrigin = null
+      state.activeBoxFace = null
     }),
 })

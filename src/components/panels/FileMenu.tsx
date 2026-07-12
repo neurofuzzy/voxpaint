@@ -16,17 +16,18 @@ export function FileMenu() {
   }
 
   function handleExport() {
-    const { model, palette, meta } = useAppStore.getState()
-    downloadProjectFile(serializeProject(model, palette, meta))
+    const { model, palette, meta, texture } = useAppStore.getState()
+    downloadProjectFile(serializeProject(model, palette, meta, texture))
     showToast('Project exported.')
   }
 
   async function handleImportFile(file: File) {
     try {
       const parsed = await readProjectFile(file)
-      const { model, palette, meta } = deserializeProject(parsed)
+      const { model, palette, meta, texture } = deserializeProject(parsed)
       useAppStore.getState().setModel(model)
       useAppStore.getState().setPalette(palette)
+      useAppStore.getState().setTexture(texture)
       useAppStore.setState((s) => {
         s.meta = meta
       })
@@ -37,14 +38,14 @@ export function FileMenu() {
   }
 
   async function handleExportGltf() {
-    const { model, palette, meta } = useAppStore.getState()
+    const { model, palette, meta, texture } = useAppStore.getState()
     if (model.color.size === 0) {
       showToast('Nothing to export — the model is empty.')
       return
     }
     try {
       showToast('Exporting GLTF…')
-      const glb = await exportModelToGlb(model, palette)
+      const glb = await exportModelToGlb(model, palette, texture)
       downloadGlb(glb, meta.name || 'voxpaint-model')
       showToast('GLTF exported.')
     } catch (err) {

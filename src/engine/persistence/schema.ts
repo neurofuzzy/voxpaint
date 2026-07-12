@@ -1,7 +1,8 @@
 import type { Axis, BBox, ChamferClassification, Orientation } from '@/engine/grid/types'
 import type { PaletteSlotRef, PaletteState } from '@/engine/palette/types'
+import type { BoxFace } from '@/engine/texture/types'
 
-export const CURRENT_SCHEMA_VERSION = 1 as const
+export const CURRENT_SCHEMA_VERSION = 2 as const
 
 export type ProjectMeta = {
   name: string
@@ -21,6 +22,14 @@ export type SerializedChamferCell = {
   resolvedTo: ChamferClassification | null
 }
 
+/** The box-mapped texture, serialized: per-face grayscale texel arrays as base64. `texelScale` and
+ * `faceSize` are recorded so a future grid-size change can detect (and skip) incompatible textures. */
+export type SerializedTexture = {
+  texelScale: number
+  faceSize: number
+  faces: Record<BoxFace, string>
+}
+
 export type VoxPaintProjectFileV1 = {
   schemaVersion: 1
   meta: ProjectMeta
@@ -32,4 +41,17 @@ export type VoxPaintProjectFileV1 = {
   }
 }
 
-export type VoxPaintProjectFile = VoxPaintProjectFileV1
+export type VoxPaintProjectFileV2 = {
+  schemaVersion: 2
+  meta: ProjectMeta
+  palette: PaletteState
+  model: {
+    bounds: BBox | null
+    colorCells: SerializedColorCell[]
+    chamferCells: SerializedChamferCell[]
+  }
+  /** Optional — absent on projects that were never textured (and on migrated v1 files). */
+  texture?: SerializedTexture
+}
+
+export type VoxPaintProjectFile = VoxPaintProjectFileV2

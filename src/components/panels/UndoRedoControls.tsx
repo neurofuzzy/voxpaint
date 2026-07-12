@@ -2,11 +2,20 @@ import { Redo2, Undo2 } from 'lucide-react'
 import { useAppStore } from '@/store/useAppStore'
 
 export function UndoRedoControls() {
-  const past = useAppStore((s) => s.past)
-  const future = useAppStore((s) => s.future)
-  const floatContent = useAppStore((s) => s.floatContent)
-  const undo = useAppStore((s) => s.undo)
-  const redo = useAppStore((s) => s.redo)
+  const mode = useAppStore((s) => s.mode)
+  const modelPast = useAppStore((s) => s.past)
+  const modelFuture = useAppStore((s) => s.future)
+  const modelFloat = useAppStore((s) => s.floatContent)
+  const texturePast = useAppStore((s) => s.texturePast)
+  const textureFuture = useAppStore((s) => s.textureFuture)
+  const textureFloat = useAppStore((s) => s.textureFloat)
+
+  const texture = mode === 'texture'
+  const past = texture ? texturePast : modelPast
+  const future = texture ? textureFuture : modelFuture
+  const floatContent = texture ? textureFloat : modelFloat
+  const undo = useAppStore((s) => (texture ? s.textureUndo : s.undo))
+  const redo = useAppStore((s) => (texture ? s.textureRedo : s.redo))
 
   return (
     <div className="flex items-center gap-1">

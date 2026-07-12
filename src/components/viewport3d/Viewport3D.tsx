@@ -8,11 +8,13 @@ import type { InstancingManager } from '@/engine/instancing/InstancingManager'
 import { planeFromFaceHit } from '@/engine/plane/constructionPlane'
 import { useAppStore } from '@/store/useAppStore'
 import { usePlaneLayerScroll } from '@/components/usePlaneLayerScroll'
+import { BoundingBoxFaceSelector } from './BoundingBoxFaceSelector'
 import { ConstructionPlaneGizmo } from './ConstructionPlaneGizmo'
 import { ConstructionPlaneVisual } from './ConstructionPlaneVisual'
 import { OptimizedMeshView } from './OptimizedMeshView'
 import type { OptimizedMeshStats } from './OptimizedMeshView'
 import { SceneLighting } from './SceneLighting'
+import { TexturedModelView } from './TexturedModelView'
 import { ViewOptionsOverlay } from './ViewOptionsOverlay'
 import { VoxelFaceHighlight } from './VoxelFaceHighlight'
 import { VoxelGhostPreview } from './VoxelGhostPreview'
@@ -118,10 +120,13 @@ function VoxelInteractionHandler({ managerRef }: { managerRef: React.RefObject<I
 export function Viewport3D() {
   const managerRef = useRef<InstancingManager | null>(null)
   const orbitControlsRef = useRef<OrbitControlsImpl | null>(null)
+  const mode = useAppStore((s) => s.mode)
   const optimizedMesh = useAppStore((s) => s.optimizedMesh)
   const [meshStats, setMeshStats] = useState<OptimizedMeshStats | null>(null)
   const containerRef = useRef<HTMLDivElement>(null)
   usePlaneLayerScroll(containerRef)
+
+  const textureMode = mode === 'texture'
 
   return (
     <div ref={containerRef} className="relative h-full min-w-0 bg-neutral-900">
@@ -131,16 +136,25 @@ export function Viewport3D() {
       <Canvas flat camera={{ position: [18, 16, 20], fov: 45 }} gl={{ antialias: true }}>
         <color attach="background" args={['#111114']} />
         <SceneLighting />
-        <ConstructionPlaneVisual orbitControlsRef={orbitControlsRef} />
-        <VoxelInstancedMeshes ref={managerRef} />
-        {optimizedMesh && <OptimizedMeshView onStats={setMeshStats} />}
-        <VoxelFaceHighlight />
-        <VoxelGhostPreview />
-        <ConstructionPlaneGizmo />
-        <VoxelInteractionHandler managerRef={managerRef} />
+        {textureMode ? (
+          <>
+            <TexturedModelView />
+            <BoundingBoxFaceSelector />
+          </>
+        ) : (
+          <>
+            <ConstructionPlaneVisual orbitControlsRef={orbitControlsRef} />
+            <VoxelInstancedMeshes ref={managerRef} />
+            {optimizedMesh && <OptimizedMeshView onStats={setMeshStats} />}
+            <VoxelFaceHighlight />
+            <VoxelGhostPreview />
+            <ConstructionPlaneGizmo />
+            <VoxelInteractionHandler managerRef={managerRef} />
+          </>
+        )}
         <OrbitControls ref={orbitControlsRef} makeDefault enableDamping dampingFactor={0.12} minDistance={2} maxDistance={150} />
       </Canvas>
-      <ViewOptionsOverlay stats={optimizedMesh ? meshStats : null} onResetCamera={() => orbitControlsRef.current?.reset()} />
+      <ViewOptionsOverlay stats={!textureMode && optimizedMesh ? meshStats : null} onResetCamera={() => orbitControlsRef.current?.reset()} />
     </div>
   )
 }

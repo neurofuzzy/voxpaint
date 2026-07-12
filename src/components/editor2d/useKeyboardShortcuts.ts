@@ -17,8 +17,13 @@ const TOOL_KEYS: Record<string, ToolId> = {
  * deselect, rotate/mirror, and single-letter tool switching. One decoupled if-chain (matching
  * trixelart's own use-keyboard-shortcuts.ts), separate from tool pointer-dispatch since this is
  * app/selection-domain, not per-tool pointer logic.
+ *
+ * Mode-aware: in Texture mode every selection/history action dispatches to the parallel texture
+ * actions (its own separate undo/redo history and texel selection/clipboard). Tool switching is
+ * shared. Called from whichever 2D canvas is mounted (only one at a time), so a single listener is
+ * ever active.
  */
-export function useKeyboardShortcuts(hoverCellRef: React.RefObject<[number, number] | null>) {
+export function useKeyboardShortcuts(hoverCellRef?: React.RefObject<[number, number] | null>) {
   useEffect(() => {
     function onKeyDown(e: KeyboardEvent) {
       const target = e.target as HTMLElement | null
@@ -28,52 +33,65 @@ export function useKeyboardShortcuts(hoverCellRef: React.RefObject<[number, numb
       const isMeta = e.ctrlKey || e.metaKey
       const key = e.key.toLowerCase()
 
+      // Mode-specific bindings for a shared set of concepts, resolved up front so the rest of the
+      // handler reads the same regardless of mode.
+      const texture = store.mode === 'texture'
+      const undo = texture ? store.textureUndo : store.undo
+      const redo = texture ? store.textureRedo : store.redo
+      const selection = texture ? store.textureSelection : store.selection
+      const clipboard = texture ? store.textureClipboard : store.clipboard
+      const copy = texture ? store.textureCopy : store.copySelection
+      const cut = texture ? store.textureCut : store.cutSelection
+      const pasteAt = texture ? store.texturePasteAt : store.pasteClipboardAt
+      const bakeFloat = texture ? store.textureBakeFloatIfAny : store.bakeFloatIfAny
+      const clearSelection = texture ? () => store.setTextureSelection(null) : () => store.setSelection(null)
+      const deleteSelection = texture ? store.textureDelete : store.deleteSelection
+      const transformFloat = texture ? store.textureTransformFloat : store.transformFloat
+
       if (isMeta) {
         if (key === 'z') {
-          if (e.shiftKey) store.redo()
-          else store.undo()
+          if (e.shiftKey) redo()
+          else undo()
           e.preventDefault()
-        } else if (key === 'c' && store.selection) {
-          store.copySelection()
+        } else if (key === 'c' && selection) {
+          copy()
           e.preventDefault()
-        } else if (key === 'x' && store.selection) {
-          store.cutSelection()
+        } else if (key === 'x' && selection) {
+          cut()
           e.preventDefault()
-        } else if (key === 'v' && store.clipboard) {
+        } else if (key === 'v' && clipboard) {
           // Paste-in-place: always land at the same top-left the selection was copied from.
-          store.pasteClipboardAt(store.clipboard.originU ?? 0, store.clipboard.originV ?? 0)
+          pasteAt(clipboard.originU ?? 0, clipboard.originV ?? 0)
           e.preventDefault()
         }
         return
       }
 
       if (e.key === 'Escape') {
-        store.bakeFloatIfAny()
-        store.setSelection(null)
+        bakeFloat()
+        clearSelection()
         e.preventDefault()
         return
       }
 
-      if ((key === 'delete' || key === 'backspace') && store.selection) {
-        store.deleteSelection()
+      if ((key === 'delete' || key === 'backspace') && selection) {
+        deleteSelection()
         e.preventDefault()
         return
       }
 
-      // Rotate/mirror apply to whatever is selected regardless of the active tool — both Select
-      // (dragging inside a selection) and Move (whole-slice) can leave a transformable float/
-      // selection behind, so this isn't scoped to a specific tool.
-      if (store.selection) {
+      // Rotate/mirror apply to whatever is selected regardless of the active tool.
+      if (selection) {
         if (key === 'r') {
-          store.transformFloat('rotate')
+          transformFloat('rotate')
           e.preventDefault()
           return
         } else if (key === 'h') {
-          store.transformFloat('mirror-h')
+          transformFloat('mirror-h')
           e.preventDefault()
           return
         } else if (key === 'v') {
-          store.transformFloat('mirror-v')
+          transformFloat('mirror-v')
           e.preventDefault()
           return
         }

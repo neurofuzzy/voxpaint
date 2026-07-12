@@ -17,13 +17,19 @@ const KINDS: Array<{ id: VoxelKind; label: string; Icon: typeof CubeIcon }> = [
 export function VoxelKindToggle() {
   const activeVoxelKind = useAppStore((s) => s.activeVoxelKind)
   const setActiveVoxelKind = useAppStore((s) => s.setActiveVoxelKind)
+  // Voxel kind (cube/chamfer) has no meaning while texturing — disabled in Texture mode.
+  const disabled = useAppStore((s) => s.mode === 'texture')
 
   return (
     <Tooltip.Provider delayDuration={300}>
       <div
         role="group"
         aria-label="Voxel kind"
-        className="flex flex-col divide-y divide-neutral-700 overflow-hidden rounded-lg border border-neutral-700"
+        aria-disabled={disabled}
+        className={
+          'flex flex-col divide-y divide-neutral-700 overflow-hidden rounded-lg border border-neutral-700 ' +
+          (disabled ? 'pointer-events-none opacity-40' : '')
+        }
       >
         {KINDS.map(({ id, label, Icon }) => {
           const active = activeVoxelKind === id
@@ -34,6 +40,7 @@ export function VoxelKindToggle() {
                   type="button"
                   aria-label={label}
                   aria-pressed={active}
+                  disabled={disabled}
                   onClick={() => setActiveVoxelKind(id)}
                   className={
                     'flex h-9 w-9 items-center justify-center transition ' +

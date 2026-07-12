@@ -1,6 +1,6 @@
 import * as THREE from 'three'
 import { decodeKey } from '@/engine/grid/GridStore'
-import type { Coord, VoxelModel } from '@/engine/grid/types'
+import type { ChamferCell, Coord, VoxelModel } from '@/engine/grid/types'
 import { concaveCornerGeometry, convexCornerGeometry, mirrorVGeometry, rampGeometry } from '@/engine/chamfer/chamferGeometry'
 import { emissiveClassFor, resolveSlotColor } from '@/engine/palette/palette'
 import type { PaletteState } from '@/engine/palette/types'
@@ -37,7 +37,18 @@ interface Face {
   normal: THREE.Vector3
   colorKey: number
   emissiveClass: number
+  /** The source chamfer cell when this face came from a resolved chamfer prefab, else undefined.
+   * Only the box-map UV path reads it (to project a chamfer's faces along its authored axis). */
+  chamfer?: ChamferCell
 }
+
+/**
+ * Per-vertex box-map UV generator supplied by the texture layer. Takes the face's source chamfer
+ * (undefined for plain cubes), its outward normal, and the world-space vertex; returns `[u, v]` in
+ * atlas space. Kept as an injected callback so `engine/instancing` has no dependency on
+ * `engine/texture`.
+ */
+export type VertexUV = (chamfer: ChamferCell | undefined, normal: THREE.Vector3, vertex: THREE.Vector3) => [number, number]
 
 const QUANT = 1e6
 const qkey = (v: THREE.Vector3) => `${Math.round(v.x * QUANT)},${Math.round(v.y * QUANT)},${Math.round(v.z * QUANT)}`
@@ -221,7 +232,9 @@ function buildShellFaces(model: VoxelModel, palette: PaletteState): { faces: Fac
       const variant = chamferBasisIsReflected(chamfer.planeAxis, chamfer.planeOrientation) ? 'M' : ''
       const base = CHAMFER_BASE[`${chamfer.resolvedTo.shapeKind}${variant}`]
       chamferInstanceMatrix(coord, chamfer.planeAxis, chamfer.planeOrientation, chamfer.resolvedTo.rotation, matrix)
+      const start = faces.length
       emitChamfer(faces, base, matrix, mat)
+      for (let i = start; i < faces.length; i++) faces[i].chamfer = chamfer
     } else {
       emitCube(faces, coord, mat)
     }
@@ -268,6 +281,62 @@ export function buildOptimizedVoxelGeometryByColor(model: VoxelModel, palette: P
   const out: ColorGroupGeometry[] = []
   for (const group of byMaterial.values()) {
     out.push({ colorKey: group[0].colorKey, emissiveClass: group[0].emissiveClass, geometry: optimizeGeometry(geometryFromFaces(group)) })
+  }
+  return out
+}
+
+/**
+ * Like `geometryFromFaces` but for the box-map texture path: carries per-vertex `color` (RGB, for the
+ * shade/multiply material) **and** a `uv` attribute from the injected generator. The coplanar-merge
+ * optimizer is deliberately **not** run on textured geometry — box-map UVs are a pure function of
+ * (world position, projection face), so leaving the shell faces un-welded keeps UV assignment trivial
+ * and correct without teaching the optimizer to carry UVs.
+ */
+function geometryFromFacesUV(faces: Face[], uvFor: VertexUV): THREE.BufferGeometry {
+  const positions: number[] = []
+  const normals: number[] = []
+  const colors: number[] = []
+  const uvs: number[] = []
+  const color = new THREE.Color()
+  for (const f of faces) {
+    color.setHex(f.colorKey)
+    for (const v of [f.a, f.b, f.c]) {
+      positions.push(v.x, v.y, v.z)
+      normals.push(f.normal.x, f.normal.y, f.normal.z)
+      colors.push(color.r, color.g, color.b)
+      const [uu, vv] = uvFor(f.chamfer, f.normal, v)
+      uvs.push(uu, vv)
+    }
+  }
+  const geometry = new THREE.BufferGeometry()
+  geometry.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3))
+  geometry.setAttribute('normal', new THREE.Float32BufferAttribute(normals, 3))
+  geometry.setAttribute('color', new THREE.Float32BufferAttribute(colors, 3))
+  geometry.setAttribute('uv', new THREE.Float32BufferAttribute(uvs, 2))
+  return geometry
+}
+
+/** Build the shell-culled mesh with per-vertex box-map UVs + color for the Texture-mode preview
+ * (single geometry, one atlas material). See `geometryFromFacesUV` on why the coplanar merge is skipped. */
+export function buildTexturedShellGeometry(model: VoxelModel, palette: PaletteState, uvFor: VertexUV): THREE.BufferGeometry {
+  const { faces } = buildShellFaces(model, palette)
+  return geometryFromFacesUV(faces, uvFor)
+}
+
+/** Per-(color, emissive class) split of the textured shell, for GLTF export — each group carries UVs
+ * so every per-color material can share the atlas map (baseColor × map = the shade/multiply preview). */
+export function buildTexturedShellGeometryByColor(model: VoxelModel, palette: PaletteState, uvFor: VertexUV): ColorGroupGeometry[] {
+  const { faces } = buildShellFaces(model, palette)
+  const byMaterial = new Map<string, Face[]>()
+  for (const f of faces) {
+    const matKey = `${f.colorKey}:${f.emissiveClass}`
+    const group = byMaterial.get(matKey)
+    if (group) group.push(f)
+    else byMaterial.set(matKey, [f])
+  }
+  const out: ColorGroupGeometry[] = []
+  for (const group of byMaterial.values()) {
+    out.push({ colorKey: group[0].colorKey, emissiveClass: group[0].emissiveClass, geometry: geometryFromFacesUV(group, uvFor) })
   }
   return out
 }

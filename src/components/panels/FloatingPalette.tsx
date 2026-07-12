@@ -1,5 +1,6 @@
 import { useAppStore } from '@/store/useAppStore'
 import type { PaletteSlotKind } from '@/engine/palette/types'
+import { GRAYSCALE } from '@/engine/texture/types'
 
 const SWATCH = 'h-6 w-6 shrink-0'
 
@@ -30,8 +31,35 @@ function Swatch({ kind, index, hex }: { kind: PaletteSlotKind; index: number; he
  * 4 + spacer — 4 spacer slots + 12 swatches = 16 slots, exactly matching the 16-wide base row
  * above, so both rows share the same total width and center perfectly on top of each other.
  */
+/** Texture-mode palette: the (currently 5) grayscale values a texel can hold, bound to
+ * `activeGrayIndex`. */
+function GrayscalePalette() {
+  const activeGrayIndex = useAppStore((s) => s.activeGrayIndex)
+  const setActiveGrayIndex = useAppStore((s) => s.setActiveGrayIndex)
+  return (
+    <div className="flex items-center gap-1.5">
+      {GRAYSCALE.map((hex, index) => {
+        const active = activeGrayIndex === index
+        return (
+          <button
+            key={index}
+            aria-label={`gray ${index}`}
+            onClick={() => setActiveGrayIndex(index)}
+            className={
+              `${SWATCH} rounded-full border-2 transition-transform hover:scale-110 ` +
+              (active ? 'scale-125 border-white shadow-lg' : 'border-white/20')
+            }
+            style={{ backgroundColor: hex }}
+          />
+        )
+      })}
+    </div>
+  )
+}
+
 export function FloatingPalette() {
   const palette = useAppStore((s) => s.palette)
+  const mode = useAppStore((s) => s.mode)
 
   return (
     <div
@@ -40,6 +68,9 @@ export function FloatingPalette() {
       onPointerDown={(e) => e.stopPropagation()}
       onPointerMove={(e) => e.stopPropagation()}
     >
+      {mode === 'texture' ? (
+        <GrayscalePalette />
+      ) : (
       <div className="flex flex-col gap-1">
         <div className="flex items-center gap-1">
           {palette.base.map((hex, index) => (
@@ -62,6 +93,7 @@ export function FloatingPalette() {
           <div className={SWATCH} />
         </div>
       </div>
+      )}
     </div>
   )
 }

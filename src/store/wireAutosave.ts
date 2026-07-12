@@ -9,9 +9,10 @@ export function restoreAutosave(): void {
   try {
     const file = loadAutosave()
     if (!file) return
-    const { model, palette, meta } = deserializeProject(file)
+    const { model, palette, meta, texture } = deserializeProject(file)
     useAppStore.getState().setModel(model)
     useAppStore.getState().setPalette(palette)
+    useAppStore.getState().setTexture(texture)
     useAppStore.setState((state) => {
       state.meta = meta
     })
@@ -23,7 +24,7 @@ export function restoreAutosave(): void {
 const flush = debounce(() => {
   const state = useAppStore.getState()
   try {
-    const file = serializeProject(state.model, state.palette, state.meta)
+    const file = serializeProject(state.model, state.palette, state.meta, state.texture)
     saveAutosave(file)
     state.markSaved(new Date().toISOString())
   } catch (err) {
@@ -36,5 +37,6 @@ export function wireAutosave(): () => void {
   return useAppStore.subscribe((state, prevState) => {
     if (state.dirty && state.dirty !== prevState.dirty) flush()
     else if (state.model !== prevState.model && state.dirty) flush()
+    else if (state.texture !== prevState.texture && state.dirty) flush()
   })
 }

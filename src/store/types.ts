@@ -2,6 +2,8 @@ import type { Axis, CellKey, ChamferCell, Coord, Orientation, VoxelModel } from 
 import type { PaletteSlotRef, PaletteState } from '@/engine/palette/types'
 import type { ConstructionPlane } from '@/engine/plane/types'
 import type { ProjectMeta } from '@/engine/persistence/schema'
+import type { BoxFace, TextureModel } from '@/engine/texture/types'
+import type { TexelClip } from '@/engine/texture/texelOps'
 
 export type ToolId = 'paint' | 'erase' | 'eyedropper' | 'select' | 'fill' | 'clone' | 'move'
 export type VoxelKind = 'cube' | 'ramp'
@@ -170,6 +172,69 @@ export type MoveActionsSlice = {
   endMove: () => void
 }
 
+/** The top-level authoring mode. `model` = voxel modeling (the original app); `texture` = box-mapped
+ * surface texturing. The one shared switch every mode-aware component keys off. */
+export type EditorMode = 'model' | 'texture'
+
+export type ModeSlice = {
+  mode: EditorMode
+  setMode: (mode: EditorMode) => void
+}
+
+/**
+ * Texture authoring state — a fully parallel stack to the voxel one (its own model, selection/float/
+ * clipboard, and **independent** undo/redo history), so texturing never touches voxel history and
+ * vice versa. Operates on the active box face's flat texel grid.
+ */
+export type TextureSlice = {
+  texture: TextureModel
+  /** Which of the 6 box faces the 2D canvas edits, or null until the user clicks a face in 3D. */
+  activeBoxFace: BoxFace | null
+  /** Active grayscale index (0..4) the texture brush writes. */
+  activeGrayIndex: number
+
+  /** Separate undo/redo stacks — whole-`TextureModel` snapshots, one per completed gesture. */
+  texturePast: TextureModel[]
+  textureFuture: TextureModel[]
+
+  /** Texel selection/float/clipboard, mirroring the voxel selection subsystem on a flat grid. */
+  textureSelection: SelectionRegion | null
+  textureFloat: TexelClip | null
+  textureFloatOrigin: FloatOrigin | null
+  textureClipboard: TexelClip | null
+
+  setTexture: (texture: TextureModel) => void
+  setActiveBoxFace: (face: BoxFace | null) => void
+  setActiveGrayIndex: (index: number) => void
+
+  textureBeginStroke: () => void
+  textureCommitStroke: () => void
+  textureUndo: () => void
+  textureRedo: () => void
+
+  /** Paints/erases/fills the active face at texel (u,v). Clipped to the active selection mask and
+   * face bounds; no-op when no box face is active. */
+  paintTexel: (u: number, v: number) => void
+  eraseTexel: (u: number, v: number) => void
+  floodFillTexel: (u: number, v: number) => void
+  cloneStampTexel: (srcU: number, srcV: number, destU: number, destV: number) => void
+
+  /** Live Move of the whole active-face texel grid (one undo stroke). */
+  beginTextureMove: () => void
+  updateTextureMove: (du: number, dv: number) => void
+  endTextureMove: () => void
+
+  setTextureSelection: (region: SelectionRegion | null) => void
+  textureLiftToFloat: () => void
+  textureMoveFloatTo: (originU: number, originV: number) => void
+  textureTransformFloat: (kind: SelectionTransformKind) => void
+  textureBakeFloatIfAny: () => void
+  textureCopy: () => void
+  textureCut: () => void
+  textureDelete: () => void
+  texturePasteAt: (u: number, v: number) => void
+}
+
 export type AppState = ProjectSlice &
   HistorySlice &
   PlaneSlice &
@@ -179,4 +244,6 @@ export type AppState = ProjectSlice &
   PersistenceSlice &
   PaintActionsSlice &
   ToolActionsSlice &
-  MoveActionsSlice
+  MoveActionsSlice &
+  ModeSlice &
+  TextureSlice
