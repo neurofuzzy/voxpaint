@@ -55,6 +55,10 @@ export class InstancingManager {
   private lastSyncedModel: VoxelModel | null = null
   private scratchColor = new THREE.Color()
 
+  private wireframeMaterial: THREE.MeshBasicMaterial
+  private wireframeMeshes: Record<PoolId, THREE.InstancedMesh>
+  private wireframeVisible = false
+
   // Picking runs against full-cell AABBs (unit cubes), NOT the visible chamfer meshes: clicking a
   // sloped chamfer face must still resolve to that cell and a clean axis-aligned face normal, so the
   // construction-plane pick is never confused by the bevel geometry. This invisible InstancedMesh
@@ -71,6 +75,13 @@ export class InstancingManager {
     // Rendering both sides keeps the (correctly outward-wound) chamfer faces visible on every plane;
     // three flips the normal for the viewed backface so Lambert lighting stays correct.
     this.material = new THREE.MeshLambertMaterial({ color: 0xffffff, side: THREE.DoubleSide })
+    // polygonOffset pushes solid faces slightly back in the depth buffer so the wireframe overlay
+    // (identical geometry coords) always draws its edges on top without z-fighting.
+    this.material.polygonOffset = true
+    this.material.polygonOffsetFactor = 1
+    this.material.polygonOffsetUnits = 1
+
+    this.wireframeMaterial = new THREE.MeshBasicMaterial({ color: 0xffffff, wireframe: true })
 
     const ramp = rampGeometry(0)
     const convex = convexCornerGeometry(0)
@@ -87,6 +98,7 @@ export class InstancingManager {
 
     this.capacities = { cube: INITIAL_CAPACITY, ramp: 256, convex: 256, concave: 256, rampM: 256, convexM: 256, concaveM: 256 }
     this.meshes = {} as Record<PoolId, THREE.InstancedMesh>
+    this.wireframeMeshes = {} as Record<PoolId, THREE.InstancedMesh>
     for (const id of POOL_IDS) {
       const mesh = new THREE.InstancedMesh(geometries[id], this.material, this.capacities[id])
       mesh.count = 0
@@ -94,6 +106,14 @@ export class InstancingManager {
       mesh.frustumCulled = false
       this.group.add(mesh)
       this.meshes[id] = mesh
+
+      const wf = new THREE.InstancedMesh(geometries[id], this.wireframeMaterial, this.capacities[id])
+      wf.count = 0
+      wf.visible = false
+      wf.instanceMatrix.setUsage(THREE.DynamicDrawUsage)
+      wf.frustumCulled = false
+      this.group.add(wf)
+      this.wireframeMeshes[id] = wf
     }
 
     this.pickMesh = this.makePickMesh(this.pickCapacity)
@@ -125,6 +145,16 @@ export class InstancingManager {
     old.dispose()
     this.group.add(mesh)
     this.meshes[id] = mesh
+
+    const oldWf = this.wireframeMeshes[id]
+    const wf = new THREE.InstancedMesh(oldWf.geometry, this.wireframeMaterial, newCapacity)
+    wf.visible = oldWf.visible
+    wf.instanceMatrix.setUsage(THREE.DynamicDrawUsage)
+    wf.frustumCulled = false
+    this.group.remove(oldWf)
+    oldWf.dispose()
+    this.group.add(wf)
+    this.wireframeMeshes[id] = wf
   }
 
   private ensurePickCapacity(needed: number) {
@@ -203,6 +233,12 @@ export class InstancingManager {
       mesh.count = keys.length
       mesh.instanceMatrix.needsUpdate = true
       if (mesh.instanceColor) mesh.instanceColor.needsUpdate = true
+
+      // Wireframe overlay: same transforms, same count, always white unlit wireframe.
+      const wf = this.wireframeMeshes[id]
+      wf.count = keys.length
+      wf.instanceMatrix.copy(mesh.instanceMatrix)
+      wf.instanceMatrix.needsUpdate = true
     }
 
     this.syncPickMesh(model)
@@ -269,15 +305,21 @@ export class InstancingManager {
     this.hoverTarget = next
   }
 
-  /** Toggle wireframe on the shared render material (all 7 pools; the pick material is separate). */
+  /** Toggle the white wireframe overlay (separate from the solid mesh, always unlit/emissive). */
   setWireframe(v: boolean) {
-    this.material.wireframe = v
+    this.wireframeVisible = v
+    for (const id of POOL_IDS) this.wireframeMeshes[id].visible = v
   }
 
   /** Show/hide the visible render pools without touching the invisible pick mesh — so
-   * construction-plane picking keeps working while the optimized mesh is shown instead. */
+   * construction-plane picking keeps working while the optimized mesh is shown instead.
+   * Wireframe overlays use AND logic: only visible when both the render pools are shown
+   * AND the wireframe toggle is on. */
   setRenderVisible(v: boolean) {
-    for (const id of POOL_IDS) this.meshes[id].visible = v
+    for (const id of POOL_IDS) {
+      this.meshes[id].visible = v
+      this.wireframeMeshes[id].visible = v && this.wireframeVisible
+    }
   }
 
   /** The invisible AABB mesh to raycast for construction-plane picking. Pass it to
@@ -292,8 +334,12 @@ export class InstancingManager {
   }
 
   dispose() {
-    for (const id of POOL_IDS) this.meshes[id].dispose()
+    for (const id of POOL_IDS) {
+      this.meshes[id].dispose()
+      this.wireframeMeshes[id].dispose()
+    }
     this.material.dispose()
+    this.wireframeMaterial.dispose()
     this.pickMesh.dispose()
     this.pickGeometry.dispose()
     this.pickMaterial.dispose()
