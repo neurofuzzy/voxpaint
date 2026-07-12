@@ -44,7 +44,7 @@ function fillDither(ctx: CanvasRenderingContext2D, sx: number, sy: number, size:
   }
 }
 
-const CHAMFER_STRIPE_WIDTH = 2
+const CHAMFER_STRIPE_WIDTH = 4
 const CHAMFER_SHADE_DELTA = 24
 
 /**
@@ -54,7 +54,7 @@ const CHAMFER_SHADE_DELTA = 24
  * reference cells always use the flat dithered fill regardless of chamfer status.
  */
 function fillDiagonalStripes(ctx: CanvasRenderingContext2D, sx: number, sy: number, size: number, color: string) {
-  const colorA = shadeColor(color, CHAMFER_SHADE_DELTA)
+  const colorA = color;
   const colorB = shadeColor(color, -CHAMFER_SHADE_DELTA)
   ctx.save()
   ctx.beginPath()
@@ -197,9 +197,9 @@ export function PixelCanvas() {
         if (!colorCell) continue
         const [sx, sy] = worldToScreen(toDisplayU(plane, u), toDisplayV(plane, v), size, pan, zoom)
         const color = resolveSlotColor(palette, colorCell.paletteSlot)
-        // Unresolved chamfer cells (still waiting on neighbors) render as a flat fill, same as a
-        // plain cube — the stripe pattern is reserved for cells that actually resolved a shape.
-        if (model.chamfer.get(key)?.resolvedTo) {
+        // Any chamfer cell shows the diagonal-stripe marker (whether or not its shape has resolved
+        // yet), so it's always distinguishable from a plain cube; plain cubes get a flat fill.
+        if (model.chamfer.has(key)) {
           fillDiagonalStripes(ctx, sx, sy, cellPx, color)
         } else {
           ctx.fillStyle = color

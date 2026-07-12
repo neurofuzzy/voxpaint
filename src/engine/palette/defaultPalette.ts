@@ -3,11 +3,11 @@ import type { PaletteState } from './types'
 /** Slightly desaturated "vintage retro" default palette. Fully user-editable at runtime. */
 export const DEFAULT_PALETTE: PaletteState = {
   base: [
-    '#2b2530', // near-black plum
-    '#4a4358', // muted violet-gray
-    '#7c7583', // dusty lavender gray
-    '#b8b2c2', // pale lilac gray
     '#e8e3ed', // off white
+    '#b8b2c2', // pale lilac gray
+    '#7c7583', // dusty lavender gray
+    '#4a4358', // muted violet-gray
+    '#2b2530', // near-black plum
     '#8a5a44', // muted terracotta
     '#c98a5c', // dusty orange
     '#d9b56b', // muted gold

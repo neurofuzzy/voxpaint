@@ -1,6 +1,5 @@
 import { useAppStore } from '@/store/useAppStore'
 import type { PaletteSlotKind } from '@/engine/palette/types'
-import { VoxelKindToggle } from './LayerToggle'
 
 const SWATCH = 'h-6 w-6 shrink-0'
 
@@ -41,8 +40,6 @@ export function FloatingPalette() {
       onPointerDown={(e) => e.stopPropagation()}
       onPointerMove={(e) => e.stopPropagation()}
     >
-      <VoxelKindToggle compact />
-      <div className="h-8 w-px bg-neutral-700" />
       <div className="flex flex-col gap-1">
         <div className="flex items-center gap-1">
           {palette.base.map((hex, index) => (

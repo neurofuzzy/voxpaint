@@ -1,8 +1,7 @@
 import { DEFAULT_GRID_EXTENT } from '@/engine/grid/GridStore'
 
 /** Grid-cell size in CSS px at 100% zoom (1.0). Centralized here for easy tuning. */
-export const BASE_CELL_PX = 20
-
+export const BASE_CELL_PX = 30;
 export const ZOOM_MIN = 0.25
 export const ZOOM_MAX = 6
 /** Larger = gentler zoom per wheel tick (divisor on wheel delta before the exponential curve). */
