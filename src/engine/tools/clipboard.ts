@@ -24,7 +24,7 @@ export function copyRegionToClipboard(model: VoxelModel, plane: ConstructionPlan
       chamfer: chamfer ? cloneChamfer(chamfer) : undefined,
     })
   })
-  return { width: region.width, height: region.height, cells }
+  return { width: region.width, height: region.height, originU: region.originU, originV: region.originV, cells }
 }
 
 /** Erases both layers under a selection mask (used by cut/move). Mutates the given (draft) model. */

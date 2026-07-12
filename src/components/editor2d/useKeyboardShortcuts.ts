@@ -40,8 +40,8 @@ export function useKeyboardShortcuts(hoverCellRef: React.RefObject<[number, numb
           store.cutSelection()
           e.preventDefault()
         } else if (key === 'v' && store.clipboard) {
-          const [u, v] = hoverCellRef.current ?? [store.selection?.originU ?? 0, store.selection?.originV ?? 0]
-          store.pasteClipboardAt(u, v)
+          // Paste-in-place: always land at the same top-left the selection was copied from.
+          store.pasteClipboardAt(store.clipboard.originU ?? 0, store.clipboard.originV ?? 0)
           e.preventDefault()
         }
         return

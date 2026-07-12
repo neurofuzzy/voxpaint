@@ -4,7 +4,7 @@ import { gridCoordFromPixel } from '@/engine/plane/constructionPlane'
 import { floodFillRegion } from '@/engine/tools/floodFill'
 import { applyClipboardAt, clearRegion, copyRegionToClipboard } from '@/engine/tools/clipboard'
 import { mirrorClipboard, rotateClipboard90 } from '@/engine/tools/transform'
-import { mirrorRegion, rotateRegion90 } from '@/engine/tools/selectionMask'
+import { isCellSelected, mirrorRegion, rotateRegion90 } from '@/engine/tools/selectionMask'
 import type { AppState, ToolActionsSlice } from './types'
 
 type Slice = StateCreator<AppState, [['zustand/immer', never]], [], ToolActionsSlice>
@@ -16,8 +16,10 @@ type Slice = StateCreator<AppState, [['zustand/immer', never]], [], ToolActionsS
 export const createToolActionsSlice: Slice = (set, get) => ({
   floodFill: (u, v) => {
     get().bakeFloatIfAny()
-    const { model, plane, activePaletteSlot } = get()
-    const cells = floodFillRegion(model, plane, u, v)
+    const { model, plane, activePaletteSlot, selection } = get()
+    let cells = floodFillRegion(model, plane, u, v)
+    // An active selection clips the fill to its mask.
+    if (selection) cells = cells.filter(([cu, cv]) => isCellSelected(selection, cu, cv))
     if (cells.length === 0) return
     get().beginStroke()
     set((state) => {

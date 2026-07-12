@@ -2,7 +2,8 @@ import type { StateCreator } from 'zustand'
 import { encodeKey, expandBounds, withinWorkingBounds } from '@/engine/grid/GridStore'
 import type { Coord } from '@/engine/grid/types'
 import { classify, sampleNeighbors } from '@/engine/chamfer/chamferResolver'
-import { gridCoordFromPixel } from '@/engine/plane/constructionPlane'
+import { gridCoordFromPixel, pixelFromGridCoord } from '@/engine/plane/constructionPlane'
+import { isCellSelected } from '@/engine/tools/selectionMask'
 import type { AppState, PaintActionsSlice } from './types'
 
 type Slice = StateCreator<AppState, [['zustand/immer', never]], [], PaintActionsSlice>
@@ -10,9 +11,11 @@ type Slice = StateCreator<AppState, [['zustand/immer', never]], [], PaintActions
 export const createPaintActionsSlice: Slice = (set, get) => ({
   paintCell: (u: number, v: number) => {
     get().bakeFloatIfAny()
-    const { model, plane, activeVoxelKind, activePaletteSlot } = get()
+    const { model, plane, activeVoxelKind, activePaletteSlot, selection } = get()
     const coord = gridCoordFromPixel(plane, u, v)
     if (!withinWorkingBounds(coord)) return false
+    // An active selection clips editing to its mask (bakeFloatIfAny above already resolved any float).
+    if (selection && !isCellSelected(selection, u, v)) return false
 
     set((state) => {
       const key = encodeKey(...coord)
@@ -36,6 +39,11 @@ export const createPaintActionsSlice: Slice = (set, get) => ({
 
   eraseCell: (coord: Coord) => {
     get().bakeFloatIfAny()
+    const { plane, selection } = get()
+    if (selection) {
+      const { u, v } = pixelFromGridCoord(plane, coord)
+      if (!isCellSelected(selection, u, v)) return
+    }
     set((state) => {
       const key = encodeKey(...coord)
       state.model.color.delete(key)

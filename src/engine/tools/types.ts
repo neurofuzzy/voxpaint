@@ -2,7 +2,7 @@ import type { VoxelModel } from '@/engine/grid/types'
 import type { ConstructionPlane } from '@/engine/plane/types'
 import type { PaletteSlotRef } from '@/engine/palette/types'
 import type { NormalizedPointerEvent } from '@/engine/input/PointerInputController'
-import type { ClipboardData, FloatOrigin, SelectionRegion, SelectionTransformKind, VoxelKind } from '@/store/types'
+import type { ClipboardData, FloatOrigin, SelectionRegion, SelectionTransformKind, ToolId, VoxelKind } from '@/store/types'
 
 /**
  * Everything a tool module needs, bundled into one object rebuilt fresh every render by the
@@ -27,6 +27,7 @@ export interface ToolContext {
   floodFill: (u: number, v: number) => void
   cloneStampCell: (srcU: number, srcV: number, destU: number, destV: number) => void
   setActivePaletteSlot: (slot: PaletteSlotRef) => void
+  setActiveTool: (tool: ToolId) => void
   setSelection: (region: SelectionRegion | null) => void
   liftSelectionToFloat: () => void
   moveFloatTo: (originU: number, originV: number) => void

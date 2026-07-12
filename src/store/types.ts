@@ -28,6 +28,11 @@ export type ClipboardData = {
   width: number
   height: number
   cells: ClipboardCell[]
+  /** (u,v) top-left of the region this was copied from, so paste lands in the same spot
+   * (paste-in-place). Present on clipboard copies; omitted on transformed float content, which
+   * tracks position via `floatOrigin` instead. */
+  originU?: number
+  originV?: number
 }
 
 export type ProjectSlice = {

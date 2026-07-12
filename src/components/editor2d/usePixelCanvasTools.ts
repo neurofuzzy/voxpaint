@@ -144,6 +144,7 @@ export function usePixelCanvasTools(canvasRef: React.RefObject<HTMLCanvasElement
     floodFill: store.floodFill,
     cloneStampCell: store.cloneStampCell,
     setActivePaletteSlot: store.setActivePaletteSlot,
+    setActiveTool: store.setActiveTool,
     setSelection: store.setSelection,
     liftSelectionToFloat: store.liftSelectionToFloat,
     moveFloatTo: store.moveFloatTo,
