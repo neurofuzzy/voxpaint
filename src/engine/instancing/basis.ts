@@ -1,7 +1,7 @@
 import * as THREE from 'three'
 import type { Axis, Coord, Orientation } from '@/engine/grid/types'
 import { planeLogicalBasis } from '@/engine/plane/constructionPlane'
-import { ALL_AXES, flushFaceCoord, outwardNormal } from '@/engine/plane/planeGeometry'
+import { ALL_AXES, outwardNormal } from '@/engine/plane/planeGeometry'
 
 function setFromCoord(v: THREE.Vector3, coord: Coord): THREE.Vector3 {
   return v.set(coord[0], coord[1], coord[2])
@@ -22,21 +22,46 @@ const PLANE_BASIS: Record<Axis, { worldU: THREE.Vector3; worldV: THREE.Vector3 }
 ) as Record<Axis, { worldU: THREE.Vector3; worldV: THREE.Vector3 }>
 
 const scratchBasis = new THREE.Matrix4()
-const scratchCentered = new THREE.Matrix4()
 const scratchRotZ = new THREE.Matrix4()
-const scratchTranslate = new THREE.Matrix4()
 const scratchOutward = new THREE.Vector3()
-const scratchOrigin = new THREE.Vector3()
+const scratchV = new THREE.Vector3()
+const scratchCross = new THREE.Vector3()
 
-/** Placement matrix for a plain cube: axis-aligned, no plane basis needed. */
+/**
+ * Placement matrix for a plain cube. Geometry is centered on the origin (see chamferGeometry.ts's
+ * unitCubeGeometry), so the instance origin is the cell's 3D center — coord's min corner + (0.5).
+ */
 export function cubeInstanceMatrix(coord: Coord, out = new THREE.Matrix4()): THREE.Matrix4 {
-  return out.makeTranslation(coord[0], coord[1], coord[2])
+  return out.makeTranslation(coord[0] + 0.5, coord[1] + 0.5, coord[2] + 0.5)
 }
 
 /**
- * Placement matrix for a chamfer prefab (local space: x=u, y=v, z=outward extent, z=1 flush with
- * the construction plane — see chamferGeometry.ts). Uses the cell's own baked
- * planeAxis/planeOrientation — never the currently active plane.
+ * True when `makeBasis(worldU, worldV, outward)` for this plane is a reflection (negative
+ * determinant) rather than a proper rotation. Happens for exactly the (axis, orientation) combos
+ * where the 2D editor's u/v frame is left-handed about the outward normal: +Z, +X, and -Y.
+ *
+ * A reflected instance matrix flips triangle winding in screen space, which inverts what the
+ * fragment shader treats as the front face — so those chamfers would light as if lit from behind
+ * (dark). InstancingManager routes reflected instances to a v-mirrored geometry pool paired with
+ * the proper-rotation matrix chamferInstanceMatrix produces below, keeping every rendered instance
+ * det=+1 and correctly lit. See chamferGeometry.ts's mirrorVGeometry.
+ */
+export function chamferBasisIsReflected(planeAxis: Axis, planeOrientation: Orientation): boolean {
+  const { worldU, worldV } = PLANE_BASIS[planeAxis]
+  setFromCoord(scratchOutward, outwardNormal(planeAxis, planeOrientation))
+  scratchCross.crossVectors(worldV, scratchOutward)
+  return worldU.dot(scratchCross) < 0
+}
+
+/**
+ * Placement matrix for a chamfer prefab (local space: x=u, y=v, z=outward extent, centered on the
+ * origin with z=+0.5 flush against the construction plane — see chamferGeometry.ts). Uses the cell's
+ * own baked planeAxis/planeOrientation — never the currently active plane.
+ *
+ * Always returns a **proper rotation** (det=+1). On planes where the raw basis would be a reflection
+ * (see chamferBasisIsReflected), it negates worldV *and* the baked rotation and expects the caller
+ * to use the v-mirrored geometry variant: `makeBasis(U,V,W)·Rz(θ) = makeBasis(U,-V,W)·Rz(-θ)·F_v`,
+ * where `F_v` (mirror in v) is baked into that geometry. Same placement, correct lighting.
  */
 export function chamferInstanceMatrix(
   coord: Coord,
@@ -47,20 +72,17 @@ export function chamferInstanceMatrix(
 ): THREE.Matrix4 {
   const { worldU, worldV } = PLANE_BASIS[planeAxis]
   setFromCoord(scratchOutward, outwardNormal(planeAxis, planeOrientation))
-  scratchBasis.makeBasis(worldU, worldV, scratchOutward)
 
-  // Local z=1 (the prefab's flush face) must land on the cell's actual flush face
-  // (flushFaceCoord); the instance origin is local z=0, one unit further in along the outward
-  // normal, so back off by scratchOutward from the flush face to place it. Same "flush face"
-  // primitive ConstructionPlaneVisual.tsx and VoxelFaceHighlight.tsx use.
-  setFromCoord(scratchOrigin, flushFaceCoord(coord, planeAxis, planeOrientation)).sub(scratchOutward)
-  scratchBasis.setPosition(scratchOrigin)
+  const sign = chamferBasisIsReflected(planeAxis, planeOrientation) ? -1 : 1
+  scratchV.copy(worldV).multiplyScalar(sign)
+  scratchBasis.makeBasis(worldU, scratchV, scratchOutward)
 
-  // Pre/post translate so the baked rotation happens about the footprint's center (0.5, 0.5), not the origin.
-  scratchRotZ.makeRotationZ((rotation * Math.PI) / 2)
-  scratchCentered.makeTranslation(0.5, 0.5, 0).multiply(scratchRotZ)
-  scratchTranslate.makeTranslation(-0.5, -0.5, 0)
-  scratchCentered.multiply(scratchTranslate)
+  // The centered model's origin is the cell's own 3D center (coord's min corner + 0.5 on each axis);
+  // local z=+0.5 then lands exactly on the flush face, z=-0.5 on the inward base.
+  scratchBasis.setPosition(coord[0] + 0.5, coord[1] + 0.5, coord[2] + 0.5)
 
-  return out.copy(scratchBasis).multiply(scratchCentered)
+  // Model is centered, so the baked rotation is a plain rotation about its own up axis (negated in
+  // lockstep with worldV on reflected planes to keep placement identical — see the doc comment).
+  scratchRotZ.makeRotationZ((sign * rotation * Math.PI) / 2)
+  return out.copy(scratchBasis).multiply(scratchRotZ)
 }

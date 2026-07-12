@@ -4,8 +4,8 @@
 
 ## MODELS
 A) Cube Voxel: 6 sides, 12 triangles.
-B) Simple Ramp: 5 sides, 10 triangles. Square bottom. Ramped Top. 3 sides. Sloped sides are single triangle. Backside is a 2-triangle quad like the bottom.
-C) Convex Corner Ramp: 4 sides, 8 triangles. Top triangles each have 2 vertices shared with the bottom.
+B) Simple Ramp: 5 sides, 8 triangles. Square bottom. Ramped Top. 3 sides. Sloped sides are single triangle. Backside is a 2-triangle quad like the bottom.
+C) Convex Corner Ramp: 4 sides, 6 triangles. Top triangles each have 2 vertices shared with the bottom.
 D) Concave Corner Ramp: 6 sides, 10 triangles. Top triangles each have 1 vertex shared with the bottom.
 
 Model origin is the 3d center of the voxel cube. This will eliminate the need for rotation offsets.

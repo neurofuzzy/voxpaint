@@ -1,13 +1,26 @@
 import * as THREE from 'three'
 import { decodeKey } from '@/engine/grid/GridStore'
-import type { CellKey, VoxelModel } from '@/engine/grid/types'
-import { concaveCornerGeometry, convexCornerGeometry, rampGeometry, unitCubeGeometry } from '@/engine/chamfer/chamferGeometry'
+import type { CellKey, ChamferCell, VoxelModel } from '@/engine/grid/types'
+import { concaveCornerGeometry, convexCornerGeometry, mirrorVGeometry, rampGeometry, unitCubeGeometry } from '@/engine/chamfer/chamferGeometry'
 import { emissiveClassFor, resolveSlotColor } from '@/engine/palette/palette'
 import type { PaletteState } from '@/engine/palette/types'
-import { chamferInstanceMatrix, cubeInstanceMatrix } from './basis'
+import { chamferBasisIsReflected, chamferInstanceMatrix, cubeInstanceMatrix } from './basis'
 
-export type PoolId = 'cube' | 'ramp' | 'convex' | 'concave'
-const POOL_IDS: PoolId[] = ['cube', 'ramp', 'convex', 'concave']
+// Chamfer shapes split into a plain and a v-mirrored (`…M`) pool: reflected-basis planes (+Z/+X/-Y)
+// use the mirrored geometry so every rendered instance stays a proper rotation and lights correctly.
+// See basis.ts's chamferBasisIsReflected and chamferGeometry.ts's mirrorVGeometry.
+export type PoolId = 'cube' | 'ramp' | 'convex' | 'concave' | 'rampM' | 'convexM' | 'concaveM'
+const POOL_IDS: PoolId[] = ['cube', 'ramp', 'convex', 'concave', 'rampM', 'convexM', 'concaveM']
+
+/** The pool a color cell belongs to, accounting for its baked shape and plane handedness. */
+function poolIdFor(chamfer: ChamferCell | undefined): PoolId {
+  if (!chamfer?.resolvedTo) return 'cube'
+  const kind = chamfer.resolvedTo.shapeKind
+  return chamferBasisIsReflected(chamfer.planeAxis, chamfer.planeOrientation) ? (`${kind}M` as PoolId) : kind
+}
+
+const emptyPools = <T>(): Record<PoolId, T[]> =>
+  Object.fromEntries(POOL_IDS.map((id) => [id, [] as T[]])) as unknown as Record<PoolId, T[]>
 
 const INITIAL_CAPACITY = 4096
 
@@ -34,9 +47,9 @@ export class InstancingManager {
   readonly group = new THREE.Group()
   private meshes: Record<PoolId, THREE.InstancedMesh>
   private capacities: Record<PoolId, number>
-  private indexToCellKey: Record<PoolId, CellKey[]> = { cube: [], ramp: [], convex: [], concave: [] }
-  private animatedInstances: Record<PoolId, AnimatedInstance[]> = { cube: [], ramp: [], convex: [], concave: [] }
-  private baseColors: Record<PoolId, THREE.Color[]> = { cube: [], ramp: [], convex: [], concave: [] }
+  private indexToCellKey: Record<PoolId, CellKey[]> = emptyPools<CellKey>()
+  private animatedInstances: Record<PoolId, AnimatedInstance[]> = emptyPools<AnimatedInstance>()
+  private baseColors: Record<PoolId, THREE.Color[]> = emptyPools<THREE.Color>()
   private cellKeyToInstance = new Map<CellKey, InstanceRef>()
   private hoverTarget: HoverTarget | null = null
   private material: THREE.MeshLambertMaterial
@@ -44,16 +57,26 @@ export class InstancingManager {
   private scratchColor = new THREE.Color()
 
   constructor() {
-    this.material = new THREE.MeshLambertMaterial({ color: 0xffffff })
+    // DoubleSide: the chamfer instance basis (makeBasis of worldU/worldV/outward) is a reflection
+    // on the x- and z-planes (negative determinant), which flips triangle winding in screen space.
+    // Rendering both sides keeps the (correctly outward-wound) chamfer faces visible on every plane;
+    // three flips the normal for the viewed backface so Lambert lighting stays correct.
+    this.material = new THREE.MeshLambertMaterial({ color: 0xffffff, side: THREE.DoubleSide })
 
+    const ramp = rampGeometry(0)
+    const convex = convexCornerGeometry(0)
+    const concave = concaveCornerGeometry(0)
     const geometries: Record<PoolId, THREE.BufferGeometry> = {
       cube: unitCubeGeometry(),
-      ramp: rampGeometry(0),
-      convex: convexCornerGeometry(0),
-      concave: concaveCornerGeometry(0),
+      ramp,
+      convex,
+      concave,
+      rampM: mirrorVGeometry(ramp),
+      convexM: mirrorVGeometry(convex),
+      concaveM: mirrorVGeometry(concave),
     }
 
-    this.capacities = { cube: INITIAL_CAPACITY, ramp: 256, convex: 256, concave: 256 }
+    this.capacities = { cube: INITIAL_CAPACITY, ramp: 256, convex: 256, concave: 256, rampM: 256, convexM: 256, concaveM: 256 }
     this.meshes = {} as Record<PoolId, THREE.InstancedMesh>
     for (const id of POOL_IDS) {
       const mesh = new THREE.InstancedMesh(geometries[id], this.material, this.capacities[id])
@@ -87,11 +110,10 @@ export class InstancingManager {
     if (model === this.lastSyncedModel) return
     this.lastSyncedModel = model
 
-    const byPool: Record<PoolId, CellKey[]> = { cube: [], ramp: [], convex: [], concave: [] }
+    const byPool: Record<PoolId, CellKey[]> = emptyPools<CellKey>()
     for (const key of model.color.keys()) {
-      const chamfer = model.chamfer.get(key)
-      // Unresolved chamfer cells (resolvedTo: null) render as a plain cube until they resolve.
-      byPool[chamfer?.resolvedTo ? chamfer.resolvedTo.shapeKind : 'cube'].push(key)
+      // Unresolved chamfer cells (resolvedTo: null) fall through to the 'cube' pool until they resolve.
+      byPool[poolIdFor(model.chamfer.get(key))].push(key)
     }
 
     this.cellKeyToInstance.clear()
