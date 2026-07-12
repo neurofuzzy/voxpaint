@@ -30,6 +30,7 @@ export function TextureCanvas() {
   const floatOrigin = useAppStore((s) => s.textureFloatOrigin)
 
   const setStatusMessage = useAppStore((s) => s.setStatusMessage)
+  const onionSkin = useAppStore((s) => s.onionSkin)
   const { onPointerDown, onPointerMove, onPointerUp, linePreview, selectPreview, size, pan, zoom } = useTextureCanvasTools(canvasRef)
   useKeyboardShortcuts()
 
@@ -72,17 +73,22 @@ export function TextureCanvas() {
     const face = activeBoxFace
 
     // Face content — painted texels show their grayscale; unpainted texels reveal the model
-    // silhouette projected onto this face (or the dark background where the model doesn't cover).
+    // silhouette projected onto this face, or a medium-gray checkerboard when onion skin is off.
     for (let tv = 0; tv < FACE_SIZE; tv++) {
       for (let tu = 0; tu < FACE_SIZE; tu++) {
         const value = face ? getTexel(texture, face, tu, tv) : EMPTY
-        let fill: string | null
+        let fill: string | null = null
         if (value === EMPTY) {
-          fill = projection ? projection[texelIndex(tu, tv)] : null
+          if (onionSkin && projection) {
+            fill = projection[texelIndex(tu, tv)]
+          }
         } else {
           fill = GRAYSCALE[value] ?? '#ff00ff'
         }
-        if (!fill) continue // uncovered empty texel — leave the dark background showing
+        if (!fill) {
+          if (onionSkin) continue
+          fill = (tu + tv) % 2 === 0 ? '#2f3840' : '#3d4852'
+        }
         const [sx, sy] = texWorldToScreen(tu, tv, size, pan, zoom)
         ctx.fillStyle = fill
         ctx.fillRect(sx, sy, px + 1, px + 1)
@@ -150,7 +156,7 @@ export function TextureCanvas() {
       }
       ctx.setLineDash([])
     }
-  }, [texture, activeBoxFace, projection, linePreview, selection, selectPreview, floatContent, floatOrigin, antPhase, size, pan, zoom])
+  }, [texture, activeBoxFace, projection, onionSkin, linePreview, selection, selectPreview, floatContent, floatOrigin, antPhase, size, pan, zoom])
 
   useEffect(() => {
     draw()

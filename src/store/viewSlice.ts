@@ -11,6 +11,7 @@ export const createViewSlice: Slice = (set) => ({
   wireframe: false,
   optimizedMesh: false,
   statusMessage: null,
+  onionSkin: true,
 
   setFullscreen: (v) => set((state) => { state.fullscreen = v }),
   setWireframe: (v) => set((state) => { state.wireframe = v }),
@@ -22,4 +23,5 @@ export const createViewSlice: Slice = (set) => ({
     }),
   setHoveredFace: (face) => set((state) => { state.hoveredFace = face }),
   setStatusMessage: (msg) => set((state) => { state.statusMessage = msg }),
+  setOnionSkin: (v) => set((state) => { state.onionSkin = v }),
 })

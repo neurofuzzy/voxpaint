@@ -111,12 +111,15 @@ export type ViewSlice = {
   /** Dynamic status message shown in the footer's center area. Components set this on hover to
    * show contextual info; cleared on pointer leave. Falls back to the active tool hint when null. */
   statusMessage: string | null
+  /** Texture mode: show the 3D model silhouette as a ghosted guide behind the texel grid. */
+  onionSkin: boolean
   setFullscreen: (v: boolean) => void
   setHoverCell: (coord: Coord | null, chamferValid: boolean | null) => void
   setHoveredFace: (face: HoveredFace | null) => void
   setWireframe: (v: boolean) => void
   setOptimizedMesh: (v: boolean) => void
   setStatusMessage: (msg: string | null) => void
+  setOnionSkin: (v: boolean) => void
 }
 
 export type PersistenceSlice = {
