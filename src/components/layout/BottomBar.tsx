@@ -22,7 +22,7 @@ export function BottomBar() {
   const statusMessage = useAppStore((s) => s.statusMessage)
 
   return (
-    <div className="flex h-11 items-center gap-3 border-t border-neutral-800 bg-neutral-900 px-2 text-xs text-neutral-300">
+    <div className="flex h-11 items-center gap-3 border-t border-neutral-800 bg-neutral-900 px-2 py-0 text-xs text-neutral-300">
       <UndoRedoControls />
       <div className="h-5 w-px shrink-0 bg-neutral-800" />
       <span className="flex-1 truncate text-center font-mono text-[11px] text-neutral-300">

@@ -18,12 +18,12 @@ export function UndoRedoControls() {
   const redo = useAppStore((s) => (texture ? s.textureRedo : s.redo))
 
   return (
-    <div className="flex items-center gap-1">
+    <div className="flex gap-1">
       <button
         disabled={past.length === 0 && !floatContent}
         onClick={undo}
         aria-label="Undo"
-        className="flex h-8 w-8 items-center justify-center rounded-md text-neutral-400 hover:bg-neutral-800 hover:text-neutral-100 disabled:opacity-30 disabled:hover:bg-transparent"
+        className="flex h-8 w-8 py-1.5 justify-center text-neutral-400 hover:bg-neutral-800 hover:text-neutral-100 disabled:opacity-30 disabled:hover:bg-transparent"
       >
         <Undo2 size={16} />
       </button>
@@ -31,7 +31,7 @@ export function UndoRedoControls() {
         disabled={future.length === 0}
         onClick={redo}
         aria-label="Redo"
-        className="flex h-8 w-8 items-center justify-center rounded-md text-neutral-400 hover:bg-neutral-800 hover:text-neutral-100 disabled:opacity-30 disabled:hover:bg-transparent"
+        className="flex h-8 w-8 py-1.5 justify-center text-neutral-400 hover:bg-neutral-800 hover:text-neutral-100 disabled:opacity-30 disabled:hover:bg-transparent"
       >
         <Redo2 size={16} />
       </button>

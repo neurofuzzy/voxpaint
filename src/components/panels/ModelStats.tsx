@@ -20,7 +20,7 @@ export function ModelStats() {
       </span>
       <span className="text-neutral-700">·</span>
       <span className={nearCap ? 'text-amber-400' : undefined}>
-        {span}/{DEFAULT_GRID_EXTENT}
+        {span}<sup>3</sup>
       </span>
       <span className="text-neutral-700">·</span>
       <span>{dirty ? 'unsaved changes…' : lastSavedAt ? `saved ${new Date(lastSavedAt).toLocaleTimeString()}` : 'not saved yet'}</span>

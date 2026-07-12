@@ -9,6 +9,7 @@ import { showToast } from '@/components/ui/toastBus'
 
 export function FileMenu() {
   const fileInputRef = useRef<HTMLInputElement>(null)
+  const setStatusMessage = useAppStore((s) => s.setStatusMessage)
 
   function handleNew() {
     if (!confirm('Start a new project? Unsaved changes in this project will be lost from the autosave slot.')) return
@@ -56,7 +57,11 @@ export function FileMenu() {
   return (
     <DropdownMenu.Root>
       <DropdownMenu.Trigger asChild>
-        <button className="flex items-center gap-1 rounded-md px-2.5 py-1.5 text-sm text-neutral-300 hover:bg-neutral-800">
+        <button
+          className="flex items-center gap-1 rounded-md px-2.5 py-1.5 text-sm text-neutral-300 hover:bg-neutral-800"
+          onPointerEnter={() => setStatusMessage('Open the file menu')}
+          onPointerLeave={() => setStatusMessage(null)}
+        >
           File
           <ChevronDown size={14} />
         </button>

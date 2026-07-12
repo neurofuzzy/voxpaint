@@ -8,9 +8,24 @@ const BTN_ON = 'bg-violet-500/20 text-violet-300 hover:bg-violet-500/25 hover:te
 
 const AXES: Axis[] = ['x', 'y', 'z']
 
-function ToggleButton({ on, onClick, label, children }: { on: boolean; onClick: () => void; label: string; children: React.ReactNode }) {
+function ToggleButton({ on, onClick, label, children, onPointerEnter, onPointerLeave }: {
+  on: boolean
+  onClick: () => void
+  label: string
+  children: React.ReactNode
+  onPointerEnter?: React.PointerEventHandler<HTMLButtonElement>
+  onPointerLeave?: React.PointerEventHandler<HTMLButtonElement>
+}) {
   return (
-    <button onClick={onClick} aria-label={label} aria-pressed={on} title={label} className={`${BTN_BASE} ${on ? BTN_ON : ''}`}>
+    <button
+      onClick={onClick}
+      aria-label={label}
+      aria-pressed={on}
+      title={label}
+      onPointerEnter={onPointerEnter}
+      onPointerLeave={onPointerLeave}
+      className={`${BTN_BASE} ${on ? BTN_ON : ''}`}
+    >
       {children}
     </button>
   )
@@ -29,6 +44,7 @@ export function ViewOptionsOverlay({ stats, onResetCamera }: { stats: OptimizedM
   const optimizedMesh = useAppStore((s) => s.optimizedMesh)
   const setWireframe = useAppStore((s) => s.setWireframe)
   const setOptimizedMesh = useAppStore((s) => s.setOptimizedMesh)
+  const setStatusMessage = useAppStore((s) => s.setStatusMessage)
 
   const cycleAxis = () => setPlaneAxisOrientation(AXES[(AXES.indexOf(plane.axis) + 1) % 3], plane.orientation)
   const flip = () => setPlaneAxisOrientation(plane.axis, plane.orientation === 1 ? -1 : 1)
@@ -40,19 +56,45 @@ export function ViewOptionsOverlay({ stats, onResetCamera }: { stats: OptimizedM
       onPointerDown={(e) => e.stopPropagation()}
       onPointerMove={(e) => e.stopPropagation()}
     >
-      <button onClick={cycleAxis} title="Construction plane axis (click to cycle)" aria-label="Construction plane axis" className={`${BTN_BASE} font-mono text-sm font-semibold uppercase`}>
+      <button
+        onClick={cycleAxis}
+        title="Construction plane axis (click to cycle)"
+        aria-label="Construction plane axis"
+        onPointerEnter={() => setStatusMessage('Click to cycle the construction plane axis')}
+        onPointerLeave={() => setStatusMessage(null)}
+        className={`${BTN_BASE} font-mono text-sm font-semibold uppercase`}
+      >
         {plane.axis}
       </button>
-      <button onClick={flip} title={`Flip plane orientation (currently ${plane.orientation === 1 ? '+' : '−'})`} aria-label="Flip plane orientation" className={BTN_BASE}>
+      <button
+        onClick={flip}
+        title={`Flip plane orientation (currently ${plane.orientation === 1 ? '+' : '−'})`}
+        aria-label="Flip plane orientation"
+        onPointerEnter={() => setStatusMessage('Click to flip the construction plane orientation')}
+        onPointerLeave={() => setStatusMessage(null)}
+        className={BTN_BASE}
+      >
         <FlipHorizontal size={16} />
       </button>
 
       <div className="h-5 w-px bg-neutral-800" />
 
-      <ToggleButton on={wireframe} onClick={() => setWireframe(!wireframe)} label="Wireframe">
+      <ToggleButton
+        on={wireframe}
+        onClick={() => setWireframe(!wireframe)}
+        label="Wireframe"
+        onPointerEnter={() => setStatusMessage('Toggle wireframe overlay on the 3D view')}
+        onPointerLeave={() => setStatusMessage(null)}
+      >
         <Grid3x3 size={16} />
       </ToggleButton>
-      <ToggleButton on={optimizedMesh} onClick={() => setOptimizedMesh(!optimizedMesh)} label="Optimized mesh">
+      <ToggleButton
+        on={optimizedMesh}
+        onClick={() => setOptimizedMesh(!optimizedMesh)}
+        label="Optimized mesh"
+        onPointerEnter={() => setStatusMessage('Toggle optimized mesh rendering')}
+        onPointerLeave={() => setStatusMessage(null)}
+      >
         <Boxes size={16} />
       </ToggleButton>
       {optimizedMesh && stats && (
@@ -62,7 +104,14 @@ export function ViewOptionsOverlay({ stats, onResetCamera }: { stats: OptimizedM
         </span>
       )}
 
-      <button onClick={onResetCamera} title="Reset camera" aria-label="Reset camera" className={BTN_BASE}>
+      <button
+        onClick={onResetCamera}
+        title="Reset camera"
+        aria-label="Reset camera"
+        onPointerEnter={() => setStatusMessage('Click to reset the camera to its default position')}
+        onPointerLeave={() => setStatusMessage(null)}
+        className={BTN_BASE}
+      >
         <Video size={16} />
       </button>
     </div>

@@ -14,6 +14,7 @@ const MODES: Array<{ id: EditorMode; label: string }> = [
 export function ModeTabs() {
   const mode = useAppStore((s) => s.mode)
   const setMode = useAppStore((s) => s.setMode)
+  const setStatusMessage = useAppStore((s) => s.setStatusMessage)
 
   return (
     <div role="tablist" aria-label="Authoring mode" className="flex items-center gap-0.5 rounded-lg border border-neutral-800 bg-neutral-950 p-0.5">
@@ -25,6 +26,8 @@ export function ModeTabs() {
             role="tab"
             aria-selected={active}
             onClick={() => setMode(id)}
+            onPointerEnter={() => setStatusMessage(id === 'model' ? 'Switch to voxel modeling mode' : 'Switch to texture painting mode')}
+            onPointerLeave={() => setStatusMessage(null)}
             className={
               'rounded-md px-3 py-1 text-sm font-medium transition ' +
               (active ? 'bg-neutral-700 text-neutral-100 shadow' : 'text-neutral-400 hover:text-neutral-200')
