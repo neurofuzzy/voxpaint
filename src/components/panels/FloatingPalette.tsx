@@ -41,16 +41,19 @@ function GrayscalePalette() {
       {GRAYSCALE.map((hex, index) => {
         const active = activeGrayIndex === index
         return (
-          <button
-            key={index}
-            aria-label={`gray ${index}`}
-            onClick={() => setActiveGrayIndex(index)}
-            className={
-              `${SWATCH} rounded-full border-2 transition-transform hover:scale-110 ` +
-              (active ? 'scale-125 border-white shadow-lg' : 'border-white/20')
-            }
-            style={{ backgroundColor: hex }}
-          />
+          <div key={index} className="flex items-center gap-1.5">
+            {/* small gap separating the 4 dark swatches from the 4 light ones */}
+            {index === GRAYSCALE.length / 2 && <div className="mx-0.5 h-6 w-px bg-neutral-700" />}
+            <button
+              aria-label={`gray ${index}`}
+              onClick={() => setActiveGrayIndex(index)}
+              className={
+                `${SWATCH} rounded-full border-2 transition-transform hover:scale-110 ` +
+                (active ? 'scale-125 border-white shadow-lg' : 'border-white/20')
+              }
+              style={{ backgroundColor: hex }}
+            />
+          </div>
         )
       })}
     </div>

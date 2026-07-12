@@ -4,8 +4,8 @@ import type { Axis, ChamferCell, Coord } from '@/engine/grid/types'
 import type { BoxFace, TextureModel } from './types'
 import { BOX_FACE_AXIS, boxFaceOf, EMPTY, FACE_SIZE, GRAYSCALE, HALF_WORLD, TEXEL_SCALE } from './types'
 
-/** Grayscale index → overlay blend value in [0,1]. Middle index (2) = 0.5 = neutral (no change);
- * unpainted (`EMPTY`) is also neutral. `GRAYSCALE.length - 1` is the max index. */
+/** Grayscale index → overlay blend value in [0,1], evenly spaced (`index/7`): indices 0–3 fall below
+ * 0.5 (darken), 4–7 above (lighten), and none is exactly 0.5. Unpainted (`EMPTY`) is neutral 0.5. */
 function blendForIndex(index: number): number {
   if (index === EMPTY) return 0.5
   return index / (GRAYSCALE.length - 1)

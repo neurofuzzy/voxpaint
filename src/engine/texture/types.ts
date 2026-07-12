@@ -40,12 +40,15 @@ export const FACE_SIZE = DEFAULT_GRID_EXTENT * TEXEL_SCALE
 export const HALF_WORLD = DEFAULT_GRID_EXTENT / 2
 
 /**
- * The texture palette — for now, the first 5 grayscale values (index 0 = black … 4 = white). A
- * texel stores one of these indices, or `EMPTY` when unpainted. The grayscale is applied to the
- * voxel's palette color via **overlay** blend (see `overlay.ts`): the middle value (index 2) is
- * neutral, darker values darken, lighter values lighten. `EMPTY` is also neutral.
+ * The texture palette — 8 grayscale values: **4 dark** (indices 0–3) and **4 light** (indices 4–7),
+ * evenly spaced across the blend range so none lands on neutral 0.5 (a mid-gray swatch would be a
+ * no-op under overlay, so it's deliberately skipped). A texel stores one of these indices, or
+ * `EMPTY` when unpainted. The grayscale is applied to the voxel's palette color via **overlay**
+ * blend (see `overlay.ts`): darker values darken, lighter values lighten; `EMPTY` is neutral. The
+ * hex values are the grays corresponding to each blend level (`index/7`), used for the 2D canvas /
+ * swatch display only — the actual surface effect comes from the blend value, not the hex.
  */
-export const GRAYSCALE: readonly string[] = ['#000000', '#404040', '#808080', '#c0c0c0', '#ffffff']
+export const GRAYSCALE: readonly string[] = ['#000000', '#242424', '#494949', '#6d6d6d', '#929292', '#b6b6b6', '#dbdbdb', '#ffffff']
 
 /** Sentinel stored in a texel array for an unpainted texel. Chosen outside the 0..4 index range and
  * inside `Uint8Array`'s domain. Renders as white (multiply no-op) in the atlas. */

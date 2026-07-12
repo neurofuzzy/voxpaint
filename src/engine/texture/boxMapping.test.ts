@@ -71,7 +71,7 @@ describe('atlas', () => {
   it('stores blend values (neutral where unpainted) and places a painted texel at its atlas pixel', () => {
     const tex = emptyTextureModel()
     tex.faces.px[0] = 0 // darkest (index 0 → blend 0) at (0,0) of +X face
-    tex.faces.px[1] = 4 // lightest (index 4 → blend 1)
+    tex.faces.px[1] = 7 // lightest (index 7 → blend 1)
     const { data, width, height } = buildBlendAtlas(tex)
     expect(width).toBe(ATLAS_WIDTH)
     expect(height).toBe(ATLAS_HEIGHT)

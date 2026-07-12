@@ -1,7 +1,8 @@
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { forEachSelectedCell, traceSelectionOutline } from '@/engine/tools/selectionMask'
-import { getTexel } from '@/engine/texture/TextureStore'
-import { EMPTY, FACE_SIZE, GRAYSCALE, TEXEL_SCALE } from '@/engine/texture/types'
+import { projectModelToFace } from '@/engine/texture/projection'
+import { getTexel, texelIndex } from '@/engine/texture/TextureStore'
+import { EMPTY, FACE_SIZE, GRAYSCALE } from '@/engine/texture/types'
 import { useAppStore } from '@/store/useAppStore'
 import { TEXEL_BASE_PX, texWorldToScreen } from './textureCanvasConstants'
 import { useKeyboardShortcuts } from './useKeyboardShortcuts'
@@ -21,6 +22,8 @@ export function TextureCanvas() {
   const canvasRef = useRef<HTMLCanvasElement>(null)
 
   const texture = useAppStore((s) => s.texture)
+  const model = useAppStore((s) => s.model)
+  const palette = useAppStore((s) => s.palette)
   const activeBoxFace = useAppStore((s) => s.activeBoxFace)
   const selection = useAppStore((s) => s.textureSelection)
   const floatContent = useAppStore((s) => s.textureFloat)
@@ -28,6 +31,13 @@ export function TextureCanvas() {
 
   const { onPointerDown, onPointerMove, onPointerUp, linePreview, selectPreview, size, pan, zoom } = useTextureCanvasTools(canvasRef)
   useKeyboardShortcuts()
+
+  // Model silhouette projected onto the active face — a paint-alignment guide behind the texels.
+  // Recomputed only when the model/palette/face changes (not while painting), so strokes stay fast.
+  const projection = useMemo(
+    () => (activeBoxFace ? projectModelToFace(model, palette, activeBoxFace) : null),
+    [model, palette, activeBoxFace],
+  )
 
   const [antPhase, setAntPhase] = useState(0)
   useEffect(() => {
@@ -60,47 +70,28 @@ export function TextureCanvas() {
     const px = TEXEL_BASE_PX * zoom
     const face = activeBoxFace
 
-    // Face content — checkerboard for empty texels, grayscale fill for painted ones.
+    // Face content — painted texels show their grayscale; unpainted texels reveal the model
+    // silhouette projected onto this face (or the dark background where the model doesn't cover).
     for (let tv = 0; tv < FACE_SIZE; tv++) {
       for (let tu = 0; tu < FACE_SIZE; tu++) {
-        const [sx, sy] = texWorldToScreen(tu, tv, size, pan, zoom)
         const value = face ? getTexel(texture, face, tu, tv) : EMPTY
+        let fill: string | null
         if (value === EMPTY) {
-          if ((tu + tv) % 2 === 0) continue
-          ctx.fillStyle = '#141416'
+          fill = projection ? projection[texelIndex(tu, tv)] : null
         } else {
-          ctx.fillStyle = GRAYSCALE[value] ?? '#ff00ff'
+          fill = GRAYSCALE[value] ?? '#ff00ff'
         }
+        if (!fill) continue // uncovered empty texel — leave the dark background showing
+        const [sx, sy] = texWorldToScreen(tu, tv, size, pan, zoom)
+        ctx.fillStyle = fill
         ctx.fillRect(sx, sy, px + 1, px + 1)
       }
     }
 
-    // Grid: voxel boundaries every TEXEL_SCALE texels (bold), texel lines when zoomed in (fine),
-    // and a bright border around the whole face.
+    // Faint border framing the paintable face extent (no interior grid — the projection is the guide).
     const [left, top] = texWorldToScreen(0, 0, size, pan, zoom)
     const [right, bottom] = texWorldToScreen(FACE_SIZE, FACE_SIZE, size, pan, zoom)
-
-    const strokeLines = (step: number, color: string) => {
-      ctx.strokeStyle = color
-      ctx.lineWidth = 1
-      ctx.beginPath()
-      for (let i = 0; i <= FACE_SIZE; i += step) {
-        const [sx] = texWorldToScreen(i, 0, size, pan, zoom)
-        const snappedX = snapPx(sx)
-        ctx.moveTo(snappedX, top)
-        ctx.lineTo(snappedX, bottom)
-        const [, sy] = texWorldToScreen(0, i, size, pan, zoom)
-        const snappedY = snapPx(sy)
-        ctx.moveTo(left, snappedY)
-        ctx.lineTo(right, snappedY)
-      }
-      ctx.stroke()
-    }
-
-    if (px >= 6) strokeLines(1, '#1c1c20') // per-texel, only when there's room
-    strokeLines(TEXEL_SCALE, '#33414b') // voxel boundaries
-
-    ctx.strokeStyle = '#3d6d8a'
+    ctx.strokeStyle = '#2a3540'
     ctx.lineWidth = 1.5
     ctx.strokeRect(snapPx(left), snapPx(top), right - left, bottom - top)
 
@@ -158,7 +149,7 @@ export function TextureCanvas() {
       }
       ctx.setLineDash([])
     }
-  }, [texture, activeBoxFace, linePreview, selection, selectPreview, floatContent, floatOrigin, antPhase, size, pan, zoom])
+  }, [texture, activeBoxFace, projection, linePreview, selection, selectPreview, floatContent, floatOrigin, antPhase, size, pan, zoom])
 
   useEffect(() => {
     draw()
