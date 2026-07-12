@@ -1,4 +1,4 @@
-import type { Axis, CellKey, Coord, Orientation, VoxelModel } from '@/engine/grid/types'
+import type { Axis, CellKey, ChamferCell, Coord, Orientation, VoxelModel } from '@/engine/grid/types'
 import type { PaletteSlotRef, PaletteState } from '@/engine/palette/types'
 import type { ConstructionPlane } from '@/engine/plane/types'
 import type { ProjectMeta } from '@/engine/persistence/schema'
@@ -18,10 +18,10 @@ export type ClipboardCell = {
   du: number
   dv: number
   color?: { paletteSlot: PaletteSlotRef }
-  /** Just a flag ("this cell was a chamfer cell") — the destination always reclassifies fresh
-   * against its own neighbors on paste (engine/tools/clipboard.ts), so no shape/rotation is
-   * carried over from the source. */
-  chamfer?: true
+  /** The source cell's full chamfer data (plane basis + resolved shape), copied verbatim and
+   * restored on paste with no reclassification — the pasted shape exactly matches the source. A
+   * chamfer only ever (re)resolves when the user edits that specific voxel. */
+  chamfer?: ChamferCell
 }
 
 export type ClipboardData = {

@@ -1,7 +1,6 @@
 import type { StateCreator } from 'zustand'
 import { encodeKey, expandBounds, withinWorkingBounds } from '@/engine/grid/GridStore'
 import { gridCoordFromPixel } from '@/engine/plane/constructionPlane'
-import { classify, resolveChamferCellsOnPlane, sampleNeighbors } from '@/engine/chamfer/chamferResolver'
 import { floodFillRegion } from '@/engine/tools/floodFill'
 import { applyClipboardAt, clearRegion, copyRegionToClipboard } from '@/engine/tools/clipboard'
 import { mirrorClipboard, rotateClipboard90 } from '@/engine/tools/transform'
@@ -27,9 +26,6 @@ export const createToolActionsSlice: Slice = (set, get) => ({
         state.model.color.set(encodeKey(...coord), { paletteSlot: activePaletteSlot })
         state.model.bounds = expandBounds(state.model.bounds, coord)
       }
-      // Any of these newly-filled cells could be the missing neighbor an unresolved chamfer
-      // cell on this same plane slice was waiting on (chamfer adjacency counts color cells too).
-      resolveChamferCellsOnPlane(state.model, state.plane)
       state.meta.modifiedAt = new Date().toISOString()
       state.dirty = true
     })
@@ -56,15 +52,18 @@ export const createToolActionsSlice: Slice = (set, get) => ({
       }
 
       state.model.color.set(destKey, { paletteSlot: srcColor.paletteSlot })
+      // Clone/stamp reproduces the source voxel — its chamfer shape is copied verbatim, never
+      // reclassified against the destination's neighbors (a chamfer only (re)resolves when the user
+      // edits that specific voxel).
       if (srcChamfer) {
-        const resolvedTo = classify(sampleNeighbors(state.model, state.plane, destU, destV))
-        state.model.chamfer.set(destKey, { planeAxis: state.plane.axis, planeOrientation: state.plane.orientation, resolvedTo })
+        state.model.chamfer.set(destKey, {
+          planeAxis: srcChamfer.planeAxis,
+          planeOrientation: srcChamfer.planeOrientation,
+          resolvedTo: srcChamfer.resolvedTo ? { ...srcChamfer.resolvedTo } : null,
+        })
       } else {
         state.model.chamfer.delete(destKey)
       }
-      // Either branch may be the missing neighbor an unresolved chamfer cell on this plane slice
-      // was waiting on (chamfer adjacency counts color cells too, not just other chamfer cells).
-      resolveChamferCellsOnPlane(state.model, state.plane)
       state.model.bounds = expandBounds(state.model.bounds, destCoord)
       state.meta.modifiedAt = new Date().toISOString()
       state.dirty = true

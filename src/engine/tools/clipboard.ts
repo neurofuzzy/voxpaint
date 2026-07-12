@@ -1,10 +1,14 @@
-import type { VoxelModel } from '@/engine/grid/types'
+import type { ChamferCell, VoxelModel } from '@/engine/grid/types'
 import type { ConstructionPlane } from '@/engine/plane/types'
 import { encodeKey, expandBounds, withinWorkingBounds } from '@/engine/grid/GridStore'
 import { gridCoordFromPixel } from '@/engine/plane/constructionPlane'
-import { classify, resolveChamferCellsOnPlane, sampleNeighbors } from '@/engine/chamfer/chamferResolver'
 import { forEachSelectedCell } from './selectionMask'
 import type { ClipboardCell, ClipboardData, SelectionRegion } from '@/store/types'
+
+/** Deep-copy a chamfer cell so the clipboard never shares references with the live model. */
+function cloneChamfer(c: ChamferCell): ChamferCell {
+  return { planeAxis: c.planeAxis, planeOrientation: c.planeOrientation, resolvedTo: c.resolvedTo ? { ...c.resolvedTo } : null }
+}
 
 export function copyRegionToClipboard(model: VoxelModel, plane: ConstructionPlane, region: SelectionRegion): ClipboardData {
   const cells: ClipboardCell[] = []
@@ -17,7 +21,7 @@ export function copyRegionToClipboard(model: VoxelModel, plane: ConstructionPlan
       du: u - region.originU,
       dv: v - region.originV,
       color: color ? { paletteSlot: color.paletteSlot } : undefined,
-      chamfer: chamfer ? true : undefined,
+      chamfer: chamfer ? cloneChamfer(chamfer) : undefined,
     })
   })
   return { width: region.width, height: region.height, cells }
@@ -33,12 +37,10 @@ export function clearRegion(model: VoxelModel, plane: ConstructionPlane, region:
 }
 
 /**
- * Stamps clipboard data at a destination origin. Chamfer cells always paste (never dropped) —
- * each gets classified fresh against the destination's neighbors, same as a live chamfer paint;
- * `resolvedTo` is null if that doesn't (yet) resolve to a shape. A final `resolveChamferCellsOnPlane`
- * pass catches any cell whose required neighbor was pasted *later* in this same clipboard (paste
- * order within one operation shouldn't matter for whether a loop shape fully resolves).
- * Mutates the given (draft) model directly.
+ * Stamps clipboard data at a destination origin. Chamfer cells are restored **verbatim** — their
+ * copied plane basis and resolved shape are written back unchanged, with no reclassification against
+ * the destination's neighbors, so the pasted result exactly matches the source. (A chamfer only ever
+ * (re)resolves when the user edits that specific voxel.) Mutates the given (draft) model directly.
  */
 export function applyClipboardAt(
   model: VoxelModel,
@@ -48,25 +50,17 @@ export function applyClipboardAt(
   destOriginV: number,
 ): void {
   for (const cell of clipboard.cells) {
-    const u = destOriginU + cell.du
-    const v = destOriginV + cell.dv
-    const coord = gridCoordFromPixel(plane, u, v)
+    const coord = gridCoordFromPixel(plane, destOriginU + cell.du, destOriginV + cell.dv)
     if (!withinWorkingBounds(coord)) continue
 
     const key = encodeKey(...coord)
 
-    if (cell.chamfer) {
-      const resolvedTo = classify(sampleNeighbors(model, plane, u, v))
-      model.chamfer.set(key, { planeAxis: plane.axis, planeOrientation: plane.orientation, resolvedTo })
-    } else {
-      model.chamfer.delete(key)
-    }
+    if (cell.chamfer) model.chamfer.set(key, cloneChamfer(cell.chamfer))
+    else model.chamfer.delete(key)
 
     if (cell.color) {
       model.color.set(key, { paletteSlot: cell.color.paletteSlot })
       model.bounds = expandBounds(model.bounds, coord)
     }
   }
-
-  resolveChamferCellsOnPlane(model, plane)
 }
