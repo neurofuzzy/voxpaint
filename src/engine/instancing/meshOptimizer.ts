@@ -95,7 +95,57 @@ function simplifyCollinearVertices(vertices: THREE.Vector3[]): THREE.Vector3[] {
   return simplified.length >= 3 ? simplified : vertices
 }
 
-/** Merge one coplanar+connected+same-color triangle group into a re-triangulated polygon. */
+/** Returns true when two groups share at least one edge (any triangle in group a shares an edge
+ * with any triangle in group b). */
+function groupsShareEdge(a: Tri[], b: Tri[]): boolean {
+  for (const ta of a) {
+    for (const tb of b) {
+      if (trianglesShareEdge(ta, tb)) return true
+    }
+  }
+  return false
+}
+
+/** Iteratively merge edge-connected coplanar same-color groups until stable, fixing
+ * fragmentation from the order-dependent greedy pass. Each iteration scans for groups that
+ * can merge and combines them, repeating until no more merges happen. */
+function mergeConnectedGroups(groups: Tri[][]): Tri[][] {
+  let changed = true
+  let current = groups
+
+  while (changed) {
+    changed = false
+    const next: Tri[][] = []
+    const placed = new Set<number>()
+
+    for (let i = 0; i < current.length; i++) {
+      if (placed.has(i)) continue
+      let group = current[i]
+      placed.add(i)
+
+      for (let j = i + 1; j < current.length; j++) {
+        if (placed.has(j)) continue
+        const head = current[j][0]
+        if (group[0].normal.dot(head.normal) <= NORMAL_THRESHOLD) continue
+        if (Math.abs(group[0].plane.distanceToPoint(head.vertices[0])) > COPLANAR_THRESHOLD) continue
+        if (group[0].colorKey !== head.colorKey) continue
+        if (!groupsShareEdge(group, current[j])) continue
+        group = [...group, ...current[j]]
+        placed.add(j)
+        changed = true
+      }
+
+      next.push(group)
+    }
+
+    current = next
+  }
+
+  return current
+}
+
+/**
+ * Merge one coplanar+connected+same-color triangle group into a re-triangulated polygon. */
 function mergeCoplanarTriangles(triangles: Tri[]): Tri[] {
   if (triangles.length <= 1) return triangles
 
@@ -289,8 +339,14 @@ export function optimizeGeometry(geometry: THREE.BufferGeometry): THREE.BufferGe
     if (!placed) groups.push([tri])
   }
 
+  // Multi-pass merge: the greedy pass above is order-dependent — two groups that end up
+  // coplanar, same-color, and sharing an edge may have been split because their connecting
+  // triangle was added to only one. Iteratively merge any edge-connected compatible groups
+  // until stable, so large coplanar surfaces aren't unnecessarily fragmented.
+  const merged = mergeConnectedGroups(groups)
+
   const optimized: Tri[] = []
-  for (const group of groups) {
+  for (const group of merged) {
     if (group.length === 1) optimized.push(group[0])
     else optimized.push(...mergeCoplanarTriangles(group))
   }
