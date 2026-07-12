@@ -1,8 +1,8 @@
 ```
 # Auto-generated project map
-# Last updated: 2026-07-11 20:23:50
-# Files: 76
-# Lines of code: ~4237
+# Last updated: 2026-07-12 00:27:11
+# Files: 80
+# Lines of code: ~5221
 ```
 - **/components**
   - **/editor2d**
@@ -47,7 +47,7 @@
     - [FullscreenToggle.tsx](../src/components/panels/FullscreenToggle.tsx)
       - Function: `FullscreenToggle`
     - [LayerToggle.tsx](../src/components/panels/LayerToggle.tsx)
-      - Function: `LayerToggle`
+      - Function: `VoxelKindToggle`
     - [ModelStats.tsx](../src/components/panels/ModelStats.tsx)
       - Function: `ModelStats`
     - [ToolPalette.tsx](../src/components/panels/ToolPalette.tsx)
@@ -81,13 +81,16 @@
       - Variable: `VoxelInstancedMeshes`
 - **/engine**
   - **/chamfer**
+    - [chamferGeometry.test.ts](../src/engine/chamfer/chamferGeometry.test.ts)
     - [chamferGeometry.ts](../src/engine/chamfer/chamferGeometry.ts)
-      - Function: `unitCubeGeometry`
-      - Function: `rampGeometry` - Wedge: full height along the side opposite `ope...
-      - Function: `convexCornerGeometry` - Single flat 45° corner cut: full height only at...
-      - Function: `concaveCornerGeometry` - Inverse of convex: full height along all 4 edge...
+      - Function: `unitCubeGeometry` - Model A — full cube: 6 sides, 12 triangles. Cen...
+      - Function: `mirrorVGeometry` - Mirror a chamfer geometry across the v axis (ne...
+      - Function: `rampGeometry` - Model B — simple ramp (triangular prism): 5 sid...
+      - Function: `convexCornerGeometry` - Model C — convex corner ramp: 4 sides, 6 triang...
+      - Function: `concaveCornerGeometry` - Model D — concave corner ramp: 6 sides, 10 tria...
+    - [chamferResolver.test.ts](../src/engine/chamfer/chamferResolver.test.ts)
     - [chamferResolver.ts](../src/engine/chamfer/chamferResolver.ts)
-      - Function: `sampleNeighbors` - Samples the chamfer layer's 8-neighborhood arou...
+      - Function: `sampleNeighbors` - Samples the 8-neighborhood around a (u,v) pixel...
       - Function: `classify` - Classifies a chamfer cell's shape from its 8-ne...
       - Function: `resolveChamferCellsOnPlane` - Re-attempts resolution for every still-unresolv...
     - [types.ts](../src/engine/chamfer/types.ts)
@@ -122,12 +125,15 @@
       - Interface: `NormalizedPointerEvent` - Normalized pointer event shape consumed by `eng...
       - Function: `toNormalizedPointerEvent`
   - **/instancing**
+    - [basis.test.ts](../src/engine/instancing/basis.test.ts)
     - [basis.ts](../src/engine/instancing/basis.ts)
-      - Function: `cubeInstanceMatrix` - Placement matrix for a plain cube: axis-aligned...
+      - Function: `cubeInstanceMatrix` - Placement matrix for a plain cube. Geometry is ...
+      - Function: `chamferBasisIsReflected` - True when `makeBasis(worldU, worldV, outward)` ...
       - Function: `chamferInstanceMatrix` - Placement matrix for a chamfer prefab (local sp...
+    - [InstancingManager.test.ts](../src/engine/instancing/InstancingManager.test.ts)
     - [InstancingManager.ts](../src/engine/instancing/InstancingManager.ts)
-      - Type: `PoolId`
-      - Class: `InstancingManager` (Methods: ensureCapacity, sync, tick, setHoveredCell, cellKeyForHit, dispose) - Owns the 4 InstancedMesh pools (cube + 3 chamfe...
+      - Type: `PoolId` - // See basis.ts's chamferBasisIsReflected and c...
+      - Class: `InstancingManager` (Methods: makePickMesh, ensureCapacity, ensurePickCapacity, syncPickMesh, sync, tick, setHoveredCell, cellKeyForPick, dispose) - Owns the 4 InstancedMesh pools (cube + 3 chamfe...
   - **/palette**
     - [defaultPalette.ts](../src/engine/palette/defaultPalette.ts)
       - Variable: `DEFAULT_PALETTE` - Slightly desaturated "vintage retro" default pa...
@@ -246,7 +252,7 @@
     - Function: `createToolSlice`
   - [types.ts](../src/store/types.ts)
     - Type: `ToolId`
-    - Type: `ActiveLayer`
+    - Type: `VoxelKind`
     - Type: `SelectionRegion`
     - Type: `ClipboardCell`
     - Type: `ClipboardData`

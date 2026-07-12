@@ -269,6 +269,17 @@ export class InstancingManager {
     this.hoverTarget = next
   }
 
+  /** Toggle wireframe on the shared render material (all 7 pools; the pick material is separate). */
+  setWireframe(v: boolean) {
+    this.material.wireframe = v
+  }
+
+  /** Show/hide the visible render pools without touching the invisible pick mesh — so
+   * construction-plane picking keeps working while the optimized mesh is shown instead. */
+  setRenderVisible(v: boolean) {
+    for (const id of POOL_IDS) this.meshes[id].visible = v
+  }
+
   /** The invisible AABB mesh to raycast for construction-plane picking. Pass it to
    * `Raycaster.intersectObject` — it resolves hits via `cellKeyForPick` and yields clean box normals. */
   get pickObject(): THREE.InstancedMesh {

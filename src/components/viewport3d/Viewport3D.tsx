@@ -1,6 +1,6 @@
 import { Canvas, useThree } from '@react-three/fiber'
 import { OrbitControls } from '@react-three/drei'
-import { useEffect, useRef } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import * as THREE from 'three'
 import type { OrbitControls as OrbitControlsImpl } from 'three-stdlib'
 import { decodeKey } from '@/engine/grid/GridStore'
@@ -9,7 +9,10 @@ import { planeFromFaceHit } from '@/engine/plane/constructionPlane'
 import { useAppStore } from '@/store/useAppStore'
 import { ConstructionPlaneGizmo } from './ConstructionPlaneGizmo'
 import { ConstructionPlaneVisual } from './ConstructionPlaneVisual'
+import { OptimizedMeshView } from './OptimizedMeshView'
+import type { OptimizedMeshStats } from './OptimizedMeshView'
 import { SceneLighting } from './SceneLighting'
+import { ViewOptionsOverlay } from './ViewOptionsOverlay'
 import { VoxelFaceHighlight } from './VoxelFaceHighlight'
 import { VoxelGhostPreview } from './VoxelGhostPreview'
 import { VoxelInstancedMeshes } from './VoxelInstancedMeshes'
@@ -114,9 +117,11 @@ function VoxelInteractionHandler({ managerRef }: { managerRef: React.RefObject<I
 export function Viewport3D() {
   const managerRef = useRef<InstancingManager | null>(null)
   const orbitControlsRef = useRef<OrbitControlsImpl | null>(null)
+  const optimizedMesh = useAppStore((s) => s.optimizedMesh)
+  const [meshStats, setMeshStats] = useState<OptimizedMeshStats | null>(null)
 
   return (
-    <div className="h-full min-w-0 bg-neutral-900">
+    <div className="relative h-full min-w-0 bg-neutral-900">
       {/* flat disables R3F's default ACESFilmicToneMapping — that curve compresses/rolls off
           brightness at moderate light intensities, which was fighting every lighting change.
           With it off, on-screen brightness maps linearly and predictably to light intensity. */}
@@ -125,12 +130,14 @@ export function Viewport3D() {
         <SceneLighting />
         <ConstructionPlaneVisual orbitControlsRef={orbitControlsRef} />
         <VoxelInstancedMeshes ref={managerRef} />
+        {optimizedMesh && <OptimizedMeshView onStats={setMeshStats} />}
         <VoxelFaceHighlight />
         <VoxelGhostPreview />
         <ConstructionPlaneGizmo />
         <VoxelInteractionHandler managerRef={managerRef} />
         <OrbitControls ref={orbitControlsRef} makeDefault enableDamping dampingFactor={0.12} minDistance={2} maxDistance={150} />
       </Canvas>
+      <ViewOptionsOverlay stats={optimizedMesh ? meshStats : null} />
     </div>
   )
 }

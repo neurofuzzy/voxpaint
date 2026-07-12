@@ -8,8 +8,12 @@ export const createViewSlice: Slice = (set) => ({
   hoverCell: null,
   chamferHoverValid: null,
   hoveredFace: null,
+  wireframe: false,
+  optimizedMesh: false,
 
   setFullscreen: (v) => set((state) => { state.fullscreen = v }),
+  setWireframe: (v) => set((state) => { state.wireframe = v }),
+  setOptimizedMesh: (v) => set((state) => { state.optimizedMesh = v }),
   setHoverCell: (coord, chamferValid) =>
     set((state) => {
       state.hoverCell = coord

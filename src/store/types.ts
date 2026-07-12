@@ -97,9 +97,15 @@ export type ViewSlice = {
   hoverCell: Coord | null
   chamferHoverValid: boolean | null
   hoveredFace: HoveredFace | null
+  /** 3D preview: render the mesh as wireframe (applies to both the instanced and optimized views). */
+  wireframe: boolean
+  /** 3D preview: replace the instanced voxels with a single merged, coplanar-optimized shell mesh. */
+  optimizedMesh: boolean
   setFullscreen: (v: boolean) => void
   setHoverCell: (coord: Coord | null, chamferValid: boolean | null) => void
   setHoveredFace: (face: HoveredFace | null) => void
+  setWireframe: (v: boolean) => void
+  setOptimizedMesh: (v: boolean) => void
 }
 
 export type PersistenceSlice = {

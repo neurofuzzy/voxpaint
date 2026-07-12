@@ -9,6 +9,8 @@ export const VoxelInstancedMeshes = forwardRef<InstancingManager>((_props, ref) 
   const model = useAppStore((s) => s.model)
   const palette = useAppStore((s) => s.palette)
   const hoverCell = useAppStore((s) => s.hoverCell)
+  const wireframe = useAppStore((s) => s.wireframe)
+  const optimizedMesh = useAppStore((s) => s.optimizedMesh)
 
   useEffect(() => {
     if (typeof ref === 'function') ref(manager)
@@ -24,6 +26,16 @@ export const VoxelInstancedMeshes = forwardRef<InstancingManager>((_props, ref) 
   useEffect(() => {
     manager.setHoveredCell(hoverCell ? encodeKey(...hoverCell) : null)
   }, [manager, hoverCell])
+
+  // Wireframe applies to the instanced view; when the optimized mesh is shown, hide the instanced
+  // render pools (the invisible pick mesh stays active so plane-picking still works).
+  useEffect(() => {
+    manager.setWireframe(wireframe)
+  }, [manager, wireframe])
+
+  useEffect(() => {
+    manager.setRenderVisible(!optimizedMesh)
+  }, [manager, optimizedMesh])
 
   useFrame((state) => {
     manager.tick(state.clock.elapsedTime)

@@ -176,8 +176,18 @@ the 2D canvas drives the exact same 3D feedback as hovering the 3D view directly
   everything else — including the 0-or-1-filled case every fresh cell starts at — unresolved, not
   blocked).
 - `chamferGeometry.ts` — the actual mesh builders (`unitCubeGeometry`, `rampGeometry`,
-  `convexCornerGeometry`, `concaveCornerGeometry`), all in a shared local prefab space `[0,1]^3`
-  (x=u, y=v, z=outward extent; z=1 is flush with the construction plane).
+  `convexCornerGeometry`, `concaveCornerGeometry`), all in a shared local prefab space **centered on
+  the origin**, `[-0.5, 0.5]^3` (x=u, y=v, z=outward extent; z=+0.5 is flush with the construction
+  plane, z=-0.5 the inward base). Centering on the voxel's own 3D center (per `etc/chamfer-tests.md`)
+  makes the baked rotation a plain rotation about the origin and lands each mesh on its cell with no
+  half-unit offset. The four canonical (rotation-0) shapes are: cube (12 tris); ramp — a triangular
+  prism opening **east** (full height on the west edge), 8 tris, matching `classify`'s "rotation 0
+  slopes toward E"; convex — full height only at the **SW** corner, a 2-triangle hip fan down to the
+  other corners, 6 tris; concave — the inverse, a notch at the **NE** corner, 10 tris. Every triangle
+  is wound counter-clockwise as seen from outside so `computeVertexNormals()` gives outward normals.
+  `mirrorVGeometry` produces a v-mirrored, winding-reversed twin of each chamfer shape, used by the
+  reflected-plane instance pools (see 3D viewport below). Triangle topology is validated in
+  `chamferGeometry.test.ts` (counts, centered bounds, outward windings, per-model vertex presence).
 
 **Painting a chamfer cell always succeeds**, even when it can't resolve a shape yet — there's no
 paint-blocking validation (an earlier design gated the paint itself on `classify` succeeding,
@@ -203,8 +213,15 @@ diagonal-stripe chamfer marker — see below) and the 3D view (`InstancingManage
 cell into the `cube` pool unless `chamfer?.resolvedTo` is set) until they resolve.
 `engine/instancing/basis.ts`'s `chamferInstanceMatrix` turns a resolved cell's baked
 `{planeAxis, planeOrientation, resolvedTo.rotation}` into a world-space transform for the shared
-instanced geometry (rotation applied via the instance matrix, not separate geometries per
-rotation).
+instanced geometry (rotation applied via the instance matrix, not separate geometries per rotation),
+placing the centered model at the cell's own 3D center (`coord + 0.5`). It **always returns a proper
+rotation (det = +1)**: on planes where the raw `makeBasis(worldU, worldV, outward)` is a reflection
+(negative determinant — exactly the +Z, +X, and -Y planes; see `chamferBasisIsReflected`), it negates
+`worldV` and the baked rotation and pairs that with the v-mirrored geometry variant, giving identical
+placement (`makeBasis(U,V,W)·Rz(θ) = makeBasis(U,-V,W)·Rz(-θ)·mirror_v`) without the reflection. This
+matters because a reflected instance matrix flips triangle winding in screen space, which inverts the
+shader's front/back decision and lit those chamfers as if from behind (dark). `basis.test.ts` guards
+the det = +1 invariant across every axis/orientation/rotation and that placement is preserved.
 
 ---
 
@@ -255,16 +272,22 @@ live chamfer re-validation at the destination, dropping invalid cells with a toa
 
 `components/viewport3d/` + `engine/instancing/`:
 
-- **Instancing**: `engine/instancing/InstancingManager.ts` owns 4 `InstancedMesh` pools (cube,
-  ramp, convex, concave) outside React — `components/viewport3d/VoxelInstancedMeshes.tsx` just
-  mounts `.group` and calls `sync(model, palette)` / `tick(elapsedSeconds)` from `useEffect`/
-  `useFrame`. `sync()` does a full rebuild per pool (diffing is a v2 optimization, not implemented),
-  populating per-instance transforms (`basis.ts`'s `cubeInstanceMatrix`/`chamferInstanceMatrix`),
-  base colors, a `cellKey ⇄ instance` reverse lookup, and the animated-instance list.
+- **Instancing**: `engine/instancing/InstancingManager.ts` owns **7** `InstancedMesh` pools outside
+  React — `cube`, the three chamfer shapes (`ramp`/`convex`/`concave`), and a v-mirrored twin of each
+  (`rampM`/`convexM`/`concaveM`) for cells on a reflected-basis plane (see `poolIdFor` +
+  `chamferBasisIsReflected`) — plus one **invisible AABB `pickMesh`** used only for raycasting (below).
+  `components/viewport3d/VoxelInstancedMeshes.tsx` just mounts `.group` and calls `sync(model, palette)`
+  / `tick(elapsedSeconds)` from `useEffect`/`useFrame`. `sync()` does a full rebuild per pool (diffing
+  is a v2 optimization, not implemented), populating per-instance transforms (`basis.ts`'s
+  `cubeInstanceMatrix`/`chamferInstanceMatrix`), base colors, a `cellKey ⇄ instance` reverse lookup,
+  and the animated-instance list.
 - **Material/lighting** (deviates from `SPEC.md` §3 — see below): one shared `MeshLambertMaterial`,
-  base color pinned to white (`0xffffff`) — three.js multiplies `instanceColor` against
-  `material.color` in the shader regardless of `vertexColors`, so any non-white base color would
-  tint every painted color. Blink/pulse animation (`emissiveClassFor` in `engine/palette/palette.ts`)
+  `side: DoubleSide`, base color pinned to white (`0xffffff`) — three.js multiplies `instanceColor`
+  against `material.color` in the shader regardless of `vertexColors`, so any non-white base color
+  would tint every painted color. (With the proper-rotation instance matrices and mirrored pools above,
+  every visible face is now front-facing and correctly lit; `DoubleSide` is retained defensively — the
+  inward base face is hidden inside the solid anyway.) Blink/pulse animation (`emissiveClassFor` in
+  `engine/palette/palette.ts`)
   and the hover blink are both driven from plain JS in `tick()`, recoloring just the affected
   instances via `setColorAt` every frame — not a GPU shader. `SceneLighting.tsx`'s lights live in a
   rig `<group>` synced to the camera's transform every frame (so the key light stays fixed relative
@@ -273,13 +296,21 @@ live chamfer re-validation at the destination, dropping invalid cells with a toa
 - **Hover blink**: `InstancingManager.setHoveredCell(key)` pulses the given instance's color
   between ~0.78x and ~1.22x its base brightness (sine wave in `tick()`), restoring the previous
   target's color when hover moves elsewhere.
-- **Raycasting**: `Viewport3D.tsx`'s `VoxelInteractionHandler` does its own manual raycasting
-  (native `pointerdown`/`move`/`up`/`leave` listeners on `gl.domElement`, not R3F's synthetic event
-  system) against `InstancingManager.meshList`, resolving hits back to a `CellKey` via
-  `cellKeyForHit`.
+- **Raycasting / picking**: `Viewport3D.tsx`'s `VoxelInteractionHandler` does its own manual
+  raycasting (native `pointerdown`/`move`/`up`/`leave` listeners on `gl.domElement`, not R3F's
+  synthetic event system) against `InstancingManager.pickObject` — the invisible **full-cell AABB**
+  pick mesh (one axis-aligned unit cube per occupied cell), **not** the visible chamfer geometry.
+  This is deliberate: raycasting the sloped chamfer faces produced diagonal face normals that confused
+  construction-plane selection, so picking treats every voxel as a full cube, always yielding the cell
+  (`cellKeyForPick`) and a clean ±axis face normal (fed to `planeFromFaceHit`). The pick mesh is added
+  to `.group` with `visible = false` (never rendered) but is still raycastable when passed explicitly
+  to the `Raycaster`. `InstancingManager.test.ts` covers this with real raycasts.
 - **Construction plane visuals**: `ConstructionPlaneVisual.tsx` (the plane-aligned grid + draggable
   offset arrow), `ConstructionPlaneGizmo.tsx` (axis-select spheres), `VoxelFaceHighlight.tsx`
-  (live hovered-face quad), `VoxelGhostPreview.tsx` (empty-cell paint preview).
+  (live hovered-face quad), `VoxelGhostPreview.tsx` (empty-cell paint preview). The plane grid renders
+  through the **centers** of its layer's voxels (`plane.offset + 0.5` along the axis, for either
+  orientation), not flush against a cell face; the drag-snap in `ConstructionPlaneVisual.tsx` mirrors
+  that same +0.5 so dragging still lands on whole offsets.
 
 ---
 
@@ -366,7 +397,7 @@ is the source of truth — treat the spec as historical context, not a contract:
   [Grid bounds](#grid-bounds--two-different-constants) above. No per-project sizing UI exists yet.
 - **§3 instancing diffing**: spec called for dense arrays + swap-remove/append diffing with
   dirty-range flushing, never a full-buffer rebuild per stroke. `InstancingManager.sync()` does a
-  full rebuild of all 4 pools on every model change — correct but not the described optimization.
+  full rebuild of all 7 pools (plus the pick mesh) on every model change — correct but not the described optimization.
   Not yet a measured problem at current grid sizes.
 - **§5 GLTF export**: `engine/csg/` exists as an empty directory. `three-bvh-csg`-based export
   (`CsgExporter.ts` in the spec's module breakdown) is not implemented.
