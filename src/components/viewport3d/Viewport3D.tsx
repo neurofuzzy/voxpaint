@@ -7,6 +7,7 @@ import { decodeKey } from '@/engine/grid/GridStore'
 import type { InstancingManager } from '@/engine/instancing/InstancingManager'
 import { planeFromFaceHit } from '@/engine/plane/constructionPlane'
 import { useAppStore } from '@/store/useAppStore'
+import { usePlaneLayerScroll } from '@/components/usePlaneLayerScroll'
 import { ConstructionPlaneGizmo } from './ConstructionPlaneGizmo'
 import { ConstructionPlaneVisual } from './ConstructionPlaneVisual'
 import { OptimizedMeshView } from './OptimizedMeshView'
@@ -119,9 +120,11 @@ export function Viewport3D() {
   const orbitControlsRef = useRef<OrbitControlsImpl | null>(null)
   const optimizedMesh = useAppStore((s) => s.optimizedMesh)
   const [meshStats, setMeshStats] = useState<OptimizedMeshStats | null>(null)
+  const containerRef = useRef<HTMLDivElement>(null)
+  usePlaneLayerScroll(containerRef)
 
   return (
-    <div className="relative h-full min-w-0 bg-neutral-900">
+    <div ref={containerRef} className="relative h-full min-w-0 bg-neutral-900">
       {/* flat disables R3F's default ACESFilmicToneMapping — that curve compresses/rolls off
           brightness at moderate light intensities, which was fighting every lighting change.
           With it off, on-screen brightness maps linearly and predictably to light intensity. */}
