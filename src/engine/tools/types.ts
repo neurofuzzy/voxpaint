@@ -25,6 +25,9 @@ export interface ToolContext {
   paintCell: (u: number, v: number) => boolean
   eraseCell: (coord: [number, number, number]) => void
   floodFill: (u: number, v: number) => void
+  beginMove: (wholeModel: boolean) => void
+  updateMove: (du: number, dv: number) => void
+  endMove: () => void
   cloneStampCell: (srcU: number, srcV: number, destU: number, destV: number) => void
   setActivePaletteSlot: (slot: PaletteSlotRef) => void
   setActiveTool: (tool: ToolId) => void
@@ -61,6 +64,7 @@ export type ToolDragState =
   | { kind: 'selectLasso'; points: Array<[number, number]> }
   | { kind: 'clone'; last: [number, number] }
   | { kind: 'moveFloat'; startU: number; startV: number; originAtStart: FloatOrigin }
+  | { kind: 'moveGrid'; startU: number; startV: number; lastU: number; lastV: number }
 
 export interface ToolHandler {
   onDown?(ctx: ToolContext, e: NormalizedPointerEvent): void

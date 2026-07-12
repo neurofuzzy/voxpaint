@@ -160,6 +160,16 @@ export type ToolActionsSlice = {
   bakeFloatIfAny: () => void
 }
 
+export type MoveActionsSlice = {
+  /** Starts a Move-tool drag: snapshots the cells to translate (current plane slice, or the whole
+   * model when `wholeModel`) and opens one undo stroke. No selection, no float. */
+  beginMove: (wholeModel: boolean) => void
+  /** Live-translates the snapshotted cells by a plane-space (du,dv) offset from the drag start. */
+  updateMove: (du: number, dv: number) => void
+  /** Ends the Move drag and commits the undo stroke. */
+  endMove: () => void
+}
+
 export type AppState = ProjectSlice &
   HistorySlice &
   PlaneSlice &
@@ -168,4 +178,5 @@ export type AppState = ProjectSlice &
   ViewSlice &
   PersistenceSlice &
   PaintActionsSlice &
-  ToolActionsSlice
+  ToolActionsSlice &
+  MoveActionsSlice

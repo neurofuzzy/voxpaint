@@ -1,18 +1,4 @@
-import { DEFAULT_GRID_EXTENT } from '@/engine/grid/GridStore'
 import type { SelectionRegion } from '@/store/types'
-
-/** A selection covering the entire working span — used by the Move tool to shift every pixel
- * visible on the current plane slice, regardless of any existing partial selection. */
-export function fullCanvasRegion(): SelectionRegion {
-  const half = DEFAULT_GRID_EXTENT / 2
-  return {
-    originU: -half,
-    originV: -half,
-    width: DEFAULT_GRID_EXTENT,
-    height: DEFAULT_GRID_EXTENT,
-    mask: new Uint8Array(DEFAULT_GRID_EXTENT * DEFAULT_GRID_EXTENT).fill(1),
-  }
-}
 
 export function rectRegion(u0: number, v0: number, u1: number, v1: number): SelectionRegion {
   const originU = Math.min(u0, u1)
