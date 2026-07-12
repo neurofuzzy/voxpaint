@@ -108,11 +108,15 @@ export type ViewSlice = {
   wireframe: boolean
   /** 3D preview: replace the instanced voxels with a single merged, coplanar-optimized shell mesh. */
   optimizedMesh: boolean
+  /** Dynamic status message shown in the footer's center area. Components set this on hover to
+   * show contextual info; cleared on pointer leave. Falls back to the active tool hint when null. */
+  statusMessage: string | null
   setFullscreen: (v: boolean) => void
   setHoverCell: (coord: Coord | null, chamferValid: boolean | null) => void
   setHoveredFace: (face: HoveredFace | null) => void
   setWireframe: (v: boolean) => void
   setOptimizedMesh: (v: boolean) => void
+  setStatusMessage: (msg: string | null) => void
 }
 
 export type PersistenceSlice = {

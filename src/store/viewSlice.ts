@@ -10,6 +10,7 @@ export const createViewSlice: Slice = (set) => ({
   hoveredFace: null,
   wireframe: false,
   optimizedMesh: false,
+  statusMessage: null,
 
   setFullscreen: (v) => set((state) => { state.fullscreen = v }),
   setWireframe: (v) => set((state) => { state.wireframe = v }),
@@ -20,4 +21,5 @@ export const createViewSlice: Slice = (set) => ({
       state.chamferHoverValid = chamferValid
     }),
   setHoveredFace: (face) => set((state) => { state.hoveredFace = face }),
+  setStatusMessage: (msg) => set((state) => { state.statusMessage = msg }),
 })

@@ -3,9 +3,9 @@ import { useAppStore } from '@/store/useAppStore'
 import type { VoxelKind } from '@/store/types'
 import { ChamferIcon, CubeIcon } from './voxelKindIcons'
 
-const KINDS: Array<{ id: VoxelKind; label: string; Icon: typeof CubeIcon }> = [
-  { id: 'cube', label: 'Cube', Icon: CubeIcon },
-  { id: 'ramp', label: 'Chamfer', Icon: ChamferIcon },
+const KINDS: Array<{ id: VoxelKind; label: string; Icon: typeof CubeIcon; hint: string }> = [
+  { id: 'cube', label: 'Cube', Icon: CubeIcon, hint: 'Cube mode: standard block shapes' },
+  { id: 'ramp', label: 'Chamfer', Icon: ChamferIcon, hint: 'Chamfer mode: beveled edges and slopes' },
 ]
 
 /**
@@ -17,6 +17,7 @@ const KINDS: Array<{ id: VoxelKind; label: string; Icon: typeof CubeIcon }> = [
 export function VoxelKindToggle() {
   const activeVoxelKind = useAppStore((s) => s.activeVoxelKind)
   const setActiveVoxelKind = useAppStore((s) => s.setActiveVoxelKind)
+  const setStatusMessage = useAppStore((s) => s.setStatusMessage)
   // Voxel kind (cube/chamfer) has no meaning while texturing — disabled in Texture mode.
   const disabled = useAppStore((s) => s.mode === 'texture')
 
@@ -26,12 +27,14 @@ export function VoxelKindToggle() {
         role="group"
         aria-label="Voxel kind"
         aria-disabled={disabled}
+        onPointerEnter={() => setStatusMessage(null)}
+        onPointerLeave={() => setStatusMessage(null)}
         className={
           'flex flex-col divide-y divide-neutral-700 overflow-hidden rounded-lg border border-neutral-700 ' +
           (disabled ? 'pointer-events-none opacity-40' : '')
         }
       >
-        {KINDS.map(({ id, label, Icon }) => {
+        {KINDS.map(({ id, label, Icon, hint }) => {
           const active = activeVoxelKind === id
           return (
             <Tooltip.Root key={id}>
@@ -41,6 +44,8 @@ export function VoxelKindToggle() {
                   aria-label={label}
                   aria-pressed={active}
                   disabled={disabled}
+                  onPointerEnter={() => setStatusMessage(hint)}
+                  onPointerLeave={() => setStatusMessage(null)}
                   onClick={() => setActiveVoxelKind(id)}
                   className={
                     'flex h-9 w-9 items-center justify-center transition ' +

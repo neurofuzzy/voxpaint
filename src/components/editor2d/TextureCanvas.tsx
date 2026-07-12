@@ -29,6 +29,7 @@ export function TextureCanvas() {
   const floatContent = useAppStore((s) => s.textureFloat)
   const floatOrigin = useAppStore((s) => s.textureFloatOrigin)
 
+  const setStatusMessage = useAppStore((s) => s.setStatusMessage)
   const { onPointerDown, onPointerMove, onPointerUp, linePreview, selectPreview, size, pan, zoom } = useTextureCanvasTools(canvasRef)
   useKeyboardShortcuts()
 
@@ -163,6 +164,7 @@ export function TextureCanvas() {
         onPointerDown={onPointerDown}
         onPointerMove={onPointerMove}
         onPointerUp={onPointerUp}
+        onPointerLeave={() => setStatusMessage(null)}
         onContextMenu={(e) => e.preventDefault()}
       />
       {!activeBoxFace && (

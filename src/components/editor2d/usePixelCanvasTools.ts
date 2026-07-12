@@ -136,6 +136,7 @@ export function usePixelCanvasTools(canvasRef: React.RefObject<HTMLCanvasElement
 
   const store = useAppStore.getState() // action references are stable for the store's lifetime
   const setHoverCell = store.setHoverCell // pulled out so it can be a genuine, listable useCallback dep
+  const setStatusMessage = store.setStatusMessage
 
   const ctx: ToolContext = {
     model, plane, activeVoxelKind, activePaletteSlot, selection, floatContent, floatOrigin, clipboard,
@@ -220,7 +221,8 @@ export function usePixelCanvasTools(canvasRef: React.RefObject<HTMLCanvasElement
   const onPointerLeave = useCallback(() => {
     hoverCellRef.current = null
     setHoverCell(null, null)
-  }, [setHoverCell])
+    setStatusMessage(null)
+  }, [setHoverCell, setStatusMessage])
 
   const onPointerUp = useCallback(
     (e: React.PointerEvent<HTMLCanvasElement>) => {

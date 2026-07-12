@@ -31,11 +31,15 @@ const CLICK_DRAG_THRESHOLD_PX = 4
  * on that voxel's own slice — "object mode"; a second click on the SAME voxel advances the plane
  * one step forward through that same face — see `handleVoxelFaceClick` in planeSlice.ts).
  */
+const ORBIT_HINT = 'Orbit: left-drag to rotate · right-drag: pan · scroll: zoom'
+const VOXEL_HINT = 'Click to set the construction plane on this face'
+
 function VoxelInteractionHandler({ managerRef }: { managerRef: React.RefObject<InstancingManager | null> }) {
   const { gl, camera } = useThree()
   const handleVoxelFaceClick = useAppStore((s) => s.handleVoxelFaceClick)
   const setHoverCell = useAppStore((s) => s.setHoverCell)
   const setHoveredFace = useAppStore((s) => s.setHoveredFace)
+  const setStatusMessage = useAppStore((s) => s.setStatusMessage)
 
   useEffect(() => {
     const dom = gl.domElement
@@ -82,6 +86,8 @@ function VoxelInteractionHandler({ managerRef }: { managerRef: React.RefObject<I
         lastFaceKey = faceKey
         setHoveredFace(result ? { cellKey: result.key, axis: result.plane.axis, orientation: result.plane.orientation } : null)
       }
+
+      setStatusMessage(cellKey ? VOXEL_HINT : ORBIT_HINT)
     }
 
     const onPointerLeave = () => {
@@ -89,6 +95,7 @@ function VoxelInteractionHandler({ managerRef }: { managerRef: React.RefObject<I
       lastFaceKey = null
       setHoverCell(null, null)
       setHoveredFace(null)
+      setStatusMessage(null)
     }
 
     const onPointerUp = (e: PointerEvent) => {
@@ -112,7 +119,7 @@ function VoxelInteractionHandler({ managerRef }: { managerRef: React.RefObject<I
       dom.removeEventListener('pointermove', onPointerMove)
       dom.removeEventListener('pointerleave', onPointerLeave)
     }
-  }, [gl, camera, managerRef, handleVoxelFaceClick, setHoverCell, setHoveredFace])
+  }, [gl, camera, managerRef, handleVoxelFaceClick, setHoverCell, setHoveredFace, setStatusMessage])
 
   return null
 }
@@ -122,6 +129,7 @@ export function Viewport3D() {
   const orbitControlsRef = useRef<OrbitControlsImpl | null>(null)
   const mode = useAppStore((s) => s.mode)
   const optimizedMesh = useAppStore((s) => s.optimizedMesh)
+  const setStatusMessage = useAppStore((s) => s.setStatusMessage)
   const [meshStats, setMeshStats] = useState<OptimizedMeshStats | null>(null)
   const containerRef = useRef<HTMLDivElement>(null)
   usePlaneLayerScroll(containerRef)
@@ -129,7 +137,12 @@ export function Viewport3D() {
   const textureMode = mode === 'texture'
 
   return (
-    <div ref={containerRef} className="relative h-full min-w-0 bg-neutral-900">
+    <div
+      ref={containerRef}
+      className="relative h-full min-w-0 bg-neutral-900"
+      onPointerEnter={() => setStatusMessage(ORBIT_HINT)}
+      onPointerLeave={() => setStatusMessage(null)}
+    >
       {/* flat disables R3F's default ACESFilmicToneMapping — that curve compresses/rolls off
           brightness at moderate light intensities, which was fighting every lighting change.
           With it off, on-screen brightness maps linearly and predictably to light intensity. */}
