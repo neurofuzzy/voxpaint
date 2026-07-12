@@ -33,3 +33,4 @@ npm run lint      # oxlint
 - IF you need to use an explore agent to find code and it's difficult to locate, make sure you update the function's JSDoc so that it appears in CODEMAP.md
 - BEFORE updating docs, run `npm run map` to update the code map.
 - ONLY update the docs (`./docs` folder md files and CLAUDE.md) when the user requests it.
+- When a task or session is complete and documentation should be updated, compile a structured summary (files changed, decisions made, why, and any open questions) and delegate to the documenter subagent to write it into the project's docs. Don't delegate without first synthesizing the summary yourself — the documenter has no visibility into this conversation.

@@ -1,4 +1,4 @@
-import { Boxes, FlipHorizontal, Grid3x3 } from 'lucide-react'
+import { Boxes, FlipHorizontal, Grid3x3, Video } from 'lucide-react'
 import type { Axis } from '@/engine/grid/types'
 import { useAppStore } from '@/store/useAppStore'
 import type { OptimizedMeshStats } from './OptimizedMeshView'
@@ -22,7 +22,7 @@ function ToggleButton({ on, onClick, label, children }: { on: boolean; onClick: 
  * gizmo) and view toggles (Wireframe, Optimized mesh, with the optimized triangle counts).
  * `stopPropagation` keeps clicks/drags off the OrbitControls underneath.
  */
-export function ViewOptionsOverlay({ stats }: { stats: OptimizedMeshStats | null }) {
+export function ViewOptionsOverlay({ stats, onResetCamera }: { stats: OptimizedMeshStats | null; onResetCamera: () => void }) {
   const plane = useAppStore((s) => s.plane)
   const setPlaneAxisOrientation = useAppStore((s) => s.setPlaneAxisOrientation)
   const wireframe = useAppStore((s) => s.wireframe)
@@ -61,6 +61,10 @@ export function ViewOptionsOverlay({ stats }: { stats: OptimizedMeshStats | null
           <span className="text-neutral-600"> / {stats.rawTriangles.toLocaleString()} tris</span>
         </span>
       )}
+
+      <button onClick={onResetCamera} title="Reset camera" aria-label="Reset camera" className={BTN_BASE}>
+        <Video size={16} />
+      </button>
     </div>
   )
 }

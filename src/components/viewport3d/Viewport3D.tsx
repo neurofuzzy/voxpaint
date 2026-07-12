@@ -140,7 +140,7 @@ export function Viewport3D() {
         <VoxelInteractionHandler managerRef={managerRef} />
         <OrbitControls ref={orbitControlsRef} makeDefault enableDamping dampingFactor={0.12} minDistance={2} maxDistance={150} />
       </Canvas>
-      <ViewOptionsOverlay stats={optimizedMesh ? meshStats : null} />
+      <ViewOptionsOverlay stats={optimizedMesh ? meshStats : null} onResetCamera={() => orbitControlsRef.current?.reset()} />
     </div>
   )
 }
