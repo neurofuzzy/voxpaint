@@ -194,23 +194,22 @@ paint-blocking validation (an earlier design gated the paint itself on `classify
 which meant the very first chamfer cell painted anywhere — always 0 filled neighbors — could never
 succeed; nothing could ever be painted). `ChamferCell` (`engine/grid/types.ts`) is
 `{planeAxis, planeOrientation, resolvedTo}`, where `resolvedTo: ChamferClassification | null`.
-`store/paintActions.ts`'s `paintChamferCell` always writes the cell (`resolvedTo` set to whatever
-`classify` currently returns, possibly `null`), then calls `chamferResolver.ts`'s
-`resolveChamferCellsOnPlane(model, plane)`, which re-attempts resolution for every other
-still-unresolved chamfer cell on that exact (axis, offset) slice — the newly-painted cell may be
-the missing neighbor they were waiting on. This is cheap (scans one plane's worth of already-
-chamfered cells, not the whole model) and is the only place re-resolution happens: erasing a
-neighbor can only ever reduce a fill count, never newly satisfy one, so erase never needs to
-trigger it. **Once `resolvedTo` is set, it's frozen forever** — matching the original "resolved
-once, never reclassified" invariant, just deferred until a cell actually has enough neighbors
-rather than blocking the paint that couldn't yet resolve it. `cloneStampCell`
-(`store/toolActionsSlice.ts`) and `applyClipboardAt` (`engine/tools/clipboard.ts`, paste/re-stamp)
-follow the identical pattern: always write, classify fresh against the destination's current
-neighbors, then `resolveChamferCellsOnPlane`.
+`store/paintActions.ts`'s `paintChamferCell` (and **only** direct edits) always writes the cell
+and calls `chamferResolver.ts`'s `classify` to resolve the cell's shape. **Direct edits are the
+only time resolution happens** — flood-fill, copy/paste, and clone/stamp do not trigger
+`resolveChamferCellsOnPlane` (which is now dead runtime code, kept only for its tests). Consequence:
+a chamfer painted before its neighbors exist stays a plain cube until re-clicked; pasting a chamfer
+copies its `planeAxis`/`planeOrientation`/`resolvedTo` verbatim rather than reclassifying, so the
+source shape is reproduced at the destination (fixing a reported bug where pasting garbled chamfer
+facings). **Once `resolvedTo` is set, it's frozen forever** — the original "resolved once, never
+reclassified" invariant. `cloneStampCell` (`store/toolActionsSlice.ts`) and `applyClipboardAt`
+(`engine/tools/clipboard.ts`, paste/re-stamp) now preserve the source chamfer's full cell data via
+deep copy instead of reclassifying.
 
-Cells with `resolvedTo: null` render as a plain cube in both the 2D editor (flat fill, not the
-diagonal-stripe chamfer marker — see below) and the 3D view (`InstancingManager.sync()` buckets a
-cell into the `cube` pool unless `chamfer?.resolvedTo` is set) until they resolve.
+Cells with `resolvedTo: null` render differently in 2D vs 3D. In the 3D view, `InstancingManager.sync()`
+buckets a cell into the `cube` pool (not the appropriate chamfer pool) until `resolvedTo` is set.
+In the 2D editor, every chamfer cell (regardless of `resolvedTo`) shows the diagonal-stripe marker,
+matching the float-render path, so freshly-painted unresolved chamfers are visually distinct from cubes.
 `engine/instancing/basis.ts`'s `chamferInstanceMatrix` turns a resolved cell's baked
 `{planeAxis, planeOrientation, resolvedTo.rotation}` into a world-space transform for the shared
 instanced geometry (rotation applied via the instance matrix, not separate geometries per rotation),
@@ -312,6 +311,23 @@ live chamfer re-validation at the destination, dropping invalid cells with a toa
   orientation), not flush against a cell face; the drag-snap in `ConstructionPlaneVisual.tsx` mirrors
   that same +0.5 so dragging still lands on whole offsets.
 
+### Mesh optimization and GLTF export
+
+`engine/instancing/voxelMeshBuilder.ts` builds the live preview mesh via `buildOptimizedVoxelGeometry`:
+it unions all colored cells (interior cells face-culled if completely surrounded), and welds coplanar
+adjacent quads via the shell pass. **Chamfer optimization fix**: when detecting coplanar edge-adjacent
+prefab triangle pairs (the flat quads on ramps and concave chamfers), `emitChamfer` now re-triangulates
+them through the same `pushQuad` canonical diagonal as plain cubes, so they cancel against neighbors'
+coincident faces. Genuinely triangular/folded faces (sloped sides, hip/folded roofs) are left as-is.
+
+`engine/export/gltfExport.ts` exports this optimized geometry to binary `.glb` via three's
+`GLTFExporter`. `buildOptimizedVoxelGeometryByColor` groups the shell by `(color, emissiveClass)`
+and exports one named material + mesh per pair (rather than a single vertex-colored blob), so DCC
+tools like Blender import each color under its own material. Emissive/blink/pulse materials get
+`material.emissive` set to a steady glow (static glTF cannot animate, so blink/pulse export as static
+emissive color — their animation is live-preview-only). Materials/objects are named
+`voxel_rrggbb[_emissive|_blink|_pulse]`.
+
 ---
 
 ## State management
@@ -383,6 +399,25 @@ drives in `tick()` — see [Deviations](#deviations-from-specmd) for the plain `
 The spec was written before implementation began; several things changed along the way. This repo
 is the source of truth — treat the spec as historical context, not a contract:
 
+- **§1.3 & §2 chamfer resolution rule — GLOBAL RULE**: spec calls for chamfers to auto-resolve when
+  neighbors appear (continuous "classify on write" across the layer). Implemented instead as: **a
+  chamfer cell's shape is classified ONLY when the user directly paints/edits that specific voxel**.
+  Consequence: copy/paste, clone/stamp, and flood-fill do not retro-resolve neighbors' unresolved
+  chamfers (see `resolveChamferCellsOnPlane`, now dead runtime code). When a chamfer is painted
+  before its neighbors exist, it stays a plain cube until re-clicked. Copy/paste/clone now preserve
+  the source chamfer's `planeAxis`/`planeOrientation`/`resolvedTo` verbatim instead of reclassifying,
+  fixing a reported bug where pasting garbled chamfer facings. Open consequence: rotate/mirror of
+  chamfer selections doesn't rotate the shapes themselves (kept verbatim); a proper transform would
+  require rotating `resolvedTo.rotation`/`planeOrientation` in the instance matrix, not attempted.
+- **§5 GLTF export**: spec calls for a CSG-based pipeline (`three-bvh-csg`, Web Worker). Implemented
+  instead in `engine/export/gltfExport.ts`, which runs on the main thread (grid capped at 64³, and
+  the shell/cull optimization already runs synchronously for the live mesh preview, so a worker is
+  unwarranted). The mesh optimizer—which already unions cells, culls hidden interior faces, and welds
+  coplanar quads—replaces CSG entirely. `buildOptimizedVoxelGeometryByColor(model, palette)` groups
+  the optimized shell by `(color, emissiveClass)` and exports one named material + mesh per pair;
+  emissive/blink/pulse materials get a steady `material.emissive` glow (blink/pulse animation is
+  live-preview-only, static glTF cannot express it). Materials/objects named `voxel_rrggbb[_emissive|_blink|_pulse]`.
+  Export via binary `.glb` and three's `GLTFExporter`. The `three-bvh-csg` dependency was removed.
 - **§3 material/lighting**: spec called for a single custom `ShaderMaterial` (extending
   `MeshStandardMaterial` via `onBeforeCompile`) with per-instance `instanceEmissiveClass`/
   `instanceEmissiveColor` attributes, animated by a GPU clock uniform. Implemented instead as a
@@ -399,8 +434,6 @@ is the source of truth — treat the spec as historical context, not a contract:
   dirty-range flushing, never a full-buffer rebuild per stroke. `InstancingManager.sync()` does a
   full rebuild of all 7 pools (plus the pick mesh) on every model change — correct but not the described optimization.
   Not yet a measured problem at current grid sizes.
-- **§5 GLTF export**: `engine/csg/` exists as an empty directory. `three-bvh-csg`-based export
-  (`CsgExporter.ts` in the spec's module breakdown) is not implemented.
 - **Hover/preview system** (`hoverCell`, `hoveredFace`, `VoxelFaceHighlight`, `VoxelGhostPreview`,
   the two-click "object mode" plane-advance interaction): not in the original spec at all — added
   after the initial build to make 3D face-picking and cross-view hover feedback discoverable.

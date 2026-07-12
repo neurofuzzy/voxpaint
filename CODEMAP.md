@@ -1,8 +1,8 @@
 ```
 # Auto-generated project map
-# Last updated: 2026-07-12 05:21:00
-# Files: 85
-# Lines of code: ~6102
+# Last updated: 2026-07-12 06:55:11
+# Files: 89
+# Lines of code: ~6333
 ```
 - **/components**
   - **/editor2d**
@@ -26,6 +26,8 @@
       - Function: `Editor2D`
     - [PixelCanvas.tsx](../src/components/editor2d/PixelCanvas.tsx)
       - Function: `PixelCanvas`
+    - [PlaneControlsOverlay.tsx](../src/components/editor2d/PlaneControlsOverlay.tsx)
+      - Function: `PlaneControlsOverlay` - Frosted overlay pinned to the top-right of the ...
     - [useKeyboardShortcuts.ts](../src/components/editor2d/useKeyboardShortcuts.ts)
       - Function: `useKeyboardShortcuts` - Global keyboard shortcuts — undo/redo, copy/cut...
     - [usePixelCanvasTools.ts](../src/components/editor2d/usePixelCanvasTools.ts)
@@ -47,13 +49,16 @@
     - [FullscreenToggle.tsx](../src/components/panels/FullscreenToggle.tsx)
       - Function: `FullscreenToggle`
     - [LayerToggle.tsx](../src/components/panels/LayerToggle.tsx)
-      - Function: `VoxelKindToggle`
+      - Function: `VoxelKindToggle` - Which kind of voxel paint writes — cube vs. cha...
     - [ModelStats.tsx](../src/components/panels/ModelStats.tsx)
       - Function: `ModelStats`
     - [ToolPalette.tsx](../src/components/panels/ToolPalette.tsx)
       - Function: `ToolPalette`
     - [UndoRedoControls.tsx](../src/components/panels/UndoRedoControls.tsx)
       - Function: `UndoRedoControls`
+    - [voxelKindIcons.tsx](../src/components/panels/voxelKindIcons.tsx) - Voxel-kind toolbar icons — inlined from `assets...
+      - Function: `CubeIcon`
+      - Function: `ChamferIcon`
   - **/ui**
     - [toastBus.ts](../src/components/ui/toastBus.ts)
       - Function: `showToast`
@@ -84,6 +89,8 @@
       - Function: `VoxelGhostPreview` - Semi-transparent placeholder cube at the hovere...
     - [VoxelInstancedMeshes.tsx](../src/components/viewport3d/VoxelInstancedMeshes.tsx)
       - Variable: `VoxelInstancedMeshes`
+  - [usePlaneLayerScroll.ts](../src/components/usePlaneLayerScroll.ts)
+    - Function: `usePlaneLayerScroll` - Shift + mouse wheel steps the construction-plan...
 - **/engine**
   - **/chamfer**
     - [chamferGeometry.test.ts](../src/engine/chamfer/chamferGeometry.test.ts)
@@ -103,7 +110,7 @@
   - **/csg**
   - **/export**
     - [gltfExport.ts](../src/engine/export/gltfExport.ts)
-      - Function: `exportModelToGlb` - Build the optimized per-colour meshes and seria...
+      - Function: `exportModelToGlb` - Build the optimized per-material meshes and ser...
       - Function: `downloadGlb` - Trigger a browser download of a .glb ArrayBuffer.
   - **/grid**
     - [GridStore.ts](../src/engine/grid/GridStore.ts)
@@ -229,11 +236,10 @@
       - Function: `bresenhamLine` - Bresenham line, inclusive of both endpoints.
       - Function: `snapToOrtho` - Snaps (u1,v1) so the vector from (u0,v0) lands ...
     - [moveTool.ts](../src/engine/tools/moveTool.ts)
-      - Variable: `moveTool` - Move shifts every pixel visible on the current ...
+      - Variable: `moveTool` - Move directly translates voxels — no selection,...
     - [paintTool.ts](../src/engine/tools/paintTool.ts)
       - Variable: `paintTool`
     - [selectionMask.ts](../src/engine/tools/selectionMask.ts)
-      - Function: `fullCanvasRegion` - A selection covering the entire working span — ...
       - Function: `rectRegion`
       - Function: `lassoRegion` - Builds a selection mask from a freehand (lasso)...
       - Function: `isCellSelected`
@@ -254,6 +260,8 @@
 - **/store**
   - [historySlice.ts](../src/store/historySlice.ts)
     - Function: `createHistorySlice`
+  - [moveActions.ts](../src/store/moveActions.ts)
+    - Function: `createMoveActionsSlice` - The Move tool's engine: a **direct, live transl...
   - [paintActions.ts](../src/store/paintActions.ts)
     - Function: `createPaintActionsSlice`
   - [persistenceSlice.ts](../src/store/persistenceSlice.ts)
@@ -287,6 +295,7 @@
     - Type: `PaintActionsSlice`
     - Type: `SelectionTransformKind`
     - Type: `ToolActionsSlice`
+    - Type: `MoveActionsSlice`
     - Type: `AppState`
   - [useAppStore.ts](../src/store/useAppStore.ts)
     - Variable: `useAppStore`
