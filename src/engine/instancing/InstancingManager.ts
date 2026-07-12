@@ -47,7 +47,6 @@ export class InstancingManager {
   readonly group = new THREE.Group()
   private meshes: Record<PoolId, THREE.InstancedMesh>
   private capacities: Record<PoolId, number>
-  private indexToCellKey: Record<PoolId, CellKey[]> = emptyPools<CellKey>()
   private animatedInstances: Record<PoolId, AnimatedInstance[]> = emptyPools<AnimatedInstance>()
   private baseColors: Record<PoolId, THREE.Color[]> = emptyPools<THREE.Color>()
   private cellKeyToInstance = new Map<CellKey, InstanceRef>()
@@ -55,6 +54,16 @@ export class InstancingManager {
   private material: THREE.MeshLambertMaterial
   private lastSyncedModel: VoxelModel | null = null
   private scratchColor = new THREE.Color()
+
+  // Picking runs against full-cell AABBs (unit cubes), NOT the visible chamfer meshes: clicking a
+  // sloped chamfer face must still resolve to that cell and a clean axis-aligned face normal, so the
+  // construction-plane pick is never confused by the bevel geometry. This invisible InstancedMesh
+  // holds one axis-aligned unit cube per occupied cell; raycasting hits it instead of `meshes`.
+  private pickGeometry = unitCubeGeometry()
+  private pickMaterial = new THREE.MeshBasicMaterial()
+  private pickMesh: THREE.InstancedMesh
+  private pickCapacity = INITIAL_CAPACITY
+  private pickIndexToCellKey: CellKey[] = []
 
   constructor() {
     // DoubleSide: the chamfer instance basis (makeBasis of worldU/worldV/outward) is a reflection
@@ -86,6 +95,19 @@ export class InstancingManager {
       this.group.add(mesh)
       this.meshes[id] = mesh
     }
+
+    this.pickMesh = this.makePickMesh(this.pickCapacity)
+    this.group.add(this.pickMesh)
+  }
+
+  /** Invisible unit-cube instanced mesh used only for AABB raycasting (never rendered). */
+  private makePickMesh(capacity: number): THREE.InstancedMesh {
+    const mesh = new THREE.InstancedMesh(this.pickGeometry, this.pickMaterial, capacity)
+    mesh.count = 0
+    mesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage)
+    mesh.frustumCulled = false
+    mesh.visible = false // not rendered; still raycastable when passed explicitly to the Raycaster
+    return mesh
   }
 
   private ensureCapacity(id: PoolId, needed: number) {
@@ -105,6 +127,32 @@ export class InstancingManager {
     this.meshes[id] = mesh
   }
 
+  private ensurePickCapacity(needed: number) {
+    if (needed <= this.pickCapacity) return
+    while (this.pickCapacity < needed) this.pickCapacity *= 2
+    const old = this.pickMesh
+    this.pickMesh = this.makePickMesh(this.pickCapacity)
+    this.group.remove(old)
+    old.dispose()
+    this.group.add(this.pickMesh)
+  }
+
+  /** Rebuilds the AABB pick mesh: one axis-aligned unit cube per occupied cell (regardless of its
+   * visible shape), so raycasting always yields the cell and a clean ±axis face normal. */
+  private syncPickMesh(model: VoxelModel) {
+    this.ensurePickCapacity(model.color.size)
+    const keys: CellKey[] = []
+    const matrix = new THREE.Matrix4()
+    for (const key of model.color.keys()) {
+      cubeInstanceMatrix(decodeKey(key), matrix)
+      this.pickMesh.setMatrixAt(keys.length, matrix)
+      keys.push(key)
+    }
+    this.pickIndexToCellKey = keys
+    this.pickMesh.count = keys.length
+    this.pickMesh.instanceMatrix.needsUpdate = true
+  }
+
   /** Re-syncs all 4 pools against the given model. Full rebuild per spec's sanctioned v1 simplification. */
   sync(model: VoxelModel, palette: PaletteState) {
     if (model === this.lastSyncedModel) return
@@ -122,7 +170,6 @@ export class InstancingManager {
       const keys = byPool[id]
       this.ensureCapacity(id, keys.length)
       const mesh = this.meshes[id]
-      this.indexToCellKey[id] = keys
       const animated: AnimatedInstance[] = []
       const baseColors: THREE.Color[] = []
 
@@ -157,6 +204,8 @@ export class InstancingManager {
       mesh.instanceMatrix.needsUpdate = true
       if (mesh.instanceColor) mesh.instanceColor.needsUpdate = true
     }
+
+    this.syncPickMesh(model)
 
     // Model rebuild may have moved/removed the hovered cell's instance index — re-resolve rather
     // than risk pointing at a stale/out-of-range slot.
@@ -220,19 +269,22 @@ export class InstancingManager {
     this.hoverTarget = next
   }
 
-  /** Resolves a raycast hit's (mesh, instanceId) back to a grid CellKey, for face-click plane picking. */
-  cellKeyForHit(object: THREE.Object3D, instanceId: number): CellKey | null {
-    const poolId = (POOL_IDS as string[]).find((id) => this.meshes[id as PoolId] === object) as PoolId | undefined
-    if (!poolId) return null
-    return this.indexToCellKey[poolId][instanceId] ?? null
+  /** The invisible AABB mesh to raycast for construction-plane picking. Pass it to
+   * `Raycaster.intersectObject` — it resolves hits via `cellKeyForPick` and yields clean box normals. */
+  get pickObject(): THREE.InstancedMesh {
+    return this.pickMesh
   }
 
-  get meshList(): THREE.InstancedMesh[] {
-    return POOL_IDS.map((id) => this.meshes[id])
+  /** Resolves a pick-mesh raycast hit's instanceId back to a grid CellKey. */
+  cellKeyForPick(instanceId: number): CellKey | null {
+    return this.pickIndexToCellKey[instanceId] ?? null
   }
 
   dispose() {
     for (const id of POOL_IDS) this.meshes[id].dispose()
     this.material.dispose()
+    this.pickMesh.dispose()
+    this.pickGeometry.dispose()
+    this.pickMaterial.dispose()
   }
 }

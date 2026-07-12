@@ -46,9 +46,11 @@ function VoxelInteractionHandler({ managerRef }: { managerRef: React.RefObject<I
       const rect = dom.getBoundingClientRect()
       const ndc = new THREE.Vector2(((clientX - rect.left) / rect.width) * 2 - 1, -((clientY - rect.top) / rect.height) * 2 + 1)
       raycaster.setFromCamera(ndc, camera)
-      const hit = raycaster.intersectObjects(manager.meshList, false)[0]
+      // Raycast full-cell AABBs (the invisible pick mesh), not the visible chamfer geometry, so a
+      // click on a sloped chamfer face still resolves to that cell and a clean ±axis face normal.
+      const hit = raycaster.intersectObject(manager.pickObject, false)[0]
       if (!hit || hit.instanceId === undefined || !hit.face) return null
-      const key = manager.cellKeyForHit(hit.object, hit.instanceId)
+      const key = manager.cellKeyForPick(hit.instanceId)
       if (!key) return null
       const [x, y, z] = key.split(',').map(Number)
       const worldNormal = hit.face.normal.clone().transformDirection(hit.object.matrixWorld).round()

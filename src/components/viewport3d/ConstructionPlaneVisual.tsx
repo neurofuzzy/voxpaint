@@ -3,9 +3,14 @@ import { useEffect, useMemo, useRef } from 'react'
 import * as THREE from 'three'
 import type { OrbitControls as OrbitControlsImpl } from 'three-stdlib'
 import { DEFAULT_GRID_EXTENT } from '@/engine/grid/GridStore'
-import { flushFaceValue, outwardNormal } from '@/engine/plane/planeGeometry'
+import { outwardNormal } from '@/engine/plane/planeGeometry'
 import { useAppStore } from '@/store/useAppStore'
 import { AXIS_UNIT_VECTOR, UP, toVector3 } from './axisVectors'
+
+// The plane sheet renders through the *centers* of its layer's voxels (offset + 0.5), not flush
+// against a face — cells span [offset, offset+1) along the axis, so their centers sit at +0.5. Same
+// value for either orientation (0.5 back from the flush face along the outward normal).
+const PLANE_CENTER_ADJUST = 0.5
 
 /**
  * Visualizes the active construction plane as a plane-aligned grid (replacing a static
@@ -21,14 +26,9 @@ export function ConstructionPlaneVisual({ orbitControlsRef }: { orbitControlsRef
   const draggingRef = useRef(false)
 
   const axisVec = AXIS_UNIT_VECTOR[plane.axis]
-  // Cells are corner-anchored ([offset, offset+1) along the plane axis — see constructionPlane.ts),
-  // and orientation picks which boundary of that layer the plane visually sits flush against.
-  // Derived from planeGeometry.ts's flushFaceValue — same primitive VoxelFaceHighlight.tsx and
-  // chamferInstanceMatrix (engine/instancing/basis.ts) use.
-  const orientationAdjust = flushFaceValue(0, plane.orientation)
   const position = useMemo(
-    () => axisVec.clone().multiplyScalar(plane.offset + orientationAdjust),
-    [axisVec, plane.offset, orientationAdjust],
+    () => axisVec.clone().multiplyScalar(plane.offset + PLANE_CENTER_ADJUST),
+    [axisVec, plane.offset],
   )
   const quaternion = useMemo(() => new THREE.Quaternion().setFromUnitVectors(UP, axisVec), [axisVec])
   const arrowDir = useMemo(
@@ -55,7 +55,7 @@ export function ConstructionPlaneVisual({ orbitControlsRef }: { orbitControlsRef
     const d = L.dot(O)
     const e = D.dot(O)
     const denom = a * c - b * b
-    if (Math.abs(denom) < 1e-6) return plane.offset + orientationAdjust // camera looking straight down the axis — degenerate
+    if (Math.abs(denom) < 1e-6) return plane.offset + PLANE_CENTER_ADJUST // camera looking straight down the axis — degenerate
     return (b * e - c * d) / denom
   }
 
@@ -63,7 +63,7 @@ export function ConstructionPlaneVisual({ orbitControlsRef }: { orbitControlsRef
     const dom = gl.domElement
     function onMove(ev: PointerEvent) {
       if (!draggingRef.current) return
-      setPlaneOffset(Math.round(sheetPositionFromPointer(ev.clientX, ev.clientY)) - orientationAdjust)
+      setPlaneOffset(Math.round(sheetPositionFromPointer(ev.clientX, ev.clientY) - PLANE_CENTER_ADJUST))
     }
     function onUp() {
       if (!draggingRef.current) return
