@@ -4,6 +4,13 @@ import type { Axis, ChamferCell, Coord } from '@/engine/grid/types'
 import type { BoxFace, TextureModel } from './types'
 import { BOX_FACE_AXIS, boxFaceOf, EMPTY, FACE_SIZE, GRAYSCALE, HALF_WORLD, TEXEL_SCALE } from './types'
 
+/** Grayscale index → overlay blend value in [0,1]. Middle index (2) = 0.5 = neutral (no change);
+ * unpainted (`EMPTY`) is also neutral. `GRAYSCALE.length - 1` is the max index. */
+function blendForIndex(index: number): number {
+  if (index === EMPTY) return 0.5
+  return index / (GRAYSCALE.length - 1)
+}
+
 // --- Atlas layout: the 6 faces packed into a 3×2 grid -----------------------------------------
 const ATLAS_COLS = 3
 const ATLAS_ROWS = 2
@@ -86,35 +93,35 @@ export function atlasUVFor(face: BoxFace, tu: number, tv: number): [number, numb
   return [atlasX / ATLAS_WIDTH, atlasY / ATLAS_HEIGHT]
 }
 
-// Precompute grayscale RGB triples once.
-const GRAY_RGB = GRAYSCALE.map((hex) => {
-  const clean = hex.replace('#', '')
-  return [parseInt(clean.slice(0, 2), 16), parseInt(clean.slice(2, 4), 16), parseInt(clean.slice(4, 6), 16)] as const
-})
-
 /**
- * Rasterizes the 6 texture faces into a single RGBA atlas (3×2 packing). Unpainted texels become
- * opaque white so the shade/multiply material leaves the underlying voxel color unchanged there.
+ * Rasterizes the 6 texture faces into a single RGBA **blend atlas** (3×2 packing): each pixel's
+ * R=G=B is the overlay blend value (`index/4`, unpainted = neutral 0.5), scaled to 0–255. The
+ * preview shader reads `.r` and overlays it onto the voxel color; the exporter bakes it per color.
+ * Stored as raw (non-color) data — consumers must set the texture's colorSpace to no-decode.
  */
-export function buildAtlas(texture: TextureModel): { data: Uint8ClampedArray; width: number; height: number } {
+export function buildBlendAtlas(texture: TextureModel): { data: Uint8ClampedArray; width: number; height: number } {
   const data = new Uint8ClampedArray(ATLAS_WIDTH * ATLAS_HEIGHT * 4)
-  data.fill(255) // opaque white everywhere (multiply no-op for unpainted texels)
+  // Default every pixel to neutral (0.5 blend → 128), so unused/empty atlas regions are no-ops.
+  const neutral = Math.round(0.5 * 255)
+  for (let i = 0; i < ATLAS_WIDTH * ATLAS_HEIGHT; i++) {
+    data[i * 4] = neutral
+    data[i * 4 + 1] = neutral
+    data[i * 4 + 2] = neutral
+    data[i * 4 + 3] = 255
+  }
 
   for (const face of Object.keys(FACE_ATLAS_CELL) as BoxFace[]) {
     const { col, row } = FACE_ATLAS_CELL[face]
     const arr = texture.faces[face]
     for (let tv = 0; tv < FACE_SIZE; tv++) {
       for (let tu = 0; tu < FACE_SIZE; tu++) {
-        const idx = arr[tv * FACE_SIZE + tu]
-        if (idx === EMPTY) continue
-        const rgb = GRAY_RGB[idx] ?? GRAY_RGB[GRAY_RGB.length - 1]
+        const value = Math.round(blendForIndex(arr[tv * FACE_SIZE + tu]) * 255)
         const atlasX = col * FACE_SIZE + tu
         const atlasY = row * FACE_SIZE + tv
         const p = (atlasY * ATLAS_WIDTH + atlasX) * 4
-        data[p] = rgb[0]
-        data[p + 1] = rgb[1]
-        data[p + 2] = rgb[2]
-        data[p + 3] = 255
+        data[p] = value
+        data[p + 1] = value
+        data[p + 2] = value
       }
     }
   }

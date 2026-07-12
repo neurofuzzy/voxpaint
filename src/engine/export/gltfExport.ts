@@ -3,7 +3,8 @@ import { GLTFExporter } from 'three/addons/exporters/GLTFExporter.js'
 import type { VoxelModel } from '@/engine/grid/types'
 import type { PaletteState } from '@/engine/palette/types'
 import type { TextureModel } from '@/engine/texture/types'
-import { buildAtlas } from '@/engine/texture/boxMapping'
+import { buildBlendAtlas } from '@/engine/texture/boxMapping'
+import { overlayChannel } from '@/engine/texture/overlay'
 import { buildTexturedGeometryByColor } from '@/engine/texture/texturedGeometry'
 import { hasTextureContent } from '@/engine/texture/TextureStore'
 import { buildOptimizedVoxelGeometryByColor } from '@/engine/instancing/voxelMeshBuilder'
@@ -30,6 +31,34 @@ const hex6 = (colorKey: number) => colorKey.toString(16).padStart(6, '0')
 const EMISSIVE_SUFFIX = ['', '_emissive', '_blink', '_pulse']
 
 /**
+ * Bake `overlay(color, blend)` into an sRGB RGBA texture for one color group. `blendData` is the
+ * shared blend atlas (R = blend·255); `colorKey` is the group's packed sRGB color. The result is a
+ * standard `baseColorTexture` (with `baseColorFactor` = white), so any glTF viewer reproduces the
+ * in-app overlay preview with no custom shader.
+ */
+function bakeOverlayTexture(blendData: Uint8ClampedArray, width: number, height: number, colorKey: number): THREE.DataTexture {
+  const r = ((colorKey >> 16) & 255) / 255
+  const g = ((colorKey >> 8) & 255) / 255
+  const b = (colorKey & 255) / 255
+  const out = new Uint8ClampedArray(width * height * 4)
+  for (let i = 0; i < width * height; i++) {
+    const blend = blendData[i * 4] / 255
+    out[i * 4] = overlayChannel(r, blend) * 255
+    out[i * 4 + 1] = overlayChannel(g, blend) * 255
+    out[i * 4 + 2] = overlayChannel(b, blend) * 255
+    out[i * 4 + 3] = 255
+  }
+  const tex = new THREE.DataTexture(out, width, height, THREE.RGBAFormat)
+  tex.magFilter = THREE.NearestFilter
+  tex.minFilter = THREE.NearestFilter
+  tex.generateMipmaps = false
+  tex.flipY = false
+  tex.colorSpace = THREE.SRGBColorSpace
+  tex.needsUpdate = true
+  return tex
+}
+
+/**
  * Build the optimized per-material meshes and serialize them to a binary glTF (.glb) ArrayBuffer.
  * When a non-empty `texture` is supplied, the box-mapped geometry (carrying UVs) is used and the
  * grayscale atlas is embedded as each material's `map` — glTF's `baseColor × map` reproduces the
@@ -40,32 +69,35 @@ export async function exportModelToGlb(model: VoxelModel, palette: PaletteState,
   const textured = !!texture && hasTextureContent(texture)
   const groups = textured ? buildTexturedGeometryByColor(model, palette) : buildOptimizedVoxelGeometryByColor(model, palette)
 
-  let atlasTexture: THREE.DataTexture | undefined
-  if (textured) {
-    const { data, width, height } = buildAtlas(texture!)
-    atlasTexture = new THREE.DataTexture(data, width, height, THREE.RGBAFormat)
-    atlasTexture.magFilter = THREE.NearestFilter
-    atlasTexture.minFilter = THREE.NearestFilter
-    atlasTexture.generateMipmaps = false
-    atlasTexture.flipY = false
-    atlasTexture.colorSpace = THREE.SRGBColorSpace
-    atlasTexture.needsUpdate = true
-  }
+  // Shared blend atlas — each color group bakes its own overlay result from it (below), so the
+  // exported material's baseColorTexture already contains overlay(color, blend); no shader needed.
+  const blend = textured ? buildBlendAtlas(texture!) : null
 
   const root = new THREE.Group()
   root.name = 'VoxPaintModel'
   const materials: THREE.Material[] = []
+  const textures: THREE.Texture[] = []
   const color = new THREE.Color()
 
   for (const { colorKey, emissiveClass, geometry } of groups) {
-    // The material carries the colour; drop the (redundant, single-colour) vertex attribute so it
-    // can't multiply against the base colour in glTF viewers. UVs (when present) are kept for `map`.
+    // Drop the vertex-color attribute either way: the plain path carries colour on the material;
+    // the textured path carries it in the baked map. UVs (when present) are kept for `map`.
     geometry.deleteAttribute('color')
 
-    // Single-sided (the builder winds every face outward); metalness 0 / roughness 1 keeps the
-    // low-poly colours reading flat in any viewer.
-    const material = new THREE.MeshStandardMaterial({ color: color.setHex(colorKey).clone(), metalness: 0, roughness: 1 })
-    if (atlasTexture) material.map = atlasTexture
+    let baseColor: THREE.Color
+    let map: THREE.DataTexture | undefined
+    if (blend) {
+      // Baked overlay carries the colour, so the material base is white × map.
+      baseColor = new THREE.Color(0xffffff)
+      map = bakeOverlayTexture(blend.data, blend.width, blend.height, colorKey)
+      textures.push(map)
+    } else {
+      baseColor = color.setHex(colorKey).clone()
+    }
+
+    // metalness 0 / roughness 1 keeps the low-poly colours reading flat in any viewer.
+    const material = new THREE.MeshStandardMaterial({ color: baseColor, metalness: 0, roughness: 1 })
+    if (map) material.map = map
     if (emissiveClass > 0) {
       material.emissive = color.setHex(colorKey).clone() // steady glow in the slot's own colour
       material.emissiveIntensity = 1
@@ -85,7 +117,7 @@ export async function exportModelToGlb(model: VoxelModel, palette: PaletteState,
   } finally {
     for (const { geometry } of groups) geometry.dispose()
     for (const m of materials) m.dispose()
-    atlasTexture?.dispose()
+    for (const t of textures) t.dispose()
   }
 }
 

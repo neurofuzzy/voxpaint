@@ -41,8 +41,9 @@ export const HALF_WORLD = DEFAULT_GRID_EXTENT / 2
 
 /**
  * The texture palette — for now, the first 5 grayscale values (index 0 = black … 4 = white). A
- * texel stores one of these indices, or `EMPTY` when unpainted. Grayscale multiplies the voxel's
- * palette color on the model surface (shade/multiply semantics), so white = no change.
+ * texel stores one of these indices, or `EMPTY` when unpainted. The grayscale is applied to the
+ * voxel's palette color via **overlay** blend (see `overlay.ts`): the middle value (index 2) is
+ * neutral, darker values darken, lighter values lighten. `EMPTY` is also neutral.
  */
 export const GRAYSCALE: readonly string[] = ['#000000', '#404040', '#808080', '#c0c0c0', '#ffffff']
 

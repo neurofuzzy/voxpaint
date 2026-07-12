@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import type { ChamferCell } from '@/engine/grid/types'
-import { atlasUVFor, ATLAS_HEIGHT, ATLAS_WIDTH, boxFaceForCell, buildAtlas, worldToTexel } from './boxMapping'
+import { atlasUVFor, ATLAS_HEIGHT, ATLAS_WIDTH, boxFaceForCell, buildBlendAtlas, worldToTexel } from './boxMapping'
 import { emptyTextureModel } from './TextureStore'
 import { BOX_FACES, EMPTY, FACE_SIZE, HALF_WORLD } from './types'
 
@@ -68,18 +68,21 @@ describe('atlas', () => {
     expect(new Set(centers).size).toBe(BOX_FACES.length)
   })
 
-  it('defaults unpainted texels to opaque white and places a painted texel at its atlas pixel', () => {
+  it('stores blend values (neutral where unpainted) and places a painted texel at its atlas pixel', () => {
     const tex = emptyTextureModel()
-    tex.faces.px[0] = 0 // black at (0,0) of +X face
-    const { data, width, height } = buildAtlas(tex)
+    tex.faces.px[0] = 0 // darkest (index 0 → blend 0) at (0,0) of +X face
+    tex.faces.px[1] = 4 // lightest (index 4 → blend 1)
+    const { data, width, height } = buildBlendAtlas(tex)
     expect(width).toBe(ATLAS_WIDTH)
     expect(height).toBe(ATLAS_HEIGHT)
 
     // +X face occupies atlas cell (col 0, row 0) → its (0,0) texel is atlas pixel (0,0).
     expect([data[0], data[1], data[2], data[3]]).toEqual([0, 0, 0, 255])
-    // An untouched texel elsewhere on the same face stays white.
-    const p = (1 * ATLAS_WIDTH + 1) * 4
-    expect([data[p], data[p + 1], data[p + 2], data[p + 3]]).toEqual([255, 255, 255, 255])
+    // Next texel (index 4 → blend 1 → 255).
+    expect([data[4], data[5], data[6]]).toEqual([255, 255, 255])
+    // An untouched texel stays neutral (blend 0.5 → 128).
+    const p = (1 * ATLAS_WIDTH + 5) * 4
+    expect([data[p], data[p + 1], data[p + 2]]).toEqual([128, 128, 128])
     // Sanity: EMPTY sentinel is what an untouched face array holds.
     expect(tex.faces.py[10]).toBe(EMPTY)
   })
