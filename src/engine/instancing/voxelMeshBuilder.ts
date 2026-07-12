@@ -16,8 +16,10 @@ import { optimizeGeometry, triangleCount } from './meshOptimizer'
  * Plain cubes are emitted through `pushQuad`, which splits every face on a canonical diagonal so a
  * cube's face and its neighbour's coincident face are identical vertex-triples — that's what lets
  * the shell pass cancel them. Chamfer cells reuse the prefab geometry (transformed by the same
- * instance matrix the renderer uses); their interior faces cancel too when triangulation coincides,
- * otherwise they stay hidden inside the solid (harmless).
+ * instance matrix the renderer uses), but their flat quad faces (bottom, back walls, single-facet
+ * ramp roof) are likewise re-split through `pushQuad` in `emitChamfer` so they too cancel against a
+ * neighbour's coincident face — otherwise their prefab diagonal wouldn't match the neighbour's
+ * canonical one, leaving a visible X of two facing quads. Genuinely triangular/folded faces remain.
  */
 
 interface Face {
@@ -30,6 +32,7 @@ interface Face {
 
 const QUANT = 1e6
 const qkey = (v: THREE.Vector3) => `${Math.round(v.x * QUANT)},${Math.round(v.y * QUANT)},${Math.round(v.z * QUANT)}`
+const COPLANAR_DOT = 0.9999 // two triangles count as coplanar (same-facing) above this normal dot
 
 // Chamfer prefab geometries (non-indexed, CCW-outward), keyed by shapeKind + mirrored variant.
 const CHAMFER_BASE: Record<string, THREE.BufferGeometry> = (() => {
@@ -83,13 +86,57 @@ function emitCube(faces: Face[], [x, y, z]: Coord, colorKey: number) {
   pushQuad(faces, [P(x, y, z1), P(x1, y, z1), P(x1, y1, z1), P(x, y1, z1)], new THREE.Vector3(0, 0, 1), colorKey)
 }
 
+/** If two triangles share exactly one edge (2 coincident corners) return the 4 distinct corners of
+ * the quad they tile, else null. Order is irrelevant — `pushQuad` re-sorts canonically. */
+function sharedEdgeQuad(t1: THREE.Vector3[], t2: THREE.Vector3[]): THREE.Vector3[] | null {
+  const shared: THREE.Vector3[] = []
+  const only1: THREE.Vector3[] = []
+  for (const v of t1) {
+    if (t2.some((w) => qkey(w) === qkey(v))) shared.push(v)
+    else only1.push(v)
+  }
+  if (shared.length !== 2 || only1.length !== 1) return null
+  const only2 = t2.filter((w) => !t1.some((v) => qkey(v) === qkey(w)))
+  if (only2.length !== 1) return null
+  return [shared[0], shared[1], only1[0], only2[0]]
+}
+
+/**
+ * Emit a chamfer prefab's transformed triangles, but re-split any coplanar edge-adjacent triangle
+ * pair (the flat quad faces — bottom, back walls, single-facet ramp roof) onto `pushQuad`'s canonical
+ * diagonal. That makes a chamfer's flat wall an *identical* vertex-triple to a neighbouring cell's
+ * coincident face (which is also emitted via `pushQuad`), so the shell pass can cancel the hidden
+ * interior faces — fixing the X-pattern stragglers on ramp/concave back walls. Genuinely triangular
+ * or folded faces (sloped sides, hip/folded roofs — different normals) emit as-is.
+ */
 function emitChamfer(faces: Face[], base: THREE.BufferGeometry, matrix: THREE.Matrix4, colorKey: number) {
   const pos = base.getAttribute('position')
+  const tris: THREE.Vector3[][] = []
   for (let i = 0; i < pos.count; i += 3) {
-    const a = new THREE.Vector3().fromBufferAttribute(pos, i).applyMatrix4(matrix)
-    const b = new THREE.Vector3().fromBufferAttribute(pos, i + 1).applyMatrix4(matrix)
-    const c = new THREE.Vector3().fromBufferAttribute(pos, i + 2).applyMatrix4(matrix)
-    addTri(faces, a, b, c, colorKey) // prefab is CCW-outward and the matrix is det+1, so winding holds
+    tris.push([
+      new THREE.Vector3().fromBufferAttribute(pos, i).applyMatrix4(matrix),
+      new THREE.Vector3().fromBufferAttribute(pos, i + 1).applyMatrix4(matrix),
+      new THREE.Vector3().fromBufferAttribute(pos, i + 2).applyMatrix4(matrix),
+    ])
+  }
+
+  const normals = tris.map((t) => faceNormal(t[0], t[1], t[2]))
+  const used = new Array(tris.length).fill(false)
+
+  for (let i = 0; i < tris.length; i++) {
+    if (used[i]) continue
+    let paired = false
+    for (let j = i + 1; j < tris.length; j++) {
+      if (used[j] || normals[i].dot(normals[j]) < COPLANAR_DOT) continue // must be coplanar (same-facing)
+      const quad = sharedEdgeQuad(tris[i], tris[j])
+      if (!quad) continue
+      pushQuad(faces, quad, normals[i], colorKey)
+      used[i] = used[j] = true
+      paired = true
+      break
+    }
+    // Unpaired triangle: prefab is CCW-outward and the matrix is det+1, so winding holds.
+    if (!paired) addTri(faces, tris[i][0], tris[i][1], tris[i][2], colorKey)
   }
 }
 
