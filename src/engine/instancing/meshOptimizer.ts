@@ -70,7 +70,7 @@ function orderBoundaryVertices(vertices: THREE.Vector3[], edges: Map<string, num
   while (currentKey && ordered.length < vertices.length) {
     visited.add(currentKey)
     ordered.push(byKey.get(currentKey)!)
-    const next = (adjacency.get(currentKey) ?? []).find((n) => !visited.has(n))
+    const next: string | undefined = (adjacency.get(currentKey) ?? []).find((n) => !visited.has(n))
     currentKey = next ?? null
   }
 

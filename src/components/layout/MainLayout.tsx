@@ -10,7 +10,7 @@ export function MainLayout() {
       <TopToolbar />
       <div className="flex min-h-0 flex-1">
         <LeftPanel />
-        <div className="grid min-w-0 flex-1 grid-cols-2">
+        <div className="grid min-w-0 flex-1 grid-cols-2 grid-rows-1 overflow-hidden">
           <Editor2D />
           <Viewport3D />
         </div>

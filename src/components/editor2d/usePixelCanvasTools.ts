@@ -65,13 +65,19 @@ export function usePixelCanvasTools(canvasRef: React.RefObject<HTMLCanvasElement
   useEffect(() => {
     const canvas = canvasRef.current
     if (!canvas) return
+    const container = canvas.parentElement
+    if (!container) return
     const update = () => {
-      const rect = canvas.getBoundingClientRect()
-      setSize({ width: rect.width, height: rect.height })
+      const rect = container.getBoundingClientRect()
+      setSize((prev) =>
+        prev.width === rect.width && prev.height === rect.height
+          ? prev
+          : { width: rect.width, height: rect.height }
+      )
     }
     update()
     const observer = new ResizeObserver(update)
-    observer.observe(canvas)
+    observer.observe(container)
     return () => observer.disconnect()
   }, [canvasRef])
 
