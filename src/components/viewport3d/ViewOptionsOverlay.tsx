@@ -58,6 +58,13 @@ export function ViewOptionsOverlay({ stats, onResetCamera }: { stats: OptimizedM
       onPointerDown={(e) => e.stopPropagation()}
       onPointerMove={(e) => e.stopPropagation()}
     >
+      {optimizedMesh && stats && (
+        <span className="px-1 font-mono text-[11px] tabular-nums text-neutral-400" title="triangles: optimized vs raw">
+          {stats.optimizedTriangles.toLocaleString()}
+          <span className="text-neutral-600"> / {stats.rawTriangles.toLocaleString()} tris</span>
+        </span>
+      )}
+
       <button
         onClick={cycleAxis}
         title="Construction plane axis (click to cycle)"
@@ -109,12 +116,6 @@ export function ViewOptionsOverlay({ stats, onResetCamera }: { stats: OptimizedM
         >
           <Aperture size={16} />
         </ToggleButton>
-      )}
-      {optimizedMesh && stats && (
-        <span className="px-1 font-mono text-[11px] tabular-nums text-neutral-400" title="triangles: optimized vs raw">
-          {stats.optimizedTriangles.toLocaleString()}
-          <span className="text-neutral-600"> / {stats.rawTriangles.toLocaleString()} tris</span>
-        </span>
       )}
 
       <button

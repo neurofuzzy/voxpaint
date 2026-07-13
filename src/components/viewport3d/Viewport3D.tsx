@@ -33,11 +33,23 @@ const CLICK_DRAG_THRESHOLD_PX = 4
  * one step forward through that same face — see `handleVoxelFaceClick` in planeSlice.ts).
  */
 const ORBIT_HINT = 'Orbit: left-drag to rotate · right-drag: pan · scroll: zoom'
-const VOXEL_HINT = 'Click to set the construction plane on this face'
+
+function voxelHint(axis: string, orientation: number): string {
+  const dir: Record<string, Record<number, string>> = {
+    x: { 1: 'east', '-1': 'west' },
+    y: { 1: 'up', '-1': 'down' },
+    z: { 1: 'south', '-1': 'north' },
+  }
+  return `Click to set the construction plane to this voxel facing ${dir[axis]?.[orientation] ?? ''}`
+}
+const AGAIN_HINT = 'Click again to move the construction plane forward'
 
 function VoxelInteractionHandler({ managerRef }: { managerRef: React.RefObject<InstancingManager | null> }) {
   const { gl, camera } = useThree()
   const handleVoxelFaceClick = useAppStore((s) => s.handleVoxelFaceClick)
+  const objectModeTarget = useAppStore((s) => s.objectModeTarget)
+  const objectModeTargetRef = useRef(objectModeTarget)
+  objectModeTargetRef.current = objectModeTarget
   const setHoverCell = useAppStore((s) => s.setHoverCell)
   const setHoveredFace = useAppStore((s) => s.setHoveredFace)
   const setStatusMessage = useAppStore((s) => s.setStatusMessage)
@@ -88,7 +100,12 @@ function VoxelInteractionHandler({ managerRef }: { managerRef: React.RefObject<I
         setHoveredFace(result ? { cellKey: result.key, axis: result.plane.axis, orientation: result.plane.orientation } : null)
       }
 
-      setStatusMessage(cellKey ? VOXEL_HINT : ORBIT_HINT)
+      const target = objectModeTargetRef.current
+      const again = result && target
+        && result.key === target.cellKey
+        && result.plane.axis === target.axis
+        && result.plane.orientation === target.orientation
+      setStatusMessage(result ? (again ? AGAIN_HINT : voxelHint(result.plane.axis, result.plane.orientation)) : ORBIT_HINT)
     }
 
     const onPointerLeave = () => {
@@ -157,7 +174,7 @@ export function Viewport3D() {
           </>
         ) : (
           <>
-            <ConstructionPlaneVisual orbitControlsRef={orbitControlsRef} />
+            <ConstructionPlaneVisual />
             <VoxelInstancedMeshes ref={managerRef} />
             {optimizedMesh && <SceneEnvironment />}
             {optimizedMesh && <OptimizedMeshView onStats={setMeshStats} />}
