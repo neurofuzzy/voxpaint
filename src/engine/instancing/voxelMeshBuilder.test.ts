@@ -12,30 +12,33 @@ function twoVoxels(a: PaletteSlotRef, b: PaletteSlotRef): VoxelModel {
   return { ...model, bounds: recomputeBounds(model) }
 }
 
-describe('shell pass — material boundaries', () => {
-  const base0: PaletteSlotRef = { kind: 'base', index: 0 }
-  const glass0: PaletteSlotRef = { kind: 'glass', index: 0 }
+const base0: PaletteSlotRef = { kind: 'base', index: 0 }
+const glass0: PaletteSlotRef = { kind: 'glass', index: 0 }
+const metal0: PaletteSlotRef = { kind: 'metal', index: 0 }
 
-  it('culls the shared interface between two same-material voxels', () => {
+describe('CSG per-color-group optimizer', () => {
+  it('unions two adjacent same-colour voxels into a single group with interior faces removed', () => {
     const built = buildOptimizedVoxelGroups(twoVoxels(base0, base0), DEFAULT_PALETTE)
-    // One material class → one mesh; a 1×2 box has 6 merged quads = 12 triangles (no interior faces).
+    // Same materialClass + same colour → one CSG group.
     expect(built.groups).toHaveLength(1)
-    expect(built.optimizedTriangles).toBe(12)
+    // Raw: 2 cubes × 12 tris = 24. CSG union removes the shared interior face.
+    expect(built.rawTriangles).toBe(24)
+    expect(built.optimizedTriangles).toBeLessThan(24)
   })
 
-  it('keeps the solid interface face but drops the glass one at a glass↔solid boundary', () => {
+  it('keeps glass and matte voxels in separate groups with all faces intact', () => {
     const built = buildOptimizedVoxelGroups(twoVoxels(base0, glass0), DEFAULT_PALETTE)
-    // Two material classes → two meshes. The matte voxel keeps all 6 faces (12 tris); the glass voxel
-    // drops its interface face (5 faces = 10 tris) to avoid z-fighting the solid face behind it = 22.
+    // Different materialClass → two CSG groups.
     expect(built.groups).toHaveLength(2)
-    expect(built.optimizedTriangles).toBe(22)
+    expect(built.rawTriangles).toBe(24)
+    // Each group has one voxel — no interior face removal across groups.
+    expect(built.optimizedTriangles).toBe(24)
   })
 
-  it('keeps both interface faces between two different opaque materials', () => {
-    const metal0: PaletteSlotRef = { kind: 'metal', index: 0 }
+  it('keeps matte and metal voxels in separate groups', () => {
     const built = buildOptimizedVoxelGroups(twoVoxels(base0, metal0), DEFAULT_PALETTE)
-    // Neither is glass, so the (hidden, internal) interface is kept on both: 12 + 12 = 24 tris.
     expect(built.groups).toHaveLength(2)
+    expect(built.rawTriangles).toBe(24)
     expect(built.optimizedTriangles).toBe(24)
   })
 })

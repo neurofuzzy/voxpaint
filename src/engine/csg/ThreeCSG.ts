@@ -486,6 +486,6 @@ export default class ThreeBSP {
   }
 }
 
-export function ThreeCSGFactory(THREE: any) {
+export function ThreeCSGFactory(_THREE: any) {
   return ThreeBSP;
 }

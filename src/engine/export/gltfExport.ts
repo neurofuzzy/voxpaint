@@ -137,18 +137,18 @@ export async function exportModelToGlb(
       materials.push(material)
     }
   } else {
-    // PBR path — one vertex-coloured optimized mesh per material class (≤4), optional baked AO map.
+    // PBR path — one solid-colour optimized mesh per (materialClass, colorKey) pair, optional baked AO.
     const groups = buildOptimizedVoxelGeometryByMaterial(model, palette)
     const ao = options.ambientOcclusion ? bakeAOAtlas(model) : null
     const aoTex = ao ? aoMapTexture(ao.data, ao.width, ao.height) : null
     if (aoTex) textures.push(aoTex)
 
-    for (const { materialClass, geometry } of groups) {
+    for (const { materialClass, colorKey, geometry } of groups) {
       geometries.push(geometry)
       const params = materialParamsFor(materialClass)
       const material = new THREE.MeshPhysicalMaterial({
-        color: 0xffffff,
-        vertexColors: true, // per-voxel base colour carried on the geometry (COLOR_0)
+        color: colorKey,
+        vertexColors: false,
         metalness: params.metalness,
         roughness: params.roughness,
         transmission: params.transmission,
@@ -157,11 +157,15 @@ export async function exportModelToGlb(
         material.ior = 1.5
         material.thickness = 0.5
       }
+      if (params.emissiveIntensity > 0) {
+        material.emissive = new THREE.Color(colorKey)
+        material.emissiveIntensity = params.emissiveIntensity
+      }
       if (aoTex) {
         assignAtlasUVs(geometry)
-        material.map = aoTex // baseColour × COLOR_0 × ao
+        material.map = aoTex
       }
-      material.name = `voxel_${materialClass}`
+      material.name = `voxel_${hex6(colorKey)}_${materialClass}`
       const mesh = new THREE.Mesh(geometry, material)
       mesh.name = material.name
       root.add(mesh)

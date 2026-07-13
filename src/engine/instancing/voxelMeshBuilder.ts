@@ -5,7 +5,7 @@ import { concaveCornerGeometry, convexCornerGeometry, mirrorVGeometry, rampGeome
 import { materialClassFor, resolveSlotColor, type MaterialClass } from '@/engine/palette/palette'
 import type { PaletteState } from '@/engine/palette/types'
 import { chamferBasisIsReflected, chamferInstanceMatrix } from './basis'
-import { optimizeGeometry, triangleCount } from './meshOptimizer'
+import { optimizeGroupsByCSG, triangleCount, type VoxelGroup } from './meshOptimizer'
 
 /**
  * Bakes the whole model into a single optimized "shell" mesh for the 3D preview's optimized-mesh
@@ -199,24 +199,6 @@ export function removeInteriorFaces(faces: Face[]): Face[] {
   return faces.filter((_, i) => !removed.has(i))
 }
 
-function geometryFromFaces(faces: Face[]): THREE.BufferGeometry {
-  const positions: number[] = []
-  const normals: number[] = []
-  const colorKeys: number[] = []
-  for (const f of faces) {
-    for (const v of [f.a, f.b, f.c]) {
-      positions.push(v.x, v.y, v.z)
-      normals.push(f.normal.x, f.normal.y, f.normal.z)
-      colorKeys.push(f.colorKey)
-    }
-  }
-  const geometry = new THREE.BufferGeometry()
-  geometry.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3))
-  geometry.setAttribute('normal', new THREE.Float32BufferAttribute(normals, 3))
-  geometry.setAttribute('colorKey', new THREE.Float32BufferAttribute(colorKeys, 1))
-  return geometry
-}
-
 /**
  * Accumulate every cell's faces and run the shell pass. Shared by the preview and export builders.
  * The shell pass runs across all colors together — interior faces
@@ -258,56 +240,67 @@ export interface ColorGroupGeometry {
   geometry: THREE.BufferGeometry
 }
 
-export interface MaterialGroupGeometry {
-  /** The group's PBR material class (matte/emissive/metal/glass) — the *only* grouping key, so the
-   * whole model is at most four meshes. Different material classes are **never** merged together. */
-  materialClass: MaterialClass
-  /** Optimized geometry carrying per-vertex `color` — many palette colours share one class mesh, so
-   * colour lives on the vertices (not the material) while the material carries the class's PBR params. */
-  geometry: THREE.BufferGeometry
-}
-
-/**
- * Partition shell faces into **one optimized geometry per material class** (≤4 total). Colours are not
- * a grouping key — the mesh optimizer still only welds coplanar *same-colour* faces (`colorKey` is its
- * match key), and the surviving colours are carried out on the per-vertex `color` attribute.
- */
-function groupFacesByMaterialClass(faces: Face[]): MaterialGroupGeometry[] {
-  const byClass = new Map<MaterialClass, Face[]>()
-  for (const f of faces) {
-    const group = byClass.get(f.materialClass)
-    if (group) group.push(f)
-    else byClass.set(f.materialClass, [f])
-  }
-  const out: MaterialGroupGeometry[] = []
-  for (const [materialClass, group] of byClass) {
-    out.push({ materialClass, geometry: optimizeGeometry(geometryFromFaces(group)) })
-  }
-  return out
-}
-
 export interface OptimizedVoxelGroups {
-  groups: MaterialGroupGeometry[]
-  rawTriangles: number // faces emitted before the shell pass (full instanced geometry)
-  optimizedTriangles: number // faces after shell cull + coplanar merge, summed across groups
+  groups: ColorGroupGeometry[]
+  rawTriangles: number // total triangles of all per-voxel solid geometries before CSG union
+  optimizedTriangles: number // total after CSG per-color-group unions, summed across groups
 }
 
 /**
- * Build the model split into **one optimized, vertex-coloured geometry per material class** (≤4), plus
- * triangle stats — used by the optimized-mesh PBR preview and GLTF export, where each group renders as
- * its own `MeshPhysicalMaterial` (with `vertexColors` for the base colour).
+ * Build per-voxel solid geometry grouped by (materialClass, colorKey), then CSG-union each group.
+ * CSG boolean union naturally discards interior faces between adjacent same-colour voxels and
+ * never creates false edge-bridges between disconnected components. Adjacent voxels of different
+ * colours keep their shared interface faces (they live in separate CSG groups).
+ *
+ * Returns one `ColorGroupGeometry` per (materialClass, colorKey) pair — the consumer creates one
+ * solid-colour PBR material per group. No vertex colours are needed.
  */
 export function buildOptimizedVoxelGroups(model: VoxelModel, palette: PaletteState): OptimizedVoxelGroups {
-  const { faces, rawTriangles } = buildShellFaces(model, palette)
-  const groups = groupFacesByMaterialClass(faces)
+  const byGroup = new Map<string, VoxelGroup>()
+  const color = new THREE.Color()
+  const matrix = new THREE.Matrix4()
+  let rawTriangles = 0
+
+  for (const key of model.color.keys()) {
+    const coord = decodeKey(key)
+    const slot = model.color.get(key)!.paletteSlot
+    const materialClass = materialClassFor(slot.kind)
+    const colorKey = color.set(resolveSlotColor(palette, slot)).getHex()
+    const chamfer = model.chamfer.get(key)
+
+    const groupKey = `${materialClass}:${colorKey}`
+    let group = byGroup.get(groupKey)
+    if (!group) {
+      group = { colorKey, materialClass, geometries: [] }
+      byGroup.set(groupKey, group)
+    }
+
+    let geom: THREE.BufferGeometry
+    if (chamfer?.resolvedTo) {
+      const variant = chamferBasisIsReflected(chamfer.planeAxis, chamfer.planeOrientation) ? 'M' : ''
+      const base = CHAMFER_BASE[`${chamfer.resolvedTo.shapeKind}${variant}`]
+      geom = base.clone()
+      chamferInstanceMatrix(coord, chamfer.planeAxis, chamfer.planeOrientation, chamfer.resolvedTo.rotation, matrix)
+      geom.applyMatrix4(matrix)
+    } else {
+      geom = new THREE.BoxGeometry(1, 1, 1)
+      geom.translate(coord[0] + 0.5, coord[1] + 0.5, coord[2] + 0.5)
+    }
+
+    rawTriangles += triangleCount(geom)
+    group.geometries.push(geom)
+  }
+
+  const groups = optimizeGroupsByCSG(Array.from(byGroup.values()))
   let optimizedTriangles = 0
   for (const g of groups) optimizedTriangles += triangleCount(g.geometry)
+
   return { groups, rawTriangles, optimizedTriangles }
 }
 
-/** Per-material-class optimized geometries (≤4) for GLTF export — vertex-coloured, one mesh per class. */
-export function buildOptimizedVoxelGeometryByMaterial(model: VoxelModel, palette: PaletteState): MaterialGroupGeometry[] {
-  return groupFacesByMaterialClass(buildShellFaces(model, palette).faces)
+/** Per-(materialClass, colorKey) optimized geometries for GLTF export — one solid-colour mesh per group. */
+export function buildOptimizedVoxelGeometryByMaterial(model: VoxelModel, palette: PaletteState): ColorGroupGeometry[] {
+  return buildOptimizedVoxelGroups(model, palette).groups
 }
 
 /**

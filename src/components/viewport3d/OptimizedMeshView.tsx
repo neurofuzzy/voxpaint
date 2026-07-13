@@ -11,24 +11,22 @@ export type OptimizedMeshStats = { rawTriangles: number; optimizedTriangles: num
 const wireframeOverlayMaterial = new THREE.MeshBasicMaterial({ color: 0xffffff, wireframe: true })
 
 /**
- * Renders the whole model as shell-culled, coplanar-optimized geometry — the 3D preview's "optimized
- * mesh" mode — split into **at most four meshes, one per material class** (matte / emissive / metal /
- * glass); different classes are never merged. Each mesh carries per-vertex colours (many palette
- * colours share a class mesh) and a `MeshPhysicalMaterial` configured from its class via
- * `materialParamsFor` (`vertexColors` supplies the base colour). The emissive class additionally gets
- * a small shader patch so each vertex glows in its own colour. This is where the palette-based PBR look
- * renders: the default InstancedMesh view stays flat Lambert (three can't carry per-instance PBR
- * params). Metals and glass need `scene.environment` — supplied by <SceneEnvironment/> in Viewport3D.
+ * Renders the whole model as shell-culled, CSG-optimized geometry — the 3D preview's "optimized
+ * mesh" mode — split into **one mesh per (materialClass, colour) pair**. Each colour group is
+ * CSG-unioned independently via ThreeBSP; the boolean union removes interior faces between same-
+ * colour adjacent voxels and never bridges across disconnected voxel groups. Different colours
+ * and material classes are kept in separate meshes.
  *
- * Baked ambient occlusion (analytical voxel solver, `engine/ao`) is applied — when the `ambientOcclusion`
- * toggle is on — as a grayscale atlas texture at the **same resolution/layout as the paint atlas**
- * (each texel = 0.25 voxel), bound as each material's `map`. Since three multiplies `color × map`, the
- * AO reads as a true multiply (`baseColour × ao`), not a flat overlay; box-map UVs (`atlasUVForVertex`)
- * line the AO up exactly with where paint lands.
+ * Each mesh carries a `MeshPhysicalMaterial` with a solid `color` from its palette slot (no
+ * per-vertex colours), plus PBR params from `materialParamsFor`. The emissive class sets
+ * `material.emissive` + `emissiveIntensity` directly instead of a shader patch.
  *
- * Geometry rebuilds only when the model or palette changes; the AO atlas re-bakes when the model or the
- * toggle changes. `onStats` surfaces the before/after triangle counts. When wireframe is on, each group
- * also draws a white unlit wireframe overlay.
+ * Baked ambient occlusion (analytical voxel solver, `engine/ao`) is applied — when the
+ * `ambientOcclusion` toggle is on — as a grayscale atlas texture bound to each material's `map`.
+ *
+ * Geometry rebuilds only when the model or palette changes; the AO atlas re-bakes when the model
+ * or the toggle changes. `onStats` surfaces the before/after triangle counts. When wireframe is
+ * on, each group also draws a white unlit wireframe overlay.
  */
 export function OptimizedMeshView({ onStats }: { onStats?: (stats: OptimizedMeshStats) => void }) {
   const model = useAppStore((s) => s.model)
@@ -37,10 +35,9 @@ export function OptimizedMeshView({ onStats }: { onStats?: (stats: OptimizedMesh
   const ambientOcclusion = useAppStore((s) => s.ambientOcclusion)
 
   const built = useMemo(() => {
-    const groups = buildOptimizedVoxelGroups(model, palette)
-    // Add box-map atlas UVs so the AO map samples the right texel per fragment (affine across merged
-    // quads). Computed from each vertex's position + normal, matching the paint atlas exactly.
-    for (const { geometry } of groups.groups) {
+    const { groups, rawTriangles, optimizedTriangles } = buildOptimizedVoxelGroups(model, palette)
+    // Add box-map atlas UVs so the AO map samples the right texel per fragment.
+    for (const { geometry } of groups) {
       const pos = geometry.getAttribute('position') as THREE.BufferAttribute
       const nrm = geometry.getAttribute('normal') as THREE.BufferAttribute
       const uv = new Float32Array(pos.count * 2)
@@ -51,7 +48,7 @@ export function OptimizedMeshView({ onStats }: { onStats?: (stats: OptimizedMesh
       }
       geometry.setAttribute('uv', new THREE.Float32BufferAttribute(uv, 2))
     }
-    return groups
+    return { groups, rawTriangles, optimizedTriangles }
   }, [model, palette])
 
   // Baked AO atlas (grayscale, raw values — no sRGB decode), re-baked on model change. Null when off.
@@ -63,21 +60,19 @@ export function OptimizedMeshView({ onStats }: { onStats?: (stats: OptimizedMesh
     tex.minFilter = THREE.NearestFilter
     tex.generateMipmaps = false
     tex.flipY = false
-    tex.colorSpace = THREE.NoColorSpace // AO is a linear multiplier, not a colour
+    tex.colorSpace = THREE.NoColorSpace
     tex.needsUpdate = true
     return tex
   }, [model, ambientOcclusion])
   useEffect(() => () => aoTexture?.dispose(), [aoTexture])
 
-  // One MeshPhysicalMaterial per material class. `vertexColors` supplies the per-voxel base colour
-  // (white material colour × vColor); the class supplies metalness/roughness/transmission. Emissive
-  // gets a shader patch so each vertex glows in its own colour (three's `emissive` is a single uniform).
+  // One MeshPhysicalMaterial per colour group. Solid colour (no vertexColors), PBR params per class.
   const materials = useMemo(() => {
-    return built.groups.map(({ materialClass }) => {
+    return built.groups.map(({ materialClass, colorKey }) => {
       const params = materialParamsFor(materialClass)
+      const color = new THREE.Color(colorKey)
       const m = new THREE.MeshPhysicalMaterial({
-        color: 0xffffff,
-        vertexColors: true,
+        color,
         metalness: params.metalness,
         roughness: params.roughness,
         transmission: params.transmission,
@@ -88,14 +83,8 @@ export function OptimizedMeshView({ onStats }: { onStats?: (stats: OptimizedMesh
         m.thickness = 0.5
       }
       if (params.emissiveIntensity > 0) {
-        m.onBeforeCompile = (shader) => {
-          // three declares `varying vec4 vColor` even for RGB vertex colours, so use `.rgb`
-          // (a bare `vColor` here is a vec3 += vec4 type error that fails the whole shader).
-          shader.fragmentShader = shader.fragmentShader.replace(
-            '#include <emissivemap_fragment>',
-            `#include <emissivemap_fragment>\n\ttotalEmissiveRadiance += vColor.rgb * ${params.emissiveIntensity.toFixed(3)};`,
-          )
-        }
+        m.emissive = color
+        m.emissiveIntensity = params.emissiveIntensity
       }
       m.polygonOffset = true
       m.polygonOffsetFactor = 1
@@ -104,7 +93,7 @@ export function OptimizedMeshView({ onStats }: { onStats?: (stats: OptimizedMesh
     })
   }, [built])
 
-  // Bind (or clear) the AO map on every material. `map` multiplies the base colour → baseColour × ao.
+  // Bind (or clear) the AO map on every material.
   useEffect(() => {
     for (const m of materials) {
       m.map = aoTexture
