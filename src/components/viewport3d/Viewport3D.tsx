@@ -13,6 +13,7 @@ import { ConstructionPlaneGizmo } from './ConstructionPlaneGizmo'
 import { ConstructionPlaneVisual } from './ConstructionPlaneVisual'
 import { OptimizedMeshView } from './OptimizedMeshView'
 import type { OptimizedMeshStats } from './OptimizedMeshView'
+import { SceneEnvironment } from './SceneEnvironment'
 import { SceneLighting } from './SceneLighting'
 import { TexturedModelView } from './TexturedModelView'
 import { ViewOptionsOverlay } from './ViewOptionsOverlay'
@@ -158,6 +159,7 @@ export function Viewport3D() {
           <>
             <ConstructionPlaneVisual orbitControlsRef={orbitControlsRef} />
             <VoxelInstancedMeshes ref={managerRef} />
+            {optimizedMesh && <SceneEnvironment />}
             {optimizedMesh && <OptimizedMeshView onStats={setMeshStats} />}
             <VoxelFaceHighlight />
             <VoxelGhostPreview />

@@ -1,4 +1,5 @@
 import type { StateCreator } from 'zustand'
+import { AO_DEFAULT_ENABLED } from '@/engine/ao/aoConstants'
 import type { AppState, ViewSlice } from './types'
 
 type Slice = StateCreator<AppState, [['zustand/immer', never]], [], ViewSlice>
@@ -10,12 +11,14 @@ export const createViewSlice: Slice = (set) => ({
   hoveredFace: null,
   wireframe: false,
   optimizedMesh: false,
+  ambientOcclusion: AO_DEFAULT_ENABLED,
   statusMessage: null,
   onionSkin: true,
 
   setFullscreen: (v) => set((state) => { state.fullscreen = v }),
   setWireframe: (v) => set((state) => { state.wireframe = v }),
   setOptimizedMesh: (v) => set((state) => { state.optimizedMesh = v }),
+  setAmbientOcclusion: (v) => set((state) => { state.ambientOcclusion = v }),
   setHoverCell: (coord, chamferValid) =>
     set((state) => {
       state.hoverCell = coord

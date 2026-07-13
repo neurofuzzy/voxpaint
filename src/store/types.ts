@@ -108,6 +108,8 @@ export type ViewSlice = {
   wireframe: boolean
   /** 3D preview: replace the instanced voxels with a single merged, coplanar-optimized shell mesh. */
   optimizedMesh: boolean
+  /** 3D preview: apply baked ambient occlusion (only visible in the optimized-mesh PBR view). */
+  ambientOcclusion: boolean
   /** Dynamic status message shown in the footer's center area. Components set this on hover to
    * show contextual info; cleared on pointer leave. Falls back to the active tool hint when null. */
   statusMessage: string | null
@@ -118,6 +120,7 @@ export type ViewSlice = {
   setHoveredFace: (face: HoveredFace | null) => void
   setWireframe: (v: boolean) => void
   setOptimizedMesh: (v: boolean) => void
+  setAmbientOcclusion: (v: boolean) => void
   setStatusMessage: (msg: string | null) => void
   setOnionSkin: (v: boolean) => void
 }

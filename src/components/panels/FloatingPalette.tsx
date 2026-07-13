@@ -12,6 +12,7 @@ function Swatch({ kind, index, hex }: { kind: PaletteSlotKind; index: number; he
   return (
     <button
       aria-label={`${kind} ${index}`}
+      title={`${kind} ${index + 1}`}
       onClick={() => setActivePaletteSlot({ kind, index })}
       className={
         `${SWATCH} rounded-full border-2 transition-transform hover:scale-110 ` +
@@ -27,7 +28,7 @@ function Swatch({ kind, index, hex }: { kind: PaletteSlotKind; index: number; he
  * deliberately not its desktop left-edge vertical variant). Scoped to the 2D editor pane, since
  * color-picking only applies there.
  *
- * The special-color row (emissive/blink/pulse) is laid out as spacer + 4 + spacer + 4 + spacer +
+ * The special-material row (emissive/metal/glass) is laid out as spacer + 4 + spacer + 4 + spacer +
  * 4 + spacer — 4 spacer slots + 12 swatches = 16 slots, exactly matching the 16-wide base row
  * above, so both rows share the same total width and center perfectly on top of each other.
  */
@@ -86,12 +87,12 @@ export function FloatingPalette() {
             <Swatch key={index} kind="emissive" index={index} hex={hex} />
           ))}
           <div className={SWATCH} />
-          {palette.blink.map((hex, index) => (
-            <Swatch key={index} kind="blink" index={index} hex={hex} />
+          {palette.metal.map((hex, index) => (
+            <Swatch key={index} kind="metal" index={index} hex={hex} />
           ))}
           <div className={SWATCH} />
-          {palette.pulse.map((hex, index) => (
-            <Swatch key={index} kind="pulse" index={index} hex={hex} />
+          {palette.glass.map((hex, index) => (
+            <Swatch key={index} kind="glass" index={index} hex={hex} />
           ))}
           <div className={SWATCH} />
         </div>

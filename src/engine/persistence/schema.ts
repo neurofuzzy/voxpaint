@@ -2,7 +2,7 @@ import type { Axis, BBox, ChamferClassification, Orientation } from '@/engine/gr
 import type { PaletteSlotRef, PaletteState } from '@/engine/palette/types'
 import type { BoxFace } from '@/engine/texture/types'
 
-export const CURRENT_SCHEMA_VERSION = 2 as const
+export const CURRENT_SCHEMA_VERSION = 3 as const
 
 export type ProjectMeta = {
   name: string
@@ -54,4 +54,19 @@ export type VoxPaintProjectFileV2 = {
   texture?: SerializedTexture
 }
 
-export type VoxPaintProjectFile = VoxPaintProjectFileV2
+/** v3: the palette's `blink`/`pulse` groups were replaced by `metal`/`glass` (material classes, since
+ * glTF can't animate). Structurally identical to v2 otherwise; the v2→v3 migration reshapes the
+ * palette and remaps any `blink`/`pulse` cell references to `emissive` (see migrations.ts). */
+export type VoxPaintProjectFileV3 = {
+  schemaVersion: 3
+  meta: ProjectMeta
+  palette: PaletteState
+  model: {
+    bounds: BBox | null
+    colorCells: SerializedColorCell[]
+    chamferCells: SerializedChamferCell[]
+  }
+  texture?: SerializedTexture
+}
+
+export type VoxPaintProjectFile = VoxPaintProjectFileV3

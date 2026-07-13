@@ -1,14 +1,15 @@
 import * as DropdownMenu from '@radix-ui/react-dropdown-menu'
 import { ChevronDown, FileDown, FilePlus, FileUp, Package } from 'lucide-react'
-import { useRef } from 'react'
+import { useRef, useState } from 'react'
 import { readProjectFile, downloadProjectFile } from '@/engine/persistence/projectFile'
 import { deserializeProject, serializeProject } from '@/engine/persistence/serialize'
-import { exportModelToGlb, downloadGlb } from '@/engine/export/gltfExport'
 import { useAppStore } from '@/store/useAppStore'
 import { showToast } from '@/components/ui/toastBus'
+import { ExportGltfDialog } from './ExportGltfDialog'
 
 export function FileMenu() {
   const fileInputRef = useRef<HTMLInputElement>(null)
+  const [gltfDialogOpen, setGltfDialogOpen] = useState(false)
   const setStatusMessage = useAppStore((s) => s.setStatusMessage)
 
   function handleNew() {
@@ -38,23 +39,8 @@ export function FileMenu() {
     }
   }
 
-  async function handleExportGltf() {
-    const { model, palette, meta, texture } = useAppStore.getState()
-    if (model.color.size === 0) {
-      showToast('Nothing to export — the model is empty.')
-      return
-    }
-    try {
-      showToast('Exporting GLTF…')
-      const glb = await exportModelToGlb(model, palette, texture)
-      downloadGlb(glb, meta.name || 'voxpaint-model')
-      showToast('GLTF exported.')
-    } catch (err) {
-      showToast(err instanceof Error ? err.message : 'GLTF export failed.')
-    }
-  }
-
   return (
+    <>
     <DropdownMenu.Root>
       <DropdownMenu.Trigger asChild>
         <button
@@ -92,7 +78,7 @@ export function FileMenu() {
           </DropdownMenu.Item>
           <DropdownMenu.Separator className="my-1 h-px bg-neutral-800" />
           <DropdownMenu.Item
-            onSelect={() => void handleExportGltf()}
+            onSelect={() => setGltfDialogOpen(true)}
             className="flex cursor-pointer items-center gap-2 rounded px-2 py-1.5 outline-none hover:bg-neutral-800"
           >
             <Package size={14} /> Export GLTF…
@@ -111,5 +97,7 @@ export function FileMenu() {
         }}
       />
     </DropdownMenu.Root>
+    <ExportGltfDialog open={gltfDialogOpen} onOpenChange={setGltfDialogOpen} />
+    </>
   )
 }

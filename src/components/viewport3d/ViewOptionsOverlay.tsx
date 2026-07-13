@@ -1,4 +1,4 @@
-import { Boxes, FlipHorizontal, Grid3x3, Video } from 'lucide-react'
+import { Aperture, Boxes, FlipHorizontal, Grid3x3, Video } from 'lucide-react'
 import type { Axis } from '@/engine/grid/types'
 import { useAppStore } from '@/store/useAppStore'
 import type { OptimizedMeshStats } from './OptimizedMeshView'
@@ -42,8 +42,10 @@ export function ViewOptionsOverlay({ stats, onResetCamera }: { stats: OptimizedM
   const setPlaneAxisOrientation = useAppStore((s) => s.setPlaneAxisOrientation)
   const wireframe = useAppStore((s) => s.wireframe)
   const optimizedMesh = useAppStore((s) => s.optimizedMesh)
+  const ambientOcclusion = useAppStore((s) => s.ambientOcclusion)
   const setWireframe = useAppStore((s) => s.setWireframe)
   const setOptimizedMesh = useAppStore((s) => s.setOptimizedMesh)
+  const setAmbientOcclusion = useAppStore((s) => s.setAmbientOcclusion)
   const setStatusMessage = useAppStore((s) => s.setStatusMessage)
 
   const cycleAxis = () => setPlaneAxisOrientation(AXES[(AXES.indexOf(plane.axis) + 1) % 3], plane.orientation)
@@ -97,6 +99,17 @@ export function ViewOptionsOverlay({ stats, onResetCamera }: { stats: OptimizedM
       >
         <Boxes size={16} />
       </ToggleButton>
+      {optimizedMesh && (
+        <ToggleButton
+          on={ambientOcclusion}
+          onClick={() => setAmbientOcclusion(!ambientOcclusion)}
+          label="Ambient occlusion"
+          onPointerEnter={() => setStatusMessage('Toggle baked ambient occlusion on the optimized mesh')}
+          onPointerLeave={() => setStatusMessage(null)}
+        >
+          <Aperture size={16} />
+        </ToggleButton>
+      )}
       {optimizedMesh && stats && (
         <span className="px-1 font-mono text-[11px] tabular-nums text-neutral-400" title="triangles: optimized vs raw">
           {stats.optimizedTriangles.toLocaleString()}

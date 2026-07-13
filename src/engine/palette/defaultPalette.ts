@@ -21,6 +21,6 @@ export const DEFAULT_PALETTE: PaletteState = {
     '#6e6a5c', // olive gray
   ],
   emissive: ['#ff6b4a', '#4ad9ff', '#b04aff', '#7aff6b'],
-  blink: ['#ff4a4a', '#ffe94a', '#4affe9', '#ff4ac9'],
-  pulse: ['#4a8aff', '#ff9e4a', '#4affa0', '#c94aff'],
+  metal: ['#f0f0f0', '#ffe17d', '#c69269', '#f1967a'], // silver, gold, bronze, copper
+  glass: ['#9aa0a6', '#5a86c9', '#d9a441', '#5aa06e'], // gray, blue, amber, green
 }
