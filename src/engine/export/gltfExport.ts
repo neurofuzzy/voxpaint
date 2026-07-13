@@ -3,8 +3,9 @@ import { GLTFExporter } from 'three/addons/exporters/GLTFExporter.js'
 import type { VoxelModel } from '@/engine/grid/types'
 import type { PaletteState } from '@/engine/palette/types'
 import type { TextureModel } from '@/engine/texture/types'
-import { bakeAOAtlas } from '@/engine/ao/bakeAO'
-import { atlasUVForVertex, buildBlendAtlas } from '@/engine/texture/boxMapping'
+import { bakeAOToAtlas } from '@/engine/ao/bakeAO'
+import { unwrapGeometries } from '@/engine/ao/uvUnwrap'
+import { buildBlendAtlas } from '@/engine/texture/boxMapping'
 import { overlayChannel } from '@/engine/texture/overlay'
 import { buildTexturedGeometryByColor } from '@/engine/texture/texturedGeometry'
 import { hasTextureContent } from '@/engine/texture/TextureStore'
@@ -20,12 +21,14 @@ import { materialParamsFor } from '@/engine/palette/palette'
  * material class** (matte/emissive/metal/glass) — never merging classes. Each carries per-vertex
  * colours (`COLOR_0`) and one `MeshPhysicalMaterial` whose params come from `materialParamsFor`
  * (metals `metalness: 1`, glass `transmission: 1` → three emits `KHR_materials_transmission`). Ambient
- * occlusion is opt-in (`options.ambientOcclusion`): when on, the baked AO atlas is embedded as each
- * material's `map` (so `baseColour × COLOR_0 × ao`). Emissive glow is **not** exported — glTF can't hold
- * a per-vertex emissive colour in a single material (the preview shows it); revisit with an emissive map.
+ * occlusion is opt-in (`options.ambientOcclusion`): when on, a uv1-unwrapped atlas is baked via 3D
+ * hemisphere occupancy sampling and assigned as `material.aoMap` (emits `TEXCOORD_1` + `occlusionTexture`
+ * in the .glb). Emissive glow is **not** exported — glTF can't hold a per-vertex emissive colour in a
+ * single material (the preview shows it); revisit with an emissive map.
  *
  * The textured path (a painted box-map exists) keeps the per-(colour) overlay bake: one material per
  * colour with a baked `baseColorTexture`, so `baseColor × map` reproduces the shade/multiply preview.
+ * AO is likewise supported via `aoMap` on uv1.
  *
  * Runs on the main thread: the same geometry is built synchronously for the live optimized-mesh
  * preview, and the grid is capped at 64³, so a worker isn't warranted.
@@ -66,7 +69,7 @@ function bakeOverlayTexture(blendData: Uint8ClampedArray, width: number, height:
   return tex
 }
 
-/** Wrap a baked AO atlas as a raw (non-colour) `map` texture. */
+/** Wrap a baked AO atlas as a raw (non-colour) `aoMap` texture on uv channel 1. */
 function aoMapTexture(data: Uint8ClampedArray, width: number, height: number): THREE.DataTexture {
   const tex = new THREE.DataTexture(data, width, height, THREE.RGBAFormat)
   tex.magFilter = THREE.NearestFilter
@@ -74,21 +77,9 @@ function aoMapTexture(data: Uint8ClampedArray, width: number, height: number): T
   tex.generateMipmaps = false
   tex.flipY = false
   tex.colorSpace = THREE.NoColorSpace
+  tex.channel = 1
   tex.needsUpdate = true
   return tex
-}
-
-/** Set per-vertex box-map atlas UVs on an optimized geometry (from each vertex's position + normal). */
-function assignAtlasUVs(geometry: THREE.BufferGeometry): void {
-  const pos = geometry.getAttribute('position') as THREE.BufferAttribute
-  const nrm = geometry.getAttribute('normal') as THREE.BufferAttribute
-  const uv = new Float32Array(pos.count * 2)
-  for (let i = 0; i < pos.count; i++) {
-    const [u, v] = atlasUVForVertex([nrm.getX(i), nrm.getY(i), nrm.getZ(i)], pos.getX(i), pos.getY(i), pos.getZ(i))
-    uv[i * 2] = u
-    uv[i * 2 + 1] = v
-  }
-  geometry.setAttribute('uv', new THREE.Float32BufferAttribute(uv, 2))
 }
 
 /**
@@ -114,10 +105,22 @@ export async function exportModelToGlb(
     // Glass + KHR_materials_volume + baseColorTexture breaks Mac Preview / Blender;
     // for glass we emit a solid-colour material (no baked map, no unused TEXCOORD_0).
     const groups = buildTexturedGeometryByColor(model, palette)
+    for (const { geometry } of groups) geometries.push(geometry)
+
+    let aoTex: THREE.DataTexture | null = null
+    if (options.ambientOcclusion && groups.length > 0) {
+      const unwrapped = unwrapGeometries(groups.map((g) => g.geometry))
+      for (let i = 0; i < groups.length; i++) {
+        groups[i].geometry.setAttribute('uv1', new THREE.Float32BufferAttribute(unwrapped.uv1Arrays[i], 2))
+      }
+      const baked = bakeAOToAtlas(model, unwrapped.atlas)
+      aoTex = aoMapTexture(baked.data, baked.width, baked.height)
+      textures.push(aoTex)
+    }
+
     const blend = buildBlendAtlas(texture!)
     for (const { colorKey, materialClass, geometry } of groups) {
       geometry.deleteAttribute('color')
-      geometries.push(geometry)
       const params = materialParamsFor(materialClass)
 
       if (materialClass === 'glass') {
@@ -133,6 +136,7 @@ export async function exportModelToGlb(
           material.ior = 1.5
           material.thickness = 0.5
         }
+        if (aoTex) material.aoMap = aoTex
         material.name = `voxel_${hex6(colorKey)}_${materialClass}`
         const mesh = new THREE.Mesh(geometry, material)
         mesh.name = material.name
@@ -148,6 +152,7 @@ export async function exportModelToGlb(
           roughness: params.roughness,
           transmission: params.transmission,
         })
+        if (aoTex) material.aoMap = aoTex
         material.name = `voxel_${hex6(colorKey)}_${materialClass}`
         const mesh = new THREE.Mesh(geometry, material)
         mesh.name = material.name
@@ -158,12 +163,20 @@ export async function exportModelToGlb(
   } else {
     // PBR path — one solid-colour optimized mesh per (materialClass, colorKey) pair, optional baked AO.
     const groups = buildOptimizedVoxelGeometryByMaterial(model, palette)
-    const ao = options.ambientOcclusion ? bakeAOAtlas(model) : null
-    const aoTex = ao ? aoMapTexture(ao.data, ao.width, ao.height) : null
-    if (aoTex) textures.push(aoTex)
+    for (const { geometry } of groups) geometries.push(geometry)
+
+    let aoTex: THREE.DataTexture | null = null
+    if (options.ambientOcclusion) {
+      const unwrapped = unwrapGeometries(groups.map((g) => g.geometry))
+      for (let i = 0; i < groups.length; i++) {
+        groups[i].geometry.setAttribute('uv1', new THREE.Float32BufferAttribute(unwrapped.uv1Arrays[i], 2))
+      }
+      const baked = bakeAOToAtlas(model, unwrapped.atlas)
+      aoTex = aoMapTexture(baked.data, baked.width, baked.height)
+      textures.push(aoTex)
+    }
 
     for (const { materialClass, colorKey, geometry } of groups) {
-      geometries.push(geometry)
       const params = materialParamsFor(materialClass)
       const material = new THREE.MeshPhysicalMaterial({
         color: colorKey,
@@ -181,8 +194,7 @@ export async function exportModelToGlb(
         material.emissiveIntensity = params.emissiveIntensity
       }
       if (aoTex) {
-        assignAtlasUVs(geometry)
-        material.map = aoTex
+        material.aoMap = aoTex
       }
       material.name = `voxel_${hex6(colorKey)}_${materialClass}`
       const mesh = new THREE.Mesh(geometry, material)

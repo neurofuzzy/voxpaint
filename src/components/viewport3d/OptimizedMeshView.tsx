@@ -1,9 +1,9 @@
 import { useEffect, useMemo } from 'react'
 import * as THREE from 'three'
-import { bakeAOAtlas } from '@/engine/ao/bakeAO'
+import { bakeAOToAtlas } from '@/engine/ao/bakeAO'
+import { unwrapGeometries } from '@/engine/ao/uvUnwrap'
 import { buildOptimizedVoxelGroups } from '@/engine/instancing/voxelMeshBuilder'
 import { materialParamsFor } from '@/engine/palette/palette'
-import { atlasUVForVertex } from '@/engine/texture/boxMapping'
 import { useAppStore } from '@/store/useAppStore'
 
 export type OptimizedMeshStats = { rawTriangles: number; optimizedTriangles: number }
@@ -21,8 +21,8 @@ const wireframeOverlayMaterial = new THREE.MeshBasicMaterial({ color: 0xffffff, 
  * per-vertex colours), plus PBR params from `materialParamsFor`. The emissive class sets
  * `material.emissive` + `emissiveIntensity` directly instead of a shader patch.
  *
- * Baked ambient occlusion (analytical voxel solver, `engine/ao`) is applied — when the
- * `ambientOcclusion` toggle is on — as a grayscale atlas texture bound to each material's `map`.
+ * Ambient occlusion is baked into a uv1-unwrapped atlas (non-overlapping, depth-correct hemisphere
+ * sampling from the 3D voxel occupancy field) and applied via `material.aoMap`.
  *
  * Geometry rebuilds only when the model or palette changes; the AO atlas re-bakes when the model
  * or the toggle changes. `onStats` surfaces the before/after triangle counts. When wireframe is
@@ -35,35 +35,34 @@ export function OptimizedMeshView({ onStats }: { onStats?: (stats: OptimizedMesh
   const ambientOcclusion = useAppStore((s) => s.ambientOcclusion)
 
   const built = useMemo(() => {
-    const { groups, rawTriangles, optimizedTriangles } = buildOptimizedVoxelGroups(model, palette)
-    // Add box-map atlas UVs so the AO map samples the right texel per fragment.
-    for (const { geometry } of groups) {
-      const pos = geometry.getAttribute('position') as THREE.BufferAttribute
-      const nrm = geometry.getAttribute('normal') as THREE.BufferAttribute
-      const uv = new Float32Array(pos.count * 2)
-      for (let i = 0; i < pos.count; i++) {
-        const [u, v] = atlasUVForVertex([nrm.getX(i), nrm.getY(i), nrm.getZ(i)], pos.getX(i), pos.getY(i), pos.getZ(i))
-        uv[i * 2] = u
-        uv[i * 2 + 1] = v
-      }
-      geometry.setAttribute('uv', new THREE.Float32BufferAttribute(uv, 2))
-    }
-    return { groups, rawTriangles, optimizedTriangles }
+    return buildOptimizedVoxelGroups(model, palette)
   }, [model, palette])
 
-  // Baked AO atlas (grayscale, raw values — no sRGB decode), re-baked on model change. Null when off.
+  const geometries = useMemo(() => built.groups.map((g) => g.geometry), [built])
+
   const aoTexture = useMemo(() => {
     if (!ambientOcclusion) return null
-    const { data, width, height } = bakeAOAtlas(model)
-    const tex = new THREE.DataTexture(data, width, height, THREE.RGBAFormat)
+
+    const result = unwrapGeometries(geometries)
+    const atlas = result.atlas
+
+    // Apply uv1 to each geometry
+    for (let i = 0; i < geometries.length; i++) {
+      geometries[i].setAttribute('uv1', new THREE.Float32BufferAttribute(result.uv1Arrays[i], 2))
+    }
+
+    const ao = bakeAOToAtlas(model, atlas)
+    const tex = new THREE.DataTexture(ao.data, ao.width, ao.height, THREE.RGBAFormat)
     tex.magFilter = THREE.NearestFilter
     tex.minFilter = THREE.NearestFilter
     tex.generateMipmaps = false
     tex.flipY = false
     tex.colorSpace = THREE.NoColorSpace
+    tex.channel = 1
     tex.needsUpdate = true
+
     return tex
-  }, [model, ambientOcclusion])
+  }, [model, geometries, ambientOcclusion])
   useEffect(() => () => aoTexture?.dispose(), [aoTexture])
 
   // One MeshPhysicalMaterial per colour group. Solid colour (no vertexColors), PBR params per class.
@@ -93,10 +92,10 @@ export function OptimizedMeshView({ onStats }: { onStats?: (stats: OptimizedMesh
     })
   }, [built])
 
-  // Bind (or clear) the AO map on every material.
+  // Bind (or clear) the AO map on every material via aoMap (reads uv1).
   useEffect(() => {
     for (const m of materials) {
-      m.map = aoTexture
+      m.aoMap = aoTexture
       m.needsUpdate = true
     }
   }, [materials, aoTexture])
