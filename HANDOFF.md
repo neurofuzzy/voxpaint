@@ -1,51 +1,120 @@
-# HANDOFF — VoxPaint
+# Handoff — AO rework (next session)
 
-## RESOLVED: 3D voxel materials rendered wrong
+> Replaces an older handoff about a since-resolved instance-color bug (see git history if needed).
 
-**Root cause found:** three.js always multiplies `InstancedMesh.instanceColor` (set via
-`mesh.setColorAt()`) against the shared `material.color` in the shader. This is gated on whether
-`object.instanceColor` is present — **not** on `material.vertexColors` — so turning
-`vertexColors` off (as earlier diagnostics did) never actually disabled the multiply. The
-diagnostic material was hardcoded to solid red (`0xff0000`); every painted color was therefore
-computed as `red * paletteColor`, which zeroes out the G/B channels and explains the "brightness
-tracked the red channel" symptom and the "dark gray/black for non-red colors" original bug.
+## Where we are
+The Palette-Based PBR pipeline, ≤4 material-class meshes, material-aware shell culling, export
+options modal, and the analytical voxel AO are all landed and documented (see `docs/ARCHITECTURE.md`
+and the 2026-07-12 entry in `docs/SESSION_NOTES.md`). Everything compiles: `tsc -b` + `oxlint` clean,
+132 tests pass, `vite build` succeeds. Work is uncommitted on `develop`.
 
-**Fix:** `src/engine/instancing/InstancingManager.ts` — shared material's base `color` is white
-(`0xffffff`), making the `material.color * instanceColor` multiply an identity op. Material is
-now `MeshLambertMaterial` (intentional choice: real per-face lighting from `SceneLighting.tsx`'s
-ambient + 2 directional lights, not flat/unlit). **Base color must stay white** — this is called
-out in the class docstring so it doesn't regress.
+**The one open problem: ambient occlusion still looks wrong.** It's currently **off by default** in
+both the viewport toggle (`ViewOptionsOverlay`) and the GLTF export modal (`ExportGltfDialog`), so it's
+safely parked. The next session's job is to replace the AO implementation.
 
-Ruled out along the way (left in place, all fine): point-light units/ACES tone mapping/intensity
-tuning, `onBeforeCompile` shader patching, fog, antialiasing/optical illusion.
+## Why the current AO is wrong
+Current approach (`src/engine/ao/bakeAO.ts` → `bakeAOAtlas`) bakes AO into a **2D box-map atlas** at
+`TEXEL_SCALE` resolution and applies it as a `MeshPhysicalMaterial.map` multiply. The box atlas has an
+inherent **depth ambiguity**: stacked/overhang surfaces sharing a face-column collapse to one
+"frontmost" AO value, so hidden/overlapping surfaces get the wrong shadow. Same limitation the paint
+atlas has, and it's the root of the "very wrong" shadows.
 
----
+## The fix: 3D occupancy field sampled per-fragment in the shader
+Reference code (from the `zanpo` project, `/Users/geoff/dev/zanpo`, the `getOcclusionFactor` shader)
+samples a **3D occupancy texture in world space per fragment** and averages occupancy over the
+hemisphere facing the surface normal. That is depth-correct (each fragment reads its true 3D position),
+needs no UVs, and is immune to mesh merging — it directly fixes our problem. It's the "3D occlusion
+field sampled in-shader" alternative already noted in `docs/ARCHITECTURE.md`'s AO limitations.
 
-## Everything else (stable, not in question)
+### Reference behavior (zanpo `getOcclusionFactor`)
+- Samples `occupancyTexture` (a 48³ = 16-grid × 3 `Data3DTexture`) at `worldPos / gridSize`.
+- Offsets into the hemisphere along the world normal, samples a 3×3 tangent grid, distance-weighted.
+- Clamps the offset on the normal axis to the face edge; keeps the tangent gradient smooth.
 
-- **Tool-dispatch refactor** (SPEC §8): table-driven `toolMap`/`ToolHandler` in `engine/tools/`,
-  `usePixelCanvasTools.ts` adapter hook. Tools: paint, erase, eyedropper, select, fill, clone,
-  move. Move = shift whole plane slice; Select = drag-inside-selection also lifts/moves it.
-- **Floating selection buffer**: lift/move/rotate/mirror/paste all defer to one `bakeFloatIfAny()`
-  commit (Escape, new selection, or any mutating action bakes). Verified: one undo step for a
-  whole lift→move→rotate→mirror→bake sequence.
-- **Marching ants** (cyan, animated), **pan/zoom** (right-click-drag pans, wheel/pinch zooms,
-  clamped to grid bounds + 100px padding), **grid lines** (fine/8-cell-subdivision/origin tiers,
-  pixel-snapped for crispness).
-- **Global keyboard shortcuts** (`useKeyboardShortcuts.ts`): tool hotkeys P/E/I/S/F/C/M, ⌘Z/⌘⇧Z,
-  ⌘C/X/V, Delete clears selection, R/H/V rotate/mirror, Esc deselects.
-- **Coordinate fix**: `gridCoordFromPixel`/`pixelFromGridCoord` in `constructionPlane.ts` — v was
-  mapping to world-Y with no sign flip, causing upside-down models on x/z-axis planes. Fixed +
-  `basis.ts` `WORLD_U/WORLD_V` updated to match. **Caveat**: this changes chamfer shape handedness
-  on those planes — existing chamfer geometry may render mirrored left-right. Not yet visually
-  confirmed; nobody has reported chamfer specifically broken.
-- **3D construction plane**: now a real plane-aligned grid + draggable offset arrow gizmo
-  (snapped), replacing the old static ground-only gridHelper. Flip-orientation button added next
-  to the 2D editor's offset stepper.
-- **Palette/layout**: floating bottom palette pill (no dimming on inactive swatches), BottomBar
-  (undo/redo + tool-contextual hint text, height matches header).
+### TAKE
+- The **3D occupancy `Data3DTexture`** + **shader-sampled hemisphere occlusion** (binary occupancy,
+  distance-weighted neighbor average — simpler and more robust than our analytical falloff).
 
-## Do NOT re-litigate
-- Palette default active swatch (`base[0]`) is intentionally near-black (`#2b2530`) — not a bug.
-- Right-click = pan (drag) / quick-erase (click-no-drag) — intentional, replaces old drag-erase.
-- Voxel material base color must be white (`0xffffff`) — see resolved bug above.
+### DROP from the reference
+- All `worldOffset` / instance-rotation math (`gridPos`, `aoLocalOffset`, "account for instance
+  rotation"). That's for their *instanced, rotatable* voxels. Our optimized mesh is a **static merged
+  mesh**, so just use a `vWorldPosition` varying directly — much simpler.
+- Their 3× texture resolution is a choice; we can use grid res or `TEXEL_SCALE` (4×). Start simple.
+
+## Migration plan (≈ half a day)
+1. **Replace `bakeAOAtlas`** with `bakeOccupancyField(model): THREE.Data3DTexture` in
+   `src/engine/ao/bakeAO.ts` — one byte per cell, `1` = occupied (from `model.color` via `encodeKey`).
+   Fast and trivial. (`computeVoxelAO`/`voxelAO.ts` may become unused since the shader does the
+   occlusion math — decide whether to retire it then.)
+2. **Plumb it into the optimized-mesh materials** in `OptimizedMeshView.tsx`: set the occupancy texture
+   + grid-size uniforms, and add a `vWorldPosition` varying via `onBeforeCompile`. (We already patch
+   these materials for the emissive glow, so the `onBeforeCompile` pattern is established there.)
+3. **Fragment patch**: sample the hemisphere around `vWorldPosition` + geometric normal, compute the
+   occlusion factor, multiply it into `diffuseColor` (or fold into ambient). Replaces the current
+   `material.map`-based AO application.
+4. **Keep** the `ambientOcclusion` view-slice toggle and the export-modal option — just swap the
+   implementation behind them. Note the two AO tracks below are **separate**: the 3D-field shader fixes
+   the *preview*; a real UV unwrap is what makes *export* correct.
+
+## Two separate AO tracks — don't conflate them
+- **Preview** → 3D occupancy field sampled in-shader (above). No UVs, depth-correct, disposable per
+  frame. This is the quick win. **NOT glTF-compatible** — glTF is declarative PBR with no per-fragment
+  3D-volume sampling, and GLTFExporter ignores `onBeforeCompile`, so this produces nothing in the `.glb`.
+- **Export** → must produce a real **AO texture on `TEXCOORD_1`** (glTF `occlusionTexture` / three's
+  `aoMap`). The current box-map atlas is overlapping/depth-ambiguous, so **the model needs a proper
+  non-overlapping UV unwrap** first.
+
+### Decision — DECIDED: bake AO (and grime) into the export
+We **do** want a baked map in the exported glTF, so the UV-unwrap + baked texture (below) is the
+committed path. It is not preview-only. The 3D-field shader is still worth doing for live preview, but
+it must reuse the **same occupancy sampling** as the bake so preview == export.
+
+The baked atlas is an **AO + grime** map, not just AO:
+- **AO** = the occupancy-hemisphere occlusion (darker in crevices / under overhangs).
+- **Grime** = procedural weathering derived from the same geometry: more dirt in cavities (AO-driven),
+  plus orientation terms (dust on up-faces, streaks/drips on down-faces) and optionally world height.
+  Same unwrap, same per-texel loop — just add the grime term when writing each texel.
+- **Channel caveat:** glTF `occlusionTexture` only attenuates *indirect/ambient* light. If AO should
+  read that way, put AO in the occlusion (R) channel. Grime that must **dirty the albedo under all
+  lighting** belongs multiplied into the **baseColorTexture** instead — so consider baking a combined
+  baseColor map (baseColor × grime) on TEXCOORD_0 and pure AO on the occlusion map (TEXCOORD_1), rather
+  than forcing both into one channel. Decide based on how strong/lighting-independent grime should look.
+
+## Export baking plan (UV unwrap → AO texture → TEXCOORD_1)
+This is what the gltf-materials spec's §2.2 actually wants (`TEXCOORD_1` = a strict, non-overlapping
+0–1 unwrap dedicated to baked AO).
+1. **Unwrap the optimized mesh** into a non-overlapping atlas. The geometry is axis-aligned voxel
+   quads (merged coplanar rectangles), so this is a rectangle-packing / lightmap-style unwrap:
+   pack each surviving optimized quad into the atlas at a chosen texel density, no overlaps. (Roll our
+   own rect-packer over the quads, or evaluate a lib like `xatlas`/`potpack` — the quads are simple
+   rectangles so a hand-rolled packer is very feasible.)
+2. **Write those UVs as the second UV set** (`geometry.setAttribute('uv1', …)`; three's `aoMap` reads
+   `uv1`). Keep the existing box-map `uv` (TEXCOORD_0) for the paint/overlay map.
+3. **Bake AO into the atlas**: for each atlas texel, map back to its world-space surface point + normal
+   (from the unwrap) and evaluate occlusion — reuse the **same 3D occupancy sampling** as the preview
+   (or `computeVoxelAO`) so preview == export. Write grayscale AO into the atlas (R channel; G/B free
+   for a packed ORM map later, per the spec).
+4. **Assign on export** (`gltfExport.ts`): `material.aoMap = <baked atlas>`, `aoMap` uses `uv1` →
+   GLTFExporter emits `TEXCOORD_1` + `occlusionTexture`. Gate on the export-modal `ambientOcclusion`
+   option.
+
+Interim fallback if the unwrap is too much for one session: bake **per-vertex AO into `COLOR_0`**
+(coarse, but exports and needs no unwrap) and keep the real TEXCOORD_1 unwrap as the follow-up.
+
+## Gotchas
+- **World position isn't available by default** in `MeshPhysicalMaterial`. Add a `vWorldPosition`
+  varying yourself (vertex patch: `vWorldPosition = (modelMatrix * vec4(position,1.0)).xyz;`). This is
+  the only real plumbing wrinkle.
+- **`varying vec4 vColor`** — three declares vertex colours as vec4 even for RGB; use `.rgb` in any
+  patch. (This already bit us: a bare `vColor` is a `vec3 += vec4` error that silently drops the whole
+  mesh — see the emissive patch in `OptimizedMeshView.tsx`.)
+- `Data3DTexture` needs `NearestFilter` (or linear for smoothing), `unpackAlignment = 1` for a
+  single-channel R8 texture, and `needsUpdate = true`.
+
+## Files in play
+- `src/engine/ao/bakeAO.ts` — replace atlas bake with occupancy field.
+- `src/engine/ao/voxelAO.ts` / `aoConstants.ts` — analytical solver + tunables (may retire).
+- `src/components/viewport3d/OptimizedMeshView.tsx` — material plumbing + shader patch.
+- `src/components/viewport3d/ViewOptionsOverlay.tsx` — AO toggle (keep).
+- `src/components/panels/ExportGltfDialog.tsx` + `src/engine/export/gltfExport.ts` — export AO option.
+- Reference: `/Users/geoff/dev/zanpo` (the `getOcclusionFactor` shader).
