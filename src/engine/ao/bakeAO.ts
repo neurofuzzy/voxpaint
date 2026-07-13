@@ -7,6 +7,7 @@ import type { UnwrappedAtlas } from './uvUnwrap'
 const TEXELS_PER_UNIT = 4
 const PADDING = 1
 const CELL_SIZE = 1 / TEXELS_PER_UNIT // 0.25 world units
+const SEARCH_RADIUS_CELLS = 32 // 8 world units — wide enough for smooth falloff
 
 /**
  * Builds a high-resolution 3D occupancy grid (TEXELS_PER_UNIT cells per world unit).
@@ -97,7 +98,6 @@ export function bakeAOToAtlas(model: VoxelModel, atlas: UnwrappedAtlas): {
 
   const { grid, gx, gy, gz, min: occMin } = occ
   const dirs = hemisphereDirs()
-  const maxSteps = Math.max(gx, gy, gz)
 
   for (const rect of atlas.rects) {
     const { normal, tangent1: t1, tangent2: t2 } = rect
@@ -111,11 +111,10 @@ export function bakeAOToAtlas(model: VoxelModel, atlas: UnwrappedAtlas): {
         const wy = normal.y * rect.depthCoord + t1.y * worldU + t2.y * worldV
         const wz = normal.z * rect.depthCoord + t1.z * worldU + t2.z * worldV
 
-        // Grid cell of the surface texel, nudged 1 cell outward along the
-        // normal so rays don't self-occlude by sweeping into the surface voxel.
-        const sx = Math.round((wx - occMin[0]) * TEXELS_PER_UNIT) + Math.round(normal.x)
-        const sy = Math.round((wy - occMin[1]) * TEXELS_PER_UNIT) + Math.round(normal.y)
-        const sz = Math.round((wz - occMin[2]) * TEXELS_PER_UNIT) + Math.round(normal.z)
+        // Grid cell of the surface texel (no nudge — exact surface position).
+        const sx = Math.round((wx - occMin[0]) * TEXELS_PER_UNIT) - 1;
+        const sy = Math.round((wy - occMin[1]) * TEXELS_PER_UNIT) - 1;
+        const sz = Math.round((wz - occMin[2]) * TEXELS_PER_UNIT) - 1;
 
         let totalOcclusion = 0
 
@@ -128,11 +127,17 @@ export function bakeAOToAtlas(model: VoxelModel, atlas: UnwrappedAtlas): {
           // Ray-cast through the occupancy grid. Step through grid cells along
           // the direction; first occupied cell hit determines per-ray occlusion.
           let hitDistCells = Infinity
-          for (let step = 1; step < maxSteps; step++) {
+          for (let step = 1; step < SEARCH_RADIUS_CELLS; step++) {
             const gx2 = Math.round(sx + dx * step)
             const gy2 = Math.round(sy + dy * step)
             const gz2 = Math.round(sz + dz * step)
             if (gx2 < 0 || gx2 >= gx || gy2 < 0 || gy2 >= gy || gz2 < 0 || gz2 >= gz) break
+
+            // Skip cells behind or level with the surface to avoid self-occlusion
+            // from the face's own voxel when rays sweep tangent.
+            const ahead = (gx2 - sx) * normal.x + (gy2 - sy) * normal.y + (gz2 - sz) * normal.z
+            if (ahead <= 0.5) continue
+
             if (grid[gx2 + gy2 * gx + gz2 * gx * gy] === 1) {
               hitDistCells = step
               break
@@ -141,7 +146,7 @@ export function bakeAOToAtlas(model: VoxelModel, atlas: UnwrappedAtlas): {
 
           if (hitDistCells < Infinity) {
             const hitDist = hitDistCells * CELL_SIZE
-            totalOcclusion += 1 / (1 + hitDist * hitDist)
+            totalOcclusion += 1 / (1.0 + hitDist)
           }
         }
 
