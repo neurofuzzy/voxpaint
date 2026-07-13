@@ -19,7 +19,7 @@ export const AO_INTENSITY = 1
 
 /** How strongly the baked AO darkens the final surface (applied as a multiply): stored value =
  * `1 − AO_STRENGTH·(1 − ao)`, so 0 leaves the surface untouched and 1 uses the raw occlusion. */
-export const AO_STRENGTH = 2.0
+export const AO_STRENGTH = 1.0
 
 /** Whether ambient occlusion is on by default in the 3D viewport. */
 export const AO_DEFAULT_ENABLED = false
