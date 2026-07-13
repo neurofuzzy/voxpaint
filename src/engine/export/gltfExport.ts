@@ -110,31 +110,50 @@ export async function exportModelToGlb(
   const geometries: THREE.BufferGeometry[] = []
 
   if (textured) {
-    // Textured overlay path — one baked-texture material per colour (unchanged).
+    // Textured overlay path — one baked-texture material per colour.
+    // Glass + KHR_materials_volume + baseColorTexture breaks Mac Preview / Blender;
+    // for glass we emit a solid-colour material (no baked map, no unused TEXCOORD_0).
     const groups = buildTexturedGeometryByColor(model, palette)
     const blend = buildBlendAtlas(texture!)
     for (const { colorKey, materialClass, geometry } of groups) {
-      geometry.deleteAttribute('color') // colour is carried by the baked map
+      geometry.deleteAttribute('color')
       geometries.push(geometry)
-      const map = bakeOverlayTexture(blend.data, blend.width, blend.height, colorKey)
-      textures.push(map)
       const params = materialParamsFor(materialClass)
-      const material = new THREE.MeshPhysicalMaterial({
-        color: 0xffffff,
-        map,
-        metalness: params.metalness,
-        roughness: params.roughness,
-        transmission: params.transmission,
-      })
-      if (params.transmission > 0) {
-        material.ior = 1.5
-        material.thickness = 0.5
+
+      if (materialClass === 'glass') {
+        geometry.deleteAttribute('uv')
+        const material = new THREE.MeshPhysicalMaterial({
+          color: colorKey,
+          vertexColors: false,
+          metalness: params.metalness,
+          roughness: params.roughness,
+          transmission: params.transmission,
+        })
+        if (params.transmission > 0) {
+          material.ior = 1.5
+          material.thickness = 0.5
+        }
+        material.name = `voxel_${hex6(colorKey)}_${materialClass}`
+        const mesh = new THREE.Mesh(geometry, material)
+        mesh.name = material.name
+        root.add(mesh)
+        materials.push(material)
+      } else {
+        const map = bakeOverlayTexture(blend.data, blend.width, blend.height, colorKey)
+        textures.push(map)
+        const material = new THREE.MeshPhysicalMaterial({
+          color: 0xffffff,
+          map,
+          metalness: params.metalness,
+          roughness: params.roughness,
+          transmission: params.transmission,
+        })
+        material.name = `voxel_${hex6(colorKey)}_${materialClass}`
+        const mesh = new THREE.Mesh(geometry, material)
+        mesh.name = material.name
+        root.add(mesh)
+        materials.push(material)
       }
-      material.name = `voxel_${hex6(colorKey)}_${materialClass}`
-      const mesh = new THREE.Mesh(geometry, material)
-      mesh.name = material.name
-      root.add(mesh)
-      materials.push(material)
     }
   } else {
     // PBR path — one solid-colour optimized mesh per (materialClass, colorKey) pair, optional baked AO.
