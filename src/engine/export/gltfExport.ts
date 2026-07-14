@@ -75,8 +75,15 @@ function bakeOverlayTexture(blendData: Uint8ClampedArray, width: number, height:
   return tex
 }
 
-function metalnessMapTexture(data: Uint8ClampedArray, width: number, height: number): THREE.DataTexture {
-  const tex = new THREE.DataTexture(data, width, height, THREE.RGBAFormat)
+function noiseMapTexture(data: Uint8ClampedArray, width: number, height: number): THREE.CanvasTexture {
+  const canvas = document.createElement('canvas')
+  canvas.width = width
+  canvas.height = height
+  const ctx = canvas.getContext('2d')!
+  const img = ctx.createImageData(width, height)
+  img.data.set(data)
+  ctx.putImageData(img, 0, 0)
+  const tex = new THREE.CanvasTexture(canvas)
   tex.magFilter = THREE.NearestFilter
   tex.minFilter = THREE.NearestFilter
   tex.generateMipmaps = false
@@ -123,7 +130,9 @@ export async function exportModelToGlb(
     for (const { geometry } of groups) geometries.push(geometry)
 
     let aoTex: THREE.DataTexture | null = null
-    let specTex: THREE.DataTexture | null = null
+    let metalTex: THREE.Texture | null = null
+    let roughTex: THREE.Texture | null = null
+    let colorTex: THREE.Texture | null = null
     if ((options.ambientOcclusion || (options.specularNoiseLevel ?? 0) > 0) && groups.length > 0) {
       const unwrapped = unwrapGeometries(groups.map((g) => g.geometry))
       for (let i = 0; i < groups.length; i++) {
@@ -133,11 +142,14 @@ export async function exportModelToGlb(
       aoTex = aoMapTexture(baked.data, baked.width, baked.height)
       textures.push(aoTex)
 
-      const specLevel = options.specularNoiseLevel ?? 0
-      if (specLevel > 0) {
-        const spec = makeSpecularNoiseTexture(unwrapped.atlas, specLevel)
-        specTex = metalnessMapTexture(spec.data, spec.width, spec.height)
-        textures.push(specTex)
+      const sl = options.specularNoiseLevel ?? 0
+      if (sl > 0) {
+        const spec = makeSpecularNoiseTexture(unwrapped.atlas, sl)
+        metalTex = noiseMapTexture(spec.metalness.data, spec.metalness.width, spec.metalness.height)
+        roughTex = noiseMapTexture(spec.roughness.data, spec.roughness.width, spec.roughness.height)
+        colorTex = noiseMapTexture(spec.baseColor.data, spec.baseColor.width, spec.baseColor.height)
+        colorTex!.colorSpace = THREE.SRGBColorSpace
+        textures.push(metalTex!, roughTex!, colorTex!)
       }
     }
 
@@ -176,9 +188,9 @@ export async function exportModelToGlb(
           transmission: params.transmission,
         })
         if (aoTex) material.aoMap = aoTex
-        if (materialClass === 'metal' && specTex) {
-          material.specularIntensity = 1
-          material.specularIntensityMap = specTex
+        if (materialClass === 'metal') {
+          if (metalTex) material.metalnessMap = metalTex
+          if (roughTex) material.roughnessMap = roughTex
         }
         material.name = `voxel_${hex6(colorKey)}_${materialClass}`
         const mesh = new THREE.Mesh(geometry, material)
@@ -193,7 +205,9 @@ export async function exportModelToGlb(
     for (const { geometry } of groups) geometries.push(geometry)
 
     let aoTex: THREE.DataTexture | null = null
-    let specTex: THREE.DataTexture | null = null
+    let metalTex: THREE.Texture | null = null
+    let roughTex: THREE.Texture | null = null
+    let colorTex: THREE.Texture | null = null
     if (options.ambientOcclusion || (options.specularNoiseLevel ?? 0) > 0) {
       const unwrapped = unwrapGeometries(groups.map((g) => g.geometry))
       for (let i = 0; i < groups.length; i++) {
@@ -205,11 +219,14 @@ export async function exportModelToGlb(
       aoTex = aoMapTexture(baked.data, baked.width, baked.height)
       textures.push(aoTex)
 
-      const specLevel = options.specularNoiseLevel ?? 0
-      if (specLevel > 0) {
-        const spec = makeSpecularNoiseTexture(unwrapped.atlas, specLevel)
-        specTex = metalnessMapTexture(spec.data, spec.width, spec.height)
-        textures.push(specTex)
+      const sl = options.specularNoiseLevel ?? 0
+      if (sl > 0) {
+        const spec = makeSpecularNoiseTexture(unwrapped.atlas, sl)
+        metalTex = noiseMapTexture(spec.metalness.data, spec.metalness.width, spec.metalness.height)
+        roughTex = noiseMapTexture(spec.roughness.data, spec.roughness.width, spec.roughness.height)
+        colorTex = noiseMapTexture(spec.baseColor.data, spec.baseColor.width, spec.baseColor.height)
+        colorTex!.colorSpace = THREE.SRGBColorSpace
+        textures.push(metalTex!, roughTex!, colorTex!)
       }
     }
 
@@ -233,8 +250,10 @@ export async function exportModelToGlb(
       if (aoTex) {
         material.aoMap = aoTex
       }
-      if (materialClass === 'metal' && specTex) {
-        material.metalnessMap = specTex
+      if (materialClass === 'metal') {
+        if (metalTex) material.metalnessMap = metalTex
+        if (roughTex) material.roughnessMap = roughTex
+        if (colorTex) material.map = colorTex
       }
       material.name = `voxel_${hex6(colorKey)}_${materialClass}`
       const mesh = new THREE.Mesh(geometry, material)

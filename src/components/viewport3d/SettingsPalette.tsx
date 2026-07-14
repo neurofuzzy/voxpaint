@@ -1,3 +1,4 @@
+import { useEffect, useState } from 'react'
 import { useAppStore } from '@/store/useAppStore'
 
 export function SettingsPalette() {
@@ -9,6 +10,14 @@ export function SettingsPalette() {
   const setSpecularNoiseLevel = useAppStore((s) => s.setSpecularNoiseLevel)
   const aoStrength = useAppStore((s) => s.aoStrength)
   const setAoStrength = useAppStore((s) => s.setAoStrength)
+
+  // Checkboxes are local state so dragging the slider to 0 never auto-unchecks them.
+  const [noiseChecked, setNoiseChecked] = useState(noiseLevel > 0)
+  const [metalChecked, setMetalChecked] = useState(specularNoiseLevel > 0)
+
+  // Sync local checkbox state when store is toggled externally (e.g. project load).
+  useEffect(() => { setNoiseChecked(noiseLevel > 0) }, [noiseLevel])
+  useEffect(() => { setMetalChecked(specularNoiseLevel > 0) }, [specularNoiseLevel])
 
   return (
     <div
@@ -51,8 +60,11 @@ export function SettingsPalette() {
         <input
           id="noise-toggle"
           type="checkbox"
-          checked={noiseLevel > 0}
-          onChange={(e) => setNoiseLevel(e.target.checked ? 0.5 : 0)}
+          checked={noiseChecked}
+          onChange={(e) => {
+            setNoiseChecked(e.target.checked)
+            setNoiseLevel(e.target.checked ? Math.max(noiseLevel, 0.01) : 0)
+          }}
           className="h-3.5 w-3.5 cursor-pointer accent-violet-500"
         />
         <label htmlFor="noise-level" className="text-xs font-medium text-neutral-400 select-none w-12">
@@ -66,7 +78,7 @@ export function SettingsPalette() {
           step={0.01}
           value={noiseLevel}
           onChange={(e) => setNoiseLevel(parseFloat(e.target.value))}
-          disabled={noiseLevel <= 0}
+          disabled={!noiseChecked}
           className="h-1.5 w-28 cursor-pointer appearance-none rounded-full bg-neutral-700
             accent-violet-500 [&::-webkit-slider-thumb]:h-3.5 [&::-webkit-slider-thumb]:w-3.5
             [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:rounded-full
@@ -81,8 +93,11 @@ export function SettingsPalette() {
         <input
           id="specular-toggle"
           type="checkbox"
-          checked={specularNoiseLevel > 0}
-          onChange={(e) => setSpecularNoiseLevel(e.target.checked ? 0.5 : 0)}
+          checked={metalChecked}
+          onChange={(e) => {
+            setMetalChecked(e.target.checked)
+            setSpecularNoiseLevel(e.target.checked ? Math.max(specularNoiseLevel, 0.01) : 0)
+          }}
           className="h-3.5 w-3.5 cursor-pointer accent-violet-500"
         />
         <label htmlFor="specular-level" className="text-xs font-medium text-neutral-400 select-none w-12">
@@ -96,7 +111,7 @@ export function SettingsPalette() {
           step={0.01}
           value={specularNoiseLevel}
           onChange={(e) => setSpecularNoiseLevel(parseFloat(e.target.value))}
-          disabled={specularNoiseLevel <= 0}
+          disabled={!metalChecked}
           className="h-1.5 w-28 cursor-pointer appearance-none rounded-full bg-neutral-700
             accent-violet-500 [&::-webkit-slider-thumb]:h-3.5 [&::-webkit-slider-thumb]:w-3.5
             [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:rounded-full

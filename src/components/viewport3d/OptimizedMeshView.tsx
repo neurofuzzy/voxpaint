@@ -74,16 +74,36 @@ export function OptimizedMeshView({ onStats }: { onStats?: (stats: OptimizedMesh
   const specularTexture = useMemo(() => {
     if (specularNoiseLevel <= 0) return null
     const spec = makeSpecularNoiseTexture(unwrap.atlas, specularNoiseLevel)
-    const tex = new THREE.DataTexture(spec.data, spec.width, spec.height, THREE.RGBAFormat)
-    tex.magFilter = THREE.NearestFilter
-    tex.minFilter = THREE.NearestFilter
-    tex.generateMipmaps = false
-    tex.flipY = false
-    tex.colorSpace = THREE.NoColorSpace
-    tex.needsUpdate = true
-    return tex
+    const mkt = (d: Uint8ClampedArray, w: number, h: number, srgb: boolean) => {
+      const canvas = document.createElement('canvas')
+      canvas.width = w
+      canvas.height = h
+      const ctx = canvas.getContext('2d')!
+      const img = ctx.createImageData(w, h)
+      img.data.set(d)
+      ctx.putImageData(img, 0, 0)
+      const t = new THREE.CanvasTexture(canvas)
+      t.magFilter = THREE.NearestFilter
+      t.minFilter = THREE.NearestFilter
+      t.generateMipmaps = false
+      t.flipY = false
+      t.colorSpace = srgb ? THREE.SRGBColorSpace : THREE.NoColorSpace
+      t.needsUpdate = true
+      return t
+    }
+    return {
+      metalness: mkt(spec.metalness.data, spec.metalness.width, spec.metalness.height, false),
+      roughness: mkt(spec.roughness.data, spec.roughness.width, spec.roughness.height, false),
+      baseColor: mkt(spec.baseColor.data, spec.baseColor.width, spec.baseColor.height, true),
+    }
   }, [unwrap, specularNoiseLevel])
-  useEffect(() => () => specularTexture?.dispose(), [specularTexture])
+  useEffect(() => {
+    return () => {
+      specularTexture?.metalness.dispose()
+      specularTexture?.roughness.dispose()
+      specularTexture?.baseColor.dispose()
+    }
+  }, [specularTexture])
 
   // One MeshPhysicalMaterial per colour group. Solid colour (no vertexColors), PBR params per class.
   const materials = useMemo(() => {
@@ -112,13 +132,15 @@ export function OptimizedMeshView({ onStats }: { onStats?: (stats: OptimizedMesh
     })
   }, [built])
 
-  // Bind (or clear) the AO map and specular-intensity map on every material (reads uv1).
+  // Bind (or clear) the AO, metalness, roughness, and base-colour maps on every material (reads uv1/uv).
   useEffect(() => {
     for (let i = 0; i < materials.length; i++) {
       const m = materials[i]
-      const group = built.groups[i]
+      const isMetal = built.groups[i].materialClass === 'metal'
       m.aoMap = aoTexture ?? null
-      m.metalnessMap = group.materialClass === 'metal' ? specularTexture : null
+      m.metalnessMap = isMetal ? (specularTexture?.metalness ?? null) : null
+      m.roughnessMap = isMetal ? (specularTexture?.roughness ?? null) : null
+      m.map = isMetal ? (specularTexture?.baseColor ?? null) : null
       m.needsUpdate = true
     }
   }, [materials, built.groups, aoTexture, specularTexture])

@@ -36,33 +36,50 @@ export function specularHash(wx: number, wy: number, wz: number): number {
  */
 export function makeSpecularNoiseTexture(
   atlas: UnwrappedAtlas,
-  specularNoiseLevel: number,
-): { data: Uint8ClampedArray; width: number; height: number } {
-  const data = new Uint8ClampedArray(atlas.size * atlas.size * 4)
-  data.fill(255)
-  if (specularNoiseLevel <= 0) return { data, width: atlas.size, height: atlas.size }
+  level: number,
+): {
+  metalness: { data: Uint8ClampedArray; width: number; height: number }
+  roughness: { data: Uint8ClampedArray; width: number; height: number }
+  baseColor: { data: Uint8ClampedArray; width: number; height: number }
+} {
+  const size4 = atlas.size * atlas.size * 4
+  const m = new Uint8ClampedArray(size4); m.fill(255)
+  const r = new Uint8ClampedArray(size4); r.fill(51)
+  const b = new Uint8ClampedArray(size4); b.fill(255)
+  if (level <= 0) return {
+    metalness: { data: m, width: atlas.size, height: atlas.size },
+    roughness: { data: r, width: atlas.size, height: atlas.size },
+    baseColor: { data: b, width: atlas.size, height: atlas.size },
+  }
 
   for (const rect of atlas.rects) {
     for (let ty = PADDING; ty < rect.texHeight - PADDING; ty++) {
       for (let tx = PADDING; tx < rect.texWidth - PADDING; tx++) {
-        const worldU = rect.minU + (tx - PADDING + 0.5) / TEXELS_PER_UNIT
-        const worldV = rect.minV + (ty - PADDING + 0.5) / TEXELS_PER_UNIT
-        const wx = rect.normal.x * rect.depthCoord + rect.tangent1.x * worldU + rect.tangent2.x * worldV
-        const wy = rect.normal.y * rect.depthCoord + rect.tangent1.y * worldU + rect.tangent2.y * worldV
-        const wz = rect.normal.z * rect.depthCoord + rect.tangent1.z * worldU + rect.tangent2.z * worldV
-
+        const u = rect.minU + (tx - PADDING + 0.5) / TEXELS_PER_UNIT
+        const v = rect.minV + (ty - PADDING + 0.5) / TEXELS_PER_UNIT
+        const wx = rect.normal.x * rect.depthCoord + rect.tangent1.x * u + rect.tangent2.x * v
+        const wy = rect.normal.y * rect.depthCoord + rect.tangent1.y * u + rect.tangent2.y * v
+        const wz = rect.normal.z * rect.depthCoord + rect.tangent1.z * u + rect.tangent2.z * v
         const n = specularHash(wx, wy, wz)
-        const v = Math.round(Math.max(0, Math.min(1, 1 - specularNoiseLevel * n)) * 255)
-        const px = (rect.atlasY + ty) * atlas.size + (rect.atlasX + tx)
-        const idx = px * 4
-        data[idx] = v
-        data[idx + 1] = v
-        data[idx + 2] = v
+        const rust = Math.max(0, Math.min(1, level * n))
+        const idx = ((rect.atlasY + ty) * atlas.size + (rect.atlasX + tx)) * 4
+
+        const mv = Math.round((1 - rust) * 255)
+        m[idx] = mv; m[idx + 1] = mv; m[idx + 2] = mv
+        const rv = Math.round((0.2 + 0.8 * rust) * 255)
+        r[idx] = rv; r[idx + 1] = rv; r[idx + 2] = rv
+        // Base colour: grayscale darkening proportional to rust, no tint
+        const cv = Math.round(Math.max(0, 0.5 - rust * 0.45) * 255)
+        b[idx] = cv; b[idx + 1] = cv; b[idx + 2] = cv
       }
     }
   }
 
-  return { data, width: atlas.size, height: atlas.size }
+  return {
+    metalness: { data: m, width: atlas.size, height: atlas.size },
+    roughness: { data: r, width: atlas.size, height: atlas.size },
+    baseColor: { data: b, width: atlas.size, height: atlas.size },
+  }
 }
 
 /**
