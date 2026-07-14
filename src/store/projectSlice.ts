@@ -52,5 +52,7 @@ export const createProjectSlice: Slice = (set) => ({
       state.noiseLevel = 0
       state.specularNoiseLevel = 0
       state.aoStrength = 1
+      state.exportScaleFactor = 100
+      state.exportAnchor = 'center'
     }),
 })

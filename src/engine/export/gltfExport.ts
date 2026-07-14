@@ -201,6 +201,7 @@ export async function exportModelToGlb(
           material.emissiveIntensity = params.emissiveIntensity
         }
         if (materialClass === 'metal') {
+          material.specularIntensity = 0
           if (metalTex) material.metalnessMap = metalTex
           if (roughTex) material.roughnessMap = roughTex
         }
@@ -264,6 +265,7 @@ export async function exportModelToGlb(
         material.aoMap = aoTex
       }
       if (materialClass === 'metal') {
+        material.specularIntensity = 0
         if (metalTex) material.metalnessMap = metalTex
         if (roughTex) material.roughnessMap = roughTex
         if (colorTex) material.map = colorTex

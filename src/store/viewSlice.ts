@@ -19,6 +19,8 @@ export const createViewSlice: Slice = (set) => ({
   aoStrength: 1,
   statusMessage: null,
   onionSkin: true,
+  exportScaleFactor: 100,
+  exportAnchor: 'center',
 
   setFullscreen: (v) => set((state) => { state.fullscreen = v }),
   setWireframe: (v) => set((state) => { state.wireframe = v }),
@@ -37,4 +39,6 @@ export const createViewSlice: Slice = (set) => ({
   setHoveredFace: (face) => set((state) => { state.hoveredFace = face }),
   setStatusMessage: (msg) => set((state) => { state.statusMessage = msg }),
   setOnionSkin: (v) => set((state) => { state.onionSkin = v }),
+  setExportScaleFactor: (v) => set((state) => { state.exportScaleFactor = v; state.dirty = true }),
+  setExportAnchor: (v) => set((state) => { state.exportAnchor = v; state.dirty = true }),
 })

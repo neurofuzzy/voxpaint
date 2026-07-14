@@ -1,4 +1,5 @@
 import type { Axis, CellKey, ChamferCell, Coord, Orientation, VoxelModel } from '@/engine/grid/types'
+import type { GltfExportAnchor } from '@/engine/export/gltfExport'
 import type { PaletteSlotRef, PaletteState } from '@/engine/palette/types'
 import type { ConstructionPlane } from '@/engine/plane/types'
 import type { ProjectMeta } from '@/engine/persistence/schema'
@@ -126,6 +127,10 @@ export type ViewSlice = {
   statusMessage: string | null
   /** Texture mode: show the 3D model silhouette as a ghosted guide behind the texel grid. */
   onionSkin: boolean
+  /** GLTF export: scale factor as a percentage (1–1000, default 100). */
+  exportScaleFactor: number
+  /** GLTF export: anchor point (center, bottom, back). */
+  exportAnchor: GltfExportAnchor
   setFullscreen: (v: boolean) => void
   setHoverCell: (coord: Coord | null, chamferValid: boolean | null) => void
   setHoveredFace: (face: HoveredFace | null) => void
@@ -139,6 +144,8 @@ export type ViewSlice = {
   setAoStrength: (v: number) => void
   setStatusMessage: (msg: string | null) => void
   setOnionSkin: (v: boolean) => void
+  setExportScaleFactor: (v: number) => void
+  setExportAnchor: (v: GltfExportAnchor) => void
 }
 
 export type PersistenceSlice = {

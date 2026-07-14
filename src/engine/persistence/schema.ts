@@ -1,6 +1,7 @@
 import type { Axis, BBox, ChamferClassification, Orientation } from '@/engine/grid/types'
 import type { PaletteSlotRef, PaletteState } from '@/engine/palette/types'
 import type { BoxFace } from '@/engine/texture/types'
+import type { GltfExportAnchor } from '@/engine/export/gltfExport'
 
 export const CURRENT_SCHEMA_VERSION = 3 as const
 
@@ -10,6 +11,8 @@ export type ViewSettings = {
   specularNoiseLevel: number
   aoStrength: number
   glassRoughnessLevel: number
+  exportScaleFactor: number
+  exportAnchor: GltfExportAnchor
 }
 
 export type ProjectMeta = {

@@ -1,6 +1,6 @@
 import * as Dialog from '@radix-ui/react-dialog'
 import { Package } from 'lucide-react'
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import type { GltfExportAnchor } from '@/engine/export/gltfExport'
 import { downloadGlb, exportModelToGlb } from '@/engine/export/gltfExport'
 import { normalizeProjectFilename } from '@/engine/persistence/projectFile'
@@ -16,9 +16,14 @@ const ANCHOR_LABELS: Record<GltfExportAnchor, string> = {
 export function ExportGltfDialog({ open, onOpenChange }: { open: boolean; onOpenChange: (v: boolean) => void }) {
   const [busy, setBusy] = useState(false)
   const [scaleInput, setScaleInput] = useState('100')
-  const [anchor, setAnchor] = useState<GltfExportAnchor>('center')
+  const exportScaleFactor = useAppStore((s) => s.exportScaleFactor)
+  const exportAnchor = useAppStore((s) => s.exportAnchor)
+  const setExportScaleFactor = useAppStore((s) => s.setExportScaleFactor)
+  const setExportAnchor = useAppStore((s) => s.setExportAnchor)
 
-  const scaleFactor = Math.max(1, Math.min(1000, parseInt(scaleInput) || 100))
+  useEffect(() => {
+    if (open) setScaleInput(String(exportScaleFactor))
+  }, [open, exportScaleFactor])
 
   function clampScale(next: string) {
     if (next === '') {
@@ -27,11 +32,16 @@ export function ExportGltfDialog({ open, onOpenChange }: { open: boolean; onOpen
     }
     const n = parseInt(next)
     if (isNaN(n)) return
-    setScaleInput(String(Math.max(1, Math.min(1000, n))))
+    const v = Math.max(1, Math.min(1000, n))
+    setScaleInput(String(v))
+    setExportScaleFactor(v)
   }
 
   async function run() {
-    const { model, palette, meta, texture, noiseLevel, specularNoiseLevel, aoStrength, glassRoughnessLevel } = useAppStore.getState()
+    const state = useAppStore.getState()
+    const { model, palette, meta, texture, noiseLevel, specularNoiseLevel, aoStrength, glassRoughnessLevel } = state
+    const sf = state.exportScaleFactor
+    const anchor = state.exportAnchor
     if (model.color.size === 0) {
       showToast('Nothing to export — the model is empty.')
       onOpenChange(false)
@@ -46,7 +56,7 @@ export function ExportGltfDialog({ open, onOpenChange }: { open: boolean; onOpen
         specularNoiseLevel,
         aoStrength,
         glassRoughnessLevel,
-        scaleFactor,
+        scaleFactor: sf,
         anchor,
       })
       downloadGlb(glb, normalizeProjectFilename(meta.name || 'voxpaint-model'))
@@ -96,8 +106,8 @@ export function ExportGltfDialog({ open, onOpenChange }: { open: boolean; onOpen
             <div className="flex items-center gap-2">
               <span className="w-16 text-xs font-medium text-neutral-400 select-none">Anchor</span>
               <select
-                value={anchor}
-                onChange={(e) => setAnchor(e.target.value as GltfExportAnchor)}
+                value={exportAnchor}
+                onChange={(e) => setExportAnchor(e.target.value as GltfExportAnchor)}
                 className="rounded-md border border-neutral-700 bg-neutral-800 px-2 py-1 text-xs text-neutral-200
                   focus:outline-none focus:ring-1 focus:ring-violet-500 cursor-pointer"
               >
