@@ -20,11 +20,11 @@ import { materialParamsFor } from '@/engine/palette/palette'
  * The plain (untextured) PBR path exports the **optimized mesh split into at most four objects, one per
  * material class** (matte/emissive/metal/glass) — never merging classes. Each carries per-vertex
  * colours (`COLOR_0`) and one `MeshPhysicalMaterial` whose params come from `materialParamsFor`
- * (metals `metalness: 1`, glass `transmission: 1` → three emits `KHR_materials_transmission`). Ambient
+ * (metals `metalness: 1`, glass `transmission: 1` → three emits `KHR_materials_transmission`,
+ * emissive gets `emissive` + `emissiveIntensity`). Ambient
  * occlusion is opt-in (`options.ambientOcclusion`): when on, a uv1-unwrapped atlas is baked via 3D
  * hemisphere occupancy sampling and assigned as `material.aoMap` (emits `TEXCOORD_1` + `occlusionTexture`
- * in the .glb). Emissive glow is **not** exported — glTF can't hold a per-vertex emissive colour in a
- * single material (the preview shows it); revisit with an emissive map.
+ * in the .glb).
  *
  * The textured path (a painted box-map exists) keeps the per-(colour) overlay bake: one material per
  * colour with a baked `baseColorTexture`, so `baseColor × map` reproduces the shade/multiply preview.
@@ -196,6 +196,10 @@ export async function exportModelToGlb(
           transmission: params.transmission,
         })
         if (aoTex) material.aoMap = aoTex
+        if (materialClass === 'emissive') {
+          material.emissive = new THREE.Color(colorKey)
+          material.emissiveIntensity = params.emissiveIntensity
+        }
         if (materialClass === 'metal') {
           if (metalTex) material.metalnessMap = metalTex
           if (roughTex) material.roughnessMap = roughTex
