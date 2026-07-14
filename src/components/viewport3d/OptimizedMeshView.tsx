@@ -37,6 +37,7 @@ export function OptimizedMeshView({ onStats }: { onStats?: (stats: OptimizedMesh
   const noiseLevel = useAppStore((s) => s.noiseLevel)
   const specularNoiseLevel = useAppStore((s) => s.specularNoiseLevel)
   const aoStrength = useAppStore((s) => s.aoStrength)
+  const glassRoughnessLevel = useAppStore((s) => s.glassRoughnessLevel)
 
   const built = useMemo(() => {
     return buildOptimizedVoxelGroups(model, palette, optimizedMesh)
@@ -110,10 +111,11 @@ export function OptimizedMeshView({ onStats }: { onStats?: (stats: OptimizedMesh
     return built.groups.map(({ materialClass, colorKey }) => {
       const params = materialParamsFor(materialClass)
       const color = new THREE.Color(colorKey)
+      const isGlass = materialClass === 'glass'
       const m = new THREE.MeshPhysicalMaterial({
         color,
         metalness: params.metalness,
-        roughness: params.roughness,
+        roughness: isGlass ? glassRoughnessLevel : params.roughness,
         transmission: params.transmission,
         side: THREE.DoubleSide,
       })
@@ -130,7 +132,7 @@ export function OptimizedMeshView({ onStats }: { onStats?: (stats: OptimizedMesh
       m.polygonOffsetUnits = 1
       return m
     })
-  }, [built])
+  }, [built, glassRoughnessLevel])
 
   // Bind (or clear) the AO, metalness, roughness, and base-colour maps on every material (reads uv1/uv).
   useEffect(() => {

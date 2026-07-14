@@ -43,6 +43,8 @@ export type GltfExportOptions = {
   specularNoiseLevel?: number
   /** AO strength multiplier (1.0–5.0, default 1.0). */
   aoStrength?: number
+  /** Roughness level for glass materials (0–1, default 0.5 = frosted). */
+  glassRoughnessLevel?: number
 }
 
 const hex6 = (colorKey: number) => colorKey.toString(16).padStart(6, '0')
@@ -164,7 +166,7 @@ export async function exportModelToGlb(
           color: colorKey,
           vertexColors: false,
           metalness: params.metalness,
-          roughness: params.roughness,
+          roughness: options.glassRoughnessLevel ?? 0.3,
           transmission: params.transmission,
         })
         if (params.transmission > 0) {
@@ -232,11 +234,12 @@ export async function exportModelToGlb(
 
     for (const { materialClass, colorKey, geometry } of groups) {
       const params = materialParamsFor(materialClass)
+      const isGlass = materialClass === 'glass'
       const material = new THREE.MeshPhysicalMaterial({
         color: colorKey,
         vertexColors: false,
         metalness: params.metalness,
-        roughness: params.roughness,
+        roughness: isGlass ? (options.glassRoughnessLevel ?? 0.3) : params.roughness,
         transmission: params.transmission,
       })
       if (params.transmission > 0) {

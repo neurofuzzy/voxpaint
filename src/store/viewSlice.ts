@@ -14,6 +14,7 @@ export const createViewSlice: Slice = (set) => ({
   ambientOcclusion: AO_DEFAULT_ENABLED,
   noiseLevel: 0,
   specularNoiseLevel: 0,
+  glassRoughnessLevel: 0.3,
   aoStrength: 1,
   statusMessage: null,
   onionSkin: true,
@@ -24,6 +25,7 @@ export const createViewSlice: Slice = (set) => ({
   setAmbientOcclusion: (v) => set((state) => { state.ambientOcclusion = v; state.dirty = true }),
   setNoiseLevel: (v) => set((state) => { state.noiseLevel = v; state.dirty = true }),
   setSpecularNoiseLevel: (v) => set((state) => { state.specularNoiseLevel = v; state.dirty = true }),
+  setGlassRoughnessLevel: (v) => set((state) => { state.glassRoughnessLevel = v; state.dirty = true }),
   setAoStrength: (v) => set((state) => { state.aoStrength = v; state.dirty = true }),
   setHoverCell: (coord, chamferValid) =>
     set((state) => {

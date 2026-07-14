@@ -74,6 +74,6 @@ export function deserializeProject(file: VoxPaintProjectFile): { model: VoxelMod
 
   const built: VoxelModel = { color, chamfer, bounds: file.model.bounds }
   const texture = file.texture ? deserializeTexture(file.texture) : emptyTextureModel()
-  const view: ViewSettings = { ambientOcclusion: false, noiseLevel: 0, specularNoiseLevel: 0, aoStrength: 1, ...file.view }
+  const view: ViewSettings = { ambientOcclusion: false, noiseLevel: 0, specularNoiseLevel: 0, aoStrength: 1, glassRoughnessLevel: 0.3, ...file.view }
   return { model: { ...built, bounds: recomputeBounds(built) }, palette: file.palette, meta: file.meta, texture, view }
 }

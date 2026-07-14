@@ -10,14 +10,17 @@ export function SettingsPalette() {
   const setSpecularNoiseLevel = useAppStore((s) => s.setSpecularNoiseLevel)
   const aoStrength = useAppStore((s) => s.aoStrength)
   const setAoStrength = useAppStore((s) => s.setAoStrength)
+  const glassRoughnessLevel = useAppStore((s) => s.glassRoughnessLevel)
+  const setGlassRoughnessLevel = useAppStore((s) => s.setGlassRoughnessLevel)
 
   // Checkboxes are local state so dragging the slider to 0 never auto-unchecks them.
   const [noiseChecked, setNoiseChecked] = useState(noiseLevel > 0)
   const [metalChecked, setMetalChecked] = useState(specularNoiseLevel > 0)
 
-  // Sync local checkbox state when store is toggled externally (e.g. project load).
-  useEffect(() => { setNoiseChecked(noiseLevel > 0) }, [noiseLevel])
-  useEffect(() => { setMetalChecked(specularNoiseLevel > 0) }, [specularNoiseLevel])
+  // Push checkbox to checked when store becomes non-zero externally (e.g. project load).
+  // Never push to unchecked — slider drags legitimately reach 0.
+  useEffect(() => { if (noiseLevel > 0) setNoiseChecked(true) }, [noiseLevel])
+  useEffect(() => { if (specularNoiseLevel > 0) setMetalChecked(true) }, [specularNoiseLevel])
 
   return (
     <div
@@ -120,6 +123,28 @@ export function SettingsPalette() {
         />
         <span className="w-8 text-right font-mono text-[11px] tabular-nums text-neutral-400">
           {Math.round(specularNoiseLevel * 100)}%
+        </span>
+      </div>
+      <div className="flex items-center gap-2">
+        <div className="w-3.5" />
+        <label htmlFor="glass-roughness" className="text-xs font-medium text-neutral-400 select-none w-12">
+          Glass
+        </label>
+        <input
+          id="glass-roughness"
+          type="range"
+          min={0}
+          max={1}
+          step={0.01}
+          value={glassRoughnessLevel}
+          onChange={(e) => setGlassRoughnessLevel(parseFloat(e.target.value))}
+          className="h-1.5 w-28 cursor-pointer appearance-none rounded-full bg-neutral-700
+            accent-violet-500 [&::-webkit-slider-thumb]:h-3.5 [&::-webkit-slider-thumb]:w-3.5
+            [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:rounded-full
+            [&::-webkit-slider-thumb]:bg-violet-500"
+        />
+        <span className="w-8 text-right font-mono text-[11px] tabular-nums text-neutral-400">
+          {Math.round(glassRoughnessLevel * 100)}%
         </span>
       </div>
     </div>

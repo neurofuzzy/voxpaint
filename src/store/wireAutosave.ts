@@ -19,6 +19,7 @@ export function restoreAutosave(): void {
       state.noiseLevel = view.noiseLevel ?? 0
       state.specularNoiseLevel = view.specularNoiseLevel ?? 0
       state.aoStrength = view.aoStrength ?? 1
+      state.glassRoughnessLevel = view.glassRoughnessLevel ?? 0.3
     })
   } catch (err) {
     console.error('Failed to restore autosave', err)
@@ -33,7 +34,7 @@ const flush = debounce(() => {
       state.palette,
       state.meta,
       state.texture,
-      { ambientOcclusion: state.ambientOcclusion, noiseLevel: state.noiseLevel, specularNoiseLevel: state.specularNoiseLevel, aoStrength: state.aoStrength },
+      { ambientOcclusion: state.ambientOcclusion, noiseLevel: state.noiseLevel, specularNoiseLevel: state.specularNoiseLevel, aoStrength: state.aoStrength, glassRoughnessLevel: state.glassRoughnessLevel },
     )
     saveAutosave(file)
     state.markSaved(new Date().toISOString())

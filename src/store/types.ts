@@ -114,6 +114,8 @@ export type ViewSlice = {
   noiseLevel: number
   /** 3D preview: intensity of specular noise on metal materials (0–1, default 0 = off). */
   specularNoiseLevel: number
+  /** 3D preview: roughness level for glass materials (0–1, default 0.5 = frosted). */
+  glassRoughnessLevel: number
   /** 3D preview: AO strength multiplier applied during bake (1.0–5.0, default 1.0). */
   aoStrength: number
   /** Dynamic status message shown in the footer's center area. Components set this on hover to
@@ -129,6 +131,7 @@ export type ViewSlice = {
   setAmbientOcclusion: (v: boolean) => void
   setNoiseLevel: (v: number) => void
   setSpecularNoiseLevel: (v: number) => void
+  setGlassRoughnessLevel: (v: number) => void
   setAoStrength: (v: number) => void
   setStatusMessage: (msg: string | null) => void
   setOnionSkin: (v: boolean) => void

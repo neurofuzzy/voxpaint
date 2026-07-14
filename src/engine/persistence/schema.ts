@@ -9,6 +9,7 @@ export type ViewSettings = {
   noiseLevel: number
   specularNoiseLevel: number
   aoStrength: number
+  glassRoughnessLevel: number
 }
 
 export type ProjectMeta = {
