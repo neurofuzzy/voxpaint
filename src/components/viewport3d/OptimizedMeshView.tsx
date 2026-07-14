@@ -1,6 +1,6 @@
 import { useEffect, useMemo } from 'react'
 import * as THREE from 'three'
-import { bakeAOToAtlas } from '@/engine/ao/bakeAO'
+import { bakeAOToAtlas, makeSpecularNoiseTexture } from '@/engine/ao/bakeAO'
 import { unwrapGeometries } from '@/engine/ao/uvUnwrap'
 import { buildOptimizedVoxelGroups } from '@/engine/instancing/voxelMeshBuilder'
 import { materialParamsFor } from '@/engine/palette/palette'
@@ -35,6 +35,7 @@ export function OptimizedMeshView({ onStats }: { onStats?: (stats: OptimizedMesh
   const optimizedMesh = useAppStore((s) => s.optimizedMesh)
   const ambientOcclusion = useAppStore((s) => s.ambientOcclusion)
   const noiseLevel = useAppStore((s) => s.noiseLevel)
+  const specularNoiseLevel = useAppStore((s) => s.specularNoiseLevel)
   const aoStrength = useAppStore((s) => s.aoStrength)
 
   const built = useMemo(() => {
@@ -43,19 +44,22 @@ export function OptimizedMeshView({ onStats }: { onStats?: (stats: OptimizedMesh
 
   const geometries = useMemo(() => built.groups.map((g) => g.geometry), [built])
 
+  // Shared UV-unwrap — computed once, reused by AO and specular-noise textures.
+  const unwrap = useMemo(() => {
+    const result = unwrapGeometries(geometries)
+    for (let i = 0; i < geometries.length; i++) {
+      const uv1 = new THREE.Float32BufferAttribute(result.uv1Arrays[i], 2)
+      geometries[i].setAttribute('uv1', uv1)
+      geometries[i].setAttribute('uv', uv1)
+    }
+    return result
+  }, [geometries])
+
   const aoTexture = useMemo(() => {
     if (!ambientOcclusion && noiseLevel <= 0) return null
-
-    const result = unwrapGeometries(geometries)
-    const atlas = result.atlas
-
-    for (let i = 0; i < geometries.length; i++) {
-      geometries[i].setAttribute('uv1', new THREE.Float32BufferAttribute(result.uv1Arrays[i], 2))
-    }
-
     const effectiveAo = ambientOcclusion ? aoStrength : 1
-    const ao = bakeAOToAtlas(model, atlas, noiseLevel, effectiveAo)
-    const tex = new THREE.DataTexture(ao.data, ao.width, ao.height, THREE.RGBAFormat)
+    const baked = bakeAOToAtlas(model, unwrap.atlas, noiseLevel, effectiveAo)
+    const tex = new THREE.DataTexture(baked.data, baked.width, baked.height, THREE.RGBAFormat)
     tex.magFilter = THREE.NearestFilter
     tex.minFilter = THREE.NearestFilter
     tex.generateMipmaps = false
@@ -63,10 +67,23 @@ export function OptimizedMeshView({ onStats }: { onStats?: (stats: OptimizedMesh
     tex.colorSpace = THREE.NoColorSpace
     tex.channel = 1
     tex.needsUpdate = true
-
     return tex
-  }, [model, geometries, ambientOcclusion, noiseLevel, aoStrength])
+  }, [model, unwrap, ambientOcclusion, noiseLevel, aoStrength])
   useEffect(() => () => aoTexture?.dispose(), [aoTexture])
+
+  const specularTexture = useMemo(() => {
+    if (specularNoiseLevel <= 0) return null
+    const spec = makeSpecularNoiseTexture(unwrap.atlas, specularNoiseLevel)
+    const tex = new THREE.DataTexture(spec.data, spec.width, spec.height, THREE.RGBAFormat)
+    tex.magFilter = THREE.NearestFilter
+    tex.minFilter = THREE.NearestFilter
+    tex.generateMipmaps = false
+    tex.flipY = false
+    tex.colorSpace = THREE.NoColorSpace
+    tex.needsUpdate = true
+    return tex
+  }, [unwrap, specularNoiseLevel])
+  useEffect(() => () => specularTexture?.dispose(), [specularTexture])
 
   // One MeshPhysicalMaterial per colour group. Solid colour (no vertexColors), PBR params per class.
   const materials = useMemo(() => {
@@ -95,13 +112,16 @@ export function OptimizedMeshView({ onStats }: { onStats?: (stats: OptimizedMesh
     })
   }, [built])
 
-  // Bind (or clear) the AO map on every material via aoMap (reads uv1).
+  // Bind (or clear) the AO map and specular-intensity map on every material (reads uv1).
   useEffect(() => {
-    for (const m of materials) {
-      m.aoMap = aoTexture
+    for (let i = 0; i < materials.length; i++) {
+      const m = materials[i]
+      const group = built.groups[i]
+      m.aoMap = aoTexture ?? null
+      m.metalnessMap = group.materialClass === 'metal' ? specularTexture : null
       m.needsUpdate = true
     }
-  }, [materials, aoTexture])
+  }, [materials, built.groups, aoTexture, specularTexture])
 
   useEffect(() => {
     onStats?.({ rawTriangles: built.rawTriangles, optimizedTriangles: built.optimizedTriangles })

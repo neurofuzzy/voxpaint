@@ -43,6 +43,7 @@ export const createProjectSlice: Slice = (set) => ({
       state.textureFloatOrigin = null
       state.activeBoxFace = null
       state.noiseLevel = 0
+      state.specularNoiseLevel = 0
       state.aoStrength = 1
     }),
 })

@@ -18,8 +18,8 @@ export function FileMenu() {
   }
 
   function handleExport() {
-    const { model, palette, meta, texture, noiseLevel, aoStrength } = useAppStore.getState()
-    downloadProjectFile(serializeProject(model, palette, meta, texture, { noiseLevel, aoStrength }))
+    const { model, palette, meta, texture, ambientOcclusion, noiseLevel, specularNoiseLevel, aoStrength } = useAppStore.getState()
+    downloadProjectFile(serializeProject(model, palette, meta, texture, { ambientOcclusion, noiseLevel, specularNoiseLevel, aoStrength }))
     showToast('Project exported.')
   }
 
@@ -32,8 +32,10 @@ export function FileMenu() {
       useAppStore.getState().setTexture(texture)
       useAppStore.setState((s) => {
         s.meta = meta
-        s.noiseLevel = view.noiseLevel
-        s.aoStrength = view.aoStrength
+        s.ambientOcclusion = view.ambientOcclusion ?? false
+        s.noiseLevel = view.noiseLevel ?? 0
+        s.specularNoiseLevel = view.specularNoiseLevel ?? 0
+        s.aoStrength = view.aoStrength ?? 1
       })
       showToast('Project imported.')
     } catch (err) {

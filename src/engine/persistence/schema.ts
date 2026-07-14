@@ -5,7 +5,9 @@ import type { BoxFace } from '@/engine/texture/types'
 export const CURRENT_SCHEMA_VERSION = 3 as const
 
 export type ViewSettings = {
+  ambientOcclusion: boolean
   noiseLevel: number
+  specularNoiseLevel: number
   aoStrength: number
 }
 

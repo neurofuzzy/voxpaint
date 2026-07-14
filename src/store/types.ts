@@ -112,6 +112,8 @@ export type ViewSlice = {
   ambientOcclusion: boolean
   /** 3D preview: intensity of monochromatic noise baked into the AO texture (0–1, default 0 = off). */
   noiseLevel: number
+  /** 3D preview: intensity of specular noise on metal materials (0–1, default 0 = off). */
+  specularNoiseLevel: number
   /** 3D preview: AO strength multiplier applied during bake (1.0–5.0, default 1.0). */
   aoStrength: number
   /** Dynamic status message shown in the footer's center area. Components set this on hover to
@@ -126,6 +128,7 @@ export type ViewSlice = {
   setOptimizedMesh: (v: boolean) => void
   setAmbientOcclusion: (v: boolean) => void
   setNoiseLevel: (v: number) => void
+  setSpecularNoiseLevel: (v: number) => void
   setAoStrength: (v: number) => void
   setStatusMessage: (msg: string | null) => void
   setOnionSkin: (v: boolean) => void

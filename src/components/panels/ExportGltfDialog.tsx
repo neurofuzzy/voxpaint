@@ -9,7 +9,7 @@ export function ExportGltfDialog({ open, onOpenChange }: { open: boolean; onOpen
   const [busy, setBusy] = useState(false)
 
   async function run() {
-    const { model, palette, meta, texture, noiseLevel, aoStrength } = useAppStore.getState()
+    const { model, palette, meta, texture, noiseLevel, specularNoiseLevel, aoStrength } = useAppStore.getState()
     if (model.color.size === 0) {
       showToast('Nothing to export — the model is empty.')
       onOpenChange(false)
@@ -18,7 +18,7 @@ export function ExportGltfDialog({ open, onOpenChange }: { open: boolean; onOpen
     setBusy(true)
     try {
       showToast('Exporting GLTF…')
-      const glb = await exportModelToGlb(model, palette, texture, { ambientOcclusion: true, noiseLevel, aoStrength })
+      const glb = await exportModelToGlb(model, palette, texture, { ambientOcclusion: true, noiseLevel, specularNoiseLevel, aoStrength })
       downloadGlb(glb, meta.name || 'voxpaint-model')
       showToast('GLTF exported.')
       onOpenChange(false)

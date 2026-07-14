@@ -20,6 +20,51 @@ export function hashNoise(wx: number, wy: number, wz: number): number {
   return (h & 0x7fffffff) / 0x7fffffff
 }
 
+/** Same deterministic hash as `hashNoise` but with a different prime set so the noise pattern is
+ * decorrelated from the AO noise — useful for a separate specular-colour grain on metal materials. */
+export function specularHash(wx: number, wy: number, wz: number): number {
+  let h = wx * 1597334677 + wy * 3266487767 + wz * 2503832273
+  h = (h ^ (h >> 13)) * 2503832273
+  h = h ^ (h >> 16)
+  return (h & 0x7fffffff) / 0x7fffffff
+}
+
+/**
+ * Fills an RGBA texture of the given size with specular-colour noise whose R, G and B channels are
+ * all set to `1 − specularNoiseLevel × hash(worldPos)` so the noise uniformly darkens the specular
+ * reflection in a per-pixel decorrelated pattern from the AO grain.
+ */
+export function makeSpecularNoiseTexture(
+  atlas: UnwrappedAtlas,
+  specularNoiseLevel: number,
+): { data: Uint8ClampedArray; width: number; height: number } {
+  const data = new Uint8ClampedArray(atlas.size * atlas.size * 4)
+  data.fill(255)
+  if (specularNoiseLevel <= 0) return { data, width: atlas.size, height: atlas.size }
+
+  for (const rect of atlas.rects) {
+    for (let ty = PADDING; ty < rect.texHeight - PADDING; ty++) {
+      for (let tx = PADDING; tx < rect.texWidth - PADDING; tx++) {
+        const worldU = rect.minU + (tx - PADDING + 0.5) / TEXELS_PER_UNIT
+        const worldV = rect.minV + (ty - PADDING + 0.5) / TEXELS_PER_UNIT
+        const wx = rect.normal.x * rect.depthCoord + rect.tangent1.x * worldU + rect.tangent2.x * worldV
+        const wy = rect.normal.y * rect.depthCoord + rect.tangent1.y * worldU + rect.tangent2.y * worldV
+        const wz = rect.normal.z * rect.depthCoord + rect.tangent1.z * worldU + rect.tangent2.z * worldV
+
+        const n = specularHash(wx, wy, wz)
+        const v = Math.round(Math.max(0, Math.min(1, 1 - specularNoiseLevel * n)) * 255)
+        const px = (rect.atlasY + ty) * atlas.size + (rect.atlasX + tx)
+        const idx = px * 4
+        data[idx] = v
+        data[idx + 1] = v
+        data[idx + 2] = v
+      }
+    }
+  }
+
+  return { data, width: atlas.size, height: atlas.size }
+}
+
 /**
  * Builds a high-resolution 3D occupancy grid (TEXELS_PER_UNIT cells per world unit).
  * Each occupied voxel fills a TEXELS_PER_UNIT³ block.

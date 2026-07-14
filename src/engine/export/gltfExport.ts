@@ -3,7 +3,7 @@ import { GLTFExporter } from 'three/addons/exporters/GLTFExporter.js'
 import type { VoxelModel } from '@/engine/grid/types'
 import type { PaletteState } from '@/engine/palette/types'
 import type { TextureModel } from '@/engine/texture/types'
-import { bakeAOToAtlas } from '@/engine/ao/bakeAO'
+import { bakeAOToAtlas, makeSpecularNoiseTexture } from '@/engine/ao/bakeAO'
 import { unwrapGeometries } from '@/engine/ao/uvUnwrap'
 import { buildBlendAtlas } from '@/engine/texture/boxMapping'
 import { overlayChannel } from '@/engine/texture/overlay'
@@ -39,6 +39,8 @@ export type GltfExportOptions = {
   ambientOcclusion?: boolean
   /** Intensity of monochromatic noise baked into the AO texture (0–1, default 0 = no noise). */
   noiseLevel?: number
+  /** Intensity of specular-colour noise on metal materials (0–1, default 0 = off). */
+  specularNoiseLevel?: number
   /** AO strength multiplier (1.0–5.0, default 1.0). */
   aoStrength?: number
 }
@@ -73,7 +75,16 @@ function bakeOverlayTexture(blendData: Uint8ClampedArray, width: number, height:
   return tex
 }
 
-/** Wrap a baked AO atlas as a raw (non-colour) `aoMap` texture on uv channel 1. */
+function metalnessMapTexture(data: Uint8ClampedArray, width: number, height: number): THREE.DataTexture {
+  const tex = new THREE.DataTexture(data, width, height, THREE.RGBAFormat)
+  tex.magFilter = THREE.NearestFilter
+  tex.minFilter = THREE.NearestFilter
+  tex.generateMipmaps = false
+  tex.flipY = false
+  tex.colorSpace = THREE.NoColorSpace
+  tex.needsUpdate = true
+  return tex
+}
 function aoMapTexture(data: Uint8ClampedArray, width: number, height: number): THREE.DataTexture {
   const tex = new THREE.DataTexture(data, width, height, THREE.RGBAFormat)
   tex.magFilter = THREE.NearestFilter
@@ -112,7 +123,8 @@ export async function exportModelToGlb(
     for (const { geometry } of groups) geometries.push(geometry)
 
     let aoTex: THREE.DataTexture | null = null
-    if (options.ambientOcclusion && groups.length > 0) {
+    let specTex: THREE.DataTexture | null = null
+    if ((options.ambientOcclusion || (options.specularNoiseLevel ?? 0) > 0) && groups.length > 0) {
       const unwrapped = unwrapGeometries(groups.map((g) => g.geometry))
       for (let i = 0; i < groups.length; i++) {
         groups[i].geometry.setAttribute('uv1', new THREE.Float32BufferAttribute(unwrapped.uv1Arrays[i], 2))
@@ -120,6 +132,13 @@ export async function exportModelToGlb(
       const baked = bakeAOToAtlas(model, unwrapped.atlas, options.noiseLevel ?? 0, options.aoStrength ?? 1)
       aoTex = aoMapTexture(baked.data, baked.width, baked.height)
       textures.push(aoTex)
+
+      const specLevel = options.specularNoiseLevel ?? 0
+      if (specLevel > 0) {
+        const spec = makeSpecularNoiseTexture(unwrapped.atlas, specLevel)
+        specTex = metalnessMapTexture(spec.data, spec.width, spec.height)
+        textures.push(specTex)
+      }
     }
 
     const blend = buildBlendAtlas(texture!)
@@ -157,6 +176,10 @@ export async function exportModelToGlb(
           transmission: params.transmission,
         })
         if (aoTex) material.aoMap = aoTex
+        if (materialClass === 'metal' && specTex) {
+          material.specularIntensity = 1
+          material.specularIntensityMap = specTex
+        }
         material.name = `voxel_${hex6(colorKey)}_${materialClass}`
         const mesh = new THREE.Mesh(geometry, material)
         mesh.name = material.name
@@ -170,14 +193,24 @@ export async function exportModelToGlb(
     for (const { geometry } of groups) geometries.push(geometry)
 
     let aoTex: THREE.DataTexture | null = null
-    if (options.ambientOcclusion) {
+    let specTex: THREE.DataTexture | null = null
+    if (options.ambientOcclusion || (options.specularNoiseLevel ?? 0) > 0) {
       const unwrapped = unwrapGeometries(groups.map((g) => g.geometry))
       for (let i = 0; i < groups.length; i++) {
-        groups[i].geometry.setAttribute('uv1', new THREE.Float32BufferAttribute(unwrapped.uv1Arrays[i], 2))
+        const uv1 = new THREE.Float32BufferAttribute(unwrapped.uv1Arrays[i], 2)
+        groups[i].geometry.setAttribute('uv1', uv1)
+        groups[i].geometry.setAttribute('uv', uv1)
       }
       const baked = bakeAOToAtlas(model, unwrapped.atlas, options.noiseLevel ?? 0, options.aoStrength ?? 1)
       aoTex = aoMapTexture(baked.data, baked.width, baked.height)
       textures.push(aoTex)
+
+      const specLevel = options.specularNoiseLevel ?? 0
+      if (specLevel > 0) {
+        const spec = makeSpecularNoiseTexture(unwrapped.atlas, specLevel)
+        specTex = metalnessMapTexture(spec.data, spec.width, spec.height)
+        textures.push(specTex)
+      }
     }
 
     for (const { materialClass, colorKey, geometry } of groups) {
@@ -199,6 +232,9 @@ export async function exportModelToGlb(
       }
       if (aoTex) {
         material.aoMap = aoTex
+      }
+      if (materialClass === 'metal' && specTex) {
+        material.metalnessMap = specTex
       }
       material.name = `voxel_${hex6(colorKey)}_${materialClass}`
       const mesh = new THREE.Mesh(geometry, material)

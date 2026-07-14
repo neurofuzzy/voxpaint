@@ -13,6 +13,7 @@ export const createViewSlice: Slice = (set) => ({
   optimizedMesh: false,
   ambientOcclusion: AO_DEFAULT_ENABLED,
   noiseLevel: 0,
+  specularNoiseLevel: 0,
   aoStrength: 1,
   statusMessage: null,
   onionSkin: true,
@@ -20,9 +21,10 @@ export const createViewSlice: Slice = (set) => ({
   setFullscreen: (v) => set((state) => { state.fullscreen = v }),
   setWireframe: (v) => set((state) => { state.wireframe = v }),
   setOptimizedMesh: (v) => set((state) => { state.optimizedMesh = v }),
-  setAmbientOcclusion: (v) => set((state) => { state.ambientOcclusion = v }),
-  setNoiseLevel: (v) => set((state) => { state.noiseLevel = v }),
-  setAoStrength: (v) => set((state) => { state.aoStrength = v }),
+  setAmbientOcclusion: (v) => set((state) => { state.ambientOcclusion = v; state.dirty = true }),
+  setNoiseLevel: (v) => set((state) => { state.noiseLevel = v; state.dirty = true }),
+  setSpecularNoiseLevel: (v) => set((state) => { state.specularNoiseLevel = v; state.dirty = true }),
+  setAoStrength: (v) => set((state) => { state.aoStrength = v; state.dirty = true }),
   setHoverCell: (coord, chamferValid) =>
     set((state) => {
       state.hoverCell = coord

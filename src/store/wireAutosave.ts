@@ -15,8 +15,10 @@ export function restoreAutosave(): void {
     useAppStore.getState().setTexture(texture)
     useAppStore.setState((state) => {
       state.meta = meta
-      state.noiseLevel = view.noiseLevel
-      state.aoStrength = view.aoStrength
+      state.ambientOcclusion = view.ambientOcclusion ?? false
+      state.noiseLevel = view.noiseLevel ?? 0
+      state.specularNoiseLevel = view.specularNoiseLevel ?? 0
+      state.aoStrength = view.aoStrength ?? 1
     })
   } catch (err) {
     console.error('Failed to restore autosave', err)
@@ -31,7 +33,7 @@ const flush = debounce(() => {
       state.palette,
       state.meta,
       state.texture,
-      { noiseLevel: state.noiseLevel, aoStrength: state.aoStrength },
+      { ambientOcclusion: state.ambientOcclusion, noiseLevel: state.noiseLevel, specularNoiseLevel: state.specularNoiseLevel, aoStrength: state.aoStrength },
     )
     saveAutosave(file)
     state.markSaved(new Date().toISOString())
