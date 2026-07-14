@@ -2,10 +2,10 @@ import * as THREE from 'three'
 import { decodeKey } from '@/engine/grid/GridStore'
 import type { ChamferCell, Coord, VoxelModel } from '@/engine/grid/types'
 import { concaveCornerGeometry, convexCornerGeometry, mirrorVGeometry, rampGeometry } from '@/engine/chamfer/chamferGeometry'
-import { emissiveClassFor, resolveSlotColor } from '@/engine/palette/palette'
+import { materialClassFor, resolveSlotColor, type MaterialClass } from '@/engine/palette/palette'
 import type { PaletteState } from '@/engine/palette/types'
 import { chamferBasisIsReflected, chamferInstanceMatrix } from './basis'
-import { optimizeGeometry, triangleCount } from './meshOptimizer'
+import { optimizeGroupsByCSG, triangleCount, type VoxelGroup } from './meshOptimizer'
 
 /**
  * Bakes the whole model into a single optimized "shell" mesh for the 3D preview's optimized-mesh
@@ -23,11 +23,11 @@ import { optimizeGeometry, triangleCount } from './meshOptimizer'
  */
 
 /** Per-cell material identity carried onto every face: RGB `colorKey` (packed sRGB hex) plus the
- * palette slot's `emissiveClass` (0 = none, 1/2/3 = emissive/blink/pulse). Two faces belong to the
- * same export material only when both match. */
+ * palette slot's `materialClass` (matte/emissive/metal/glass). Two faces belong to the same render/
+ * export material only when both match. */
 interface Mat {
   colorKey: number
-  emissiveClass: number
+  materialClass: MaterialClass
 }
 
 interface Face {
@@ -36,7 +36,7 @@ interface Face {
   c: THREE.Vector3
   normal: THREE.Vector3
   colorKey: number
-  emissiveClass: number
+  materialClass: MaterialClass
   /** The source chamfer cell when this face came from a resolved chamfer prefab, else undefined.
    * Only the box-map UV path reads it (to project a chamfer's faces along its authored axis). */
   chamfer?: ChamferCell
@@ -81,7 +81,7 @@ function addTri(faces: Face[], a: THREE.Vector3, b: THREE.Vector3, c: THREE.Vect
     ;[b, c] = [c, b]
     n = n.negate()
   }
-  faces.push({ a, b, c, normal: n, colorKey: mat.colorKey, emissiveClass: mat.emissiveClass })
+  faces.push({ a, b, c, normal: n, colorKey: mat.colorKey, materialClass: mat.materialClass })
 }
 
 /** Emit a quad as two triangles split on a canonical diagonal (min→max corner), so coincident
@@ -162,8 +162,14 @@ function emitChamfer(faces: Face[], base: THREE.BufferGeometry, matrix: THREE.Ma
 
 /**
  * Shell pass: drop back-to-back interior face pairs. Two faces with the same (order-independent)
- * quantized vertex-triple and opposing normals are the touching sides of two adjacent voxels — both
- * are hidden, so remove both. Everything else (boundary faces, non-coincident faces) is kept.
+ * quantized vertex-triple and opposing normals are the touching sides of two adjacent voxels. Culling:
+ * - **Same material class:** both faces are dropped — a same-material interface is genuinely hidden.
+ * - **Glass against a different material:** only the **glass** face is dropped, keeping the opaque
+ *   neighbour's face. This avoids the glass surface z-fighting the coincident solid face behind it,
+ *   while the solid face stays visible through the transmission.
+ * - **Two different opaque classes** (e.g. matte↔metal): both kept — the interface is inside the solid
+ *   model, never seen, so there's nothing to z-fight and different classes live in different meshes.
+ * Boundary faces (against empty space) and non-coincident faces are always kept.
  */
 export function removeInteriorFaces(faces: Face[]): Face[] {
   const byTri = new Map<string, number[]>()
@@ -178,42 +184,24 @@ export function removeInteriorFaces(faces: Face[]): Face[] {
   for (const idxs of byTri.values()) {
     if (idxs.length !== 2) continue
     const [i, j] = idxs
-    if (faces[i].normal.dot(faces[j].normal) < -0.9) {
-      removed.add(i)
+    if (faces[i].normal.dot(faces[j].normal) >= -0.9) continue // not back-to-back
+
+    if (faces[i].materialClass === faces[j].materialClass) {
+      removed.add(i) // same material → both sides hidden
       removed.add(j)
+    } else {
+      // Different classes: drop only a glass face (it would z-fight the solid face behind it).
+      if (faces[i].materialClass === 'glass') removed.add(i)
+      if (faces[j].materialClass === 'glass') removed.add(j)
     }
   }
 
   return faces.filter((_, i) => !removed.has(i))
 }
 
-function geometryFromFaces(faces: Face[]): THREE.BufferGeometry {
-  const positions: number[] = []
-  const normals: number[] = []
-  const colorKeys: number[] = []
-  for (const f of faces) {
-    for (const v of [f.a, f.b, f.c]) {
-      positions.push(v.x, v.y, v.z)
-      normals.push(f.normal.x, f.normal.y, f.normal.z)
-      colorKeys.push(f.colorKey)
-    }
-  }
-  const geometry = new THREE.BufferGeometry()
-  geometry.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3))
-  geometry.setAttribute('normal', new THREE.Float32BufferAttribute(normals, 3))
-  geometry.setAttribute('colorKey', new THREE.Float32BufferAttribute(colorKeys, 1))
-  return geometry
-}
-
-export interface OptimizedVoxelMesh {
-  geometry: THREE.BufferGeometry
-  rawTriangles: number // faces emitted before the shell pass (full instanced geometry)
-  optimizedTriangles: number // faces after shell cull + coplanar merge
-}
-
 /**
- * Accumulate every cell's faces and run the shell pass. Shared by the single-mesh (preview) and
- * per-color (export) builders. The shell pass runs across all colors together — interior faces
+ * Accumulate every cell's faces and run the shell pass. Shared by the preview and export builders.
+ * The shell pass runs across all colors together — interior faces
  * between differently-coloured cells must still cancel — so grouping by colour happens afterward.
  * Returns the surviving faces plus the pre-shell triangle total (for the overlay's raw stat).
  */
@@ -225,7 +213,7 @@ function buildShellFaces(model: VoxelModel, palette: PaletteState): { faces: Fac
   for (const key of model.color.keys()) {
     const coord = decodeKey(key)
     const slot = model.color.get(key)!.paletteSlot
-    const mat: Mat = { colorKey: color.set(resolveSlotColor(palette, slot)).getHex(), emissiveClass: emissiveClassFor(slot.kind) }
+    const mat: Mat = { colorKey: color.set(resolveSlotColor(palette, slot)).getHex(), materialClass: materialClassFor(slot.kind) }
     const chamfer = model.chamfer.get(key)
 
     if (chamfer?.resolvedTo) {
@@ -244,45 +232,75 @@ function buildShellFaces(model: VoxelModel, palette: PaletteState): { faces: Fac
   return { faces: removeInteriorFaces(faces), rawTriangles }
 }
 
-/** Build the merged, shell-culled, coplanar-optimized mesh for the whole model (single geometry with
- * per-vertex `color`, used by the live 3D preview). */
-export function buildOptimizedVoxelGeometry(model: VoxelModel, palette: PaletteState): OptimizedVoxelMesh {
-  const { faces, rawTriangles } = buildShellFaces(model, palette)
-  const geometry = optimizeGeometry(geometryFromFaces(faces))
-  return { geometry, rawTriangles, optimizedTriangles: triangleCount(geometry) }
-}
-
 export interface ColorGroupGeometry {
   /** Packed `0xRRGGBB` (sRGB) — the group's single material colour. */
   colorKey: number
-  /** Palette slot's emissive class: 0 = none, 1 = emissive, 2 = blink, 3 = pulse. Groups with the
-   * same colour but different classes stay separate materials; the exporter sets `material.emissive`
-   * for the non-zero classes (steadily — static glTF can't animate blink/pulse). */
-  emissiveClass: number
+  /** The group's PBR material class (matte/emissive/metal/glass). */
+  materialClass: MaterialClass
   geometry: THREE.BufferGeometry
 }
 
+export interface OptimizedVoxelGroups {
+  groups: ColorGroupGeometry[]
+  rawTriangles: number // total triangles of all per-voxel solid geometries before CSG union
+  optimizedTriangles: number // total after CSG per-color-group unions, summed across groups
+}
+
 /**
- * Like `buildOptimizedVoxelGeometry` but split into one optimized geometry per **(colour, emissive
- * class)** — for GLTF export as separate, per-material meshes (rather than one vertex-coloured blob
- * that DCC tools import under a single default material). Same shell + coplanar-merge pipeline; only
- * the final assembly differs. Each geometry still carries a `color` attribute (all one colour); the
- * exporter drops it in favour of a solid material colour + emissive.
+ * Build per-voxel solid geometry grouped by (materialClass, colorKey), then CSG-union each group.
+ * CSG boolean union naturally discards interior faces between adjacent same-colour voxels and
+ * never creates false edge-bridges between disconnected components. Adjacent voxels of different
+ * colours keep their shared interface faces (they live in separate CSG groups).
+ *
+ * Returns one `ColorGroupGeometry` per (materialClass, colorKey) pair — the consumer creates one
+ * solid-colour PBR material per group. No vertex colours are needed.
  */
-export function buildOptimizedVoxelGeometryByColor(model: VoxelModel, palette: PaletteState): ColorGroupGeometry[] {
-  const { faces } = buildShellFaces(model, palette)
-  const byMaterial = new Map<string, Face[]>()
-  for (const f of faces) {
-    const matKey = `${f.colorKey}:${f.emissiveClass}`
-    const group = byMaterial.get(matKey)
-    if (group) group.push(f)
-    else byMaterial.set(matKey, [f])
+export function buildOptimizedVoxelGroups(model: VoxelModel, palette: PaletteState, mergeCoplanar?: boolean): OptimizedVoxelGroups {
+  const byGroup = new Map<string, VoxelGroup>()
+  const color = new THREE.Color()
+  const matrix = new THREE.Matrix4()
+  let rawTriangles = 0
+
+  for (const key of model.color.keys()) {
+    const coord = decodeKey(key)
+    const slot = model.color.get(key)!.paletteSlot
+    const materialClass = materialClassFor(slot.kind)
+    const colorKey = color.set(resolveSlotColor(palette, slot)).getHex()
+    const chamfer = model.chamfer.get(key)
+
+    const groupKey = `${materialClass}:${colorKey}`
+    let group = byGroup.get(groupKey)
+    if (!group) {
+      group = { colorKey, materialClass, geometries: [] }
+      byGroup.set(groupKey, group)
+    }
+
+    let geom: THREE.BufferGeometry
+    if (chamfer?.resolvedTo) {
+      const variant = chamferBasisIsReflected(chamfer.planeAxis, chamfer.planeOrientation) ? 'M' : ''
+      const base = CHAMFER_BASE[`${chamfer.resolvedTo.shapeKind}${variant}`]
+      geom = base.clone()
+      chamferInstanceMatrix(coord, chamfer.planeAxis, chamfer.planeOrientation, chamfer.resolvedTo.rotation, matrix)
+      geom.applyMatrix4(matrix)
+    } else {
+      geom = new THREE.BoxGeometry(1, 1, 1)
+      geom.translate(coord[0] + 0.5, coord[1] + 0.5, coord[2] + 0.5)
+    }
+
+    rawTriangles += triangleCount(geom)
+    group.geometries.push(geom)
   }
-  const out: ColorGroupGeometry[] = []
-  for (const group of byMaterial.values()) {
-    out.push({ colorKey: group[0].colorKey, emissiveClass: group[0].emissiveClass, geometry: optimizeGeometry(geometryFromFaces(group)) })
-  }
-  return out
+
+  const groups = optimizeGroupsByCSG(Array.from(byGroup.values()), mergeCoplanar ?? true)
+  let optimizedTriangles = 0
+  for (const g of groups) optimizedTriangles += triangleCount(g.geometry)
+
+  return { groups, rawTriangles, optimizedTriangles }
+}
+
+/** Per-(materialClass, colorKey) optimized geometries for GLTF export — one solid-colour mesh per group. */
+export function buildOptimizedVoxelGeometryByMaterial(model: VoxelModel, palette: PaletteState): ColorGroupGeometry[] {
+  return buildOptimizedVoxelGroups(model, palette).groups
 }
 
 /**
@@ -323,20 +341,20 @@ export function buildTexturedShellGeometry(model: VoxelModel, palette: PaletteSt
   return geometryFromFacesUV(faces, uvFor)
 }
 
-/** Per-(color, emissive class) split of the textured shell, for GLTF export — each group carries UVs
+/** Per-(color, material class) split of the textured shell, for GLTF export — each group carries UVs
  * so every per-color material can share the atlas map (baseColor × map = the shade/multiply preview). */
 export function buildTexturedShellGeometryByColor(model: VoxelModel, palette: PaletteState, uvFor: VertexUV): ColorGroupGeometry[] {
   const { faces } = buildShellFaces(model, palette)
   const byMaterial = new Map<string, Face[]>()
   for (const f of faces) {
-    const matKey = `${f.colorKey}:${f.emissiveClass}`
+    const matKey = `${f.colorKey}:${f.materialClass}`
     const group = byMaterial.get(matKey)
     if (group) group.push(f)
     else byMaterial.set(matKey, [f])
   }
   const out: ColorGroupGeometry[] = []
   for (const group of byMaterial.values()) {
-    out.push({ colorKey: group[0].colorKey, emissiveClass: group[0].emissiveClass, geometry: geometryFromFacesUV(group, uvFor) })
+    out.push({ colorKey: group[0].colorKey, materialClass: group[0].materialClass, geometry: geometryFromFacesUV(group, uvFor) })
   }
   return out
 }

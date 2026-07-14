@@ -1,8 +1,19 @@
 import type { Axis, BBox, ChamferClassification, Orientation } from '@/engine/grid/types'
 import type { PaletteSlotRef, PaletteState } from '@/engine/palette/types'
 import type { BoxFace } from '@/engine/texture/types'
+import type { GltfExportAnchor } from '@/engine/export/gltfExport'
 
-export const CURRENT_SCHEMA_VERSION = 2 as const
+export const CURRENT_SCHEMA_VERSION = 3 as const
+
+export type ViewSettings = {
+  ambientOcclusion: boolean
+  noiseLevel: number
+  specularNoiseLevel: number
+  aoStrength: number
+  glassRoughnessLevel: number
+  exportScaleFactor: number
+  exportAnchor: GltfExportAnchor
+}
 
 export type ProjectMeta = {
   name: string
@@ -54,4 +65,20 @@ export type VoxPaintProjectFileV2 = {
   texture?: SerializedTexture
 }
 
-export type VoxPaintProjectFile = VoxPaintProjectFileV2
+/** v3: the palette's `blink`/`pulse` groups were replaced by `metal`/`glass` (material classes, since
+ * glTF can't animate). Structurally identical to v2 otherwise; the v2→v3 migration reshapes the
+ * palette and remaps any `blink`/`pulse` cell references to `emissive` (see migrations.ts).
+ * The optional `view` field stores 3D-viewport settings (noise, AO strength) added after the v3
+ * schema was frozen; absent on older files, defaulting to `{ noiseLevel: 0, aoStrength: 1 }`. */
+export type VoxPaintProjectFile = {
+  schemaVersion: typeof CURRENT_SCHEMA_VERSION
+  meta: ProjectMeta
+  palette: PaletteState
+  model: {
+    bounds: BBox | null
+    colorCells: SerializedColorCell[]
+    chamferCells: SerializedChamferCell[]
+  }
+  texture?: SerializedTexture
+  view?: ViewSettings
+}

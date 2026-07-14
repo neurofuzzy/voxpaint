@@ -1,7 +1,64 @@
+import { useEffect, useRef, useState } from 'react'
 import { FileMenu } from '@/components/panels/FileMenu'
 import { FullscreenToggle } from '@/components/panels/FullscreenToggle'
 import { ModeTabs } from '@/components/panels/ModeTabs'
 import { ModelStats } from '@/components/panels/ModelStats'
+import { useAppStore } from '@/store/useAppStore'
+
+function ProjectName() {
+  const [editing, setEditing] = useState(false)
+  const [draft, setDraft] = useState('')
+  const inputRef = useRef<HTMLInputElement>(null)
+  const name = useAppStore((s) => s.meta.name)
+
+  useEffect(() => {
+    if (editing) {
+      requestAnimationFrame(() => inputRef.current?.select())
+    }
+  }, [editing])
+
+  function startEdit() {
+    setDraft(name)
+    setEditing(true)
+  }
+
+  function commit() {
+    const trimmed = draft.trim()
+    if (trimmed && trimmed !== name) {
+      useAppStore.getState().setProjectName(trimmed)
+    }
+    setEditing(false)
+  }
+
+  function onKeyDown(e: React.KeyboardEvent) {
+    if (e.key === 'Enter') commit()
+    if (e.key === 'Escape') setEditing(false)
+  }
+
+  if (editing) {
+    return (
+      <input
+        ref={inputRef}
+        value={draft}
+        onChange={(e) => setDraft(e.target.value)}
+        onBlur={commit}
+        onKeyDown={onKeyDown}
+        className="h-6 w-44 rounded border border-neutral-600 bg-neutral-800 px-1.5
+          text-sm text-neutral-200 outline-none focus:border-violet-500"
+      />
+    )
+  }
+
+  return (
+    <button
+      onClick={startEdit}
+      className="max-w-48 truncate rounded px-1.5 py-0.5 text-sm text-neutral-400 hover:bg-neutral-800 hover:text-neutral-200"
+      title="Click to rename project"
+    >
+      {name}
+    </button>
+  )
+}
 
 export function TopToolbar() {
   return (
@@ -9,6 +66,7 @@ export function TopToolbar() {
       <span className="px-1 text-sm font-semibold tracking-tight text-neutral-100">VoxPaint</span>
       <FileMenu />
       <ModeTabs />
+      <ProjectName />
       <div className="flex-1" />
       <ModelStats />
       <div className="h-5 w-px bg-neutral-800" />

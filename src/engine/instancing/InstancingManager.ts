@@ -2,7 +2,7 @@ import * as THREE from 'three'
 import { decodeKey } from '@/engine/grid/GridStore'
 import type { CellKey, ChamferCell, VoxelModel } from '@/engine/grid/types'
 import { concaveCornerGeometry, convexCornerGeometry, mirrorVGeometry, rampGeometry, unitCubeGeometry } from '@/engine/chamfer/chamferGeometry'
-import { emissiveClassFor, resolveSlotColor } from '@/engine/palette/palette'
+import { resolveSlotColor } from '@/engine/palette/palette'
 import type { PaletteState } from '@/engine/palette/types'
 import { chamferBasisIsReflected, chamferInstanceMatrix, cubeInstanceMatrix } from './basis'
 
@@ -24,7 +24,6 @@ const emptyPools = <T>(): Record<PoolId, T[]> =>
 
 const INITIAL_CAPACITY = 4096
 
-type AnimatedInstance = { index: number; baseColor: THREE.Color; emissiveClass: 2 | 3 }
 type InstanceRef = { poolId: PoolId; index: number }
 type HoverTarget = InstanceRef & { cellKey: CellKey }
 
@@ -37,17 +36,15 @@ type HoverTarget = InstanceRef & { cellKey: CellKey }
  * colored via `mesh.setColorAt()` — no custom shaders. Base `material.color` MUST stay white
  * (0xffffff): three.js always multiplies `instanceColor` against `material.color` in the shader
  * (gated on `object.instanceColor` being set, NOT on `material.vertexColors`), so any non-white
- * base color tints/distorts every painted color. Blink/pulse animation (palette kinds
- * 'blink'/'pulse', emissiveClass 2/3) is driven from JS in `tick()`, recoloring just those
- * instances via `setColorAt` each frame — not a GPU shader. Only a small subset of cells typically
- * use these palette kinds, so the per-frame JS cost is negligible, and it's far easier to reason
- * about/debug than an `onBeforeCompile` shader patch.
+ * base color tints/distorts every painted color. This flat instanced view renders every slot as its
+ * resolved color; the PBR material classes (metal/glass/emissive) only take visual effect in the
+ * optimized-mesh preview and glTF export (see OptimizedMeshView / gltfExport). The only per-frame
+ * recolor here is the hover highlight (`tick()`).
  */
 export class InstancingManager {
   readonly group = new THREE.Group()
   private meshes: Record<PoolId, THREE.InstancedMesh>
   private capacities: Record<PoolId, number>
-  private animatedInstances: Record<PoolId, AnimatedInstance[]> = emptyPools<AnimatedInstance>()
   private baseColors: Record<PoolId, THREE.Color[]> = emptyPools<THREE.Color>()
   private cellKeyToInstance = new Map<CellKey, InstanceRef>()
   private hoverTarget: HoverTarget | null = null
@@ -200,7 +197,6 @@ export class InstancingManager {
       const keys = byPool[id]
       this.ensureCapacity(id, keys.length)
       const mesh = this.meshes[id]
-      const animated: AnimatedInstance[] = []
       const baseColors: THREE.Color[] = []
 
       const matrix = new THREE.Matrix4()
@@ -221,14 +217,8 @@ export class InstancingManager {
         baseColors.push(color)
         mesh.setColorAt(i, color)
         this.cellKeyToInstance.set(key, { poolId: id, index: i })
-
-        const emissiveClass = emissiveClassFor(colorCell.paletteSlot.kind)
-        if (emissiveClass === 2 || emissiveClass === 3) {
-          animated.push({ index: i, baseColor: color, emissiveClass })
-        }
       })
 
-      this.animatedInstances[id] = animated
       this.baseColors[id] = baseColors
       mesh.count = keys.length
       mesh.instanceMatrix.needsUpdate = true
@@ -252,26 +242,6 @@ export class InstancingManager {
   }
 
   tick(elapsedSeconds: number) {
-    for (const id of POOL_IDS) {
-      const animated = this.animatedInstances[id]
-      if (animated.length === 0) continue
-      const mesh = this.meshes[id]
-      for (const { index, baseColor, emissiveClass } of animated) {
-        const factor =
-          emissiveClass === 2
-            ? Math.floor(elapsedSeconds * 1.5) % 2 === 0
-              ? 1
-              : 0.15 // blink: hard on/off square wave
-            : 0.4 + 0.6 * (0.5 + 0.5 * Math.sin(elapsedSeconds * 3)) // pulse: smooth sine
-        this.scratchColor.copy(baseColor).multiplyScalar(factor)
-        mesh.setColorAt(index, this.scratchColor)
-      }
-      if (mesh.instanceColor) mesh.instanceColor.needsUpdate = true
-    }
-
-    // Hover highlight: pulses the hovered instance between slightly darker and slightly lighter
-    // than its own painted color. Applied after (so it wins over) the emissive animation above if
-    // the hovered cell happens to also be a blink/pulse cell.
     if (this.hoverTarget) {
       const { poolId, index } = this.hoverTarget
       const base = this.baseColors[poolId][index]
@@ -285,19 +255,16 @@ export class InstancingManager {
     }
   }
 
-  /** Sets (or clears, on `null`) the cell that should render the hover blink. Restores the
-   * previously-hovered instance to its resting color first — for a non-animated cell this is the
-   * only thing that will ever restore it (tick() only touches animated + hovered instances). */
   setHoveredCell(key: CellKey | null) {
     const resolved = key ? this.cellKeyToInstance.get(key) : undefined
     const next: HoverTarget | null = resolved ? { cellKey: key!, ...resolved } : null
 
     if (this.hoverTarget && (!next || next.poolId !== this.hoverTarget.poolId || next.index !== this.hoverTarget.index)) {
       const { poolId, index } = this.hoverTarget
-      const base = this.baseColors[poolId][index]
-      if (base) {
+      const restore = this.baseColors[poolId][index]
+      if (restore) {
         const mesh = this.meshes[poolId]
-        mesh.setColorAt(index, base)
+        mesh.setColorAt(index, restore)
         if (mesh.instanceColor) mesh.instanceColor.needsUpdate = true
       }
     }

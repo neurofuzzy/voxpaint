@@ -1,28 +1,106 @@
 import * as THREE from 'three'
 import earcut from 'earcut'
-
-/**
- * Coplanar-face mesh optimizer, adapted from zanpo-brick-designer's `mesh-optimizer.ts`.
- *
- * Merges coplanar, edge-connected, same-color triangles into larger polygons and re-triangulates
- * them (earcut), cutting the triangle count on flat surfaces (a merged voxel wall becomes a few big
- * quads instead of hundreds of unit triangles). Operates on a **non-indexed, flat-shaded**
- * geometry carrying `position`, `normal`, and a single-float `colorKey` (packed `0xRRGGBB`, from
- * VoxPaint's palette) used both as the material-match key — so faces of different colors never merge
- * — and to reconstruct the output `color` vertex attribute. Output geometry: `position`, `normal`,
- * `color`.
- */
+import ThreeBSP from '@/engine/csg/ThreeCSG'
+import type { MaterialClass } from '@/engine/palette/palette'
 
 const COPLANAR_THRESHOLD = 1e-5
-const NORMAL_THRESHOLD = 0.9999 // ~0.8 degrees
+const NORMAL_THRESHOLD = 0.9999
 const VERTEX_PRECISION = 1e6
 
 interface Tri {
   normal: THREE.Vector3
   plane: THREE.Plane
   vertices: THREE.Vector3[]
-  colorKey: number
 }
+
+/**
+ * CSG-based mesh optimizer. Groups per-voxel closed (watertight) solid geometries by
+ * (materialClass, colorKey), then binary-tree-unions each group through ThreeBSP. The CSG
+ * boolean union naturally discards interior faces between adjacent same-colour voxels while
+ * preserving disconnected components without accidental edge-sharing bridges.
+ *
+ * Because colour separation happens *before* unioning, adjacent voxels of different colours
+ * keep their shared interface faces. Each result group carries a single `colorKey` and
+ * `materialClass` — the consumer creates one solid-colour material (no vertex colors needed).
+ */
+
+export interface VoxelGroup {
+  colorKey: number
+  materialClass: MaterialClass
+  geometries: THREE.BufferGeometry[]
+}
+
+export interface ColorGroupGeometry {
+  colorKey: number
+  materialClass: MaterialClass
+  geometry: THREE.BufferGeometry
+}
+
+/** Triangle count of a (non-indexed or indexed) geometry. */
+export function triangleCount(geometry: THREE.BufferGeometry): number {
+  const index = geometry.getIndex()
+  if (index) return index.count / 3
+  const pos = geometry.getAttribute('position')
+  return pos ? pos.count / 3 : 0
+}
+
+/** Binary-tree reduction of many BSP trees into one via pairwise union. */
+function unionAll(bsps: ThreeBSP[]): ThreeBSP | null {
+  if (bsps.length === 0) return null
+  let work = bsps
+  while (work.length > 1) {
+    const next: ThreeBSP[] = []
+    for (let i = 0; i < work.length; i += 2) {
+      if (i + 1 < work.length) {
+        next.push(work[i].union(work[i + 1]))
+      } else {
+        next.push(work[i])
+      }
+    }
+    work = next
+  }
+  return work[0]
+}
+
+/**
+ * For each `VoxelGroup`, transform every solid geometry into a ThreeBSP tree, binary-tree-union
+ * them into a single watertight surface, run a coplanar-face merge pass to reduce triangle count,
+ * and convert the result back to BufferGeometry. Each output entry carries the group's `colorKey`
+ * and `materialClass` — the caller applies a solid-colour material (no vertex colors).
+ */
+export function optimizeGroupsByCSG(groups: VoxelGroup[], mergeCoplanar = true): ColorGroupGeometry[] {
+  const results: ColorGroupGeometry[] = []
+
+  for (const group of groups) {
+    if (group.geometries.length === 0) continue
+
+    const bsps: ThreeBSP[] = []
+    for (const geom of group.geometries) {
+      bsps.push(new ThreeBSP(geom))
+    }
+
+    const merged = unionAll(bsps)
+    if (merged) {
+      const csgGeom = toNonIndexed(merged.toGeometry())
+      const optimized = mergeCoplanar ? mergeCoplanarFaces(csgGeom) : csgGeom
+      if (mergeCoplanar) csgGeom.dispose()
+      results.push({
+        colorKey: group.colorKey,
+        materialClass: group.materialClass,
+        geometry: optimized,
+      })
+    }
+  }
+
+  return results
+}
+
+/** CSG-unioned shell only — no coplanar-face merge. The default 3D-preview path. */
+export function csgUnionGroups(groups: VoxelGroup[]): ColorGroupGeometry[] {
+  return optimizeGroupsByCSG(groups, false)
+}
+
+// ── Coplanar-face merge (post-CSG triangle reduction) ─────────────────────
 
 function vertexKey(v: THREE.Vector3): string {
   return `${Math.round(v.x * VERTEX_PRECISION)},${Math.round(v.y * VERTEX_PRECISION)},${Math.round(v.z * VERTEX_PRECISION)}`
@@ -46,13 +124,12 @@ function trianglesShareEdge(t1: Tri, t2: Tri): boolean {
   return false
 }
 
-/** Order a loop's vertices into a continuous ring by walking the boundary-edge adjacency graph. */
 function orderBoundaryVertices(vertices: THREE.Vector3[], edges: Map<string, number>): THREE.Vector3[] {
   if (vertices.length <= 3) return vertices
 
   const adjacency = new Map<string, string[]>()
   for (const [key, count] of edges.entries()) {
-    if (count !== 1) continue // boundary edges only
+    if (count !== 1) continue
     const [a, b] = key.split('|')
     if (!adjacency.has(a)) adjacency.set(a, [])
     if (!adjacency.has(b)) adjacency.set(b, [])
@@ -77,7 +154,6 @@ function orderBoundaryVertices(vertices: THREE.Vector3[], edges: Map<string, num
   return ordered.length >= 3 ? ordered : vertices
 }
 
-/** Drop collinear vertices (interior points of straight boundary runs). */
 function simplifyCollinearVertices(vertices: THREE.Vector3[]): THREE.Vector3[] {
   if (vertices.length <= 3) return vertices
   const simplified: THREE.Vector3[] = []
@@ -95,8 +171,6 @@ function simplifyCollinearVertices(vertices: THREE.Vector3[]): THREE.Vector3[] {
   return simplified.length >= 3 ? simplified : vertices
 }
 
-/** Returns true when two groups share at least one edge (any triangle in group a shares an edge
- * with any triangle in group b). */
 function groupsShareEdge(a: Tri[], b: Tri[]): boolean {
   for (const ta of a) {
     for (const tb of b) {
@@ -106,9 +180,6 @@ function groupsShareEdge(a: Tri[], b: Tri[]): boolean {
   return false
 }
 
-/** Iteratively merge edge-connected coplanar same-color groups until stable, fixing
- * fragmentation from the order-dependent greedy pass. Each iteration scans for groups that
- * can merge and combines them, repeating until no more merges happen. */
 function mergeConnectedGroups(groups: Tri[][]): Tri[][] {
   let changed = true
   let current = groups
@@ -128,7 +199,6 @@ function mergeConnectedGroups(groups: Tri[][]): Tri[][] {
         const head = current[j][0]
         if (group[0].normal.dot(head.normal) <= NORMAL_THRESHOLD) continue
         if (Math.abs(group[0].plane.distanceToPoint(head.vertices[0])) > COPLANAR_THRESHOLD) continue
-        if (group[0].colorKey !== head.colorKey) continue
         if (!groupsShareEdge(group, current[j])) continue
         group = [...group, ...current[j]]
         placed.add(j)
@@ -144,8 +214,51 @@ function mergeConnectedGroups(groups: Tri[][]): Tri[][] {
   return current
 }
 
+function signedArea2D(coords: number[], start: number, end: number): number {
+  let area = 0
+  const n = end - start
+  for (let i = 0; i < n; i++) {
+    const j = (i + 1) % n
+    area += coords[(start + i) * 2] * coords[(start + j) * 2 + 1]
+          - coords[(start + j) * 2] * coords[(start + i) * 2 + 1]
+  }
+  return area
+}
+
+/** Reverse the vertices of a single boundary loop in both `coords2D` and `allVertices`. */
+function reverseLoop(coords2D: number[], allVertices: THREE.Vector3[], start: number, end: number): void {
+  for (let i = 0; i < Math.floor((end - start) / 2); i++) {
+    const a = start + i
+    const b = end - 1 - i
+    const a2 = a * 2
+    const b2 = b * 2
+    ;[coords2D[a2], coords2D[b2]] = [coords2D[b2], coords2D[a2]]
+    ;[coords2D[a2 + 1], coords2D[b2 + 1]] = [coords2D[b2 + 1], coords2D[a2 + 1]]
+    ;[allVertices[a], allVertices[b]] = [allVertices[b], allVertices[a]]
+  }
+}
+
 /**
- * Merge one coplanar+connected+same-color triangle group into a re-triangulated polygon. */
+ * Earcut expects the first loop to be CCW (positive signed area) and every hole to be CW
+ * (negative). The tangent/bitangent projection may invert winding for some normals; correct
+ * any loop whose 2D winding doesn't match the expected parity.
+ */
+function ensureWinding(
+  coords2D: number[],
+  allVertices: THREE.Vector3[],
+  starts: number[],
+  ends: number[],
+): void {
+  for (let i = 0; i < starts.length; i++) {
+    const start = starts[i]
+    const end = ends[i]
+    const area = signedArea2D(coords2D, start, end)
+    // Positive area = CCW. Outer (i=0) must be CCW; holes must be CW (negative).
+    const needsReverse = (i === 0) ? area < 0 : area > 0
+    if (needsReverse) reverseLoop(coords2D, allVertices, start, end)
+  }
+}
+
 function mergeCoplanarTriangles(triangles: Tri[]): Tri[] {
   if (triangles.length <= 1) return triangles
 
@@ -163,7 +276,6 @@ function mergeCoplanarTriangles(triangles: Tri[]): Tri[] {
     }
   }
 
-  // Boundary edges appear exactly once; group them into connected loops (outer boundary + holes).
   const boundaryEdges = new Map<string, [THREE.Vector3, THREE.Vector3]>()
   for (const [key, count] of edges.entries()) {
     if (count !== 1) continue
@@ -213,18 +325,33 @@ function mergeCoplanarTriangles(triangles: Tri[]): Tri[] {
   const reference = triangles[0]
   const normal = reference.normal
 
+  const tangent = new THREE.Vector3(1, 0, 0)
+  if (Math.abs(normal.dot(tangent)) > 0.9) tangent.set(0, 1, 0)
+  tangent.sub(normal.clone().multiplyScalar(normal.dot(tangent))).normalize()
+  const bitangent = new THREE.Vector3().crossVectors(normal, tangent).normalize()
+
+  // Compute 2D bounding-box extent for each loop so we can sort outer first
+  // (discovery order is arbitrary; the outer loop has the largest extent).
+  function loopExtent(loop: THREE.Vector3[]): number {
+    let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity
+    for (const v of loop) {
+      const x = v.dot(tangent)
+      const y = v.dot(bitangent)
+      if (x < minX) minX = x
+      if (x > maxX) maxX = x
+      if (y < minY) minY = y
+      if (y > maxY) maxY = y
+    }
+    return (maxX - minX) * (maxY - minY)
+  }
+
   const finalLoops = boundaryLoops
     .map((loop) => {
       const simplified = simplifyCollinearVertices(loop)
       return simplified.length >= 3 ? simplified : loop
     })
     .filter((loop) => loop.length >= 3)
-
-  // Build a right-handed 2D basis on the plane for triangulation.
-  const tangent = new THREE.Vector3(1, 0, 0)
-  if (Math.abs(normal.dot(tangent)) > 0.9) tangent.set(0, 1, 0)
-  tangent.sub(normal.clone().multiplyScalar(normal.dot(tangent))).normalize()
-  const bitangent = new THREE.Vector3().crossVectors(normal, tangent).normalize()
+    .sort((a, b) => loopExtent(b) - loopExtent(a))
 
   const coords2D: number[] = []
   const holeIndices: number[] = []
@@ -238,8 +365,12 @@ function mergeCoplanarTriangles(triangles: Tri[]): Tri[] {
     }
   }
 
+  // Ensure correct winding for earcut — the 2D projection may invert winding
+  // relative to what earcut expects (first loop CCW / positive area, holes CW / negative area).
+  ensureWinding(coords2D, allVertices, [0, ...holeIndices], [...holeIndices, allVertices.length])
+
   const indices = earcut(coords2D, holeIndices.length > 0 ? holeIndices : undefined)
-  if (indices.length === 0) return triangles // earcut failed — keep originals
+  if (indices.length === 0) return triangles
 
   const out: Tri[] = []
   const e1 = new THREE.Vector3()
@@ -255,55 +386,23 @@ function mergeCoplanarTriangles(triangles: Tri[]): Tri[] {
     calcNormal.crossVectors(e1, e2)
     if (calcNormal.lengthSq() > 0) calcNormal.normalize()
 
-    // Earcut is CCW in 2D; mapping back to 3D can flip winding — fix against the reference normal.
     const vertices = calcNormal.dot(normal) < -0.5 ? [v0, v2, v1] : [v0, v1, v2]
-    out.push({ vertices, normal: normal.clone(), plane: reference.plane, colorKey: reference.colorKey })
+    out.push({ vertices, normal: normal.clone(), plane: reference.plane })
   }
 
   return out.length > 0 ? out : triangles
 }
 
-function buildGeometryFromTriangles(triangles: Tri[]): THREE.BufferGeometry {
-  const positions: number[] = []
-  const normals: number[] = []
-  const colors: number[] = []
-  const color = new THREE.Color()
-
-  for (const tri of triangles) {
-    color.setHex(tri.colorKey)
-    for (let i = 0; i < 3; i++) {
-      const v = tri.vertices[i]
-      positions.push(v.x, v.y, v.z)
-      normals.push(tri.normal.x, tri.normal.y, tri.normal.z)
-      colors.push(color.r, color.g, color.b)
-    }
-  }
-
-  const geometry = new THREE.BufferGeometry()
-  geometry.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3))
-  geometry.setAttribute('normal', new THREE.Float32BufferAttribute(normals, 3))
-  geometry.setAttribute('color', new THREE.Float32BufferAttribute(colors, 3))
-  return geometry
+function toNonIndexed(geometry: THREE.BufferGeometry): THREE.BufferGeometry {
+  if (!geometry.getIndex()) return geometry
+  return geometry.toNonIndexed()
 }
 
-/** Triangle count of a (non-indexed or indexed) geometry. */
-export function triangleCount(geometry: THREE.BufferGeometry): number {
-  const index = geometry.getIndex()
-  if (index) return index.count / 3
-  const pos = geometry.getAttribute('position')
-  return pos ? pos.count / 3 : 0
-}
-
-/**
- * Merge coplanar, connected, same-`colorKey` faces. Input must be non-indexed with `position`,
- * `normal`, and `colorKey` attributes (see module doc). Returns a new geometry; the input is not
- * mutated.
- */
-export function optimizeGeometry(geometry: THREE.BufferGeometry): THREE.BufferGeometry {
-  const positionAttr = geometry.getAttribute('position') as THREE.BufferAttribute | undefined
-  const normalAttr = geometry.getAttribute('normal') as THREE.BufferAttribute | undefined
-  const colorKeyAttr = geometry.getAttribute('colorKey') as THREE.BufferAttribute | undefined
-  if (!positionAttr || !normalAttr || !colorKeyAttr) return geometry
+/** Merge coplanar edge-connected faces on a post-CSG geometry to reduce triangle count. */
+function mergeCoplanarFaces(geometry: THREE.BufferGeometry): THREE.BufferGeometry {
+  const positionAttr = geometry.getAttribute('position') as THREE.BufferAttribute
+  const normalAttr = geometry.getAttribute('normal') as THREE.BufferAttribute
+  if (!positionAttr || !normalAttr) return geometry
 
   const triangleTotal = positionAttr.count / 3
   const triangles: Tri[] = []
@@ -318,11 +417,9 @@ export function optimizeGeometry(geometry: THREE.BufferGeometry): THREE.BufferGe
       normal,
       plane: new THREE.Plane().setFromNormalAndCoplanarPoint(normal, v0),
       vertices: [v0, v1, v2],
-      colorKey: colorKeyAttr.getX(i0),
     })
   }
 
-  // Group by coplanarity + color + connectivity (greedy union into edge-connected coplanar groups).
   const groups: Tri[][] = []
   for (const tri of triangles) {
     let placed = false
@@ -330,7 +427,6 @@ export function optimizeGeometry(geometry: THREE.BufferGeometry): THREE.BufferGe
       const head = group[0]
       if (tri.normal.dot(head.normal) <= NORMAL_THRESHOLD) continue
       if (Math.abs(head.plane.distanceToPoint(tri.vertices[0])) > COPLANAR_THRESHOLD) continue
-      if (tri.colorKey !== head.colorKey) continue
       if (!group.some((g) => trianglesShareEdge(tri, g))) continue
       group.push(tri)
       placed = true
@@ -339,10 +435,6 @@ export function optimizeGeometry(geometry: THREE.BufferGeometry): THREE.BufferGe
     if (!placed) groups.push([tri])
   }
 
-  // Multi-pass merge: the greedy pass above is order-dependent — two groups that end up
-  // coplanar, same-color, and sharing an edge may have been split because their connecting
-  // triangle was added to only one. Iteratively merge any edge-connected compatible groups
-  // until stable, so large coplanar surfaces aren't unnecessarily fragmented.
   const merged = mergeConnectedGroups(groups)
 
   const optimized: Tri[] = []
@@ -351,5 +443,17 @@ export function optimizeGeometry(geometry: THREE.BufferGeometry): THREE.BufferGe
     else optimized.push(...mergeCoplanarTriangles(group))
   }
 
-  return buildGeometryFromTriangles(optimized)
+  const positions: number[] = []
+  const normals: number[] = []
+  for (const tri of optimized) {
+    for (const v of tri.vertices) {
+      positions.push(v.x, v.y, v.z)
+      normals.push(tri.normal.x, tri.normal.y, tri.normal.z)
+    }
+  }
+
+  const out = new THREE.BufferGeometry()
+  out.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3))
+  out.setAttribute('normal', new THREE.Float32BufferAttribute(normals, 3))
+  return out
 }

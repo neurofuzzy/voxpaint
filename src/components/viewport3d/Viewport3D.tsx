@@ -1,6 +1,6 @@
 import { Canvas, useThree } from '@react-three/fiber'
 import { OrbitControls } from '@react-three/drei'
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useRef } from 'react'
 import * as THREE from 'three'
 import type { OrbitControls as OrbitControlsImpl } from 'three-stdlib'
 import { decodeKey } from '@/engine/grid/GridStore'
@@ -9,14 +9,16 @@ import { planeFromFaceHit } from '@/engine/plane/constructionPlane'
 import { useAppStore } from '@/store/useAppStore'
 import { usePlaneLayerScroll } from '@/components/usePlaneLayerScroll'
 import { BoundingBoxFaceSelector } from './BoundingBoxFaceSelector'
+import { Compass } from './Compass'
 import { ConstructionPlaneGizmo } from './ConstructionPlaneGizmo'
 import { ConstructionPlaneVisual } from './ConstructionPlaneVisual'
 import { OptimizedMeshView } from './OptimizedMeshView'
-import type { OptimizedMeshStats } from './OptimizedMeshView'
+import { SceneEnvironment } from './SceneEnvironment'
 import { SceneLighting } from './SceneLighting'
 import { TexturedModelView } from './TexturedModelView'
 import { ViewOptionsOverlay } from './ViewOptionsOverlay'
 import { VoxelFaceHighlight } from './VoxelFaceHighlight'
+import { SettingsPalette } from './SettingsPalette'
 import { VoxelGhostPreview } from './VoxelGhostPreview'
 import { VoxelInstancedMeshes } from './VoxelInstancedMeshes'
 
@@ -32,11 +34,23 @@ const CLICK_DRAG_THRESHOLD_PX = 4
  * one step forward through that same face — see `handleVoxelFaceClick` in planeSlice.ts).
  */
 const ORBIT_HINT = 'Orbit: left-drag to rotate · right-drag: pan · scroll: zoom'
-const VOXEL_HINT = 'Click to set the construction plane on this face'
+
+function voxelHint(axis: string, orientation: number): string {
+  const dir: Record<string, Record<number, string>> = {
+    x: { 1: 'east', '-1': 'west' },
+    y: { 1: 'up', '-1': 'down' },
+    z: { 1: 'south', '-1': 'north' },
+  }
+  return `Click to set the construction plane to this voxel facing ${dir[axis]?.[orientation] ?? ''}`
+}
+const AGAIN_HINT = 'Click again to move the construction plane forward'
 
 function VoxelInteractionHandler({ managerRef }: { managerRef: React.RefObject<InstancingManager | null> }) {
   const { gl, camera } = useThree()
   const handleVoxelFaceClick = useAppStore((s) => s.handleVoxelFaceClick)
+  const objectModeTarget = useAppStore((s) => s.objectModeTarget)
+  const objectModeTargetRef = useRef(objectModeTarget)
+  objectModeTargetRef.current = objectModeTarget
   const setHoverCell = useAppStore((s) => s.setHoverCell)
   const setHoveredFace = useAppStore((s) => s.setHoveredFace)
   const setStatusMessage = useAppStore((s) => s.setStatusMessage)
@@ -87,7 +101,12 @@ function VoxelInteractionHandler({ managerRef }: { managerRef: React.RefObject<I
         setHoveredFace(result ? { cellKey: result.key, axis: result.plane.axis, orientation: result.plane.orientation } : null)
       }
 
-      setStatusMessage(cellKey ? VOXEL_HINT : ORBIT_HINT)
+      const target = objectModeTargetRef.current
+      const again = result && target
+        && result.key === target.cellKey
+        && result.plane.axis === target.axis
+        && result.plane.orientation === target.orientation
+      setStatusMessage(result ? (again ? AGAIN_HINT : voxelHint(result.plane.axis, result.plane.orientation)) : ORBIT_HINT)
     }
 
     const onPointerLeave = () => {
@@ -128,9 +147,7 @@ export function Viewport3D() {
   const managerRef = useRef<InstancingManager | null>(null)
   const orbitControlsRef = useRef<OrbitControlsImpl | null>(null)
   const mode = useAppStore((s) => s.mode)
-  const optimizedMesh = useAppStore((s) => s.optimizedMesh)
   const setStatusMessage = useAppStore((s) => s.setStatusMessage)
-  const [meshStats, setMeshStats] = useState<OptimizedMeshStats | null>(null)
   const containerRef = useRef<HTMLDivElement>(null)
   usePlaneLayerScroll(containerRef)
 
@@ -143,9 +160,6 @@ export function Viewport3D() {
       onPointerEnter={() => setStatusMessage(ORBIT_HINT)}
       onPointerLeave={() => setStatusMessage(null)}
     >
-      {/* flat disables R3F's default ACESFilmicToneMapping — that curve compresses/rolls off
-          brightness at moderate light intensities, which was fighting every lighting change.
-          With it off, on-screen brightness maps linearly and predictably to light intensity. */}
       <Canvas flat camera={{ position: [18, 16, 20], fov: 45 }} gl={{ antialias: true }}>
         <color attach="background" args={['#111114']} />
         <SceneLighting />
@@ -156,18 +170,21 @@ export function Viewport3D() {
           </>
         ) : (
           <>
-            <ConstructionPlaneVisual orbitControlsRef={orbitControlsRef} />
+            <ConstructionPlaneVisual />
             <VoxelInstancedMeshes ref={managerRef} />
-            {optimizedMesh && <OptimizedMeshView onStats={setMeshStats} />}
+            <SceneEnvironment />
+            <OptimizedMeshView />
             <VoxelFaceHighlight />
             <VoxelGhostPreview />
             <ConstructionPlaneGizmo />
             <VoxelInteractionHandler managerRef={managerRef} />
           </>
         )}
-        <OrbitControls ref={orbitControlsRef} makeDefault enableDamping dampingFactor={0.12} minDistance={2} maxDistance={150} />
+          <OrbitControls ref={orbitControlsRef} makeDefault enableDamping dampingFactor={0.12} minDistance={2} maxDistance={150} />
+          <Compass />
       </Canvas>
-      <ViewOptionsOverlay stats={!textureMode && optimizedMesh ? meshStats : null} onResetCamera={() => orbitControlsRef.current?.reset()} />
+      <ViewOptionsOverlay onResetCamera={() => orbitControlsRef.current?.reset()} />
+      <SettingsPalette />
     </div>
   )
 }

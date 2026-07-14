@@ -280,18 +280,22 @@ live chamfer re-validation at the destination, dropping invalid cells with a toa
   is a v2 optimization, not implemented), populating per-instance transforms (`basis.ts`'s
   `cubeInstanceMatrix`/`chamferInstanceMatrix`), base colors, a `cellKey ⇄ instance` reverse lookup,
   and the animated-instance list.
-- **Material/lighting** (deviates from `SPEC.md` §3 — see below): one shared `MeshLambertMaterial`,
-  `side: DoubleSide`, base color pinned to white (`0xffffff`) — three.js multiplies `instanceColor`
-  against `material.color` in the shader regardless of `vertexColors`, so any non-white base color
-  would tint every painted color. (With the proper-rotation instance matrices and mirrored pools above,
-  every visible face is now front-facing and correctly lit; `DoubleSide` is retained defensively — the
-  inward base face is hidden inside the solid anyway.) Blink/pulse animation (`emissiveClassFor` in
-  `engine/palette/palette.ts`)
-  and the hover blink are both driven from plain JS in `tick()`, recoloring just the affected
-  instances via `setColorAt` every frame — not a GPU shader. `SceneLighting.tsx`'s lights live in a
-  rig `<group>` synced to the camera's transform every frame (so the key light stays fixed relative
-  to the view as you orbit) — note this rig must stay a normal child of the scene graph, not
-  reparented onto the camera object itself, or three.js's light-collection pass silently drops it.
+- **Material/lighting — flat instanced view**: One shared `MeshLambertMaterial`, `side: DoubleSide`,
+  base color pinned to white (`0xffffff`) — three.js multiplies `instanceColor` against
+  `material.color` in the shader regardless of `vertexColors`, so any non-white base color would tint
+  every painted color. Only the hover blink is animated (via `setColorAt` per frame). `SceneLighting.tsx`'s
+  lights live in a rig `<group>` synced to the camera's transform every frame (so the key light stays
+  fixed relative to the view as you orbit) — note this rig must stay a normal child of the scene
+  graph, not reparented onto the camera object itself, or three.js's light-collection pass silently
+  drops it.
+- **Material/lighting — optimized-mesh PBR path**: `OptimizedMeshView.tsx` renders the model as **one
+  mesh per (materialClass, colour) pair** — different material classes and different colours are never
+  merged. Each mesh uses a `MeshPhysicalMaterial` with a solid `color` from its palette slot (no
+  `vertexColors`) and PBR params from `materialParamsFor`. Emissive meshes set `material.emissive` +
+  `emissiveIntensity` directly (no shader patch needed, since each mesh is a single colour).
+  `buildOptimizedVoxelGroups()` returns `{groups: ColorGroupGeometry[], rawTriangles, optimizedTriangles}`
+  from the CSG pipeline. **Environment map**: metals and glass need `scene.environment` or they render
+  black; `SceneEnvironment.tsx` installs a PMREM-prefiltered `RoomEnvironment`.
 - **Hover blink**: `InstancingManager.setHoveredCell(key)` pulses the given instance's color
   between ~0.78x and ~1.22x its base brightness (sine wave in `tick()`), restoring the previous
   target's color when hover moves elsewhere.
@@ -311,31 +315,70 @@ live chamfer re-validation at the destination, dropping invalid cells with a toa
   orientation), not flush against a cell face; the drag-snap in `ConstructionPlaneVisual.tsx` mirrors
   that same +0.5 so dragging still lands on whole offsets.
 
-### Mesh optimization and GLTF export
+### Mesh optimization (CSG pipeline), PBR export, and ambient occlusion
 
-`engine/instancing/voxelMeshBuilder.ts` builds the live preview mesh via `buildOptimizedVoxelGeometry`:
-it unions all colored cells (interior cells face-culled if completely surrounded), and welds coplanar
-adjacent quads via the shell pass. **Chamfer optimization fix**: when detecting coplanar edge-adjacent
-prefab triangle pairs (the flat quads on ramps and concave chamfers), `emitChamfer` now re-triangulates
-them through the same `pushQuad` canonical diagonal as plain cubes, so they cancel against neighbors'
-coincident faces. Genuinely triangular/folded faces (sloped sides, hip/folded roofs) are left as-is.
+The optimized-mesh path builds a watertight surface from per-voxel solid geometries, grouped by
+`(materialClass, colorKey)`, and boolean-unions each group via a custom ThreeBSP in
+`engine/csg/ThreeCSG.ts`. This replaces the earlier shell-face-emission + coplanar-weld approach:
 
-**Textured geometry support** (new): `buildTexturedShellGeometry` / `buildTexturedShellGeometryByColor` additively extend the builder with per-vertex box-map UVs via an injected `uvFor` callback (shell faces + per-vertex color, chamfer metadata optional). The coplanar-merge optimizer is intentionally NOT run on textured output (box-map UVs are a pure function of position+face, so leaving faces un-welded keeps UV assignment trivial). Non-textured (model-mode) output is byte-for-byte unchanged; `engine/instancing` has no dependency on `engine/texture`.
+- **Per-voxel geometry emission** (`buildOptimizedVoxelGroups` in `voxelMeshBuilder.ts`): iterates every
+  cell, builds a closed solid mesh (`BoxGeometry(1,1,1)` translated to cell centre for plain cubes;
+  cloned chamfer prefab with the instance matrix for chamfer cells), and buckets them into
+  `VoxelGroup` objects keyed by `materialClass:colorKey`.
+- **CSG union** (`optimizeGroupsByCSG` in `meshOptimizer.ts`): each group's per-voxel BSP trees are
+  binary-tree-unioned. The boolean union naturally discards interior faces between adjacent same-colour
+  voxels and never bridges disconnected voxel components (fixing the old coplanar optimizer's tendency
+  to merge faces from separate voxel groups via shared quantized edge keys).
+- **Post-CSG coplanar face merge** (`mergeCoplanarFaces` in `meshOptimizer.ts`): The CSG output still
+  contains coplanar-adjacent polygon pairs (e.g. the top face of a 2×1 union still has two quads).
+  These are grouped by coplanarity + edge connectivity, merged into boundary loops (outer + holes), and
+  re-triangulated via earcut to reduce triangle count. **Boundary-loop ordering**: loops discovered by
+  edge flood-fill can arrive in arbitrary order (Map iteration); the outer boundary is identified by
+  largest 2D bounding-box extent, and all loops have their 2D winding corrected (`ensureWinding`) to
+  match earcut's expectation (outer CCW, holes CW), since the tangent/bitangent projection can invert
+  winding for some face normals.
+- **Per-color output**: each CSG group returns one mesh with a solid `colorKey` — the consumer creates
+  one `MeshPhysicalMaterial` per group with the palette colour as `color` (no `vertexColors`). Different
+  colours and material classes are never merged.
 
-`engine/export/gltfExport.ts` exports this optimized geometry to binary `.glb` via three's
-`GLTFExporter`. `buildOptimizedVoxelGeometryByColor` groups the shell by `(color, emissiveClass)`
-and exports one named material + mesh per pair (rather than a single vertex-colored blob), so DCC
-tools like Blender import each color under its own material. Emissive/blink/pulse materials get
-`material.emissive` set to a steady glow (static glTF cannot animate, so blink/pulse export as static
-emissive color — their animation is live-preview-only). Materials/objects are named
-`voxel_rrggbb[_emissive|_blink|_pulse]`.
+**Chamfer optimization fix**: when detecting coplanar edge-adjacent prefab triangle pairs (the flat
+quads on ramps and concave chamfers), `emitChamfer` re-triangulates them through the same `pushQuad`
+canonical diagonal as plain cubes, so they cancel against neighbors' coincident faces. Genuinely
+triangular/folded faces are left as-is.
 
-When a texture is present, `exportModelToGlb(model, palette, texture)` uses the box-mapped textured
-geometry (`buildTexturedGeometry` / `buildTexturedGeometryByColor` with per-vertex UVs) and **bakes**
-the overlay blend into a per-(color, emissiveClass) `baseColorTexture` via `bakeOverlayTexture`
-(one small 192×128 RGBA texture per color group). The resulting `.glb` uses standard glTF
-`baseColor × map` so any viewer reproduces the overlay without custom shaders; preview and export
-are identical.
+**Material-aware interior face culling** (texture shell path only): `removeInteriorFaces` handles
+back-to-back coincident faces by material class: (a) same class → drop both; (b) glass↔non-glass →
+drop only the glass face; (c) two different opaque classes → keep both.
+
+**Textured geometry support**: `buildTexturedShellGeometry` / `buildTexturedShellGeometryByColor`
+use the classic face-emission shell pass (per-face triangles with per-vertex box-map UVs via an
+injected `uvFor` callback). The CSG pipeline is NOT used for textured output (box-map UVs are a pure
+function of position+face, so leaving faces un-welded keeps UV assignment trivial).
+
+**Untextured PBR export** (`engine/export/gltfExport.ts`): `buildOptimizedVoxelGeometryByMaterial`
+returns one CSG-optimized `ColorGroupGeometry` per `(materialClass, colorKey)` pair. Each group
+exports as a named `MeshPhysicalMaterial` mesh (`voxel_rrggbb_materialClass`) with a solid `color`
+(no `vertexColors`). Glass meshes get `transmission`/`ior`/`thickness` (three emits
+`KHR_materials_transmission` + `KHR_materials_volume`). **Emissive glow is exported** as
+`material.emissive` + `emissiveIntensity` (no longer per-vertex, since each mesh is a single colour).
+
+**Textured export**: When a texture is present, `exportModelToGlb` uses the box-mapped textured
+geometry and **bakes** the overlay blend into a per-(color, materialClass) `baseColorTexture` via
+`bakeOverlayTexture` (one 192×128 RGBA texture per group). **Glass exclusion**: glass materials use a
+solid `baseColorFactor` instead of a baked texture because `KHR_materials_volume` (with
+`attenuationColor: [1,1,1]`) combined with `baseColorTexture` causes Mac Preview and Blender to fall
+through to white — the glTF spec is valid, but viewer compatibility is broken for this combination.
+For glass, the geometry also drops its `TEXCOORD_0` attribute so no unused UV channel is exported.
+
+**Ambient occlusion** (`engine/ao/`): A renderer-agnostic analytical voxel AO solver bakes per-face AO
+values into a grayscale atlas (same resolution/layout as the paint box-map atlas, 0.25 voxel/texel).
+`computeVoxelAO` performs 6-axis directional sampling with falloff controls; `bakeAOAtlas` rasterizes it
+into the atlas (frontmost voxel per texel, sampling on outer surface plane). In the preview, AO renders
+as a grayscale `map` on each material; box-map UVs are pre-computed but only attached to geometry when
+AO is active (`useEffect` on `ambientOcclusion` toggle), so unused `TEXCOORD_0` never leaks into
+exports. Export is opt-in via `GltfExportOptions { ambientOcclusion?: boolean }`. **Known limitation**:
+AO rides the box-map atlas, so stacked/overhang surfaces sharing a face-column share one AO value
+(frontmost wins) — the same depth ambiguity the paint atlas has.
 
 ---
 
@@ -351,7 +394,7 @@ with `enableMapSet()` since `VoxelModel` uses `Map`):
 | plane | `planeSlice.ts` | `plane`, `objectModeTarget`, plane-setting actions |
 | tool | `toolSlice.ts` | `activeTool`, `activeLayer`, `activePaletteSlot` |
 | selection | `selectionSlice.ts` | `selection`, `clipboard`, `floatContent`/`floatOrigin` (pending move/paste buffer) |
-| view | `viewSlice.ts` | `fullscreen`, `hoverCell`, `hoveredFace`, `chamferHoverValid` (ephemeral, not snapshotted) |
+| view | `viewSlice.ts` | `fullscreen`, `hoverCell`, `hoveredFace`, `chamferHoverValid`, `ambientOcclusion` (ephemeral, not snapshotted) |
 | persistence | `persistenceSlice.ts` | `dirty`, `lastSavedAt`, `lastError` |
 | paintActions | `paintActions.ts` | `paintColorCell`, `paintChamferCell`, `eraseCell` |
 | toolActions | `toolActionsSlice.ts` | flood fill, clone-stamp, copy/cut/delete, float lift/move/transform/bake |
@@ -371,9 +414,9 @@ whole lift→move→rotate→mirror→bake sequence is one undo step. Capped at 
 
 `engine/persistence/`:
 
-- `schema.ts` — `VoxPaintProjectFileV2` (current, `CURRENT_SCHEMA_VERSION = 2`) adds optional `texture?: SerializedTexture` to v1. `VoxPaintProjectFile` now aliases V2. Each texture face is base64-encoded; `faceSize` is validated and falls back to an empty texture on mismatch.
-- `serialize.ts` — `serializeProject(model, palette, meta, texture)` and `deserializeProject` now include/restore the texture. Exports per-face as base64 strings. Existing v1 projects load with an empty texture (backwards-compatible).
-- `migrations.ts` — `MIGRATIONS[1]` (v1 → v2) sets `schemaVersion = 2`; the optional texture just loads empty on old projects.
+- `schema.ts` — `VoxPaintProjectFileV3` (current, `CURRENT_SCHEMA_VERSION = 3`) replaces blink/pulse palette slots with metal/glass. `VoxPaintProjectFile` now aliases V3. Texture is optional (added in v2).
+- `serialize.ts` — `serializeProject(model, palette, meta, texture)` and `deserializeProject` include/restore the palette with material kinds and texture (base64 per face). Existing v1 projects load with defaults.
+- `migrations.ts` — `MIGRATIONS[1]` (v1 → v2) sets `schemaVersion = 2` and adds optional empty texture. `MIGRATIONS[2]` (v2 → v3) reshapes the palette: drops blink/pulse hex values, seeds metal/glass swatches from defaults, and remaps any cell referencing a blink/pulse slot to emissive (index clamped to 0–3) — the nearest surviving "glow" concept. **Open caveat**: this remap is lossy for old projects (blink/pulse animation is lost on import).
 - `autosave.ts` — debounced (800ms, `store/wireAutosave.ts`) `localStorage` read/write, one serialize/deserialize path shared with explicit export/import (`projectFile.ts`'s `downloadProjectFile`/`readProjectFile`) so autosave and file I/O can never diverge.
   `QuotaExceededError` surfaces as a toast (`components/ui/toastBus.ts`) rather than failing
   silently.
@@ -403,7 +446,9 @@ Parallel to the voxel modeler, a second top-level authoring mode applies a 6-sid
 - `worldToTexel(face, x, y, z)` — projects a world vertex onto the face's two in-plane axes (derived from `planeLogicalBasis`), clamped to `[0, FACE_SIZE)`.
 - `boxFaceForCell(chamfer|null, normal)` — resolves a cube's outward normal or a chamfer's authored `planeAxis`/`planeOrientation` to a box face (chamfers project along the axis they were painted in, disambiguating sloped surfaces).
 - `buildBlendAtlas(texture)` — rasterizes all 6 faces into a single `NoColorSpace` RGBA `DataTexture` (3×2 atlas packing), where R=G=B is the overlay blend value (`index/7 * 255`), unpainted = neutral 128. Used by the 3D preview shader.
-- `ATLAS_WIDTH/HEIGHT` and `atlasUVFor` — atlas packing constants and per-face UV lookup.
+- `atlasUVForVertex(normal, x, y, z)` — derives mesh UV from position+normal (affine, works across merged quad groups).
+- `texelCenterToWorld(face, tu, tv, depth)` — exact inverse of `worldToTexel`, converting atlas coordinates back to world space.
+- `ATLAS_WIDTH/HEIGHT`, `FACE_ATLAS_CELL`, and `atlasUVFor` — atlas packing constants and per-face UV lookup (used by both texture overlay and AO atlas baking).
 
 `engine/texture/overlay.ts` defines the overlay blend used by both preview and export:
 - `overlayChannel(base, blend)` — JavaScript blend in sRGB space (neutral 0.5 expressed as 128/255): `blend > 0.5` → lighten, `< 0.5` → darken, `= 0.5` → no-op. Used in export bake.
@@ -449,12 +494,23 @@ See [Persistence](#persistence) below for schema v2 changes (optional texture se
 
 ## Palette
 
-`engine/palette/`: 28 indexed slots (16 base + 4 emissive + 4 blink + 4 pulse,
-`PALETTE_SLOT_COUNTS`). Cells store a `{kind, index}` reference (`PaletteSlotRef`), never a
-resolved hex value, so recoloring a swatch recolors every cell using that slot.
-`resolveSlotColor(palette, slot)` does the lookup (falls back to magenta on a stale/out-of-range
-ref). `emissiveClassFor(kind)` maps `blink`/`pulse` to the animation classes `InstancingManager`
-drives in `tick()` — see [Deviations](#deviations-from-specmd) for the plain `emissive` kind.
+`engine/palette/`: 28 indexed slots (16 base + 4 emissive + 4 metal + 4 glass, `PALETTE_SLOT_COUNTS`).
+Cells store a `{kind, index}` reference (`PaletteSlotRef`), never a resolved hex value, so recoloring a
+swatch recolors every cell using that slot. `resolveSlotColor(palette, slot)` does the lookup (falls
+back to magenta on a stale/out-of-range ref).
+
+The palette's animation-oriented slot kinds `blink` and `pulse` were replaced with material kinds
+`metal` and `glass` (`src/engine/palette/types.ts`). Metal swatches are silver/gold/bronze/copper
+(`#f0f0f0 #ffe17d #c69269 #f1967a`); glass swatches are gray/blue/amber/green. Both new kinds carry
+physical material properties via `materialClassFor(kind): MaterialClass` (`'matte'|'emissive'|'metal'|'glass'`)
+and `materialParamsFor(class): {metalness, roughness, transmission, emissiveIntensity}` in
+`src/engine/palette/palette.ts`. Parameter values: matte {0, 0.6, 0, 0}; emissive {0, 0.5, 0, 1.5};
+metal {1, 0.2, 0, 0}; glass {0, 0.5, 1, 0}.
+
+The flat instanced editing view (`InstancingManager` default, using Lambert material) renders each
+slot as its resolved colour with the hover highlight; it drops the blink/pulse JS animation that was
+used in the old flat preview. Material classes take visual effect only in the optimized-mesh PBR path
+and export (which static glTF cannot animate).
 
 ---
 
@@ -482,24 +538,29 @@ is the source of truth — treat the spec as historical context, not a contract:
   fixing a reported bug where pasting garbled chamfer facings. Open consequence: rotate/mirror of
   chamfer selections doesn't rotate the shapes themselves (kept verbatim); a proper transform would
   require rotating `resolvedTo.rotation`/`planeOrientation` in the instance matrix, not attempted.
-- **§5 GLTF export**: spec calls for a CSG-based pipeline (`three-bvh-csg`, Web Worker). Implemented
-  instead in `engine/export/gltfExport.ts`, which runs on the main thread (grid capped at 64³, and
-  the shell/cull optimization already runs synchronously for the live mesh preview, so a worker is
-  unwarranted). The mesh optimizer—which already unions cells, culls hidden interior faces, and welds
-  coplanar quads—replaces CSG entirely. `buildOptimizedVoxelGeometryByColor(model, palette)` groups
-  the optimized shell by `(color, emissiveClass)` and exports one named material + mesh per pair;
-  emissive/blink/pulse materials get a steady `material.emissive` glow (blink/pulse animation is
-  live-preview-only, static glTF cannot express it). Materials/objects named `voxel_rrggbb[_emissive|_blink|_pulse]`.
-  Export via binary `.glb` and three's `GLTFExporter`. The `three-bvh-csg` dependency was removed.
-- **§3 material/lighting**: spec called for a single custom `ShaderMaterial` (extending
-  `MeshStandardMaterial` via `onBeforeCompile`) with per-instance `instanceEmissiveClass`/
-  `instanceEmissiveColor` attributes, animated by a GPU clock uniform. Implemented instead as a
-  plain `MeshLambertMaterial` with **all** animation (blink/pulse/hover) driven from JS in
-  `InstancingManager.tick()` via `setColorAt` — simpler to reason about and debug, at the cost of
-  recoloring on the CPU every frame for animated cells (fine at current scale). One consequence:
-  the plain `emissive` palette kind (`emissiveClassFor` → `1`) has no actual visual treatment
-  today — only `blink`/`pulse` (classes 2/3) are animated; a real glow would need `material.emissive`
-  wired per-instance, which the current shader-free approach doesn't support.
+- **§5 GLTF export**: spec calls for a CSG-based pipeline (`three-bvh-csg`, Web Worker). Now
+  implemented: `engine/csg/ThreeCSG.ts` provides the BSP boolean-union engine (derived from the classic
+  ThreeCSG, not three-bvh-csg), and `engine/instancing/meshOptimizer.ts` combines it with a post-CSG
+  coplanar-face merge (earcut) for triangle reduction. Runs on the main thread (grid capped at 64³, and
+  the CSG optimization already runs synchronously for the live mesh preview, so a worker is unwarranted).
+  `buildOptimizedVoxelGeometryByMaterial(model, palette)` returns one `ColorGroupGeometry` per
+  `(materialClass, colorKey)` pair; each exports as a named `MeshPhysicalMaterial` mesh with a solid
+  `color` (no `vertexColors`). Glass meshes get `transmission`/`ior`/`thickness`; emissive meshes set
+  `material.emissive`/`emissiveIntensity`. Export via binary `.glb` and three's `GLTFExporter`.
+  The `three-bvh-csg` dependency was never added; the custom ThreeBSP fulfills the spec's intent.
+- **§3 render pipeline — WebGPU spec → three.js reconciliation**: The `gltf-materials-maps.md` and
+  `ambient-occlusion.md` specs were written for a raw WebGPU/WGSL pipeline. VoxPaint is three.js + R3F
+  (WebGL). The intent was realized with stock `MeshPhysicalMaterial` instead of literal WGSL passes:
+  metalness/roughness/transmission/emissive params replace the spec's shader architecture; `RoomEnvironment`
+  provides the mip-chain for glass refraction; the per-vertex emissive glow uses an `onBeforeCompile`
+  shader patch instead of a custom transmission pass. The analytical AO solver (`engine/ao/`) is
+  renderer-agnostic (pure math), baked to a grayscale map in the box-map atlas layout.
+- **Palette material redesign — breaking change**: The animation-oriented `blink` and `pulse` slot kinds
+  were removed and replaced with material kinds `metal` and `glass`. Palette is still 28 slots (16 base +
+  4 emissive + 4 metal + 4 glass) but the material model is now PBR-first. The flat instanced view (`InstancingManager`)
+  no longer animates blink/pulse (only the hover highlight remains); material classes take effect only in
+  the optimized-mesh PBR path and export. Schema migration v2→v3 remaps old blink/pulse cell refs to emissive
+  (lossy for animation).
 - **§1.1 grid size**: spec describes a single hard-enforced 64³ box. Implemented as two tiers —
   `MAX_GRID_EXTENT` (64, unenforced today) and `DEFAULT_GRID_EXTENT` (16, actually enforced) — see
   [Grid bounds](#grid-bounds--two-different-constants) above. No per-project sizing UI exists yet.

@@ -1,4 +1,5 @@
 import type { Axis, CellKey, ChamferCell, Coord, Orientation, VoxelModel } from '@/engine/grid/types'
+import type { GltfExportAnchor } from '@/engine/export/gltfExport'
 import type { PaletteSlotRef, PaletteState } from '@/engine/palette/types'
 import type { ConstructionPlane } from '@/engine/plane/types'
 import type { ProjectMeta } from '@/engine/persistence/schema'
@@ -43,6 +44,7 @@ export type ProjectSlice = {
   meta: ProjectMeta
   setModel: (model: VoxelModel) => void
   setPalette: (palette: PaletteState) => void
+  setProjectName: (name: string) => void
   newProject: () => void
 }
 
@@ -106,20 +108,44 @@ export type ViewSlice = {
   hoveredFace: HoveredFace | null
   /** 3D preview: render the mesh as wireframe (applies to both the instanced and optimized views). */
   wireframe: boolean
-  /** 3D preview: replace the instanced voxels with a single merged, coplanar-optimized shell mesh. */
+  /** 3D preview: apply coplanar-face merge on top of the CSG shell for maximum triangle reduction. */
   optimizedMesh: boolean
+  /** 3D preview: apply baked ambient occlusion (only visible in the optimized-mesh PBR view). */
+  ambientOcclusion: boolean
+  /** 3D preview: intensity of monochromatic noise baked into the AO texture (0–1, default 0 = off). */
+  noiseLevel: number
+  /** 3D preview: intensity of specular noise on metal materials (0–1, default 0 = off). */
+  specularNoiseLevel: number
+  /** 3D preview: roughness level for glass materials (0–1, default 0.3 = slightly frosted). */
+  glassRoughnessLevel: number
+  /** Last-known triangle counts from the optimized-mesh builder for the header stats line. */
+  meshTriangles: { optimized: number; raw: number } | null
+  /** 3D preview: AO strength multiplier applied during bake (1.0–5.0, default 1.0). */
+  aoStrength: number
   /** Dynamic status message shown in the footer's center area. Components set this on hover to
    * show contextual info; cleared on pointer leave. Falls back to the active tool hint when null. */
   statusMessage: string | null
   /** Texture mode: show the 3D model silhouette as a ghosted guide behind the texel grid. */
   onionSkin: boolean
+  /** GLTF export: scale factor as a percentage (1–1000, default 100). */
+  exportScaleFactor: number
+  /** GLTF export: anchor point (center, bottom, back). */
+  exportAnchor: GltfExportAnchor
   setFullscreen: (v: boolean) => void
   setHoverCell: (coord: Coord | null, chamferValid: boolean | null) => void
   setHoveredFace: (face: HoveredFace | null) => void
   setWireframe: (v: boolean) => void
   setOptimizedMesh: (v: boolean) => void
+  setAmbientOcclusion: (v: boolean) => void
+  setNoiseLevel: (v: number) => void
+  setSpecularNoiseLevel: (v: number) => void
+  setGlassRoughnessLevel: (v: number) => void
+  setMeshTriangles: (v: { optimized: number; raw: number } | null) => void
+  setAoStrength: (v: number) => void
   setStatusMessage: (msg: string | null) => void
   setOnionSkin: (v: boolean) => void
+  setExportScaleFactor: (v: number) => void
+  setExportAnchor: (v: GltfExportAnchor) => void
 }
 
 export type PersistenceSlice = {

@@ -9,15 +9,31 @@ function Swatch({ kind, index, hex }: { kind: PaletteSlotKind; index: number; he
   const setActivePaletteSlot = useAppStore((s) => s.setActivePaletteSlot)
   const active = activeSlot.kind === kind && activeSlot.index === index
 
+  let swatchStyle: React.CSSProperties
+  if (kind === 'metal') {
+    swatchStyle = {
+      background: `linear-gradient(180deg, rgba(255,255,255,0.35) 15%, transparent 50%, rgba(0,0,0,0.2) 85%), ${hex}`,
+      backgroundClip: 'padding-box',
+    }
+  } else if (kind === 'glass') {
+    swatchStyle = {
+      background: `linear-gradient(${hex}9a, ${hex}9a), repeating-conic-gradient(#fff 0% 25%, #d4d4d4 0% 50%) 0 0 / 6px 6px`,
+      backgroundClip: 'padding-box',
+    }
+  } else {
+    swatchStyle = { backgroundColor: hex }
+  }
+
   return (
     <button
       aria-label={`${kind} ${index}`}
+      title={`${kind} ${index + 1}`}
       onClick={() => setActivePaletteSlot({ kind, index })}
       className={
         `${SWATCH} rounded-full border-2 transition-transform hover:scale-110 ` +
         (active ? 'scale-125 border-white shadow-lg' : 'border-white/10')
       }
-      style={{ backgroundColor: hex }}
+      style={swatchStyle}
     />
   )
 }
@@ -27,7 +43,7 @@ function Swatch({ kind, index, hex }: { kind: PaletteSlotKind; index: number; he
  * deliberately not its desktop left-edge vertical variant). Scoped to the 2D editor pane, since
  * color-picking only applies there.
  *
- * The special-color row (emissive/blink/pulse) is laid out as spacer + 4 + spacer + 4 + spacer +
+ * The special-material row (emissive/metal/glass) is laid out as spacer + 4 + spacer + 4 + spacer +
  * 4 + spacer — 4 spacer slots + 12 swatches = 16 slots, exactly matching the 16-wide base row
  * above, so both rows share the same total width and center perfectly on top of each other.
  */
@@ -86,12 +102,12 @@ export function FloatingPalette() {
             <Swatch key={index} kind="emissive" index={index} hex={hex} />
           ))}
           <div className={SWATCH} />
-          {palette.blink.map((hex, index) => (
-            <Swatch key={index} kind="blink" index={index} hex={hex} />
+          {palette.metal.map((hex, index) => (
+            <Swatch key={index} kind="metal" index={index} hex={hex} />
           ))}
           <div className={SWATCH} />
-          {palette.pulse.map((hex, index) => (
-            <Swatch key={index} kind="pulse" index={index} hex={hex} />
+          {palette.glass.map((hex, index) => (
+            <Swatch key={index} kind="glass" index={index} hex={hex} />
           ))}
           <div className={SWATCH} />
         </div>

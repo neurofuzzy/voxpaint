@@ -74,6 +74,32 @@ export function useKeyboardShortcuts(hoverCellRef?: React.RefObject<[number, num
         return
       }
 
+      if (e.altKey) {
+        if (key === 'arrowup') {
+          store.setPlaneOffset(store.plane.offset + 1)
+          e.preventDefault()
+          return
+        }
+        if (key === 'arrowdown') {
+          store.setPlaneOffset(store.plane.offset - 1)
+          e.preventDefault()
+          return
+        }
+        if (key === 'arrowleft' || key === 'arrowright') {
+          const cycle: [typeof store.plane.axis, typeof store.plane.orientation][] = [
+            ['x', 1], ['x', -1],
+            ['y', 1], ['y', -1],
+            ['z', 1], ['z', -1],
+          ]
+          const idx = cycle.findIndex(([a, o]) => a === store.plane.axis && o === store.plane.orientation)
+          const off = key === 'arrowright' ? 1 : -1
+          const next = (idx + off + cycle.length) % cycle.length
+          store.setPlaneAxisOrientation(...cycle[next])
+          e.preventDefault()
+          return
+        }
+      }
+
       if ((key === 'delete' || key === 'backspace') && selection) {
         deleteSelection()
         e.preventDefault()

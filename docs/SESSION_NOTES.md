@@ -202,3 +202,74 @@ VoxPaint gained a second top-level authoring mode. The app now has **two modes**
 - Browser verification pending: confirm all 6 face orientations read right-side-up, overlay levels look right across the 8 grays, projection guide aligns with model, exported .glb matches preview in Blender.
 - Perf note: each texel stroke rebuilds blend DataTexture in preview (geometry cached). Fine at current scale; later could update only changed atlas sub-rect.
 - Existing projects load with empty texture (backwards-compatible v1 → v2 migration).
+
+---
+
+## 2026-07-12 — Palette-Based PBR Render Pipeline, Material-Aware Shell Culling, and Analytical Ambient Occlusion
+
+Large multi-part session migrating the renderer and export pipeline from flat Lambert + animation classes to a Palette-Based PBR model with analytical ambient occlusion baking.
+
+### 1. Palette Material Model Refactor (Breaking Change)
+
+**Files**: `src/engine/palette/types.ts`, `src/engine/palette/defaultPalette.ts`, `src/engine/palette/palette.ts`, `src/components/panels/FloatingPalette.tsx`, `src/engine/persistence/schema.ts`, `src/engine/persistence/migrations.ts`.
+
+The palette's animation-oriented slot kinds `blink` and `pulse` were **removed** and replaced with material kinds `metal` and `glass`. Palette remains 28 slots but is now structured: base[16], emissive[4], metal[4], glass[4]. Metal swatches: silver/gold/bronze/copper. Glass: gray/blue/amber/green.
+
+New API: `materialClassFor(kind): MaterialClass` (`'matte'|'emissive'|'metal'|'glass'`) and `materialParamsFor(class): {metalness, roughness, transmission, emissiveIntensity}`. Parameters: matte {0, 0.6, 0, 0}; emissive {0, 0.5, 0, 1.5}; metal {1, 0.2, 0, 0}; glass {0, 0.5, 1, 0}.
+
+The flat instanced editing view (`InstancingManager`) no longer animates blink/pulse — only the hover highlight is animated. Material classes take visual effect only in the optimized-mesh PBR path and export (static glTF cannot animate).
+
+**Persistence**: Schema bumped to v3 (`CURRENT_SCHEMA_VERSION = 3`). Migration `MIGRATIONS[2]` (v2→v3) reshapes the palette (drops blink/pulse hex, seeds metal/glass from defaults) and remaps cell refs from blink/pulse slots to emissive (index 0–3, lossy for animation). **Open caveat**: old projects lose their animation styling on import.
+
+### 2. PBR Rendering — Optimized-Mesh Preview + Export
+
+**Files**: `src/components/viewport3d/OptimizedMeshView.tsx` (new), `src/components/viewport3d/SceneEnvironment.tsx` (new), `src/engine/instancing/voxelMeshBuilder.ts`, `src/engine/export/gltfExport.ts`.
+
+The optimized-mesh preview and glTF export now render the model as **at most FOUR meshes — one per material class** (matte/emissive/metal/glass). Different material classes are never merged. Each class mesh uses one `MeshPhysicalMaterial` with `vertexColors: true` and the class's PBR params; per-vertex colours ride the `color` vertex attribute.
+
+Mesh builder carries `materialClass` on face geometry (not the old numeric emissive class). New functions: `buildOptimizedVoxelGroups()` for preview, `buildOptimizedVoxelGeometryByMaterial()` for export.
+
+**Emissive per-vertex glow**: three's `emissive` is a single uniform, so emissive-class materials use an `onBeforeCompile` patch appending `totalEmissiveRadiance += vColor.rgb * <intensity>` after `#include <emissivemap_fragment>`. **Important gotcha**: three declares `varying vec4 vColor` even for RGB vertex colours, so `.rgb` is required (a bare `vColor` is a vec3+=vec4 type error that silently drops the mesh).
+
+**Environment map**: metals and glass need `scene.environment` or they render black/have nothing to refract. New `SceneEnvironment.tsx` installs a PMREM-prefiltered `RoomEnvironment` (no network fetch, built-in), mounted in `Viewport3D.tsx` only when the optimized mesh is active. `MeshLambertMaterial` (flat view) ignores it.
+
+**glTF export** (`gltfExport.ts`): untextured PBR path exports ≤4 vertex-coloured (`COLOR_0`) meshes named `voxel_<class>`, glass gets `transmission`/`ior`/`thickness` (three emits `KHR_materials_transmission`). **Emissive glow is not exported** — glTF cannot hold per-vertex emissive colour in one material (base colour is correct, but no glow; would need an emissive texture). Textured path unchanged (per-colour baked overlay baseColorTexture). New `GltfExportOptions { ambientOcclusion?: boolean }` param.
+
+### 3. Material-Aware Shell Pass
+
+**File**: `src/engine/instancing/voxelMeshBuilder.ts` (`removeInteriorFaces`).
+
+Back-to-back coincident interior face pairs are culled by material class: (a) same class → drop both (hidden); (b) glass↔non-glass → drop **only the glass face**, keep the solid (so solid shows through transmission without z-fighting); (c) two different opaque classes (e.g. matte↔metal) → keep both (interior, unseen). Covered by `src/engine/instancing/voxelMeshBuilder.test.ts`.
+
+### 4. Analytical Voxel Ambient Occlusion (New `src/engine/ao/`)
+
+**Files**: `src/engine/ao/voxelAO.ts`, `src/engine/ao/bakeAO.ts`, `src/engine/ao/aoConstants.ts`, updated `src/engine/texture/boxMapping.ts`.
+
+- `voxelAO.ts`: Pure `computeVoxelAO(samplePoints, cubes, options): Float32Array` (0=occluded, 1=lit), a renderer-agnostic port of the AO spec's directional analytical solver with all 6 axis cases and per-axis bounding cuts. Unit-tested in `voxelAO.test.ts`. Falloff is deliberately stylized (dimensionally loose), not a physical occlusion integral.
+- `bakeAO.ts`: `bakeAOAtlas(model): {data, width, height}` bakes AO into a grayscale atlas at the same resolution/layout as the paint box-map atlas (`TEXEL_SCALE`, each texel = 0.25 voxel; 3×2 face packing). Per face, keeps the frontmost voxel per texel (same rule as texture projection) and samples AO on that voxel's outer surface plane. Occluders use voxel centres. Tested in `bakeAO.test.ts`.
+- `aoConstants.ts`: Centralizes AO config — `AO_SEARCH_RADIUS`, `AO_EDGE_BIAS`, `AO_INDIRECT_FALLOFF`, `AO_DIRECT_FALLOFF`, `AO_INTENSITY`, `AO_STRENGTH` (final darken amount), `AO_DEFAULT_ENABLED` (false), assembled `AO_OPTIONS`.
+- **Application**: AO is applied as a `MeshPhysicalMaterial.map` (grayscale, `NoColorSpace`) so it **multiplies the base colour** (`baseColour × COLOR_0 × ao`). Preview toggle lives in `viewSlice.ts` (`ambientOcclusion`, default off) with a button in `ViewOptionsOverlay.tsx` (shown only when optimized mesh is on). Export AO is opt-in via the export modal.
+- **Helpers**: New `atlasUVForVertex(normal, x, y, z)` and `texelCenterToWorld(face, tu, tv, depth)` in `boxMapping.ts` for mesh UV ↔ world coord conversions; `FACE_ATLAS_CELL` exported.
+- **Known limitation**: AO rides the box-map atlas, so stacked/overhang surfaces sharing a face-column share one AO value (frontmost wins) — the same depth ambiguity the paint atlas has. The AO algorithm is still being refined; it's off by default in both preview and export. A future depth-correct option would be a 3D occlusion field sampled in-shader.
+
+### 5. Export Options Modal
+
+**File**: `src/components/panels/ExportGltfDialog.tsx` (new).
+
+New Radix `@radix-ui/react-dialog` modal (first dialog in the app). File ▸ "Export GLTF…" (`src/components/panels/FileMenu.tsx`) opens this modal instead of exporting immediately. Currently exposes one option: "Ambient occlusion" (default off). Calls `exportModelToGlb(model, palette, texture, { ambientOcclusion })`.
+
+### 6. WebGPU Spec Reconciliation
+
+The `gltf-materials-maps.md` and `ambient-occlusion.md` specs were written for raw WebGPU/WGSL. VoxPaint is three.js + R3F (WebGL). The intent was realized with stock `MeshPhysicalMaterial` (metalness/roughness/emissive/transmission) rather than literal WGSL passes. The analytical AO solver is renderer-agnostic (pure math), baked to a grayscale atlas in the box-map layout.
+
+### Verification
+
+- tsc clean, oxlint clean, 132 tests pass, `vite build` succeeds.
+- NOT browser-verified (per project rule).
+
+### Open Questions / Known Limitations
+
+1. **Lossy v2→v3 migration**: Blink/pulse cells are remapped to emissive on import; animation is lost. Old projects will need manual re-styling.
+2. **AO box-map depth ambiguity**: Stacked/overhang surfaces sharing a face-column share one AO value (frontmost wins). Same limitation as the paint atlas. AO is off by default and still WIP.
+3. **Emissive glow not exported**: glTF has no way to express per-vertex emissive colour in a single material. Would need an emissive texture as a future optimization.
+4. **Gotcha**: three declares `varying vec4 vColor` even for RGB colours, so emissive-class shader patches must use `.rgb` (bare `vColor` drops the mesh).

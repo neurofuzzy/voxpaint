@@ -17,7 +17,7 @@ const ATLAS_ROWS = 2
 export const ATLAS_WIDTH = ATLAS_COLS * FACE_SIZE
 export const ATLAS_HEIGHT = ATLAS_ROWS * FACE_SIZE
 
-const FACE_ATLAS_CELL: Record<BoxFace, { col: number; row: number }> = {
+export const FACE_ATLAS_CELL: Record<BoxFace, { col: number; row: number }> = {
   px: { col: 0, row: 0 },
   py: { col: 1, row: 0 },
   pz: { col: 2, row: 0 },
@@ -91,6 +91,41 @@ export function atlasUVFor(face: BoxFace, tu: number, tv: number): [number, numb
   const atlasX = col * FACE_SIZE + tu
   const atlasY = row * FACE_SIZE + tv
   return [atlasX / ATLAS_WIDTH, atlasY / ATLAS_HEIGHT]
+}
+
+/**
+ * Atlas UV for a mesh vertex, derived purely from its world position and outward normal (the normal
+ * picks the box face). Because `worldToTexel` and `atlasUVFor` are both affine in-plane, evaluating
+ * this per vertex and letting the rasterizer interpolate reproduces the exact per-texel mapping even
+ * across the large coplanar quads the mesh optimizer welds together.
+ */
+export function atlasUVForVertex(normal: Coord, x: number, y: number, z: number): [number, number] {
+  const face = boxFaceForCell(undefined, normal)
+  const [tu, tv] = worldToTexel(face, x, y, z)
+  return atlasUVFor(face, tu, tv)
+}
+
+/**
+ * Inverse of `worldToTexel` for a texel **centre**: given a box face, integer texel (tu, tv), and the
+ * surface's coordinate along the face axis (`depthCoord`), returns the world-space point on that face.
+ * Reuses the same axis basis + per-face flips as `worldToTexel`, so the round-trip is exact — used by
+ * the AO bake to place a sample point at each atlas texel.
+ */
+export function texelCenterToWorld(face: BoxFace, tu: number, tv: number, depthCoord: number): Coord {
+  const { axis } = BOX_FACE_AXIS[face]
+  const { uDir, vDir } = AXIS_BASIS[axis]
+  const su = (tu + 0.5) / TEXEL_SCALE - HALF_WORLD
+  const sv = (tv + 0.5) / TEXEL_SCALE - HALF_WORLD
+  const du = FLIP_U[face] ? -su : su // = dot(worldPos, uDir)
+  const dv = FLIP_V[face] ? -sv : sv // = dot(worldPos, vDir)
+  const p: Coord = [0, 0, 0]
+  // uDir/vDir are axis-aligned unit vectors: p[k] = d · dir[k] recovers the component (dir[k]² = 1).
+  for (let k = 0; k < 3; k++) {
+    if (uDir[k] !== 0) p[k] = du * uDir[k]
+    if (vDir[k] !== 0) p[k] = dv * vDir[k]
+  }
+  p[axisIndex(axis)] = depthCoord
+  return p
 }
 
 /**

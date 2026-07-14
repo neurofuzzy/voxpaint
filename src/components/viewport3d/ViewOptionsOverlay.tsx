@@ -1,7 +1,6 @@
 import { Boxes, FlipHorizontal, Grid3x3, Video } from 'lucide-react'
 import type { Axis } from '@/engine/grid/types'
 import { useAppStore } from '@/store/useAppStore'
-import type { OptimizedMeshStats } from './OptimizedMeshView'
 
 const BTN_BASE = 'flex h-8 w-8 items-center justify-center rounded-md text-neutral-400 hover:bg-neutral-800 hover:text-neutral-100'
 const BTN_ON = 'bg-violet-500/20 text-violet-300 hover:bg-violet-500/25 hover:text-violet-200'
@@ -33,11 +32,12 @@ function ToggleButton({ on, onClick, label, children, onPointerEnter, onPointerL
 
 /**
  * Frosted overlay pinned to the top-right of the 3D preview. Two clusters, divider-separated:
- * construction-plane controls (cycle axis, flip orientation — offset is driven by shift+wheel / the
- * gizmo) and view toggles (Wireframe, Optimized mesh, with the optimized triangle counts).
+ * construction-plane controls (cycle axis, flip orientation) and view toggles (Wireframe, Optimized mesh).
  * `stopPropagation` keeps clicks/drags off the OrbitControls underneath.
  */
-export function ViewOptionsOverlay({ stats, onResetCamera }: { stats: OptimizedMeshStats | null; onResetCamera: () => void }) {
+export function ViewOptionsOverlay({ onResetCamera }: {
+  onResetCamera: () => void
+}) {
   const plane = useAppStore((s) => s.plane)
   const setPlaneAxisOrientation = useAppStore((s) => s.setPlaneAxisOrientation)
   const wireframe = useAppStore((s) => s.wireframe)
@@ -92,17 +92,11 @@ export function ViewOptionsOverlay({ stats, onResetCamera }: { stats: OptimizedM
         on={optimizedMesh}
         onClick={() => setOptimizedMesh(!optimizedMesh)}
         label="Optimized mesh"
-        onPointerEnter={() => setStatusMessage('Toggle optimized mesh rendering')}
+        onPointerEnter={() => setStatusMessage('Toggle coplanar-face merge on the CSG shell')}
         onPointerLeave={() => setStatusMessage(null)}
       >
         <Boxes size={16} />
       </ToggleButton>
-      {optimizedMesh && stats && (
-        <span className="px-1 font-mono text-[11px] tabular-nums text-neutral-400" title="triangles: optimized vs raw">
-          {stats.optimizedTriangles.toLocaleString()}
-          <span className="text-neutral-600"> / {stats.rawTriangles.toLocaleString()} tris</span>
-        </span>
-      )}
 
       <button
         onClick={onResetCamera}
