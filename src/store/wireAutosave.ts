@@ -9,12 +9,14 @@ export function restoreAutosave(): void {
   try {
     const file = loadAutosave()
     if (!file) return
-    const { model, palette, meta, texture } = deserializeProject(file)
+    const { model, palette, meta, texture, view } = deserializeProject(file)
     useAppStore.getState().setModel(model)
     useAppStore.getState().setPalette(palette)
     useAppStore.getState().setTexture(texture)
     useAppStore.setState((state) => {
       state.meta = meta
+      state.noiseLevel = view.noiseLevel
+      state.aoStrength = view.aoStrength
     })
   } catch (err) {
     console.error('Failed to restore autosave', err)
@@ -24,7 +26,13 @@ export function restoreAutosave(): void {
 const flush = debounce(() => {
   const state = useAppStore.getState()
   try {
-    const file = serializeProject(state.model, state.palette, state.meta, state.texture)
+    const file = serializeProject(
+      state.model,
+      state.palette,
+      state.meta,
+      state.texture,
+      { noiseLevel: state.noiseLevel, aoStrength: state.aoStrength },
+    )
     saveAutosave(file)
     state.markSaved(new Date().toISOString())
   } catch (err) {

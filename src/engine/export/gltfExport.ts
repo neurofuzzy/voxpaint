@@ -37,6 +37,10 @@ import { materialParamsFor } from '@/engine/palette/palette'
 export type GltfExportOptions = {
   /** Bake ambient occlusion into the exported materials (off by default; the AO algorithm is WIP). */
   ambientOcclusion?: boolean
+  /** Intensity of monochromatic noise baked into the AO texture (0–1, default 0 = no noise). */
+  noiseLevel?: number
+  /** AO strength multiplier (1.0–5.0, default 1.0). */
+  aoStrength?: number
 }
 
 const hex6 = (colorKey: number) => colorKey.toString(16).padStart(6, '0')
@@ -113,7 +117,7 @@ export async function exportModelToGlb(
       for (let i = 0; i < groups.length; i++) {
         groups[i].geometry.setAttribute('uv1', new THREE.Float32BufferAttribute(unwrapped.uv1Arrays[i], 2))
       }
-      const baked = bakeAOToAtlas(model, unwrapped.atlas)
+      const baked = bakeAOToAtlas(model, unwrapped.atlas, options.noiseLevel ?? 0, options.aoStrength ?? 1)
       aoTex = aoMapTexture(baked.data, baked.width, baked.height)
       textures.push(aoTex)
     }
@@ -171,7 +175,7 @@ export async function exportModelToGlb(
       for (let i = 0; i < groups.length; i++) {
         groups[i].geometry.setAttribute('uv1', new THREE.Float32BufferAttribute(unwrapped.uv1Arrays[i], 2))
       }
-      const baked = bakeAOToAtlas(model, unwrapped.atlas)
+      const baked = bakeAOToAtlas(model, unwrapped.atlas, options.noiseLevel ?? 0, options.aoStrength ?? 1)
       aoTex = aoMapTexture(baked.data, baked.width, baked.height)
       textures.push(aoTex)
     }

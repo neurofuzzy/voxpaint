@@ -33,6 +33,8 @@ export function OptimizedMeshView({ onStats }: { onStats?: (stats: OptimizedMesh
   const palette = useAppStore((s) => s.palette)
   const wireframe = useAppStore((s) => s.wireframe)
   const ambientOcclusion = useAppStore((s) => s.ambientOcclusion)
+  const noiseLevel = useAppStore((s) => s.noiseLevel)
+  const aoStrength = useAppStore((s) => s.aoStrength)
 
   const built = useMemo(() => {
     return buildOptimizedVoxelGroups(model, palette)
@@ -51,7 +53,7 @@ export function OptimizedMeshView({ onStats }: { onStats?: (stats: OptimizedMesh
       geometries[i].setAttribute('uv1', new THREE.Float32BufferAttribute(result.uv1Arrays[i], 2))
     }
 
-    const ao = bakeAOToAtlas(model, atlas)
+    const ao = bakeAOToAtlas(model, atlas, noiseLevel, aoStrength)
     const tex = new THREE.DataTexture(ao.data, ao.width, ao.height, THREE.RGBAFormat)
     tex.magFilter = THREE.NearestFilter
     tex.minFilter = THREE.NearestFilter
@@ -62,7 +64,7 @@ export function OptimizedMeshView({ onStats }: { onStats?: (stats: OptimizedMesh
     tex.needsUpdate = true
 
     return tex
-  }, [model, geometries, ambientOcclusion])
+  }, [model, geometries, ambientOcclusion, noiseLevel, aoStrength])
   useEffect(() => () => aoTexture?.dispose(), [aoTexture])
 
   // One MeshPhysicalMaterial per colour group. Solid colour (no vertexColors), PBR params per class.

@@ -18,6 +18,7 @@ import { SceneLighting } from './SceneLighting'
 import { TexturedModelView } from './TexturedModelView'
 import { ViewOptionsOverlay } from './ViewOptionsOverlay'
 import { VoxelFaceHighlight } from './VoxelFaceHighlight'
+import { SettingsPalette } from './SettingsPalette'
 import { VoxelGhostPreview } from './VoxelGhostPreview'
 import { VoxelInstancedMeshes } from './VoxelInstancedMeshes'
 
@@ -150,6 +151,7 @@ export function Viewport3D() {
   const setStatusMessage = useAppStore((s) => s.setStatusMessage)
   const [meshStats, setMeshStats] = useState<OptimizedMeshStats | null>(null)
   const containerRef = useRef<HTMLDivElement>(null)
+  const [settingsOpen, setSettingsOpen] = useState(false)
   usePlaneLayerScroll(containerRef)
 
   const textureMode = mode === 'texture'
@@ -186,7 +188,8 @@ export function Viewport3D() {
         )}
         <OrbitControls ref={orbitControlsRef} makeDefault enableDamping dampingFactor={0.12} minDistance={2} maxDistance={150} />
       </Canvas>
-      <ViewOptionsOverlay stats={!textureMode && optimizedMesh ? meshStats : null} onResetCamera={() => orbitControlsRef.current?.reset()} />
+      <ViewOptionsOverlay stats={!textureMode && optimizedMesh ? meshStats : null} onResetCamera={() => orbitControlsRef.current?.reset()} onOpenSettings={() => setSettingsOpen((v) => !v)} />
+      {settingsOpen && <SettingsPalette />}
     </div>
   )
 }

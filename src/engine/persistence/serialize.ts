@@ -4,7 +4,7 @@ import type { PaletteState } from '@/engine/palette/types'
 import type { BoxFace, TextureModel } from '@/engine/texture/types'
 import { BOX_FACES, FACE_SIZE, TEXEL_SCALE } from '@/engine/texture/types'
 import { emptyTextureModel } from '@/engine/texture/TextureStore'
-import { CURRENT_SCHEMA_VERSION, type ProjectMeta, type SerializedTexture, type VoxPaintProjectFile } from './schema'
+import { CURRENT_SCHEMA_VERSION, type ProjectMeta, type SerializedTexture, type ViewSettings, type VoxPaintProjectFile } from './schema'
 
 function u8ToBase64(a: Uint8Array): string {
   let s = ''
@@ -37,7 +37,7 @@ function deserializeTexture(s: SerializedTexture): TextureModel {
   return texture
 }
 
-export function serializeProject(model: VoxelModel, palette: PaletteState, meta: ProjectMeta, texture: TextureModel): VoxPaintProjectFile {
+export function serializeProject(model: VoxelModel, palette: PaletteState, meta: ProjectMeta, texture: TextureModel, view?: ViewSettings): VoxPaintProjectFile {
   const colorCells = Array.from(model.color.entries()).map(([key, cell]) => {
     const [x, y, z] = decodeKey(key)
     return { x, y, z, paletteSlot: cell.paletteSlot }
@@ -52,10 +52,11 @@ export function serializeProject(model: VoxelModel, palette: PaletteState, meta:
     palette,
     model: { bounds: model.bounds, colorCells, chamferCells },
     texture: serializeTexture(texture),
+    view,
   }
 }
 
-export function deserializeProject(file: VoxPaintProjectFile): { model: VoxelModel; palette: PaletteState; meta: ProjectMeta; texture: TextureModel } {
+export function deserializeProject(file: VoxPaintProjectFile): { model: VoxelModel; palette: PaletteState; meta: ProjectMeta; texture: TextureModel; view: ViewSettings } {
   const model = emptyModel()
   const color = new Map(model.color)
   const chamfer = new Map(model.chamfer)
@@ -73,5 +74,6 @@ export function deserializeProject(file: VoxPaintProjectFile): { model: VoxelMod
 
   const built: VoxelModel = { color, chamfer, bounds: file.model.bounds }
   const texture = file.texture ? deserializeTexture(file.texture) : emptyTextureModel()
-  return { model: { ...built, bounds: recomputeBounds(built) }, palette: file.palette, meta: file.meta, texture }
+  const view: ViewSettings = file.view ?? { noiseLevel: 0, aoStrength: 1 }
+  return { model: { ...built, bounds: recomputeBounds(built) }, palette: file.palette, meta: file.meta, texture, view }
 }

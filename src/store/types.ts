@@ -110,6 +110,10 @@ export type ViewSlice = {
   optimizedMesh: boolean
   /** 3D preview: apply baked ambient occlusion (only visible in the optimized-mesh PBR view). */
   ambientOcclusion: boolean
+  /** 3D preview: intensity of monochromatic noise baked into the AO texture (0–1, default 0 = off). */
+  noiseLevel: number
+  /** 3D preview: AO strength multiplier applied during bake (1.0–5.0, default 1.0). */
+  aoStrength: number
   /** Dynamic status message shown in the footer's center area. Components set this on hover to
    * show contextual info; cleared on pointer leave. Falls back to the active tool hint when null. */
   statusMessage: string | null
@@ -121,6 +125,8 @@ export type ViewSlice = {
   setWireframe: (v: boolean) => void
   setOptimizedMesh: (v: boolean) => void
   setAmbientOcclusion: (v: boolean) => void
+  setNoiseLevel: (v: number) => void
+  setAoStrength: (v: number) => void
   setStatusMessage: (msg: string | null) => void
   setOnionSkin: (v: boolean) => void
 }

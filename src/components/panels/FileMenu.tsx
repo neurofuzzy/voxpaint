@@ -18,20 +18,22 @@ export function FileMenu() {
   }
 
   function handleExport() {
-    const { model, palette, meta, texture } = useAppStore.getState()
-    downloadProjectFile(serializeProject(model, palette, meta, texture))
+    const { model, palette, meta, texture, noiseLevel, aoStrength } = useAppStore.getState()
+    downloadProjectFile(serializeProject(model, palette, meta, texture, { noiseLevel, aoStrength }))
     showToast('Project exported.')
   }
 
   async function handleImportFile(file: File) {
     try {
       const parsed = await readProjectFile(file)
-      const { model, palette, meta, texture } = deserializeProject(parsed)
+      const { model, palette, meta, texture, view } = deserializeProject(parsed)
       useAppStore.getState().setModel(model)
       useAppStore.getState().setPalette(palette)
       useAppStore.getState().setTexture(texture)
       useAppStore.setState((s) => {
         s.meta = meta
+        s.noiseLevel = view.noiseLevel
+        s.aoStrength = view.aoStrength
       })
       showToast('Project imported.')
     } catch (err) {

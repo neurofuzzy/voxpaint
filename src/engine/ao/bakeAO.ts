@@ -1,13 +1,24 @@
 import * as THREE from 'three'
 import { decodeKey } from '@/engine/grid/GridStore'
 import type { VoxelModel } from '@/engine/grid/types'
-import { AO_STRENGTH } from './aoConstants'
 import type { UnwrappedAtlas } from './uvUnwrap'
 
 const TEXELS_PER_UNIT = 4
 const PADDING = 1
 const CELL_SIZE = 1 / TEXELS_PER_UNIT // 0.25 world units
 const SEARCH_RADIUS_CELLS = 32 // 8 world units — wide enough for smooth falloff
+
+/**
+ * Deterministic position-based pseudo-random hash producing a value in [0, 1].
+ * Same world-space position always yields the same noise — static surface grain suitable for
+ * simulating dust, dirt, and subtle surface variation baked into the AO texture.
+ */
+function hashNoise(wx: number, wy: number, wz: number): number {
+  let h = wx * 374761393 + wy * 668265263 + wz * 1274126177
+  h = (h ^ (h >> 13)) * 1274126177
+  h = h ^ (h >> 16)
+  return (h & 0x7fffffff) / 0x7fffffff
+}
 
 /**
  * Builds a high-resolution 3D occupancy grid (TEXELS_PER_UNIT cells per world unit).
@@ -84,7 +95,7 @@ function hemisphereDirs(): [number, number, number][] {
  * average across all rays gives the per-texel AO value. Nearby occluding
  * geometry blocks more rays at shorter distances → darker AO with smooth falloff.
  */
-export function bakeAOToAtlas(model: VoxelModel, atlas: UnwrappedAtlas): {
+export function bakeAOToAtlas(model: VoxelModel, atlas: UnwrappedAtlas, noiseLevel = 0, aoStrength = 1): {
   data: Uint8ClampedArray
   width: number
   height: number
@@ -151,8 +162,10 @@ export function bakeAOToAtlas(model: VoxelModel, atlas: UnwrappedAtlas): {
         }
 
         const ao = totalOcclusion / dirs.length
-        const shaded = 1 - AO_STRENGTH * ao
-        const value = Math.round(Math.max(0, Math.min(1, shaded)) * 255)
+        const shaded = 1 - aoStrength * ao
+        const noiseVal = noiseLevel > 0 ? hashNoise(wx, wy, wz) : 0
+        const noised = Math.max(0, Math.min(1, shaded - noiseLevel * noiseVal))
+        const value = Math.round(noised * 255)
 
         const atlasX = rect.atlasX + tx
         const atlasY = rect.atlasY + ty

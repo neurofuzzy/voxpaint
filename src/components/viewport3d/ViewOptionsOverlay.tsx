@@ -1,4 +1,4 @@
-import { Aperture, Boxes, FlipHorizontal, Grid3x3, Video } from 'lucide-react'
+import { Aperture, Boxes, FlipHorizontal, Grid3x3, Settings, Video } from 'lucide-react'
 import type { Axis } from '@/engine/grid/types'
 import { useAppStore } from '@/store/useAppStore'
 import type { OptimizedMeshStats } from './OptimizedMeshView'
@@ -37,7 +37,11 @@ function ToggleButton({ on, onClick, label, children, onPointerEnter, onPointerL
  * gizmo) and view toggles (Wireframe, Optimized mesh, with the optimized triangle counts).
  * `stopPropagation` keeps clicks/drags off the OrbitControls underneath.
  */
-export function ViewOptionsOverlay({ stats, onResetCamera }: { stats: OptimizedMeshStats | null; onResetCamera: () => void }) {
+export function ViewOptionsOverlay({ stats, onResetCamera, onOpenSettings }: {
+  stats: OptimizedMeshStats | null
+  onResetCamera: () => void
+  onOpenSettings: () => void
+}) {
   const plane = useAppStore((s) => s.plane)
   const setPlaneAxisOrientation = useAppStore((s) => s.setPlaneAxisOrientation)
   const wireframe = useAppStore((s) => s.wireframe)
@@ -117,6 +121,17 @@ export function ViewOptionsOverlay({ stats, onResetCamera }: { stats: OptimizedM
           <Aperture size={16} />
         </ToggleButton>
       )}
+
+      <button
+        onClick={onOpenSettings}
+        title="Viewport settings"
+        aria-label="Viewport settings"
+        onPointerEnter={() => setStatusMessage('Open viewport settings')}
+        onPointerLeave={() => setStatusMessage(null)}
+        className={BTN_BASE}
+      >
+        <Settings size={16} />
+      </button>
 
       <button
         onClick={onResetCamera}
