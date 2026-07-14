@@ -6,8 +6,6 @@ import { buildOptimizedVoxelGroups } from '@/engine/instancing/voxelMeshBuilder'
 import { materialParamsFor } from '@/engine/palette/palette'
 import { useAppStore } from '@/store/useAppStore'
 
-export type OptimizedMeshStats = { rawTriangles: number; optimizedTriangles: number }
-
 const wireframeOverlayMaterial = new THREE.MeshBasicMaterial({ color: 0xffffff, wireframe: true })
 
 /**
@@ -28,7 +26,7 @@ const wireframeOverlayMaterial = new THREE.MeshBasicMaterial({ color: 0xffffff, 
  * or the toggle changes. `onStats` surfaces the before/after triangle counts. When wireframe is
  * on, each group also draws a white unlit wireframe overlay.
  */
-export function OptimizedMeshView({ onStats }: { onStats?: (stats: OptimizedMeshStats) => void }) {
+export function OptimizedMeshView() {
   const model = useAppStore((s) => s.model)
   const palette = useAppStore((s) => s.palette)
   const wireframe = useAppStore((s) => s.wireframe)
@@ -38,6 +36,8 @@ export function OptimizedMeshView({ onStats }: { onStats?: (stats: OptimizedMesh
   const specularNoiseLevel = useAppStore((s) => s.specularNoiseLevel)
   const aoStrength = useAppStore((s) => s.aoStrength)
   const glassRoughnessLevel = useAppStore((s) => s.glassRoughnessLevel)
+
+  const setMeshTriangles = useAppStore((s) => s.setMeshTriangles)
 
   const built = useMemo(() => {
     return buildOptimizedVoxelGroups(model, palette, optimizedMesh)
@@ -148,8 +148,8 @@ export function OptimizedMeshView({ onStats }: { onStats?: (stats: OptimizedMesh
   }, [materials, built.groups, aoTexture, specularTexture])
 
   useEffect(() => {
-    onStats?.({ rawTriangles: built.rawTriangles, optimizedTriangles: built.optimizedTriangles })
-  }, [built, onStats])
+    setMeshTriangles({ optimized: built.optimizedTriangles, raw: built.rawTriangles })
+  }, [built, setMeshTriangles])
 
   useEffect(
     () => () => {

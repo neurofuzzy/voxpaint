@@ -1,7 +1,6 @@
 import { Boxes, FlipHorizontal, Grid3x3, Video } from 'lucide-react'
 import type { Axis } from '@/engine/grid/types'
 import { useAppStore } from '@/store/useAppStore'
-import type { OptimizedMeshStats } from './OptimizedMeshView'
 
 const BTN_BASE = 'flex h-8 w-8 items-center justify-center rounded-md text-neutral-400 hover:bg-neutral-800 hover:text-neutral-100'
 const BTN_ON = 'bg-violet-500/20 text-violet-300 hover:bg-violet-500/25 hover:text-violet-200'
@@ -36,8 +35,7 @@ function ToggleButton({ on, onClick, label, children, onPointerEnter, onPointerL
  * construction-plane controls (cycle axis, flip orientation) and view toggles (Wireframe, Optimized mesh).
  * `stopPropagation` keeps clicks/drags off the OrbitControls underneath.
  */
-export function ViewOptionsOverlay({ stats, onResetCamera }: {
-  stats: OptimizedMeshStats | null
+export function ViewOptionsOverlay({ onResetCamera }: {
   onResetCamera: () => void
 }) {
   const plane = useAppStore((s) => s.plane)
@@ -58,13 +56,6 @@ export function ViewOptionsOverlay({ stats, onResetCamera }: {
       onPointerDown={(e) => e.stopPropagation()}
       onPointerMove={(e) => e.stopPropagation()}
     >
-      {stats && (
-        <span className="px-1 font-mono text-[11px] tabular-nums text-neutral-400" title="triangles: optimized vs raw">
-          {stats.optimizedTriangles.toLocaleString()}
-          <span className="text-neutral-600"> / {stats.rawTriangles.toLocaleString()} tris</span>
-        </span>
-      )}
-
       <button
         onClick={cycleAxis}
         title="Construction plane axis (click to cycle)"

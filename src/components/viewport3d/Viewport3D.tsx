@@ -1,6 +1,6 @@
 import { Canvas, useThree } from '@react-three/fiber'
 import { OrbitControls } from '@react-three/drei'
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useRef } from 'react'
 import * as THREE from 'three'
 import type { OrbitControls as OrbitControlsImpl } from 'three-stdlib'
 import { decodeKey } from '@/engine/grid/GridStore'
@@ -13,7 +13,6 @@ import { Compass } from './Compass'
 import { ConstructionPlaneGizmo } from './ConstructionPlaneGizmo'
 import { ConstructionPlaneVisual } from './ConstructionPlaneVisual'
 import { OptimizedMeshView } from './OptimizedMeshView'
-import type { OptimizedMeshStats } from './OptimizedMeshView'
 import { SceneEnvironment } from './SceneEnvironment'
 import { SceneLighting } from './SceneLighting'
 import { TexturedModelView } from './TexturedModelView'
@@ -149,7 +148,6 @@ export function Viewport3D() {
   const orbitControlsRef = useRef<OrbitControlsImpl | null>(null)
   const mode = useAppStore((s) => s.mode)
   const setStatusMessage = useAppStore((s) => s.setStatusMessage)
-  const [meshStats, setMeshStats] = useState<OptimizedMeshStats | null>(null)
   const containerRef = useRef<HTMLDivElement>(null)
   usePlaneLayerScroll(containerRef)
 
@@ -175,7 +173,7 @@ export function Viewport3D() {
             <ConstructionPlaneVisual />
             <VoxelInstancedMeshes ref={managerRef} />
             <SceneEnvironment />
-            <OptimizedMeshView onStats={setMeshStats} />
+            <OptimizedMeshView />
             <VoxelFaceHighlight />
             <VoxelGhostPreview />
             <ConstructionPlaneGizmo />
@@ -185,7 +183,7 @@ export function Viewport3D() {
           <OrbitControls ref={orbitControlsRef} makeDefault enableDamping dampingFactor={0.12} minDistance={2} maxDistance={150} />
           <Compass />
       </Canvas>
-      <ViewOptionsOverlay stats={!textureMode ? meshStats : null} onResetCamera={() => orbitControlsRef.current?.reset()} />
+      <ViewOptionsOverlay onResetCamera={() => orbitControlsRef.current?.reset()} />
       <SettingsPalette />
     </div>
   )
