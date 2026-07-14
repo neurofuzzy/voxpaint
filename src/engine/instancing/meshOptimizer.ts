@@ -68,7 +68,7 @@ function unionAll(bsps: ThreeBSP[]): ThreeBSP | null {
  * and convert the result back to BufferGeometry. Each output entry carries the group's `colorKey`
  * and `materialClass` — the caller applies a solid-colour material (no vertex colors).
  */
-export function optimizeGroupsByCSG(groups: VoxelGroup[]): ColorGroupGeometry[] {
+export function optimizeGroupsByCSG(groups: VoxelGroup[], mergeCoplanar = true): ColorGroupGeometry[] {
   const results: ColorGroupGeometry[] = []
 
   for (const group of groups) {
@@ -81,9 +81,9 @@ export function optimizeGroupsByCSG(groups: VoxelGroup[]): ColorGroupGeometry[] 
 
     const merged = unionAll(bsps)
     if (merged) {
-      const csgGeom = merged.toGeometry()
-      const optimized = mergeCoplanarFaces(toNonIndexed(csgGeom))
-      csgGeom.dispose()
+      const csgGeom = toNonIndexed(merged.toGeometry())
+      const optimized = mergeCoplanar ? mergeCoplanarFaces(csgGeom) : csgGeom
+      if (mergeCoplanar) csgGeom.dispose()
       results.push({
         colorKey: group.colorKey,
         materialClass: group.materialClass,
@@ -93,6 +93,11 @@ export function optimizeGroupsByCSG(groups: VoxelGroup[]): ColorGroupGeometry[] 
   }
 
   return results
+}
+
+/** CSG-unioned shell only — no coplanar-face merge. The default 3D-preview path. */
+export function csgUnionGroups(groups: VoxelGroup[]): ColorGroupGeometry[] {
+  return optimizeGroupsByCSG(groups, false)
 }
 
 // ── Coplanar-face merge (post-CSG triangle reduction) ─────────────────────

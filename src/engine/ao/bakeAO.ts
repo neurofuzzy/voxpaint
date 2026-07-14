@@ -13,7 +13,7 @@ const SEARCH_RADIUS_CELLS = 32 // 8 world units — wide enough for smooth fallo
  * Same world-space position always yields the same noise — static surface grain suitable for
  * simulating dust, dirt, and subtle surface variation baked into the AO texture.
  */
-function hashNoise(wx: number, wy: number, wz: number): number {
+export function hashNoise(wx: number, wy: number, wz: number): number {
   let h = wx * 374761393 + wy * 668265263 + wz * 1274126177
   h = (h ^ (h >> 13)) * 1274126177
   h = h ^ (h >> 16)

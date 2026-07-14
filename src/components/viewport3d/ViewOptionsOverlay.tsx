@@ -62,7 +62,7 @@ export function ViewOptionsOverlay({ stats, onResetCamera, onOpenSettings }: {
       onPointerDown={(e) => e.stopPropagation()}
       onPointerMove={(e) => e.stopPropagation()}
     >
-      {optimizedMesh && stats && (
+      {stats && (
         <span className="px-1 font-mono text-[11px] tabular-nums text-neutral-400" title="triangles: optimized vs raw">
           {stats.optimizedTriangles.toLocaleString()}
           <span className="text-neutral-600"> / {stats.rawTriangles.toLocaleString()} tris</span>
@@ -105,22 +105,20 @@ export function ViewOptionsOverlay({ stats, onResetCamera, onOpenSettings }: {
         on={optimizedMesh}
         onClick={() => setOptimizedMesh(!optimizedMesh)}
         label="Optimized mesh"
-        onPointerEnter={() => setStatusMessage('Toggle optimized mesh rendering')}
+        onPointerEnter={() => setStatusMessage('Toggle coplanar-face merge on the CSG shell')}
         onPointerLeave={() => setStatusMessage(null)}
       >
         <Boxes size={16} />
       </ToggleButton>
-      {optimizedMesh && (
-        <ToggleButton
-          on={ambientOcclusion}
-          onClick={() => setAmbientOcclusion(!ambientOcclusion)}
-          label="Ambient occlusion"
-          onPointerEnter={() => setStatusMessage('Toggle baked ambient occlusion on the optimized mesh')}
-          onPointerLeave={() => setStatusMessage(null)}
-        >
-          <Aperture size={16} />
-        </ToggleButton>
-      )}
+      <ToggleButton
+        on={ambientOcclusion}
+        onClick={() => setAmbientOcclusion(!ambientOcclusion)}
+        label="Ambient occlusion"
+        onPointerEnter={() => setStatusMessage('Toggle baked ambient occlusion')}
+        onPointerLeave={() => setStatusMessage(null)}
+      >
+        <Aperture size={16} />
+      </ToggleButton>
 
       <button
         onClick={onOpenSettings}

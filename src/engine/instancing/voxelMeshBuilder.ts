@@ -255,7 +255,7 @@ export interface OptimizedVoxelGroups {
  * Returns one `ColorGroupGeometry` per (materialClass, colorKey) pair — the consumer creates one
  * solid-colour PBR material per group. No vertex colours are needed.
  */
-export function buildOptimizedVoxelGroups(model: VoxelModel, palette: PaletteState): OptimizedVoxelGroups {
+export function buildOptimizedVoxelGroups(model: VoxelModel, palette: PaletteState, mergeCoplanar?: boolean): OptimizedVoxelGroups {
   const byGroup = new Map<string, VoxelGroup>()
   const color = new THREE.Color()
   const matrix = new THREE.Matrix4()
@@ -291,7 +291,7 @@ export function buildOptimizedVoxelGroups(model: VoxelModel, palette: PaletteSta
     group.geometries.push(geom)
   }
 
-  const groups = optimizeGroupsByCSG(Array.from(byGroup.values()))
+  const groups = optimizeGroupsByCSG(Array.from(byGroup.values()), mergeCoplanar ?? true)
   let optimizedTriangles = 0
   for (const g of groups) optimizedTriangles += triangleCount(g.geometry)
 

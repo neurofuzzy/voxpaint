@@ -106,7 +106,7 @@ export type ViewSlice = {
   hoveredFace: HoveredFace | null
   /** 3D preview: render the mesh as wireframe (applies to both the instanced and optimized views). */
   wireframe: boolean
-  /** 3D preview: replace the instanced voxels with a single merged, coplanar-optimized shell mesh. */
+  /** 3D preview: apply coplanar-face merge on top of the CSG shell for maximum triangle reduction. */
   optimizedMesh: boolean
   /** 3D preview: apply baked ambient occlusion (only visible in the optimized-mesh PBR view). */
   ambientOcclusion: boolean

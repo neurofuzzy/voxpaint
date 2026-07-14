@@ -32,13 +32,14 @@ export function OptimizedMeshView({ onStats }: { onStats?: (stats: OptimizedMesh
   const model = useAppStore((s) => s.model)
   const palette = useAppStore((s) => s.palette)
   const wireframe = useAppStore((s) => s.wireframe)
+  const optimizedMesh = useAppStore((s) => s.optimizedMesh)
   const ambientOcclusion = useAppStore((s) => s.ambientOcclusion)
   const noiseLevel = useAppStore((s) => s.noiseLevel)
   const aoStrength = useAppStore((s) => s.aoStrength)
 
   const built = useMemo(() => {
-    return buildOptimizedVoxelGroups(model, palette)
-  }, [model, palette])
+    return buildOptimizedVoxelGroups(model, palette, optimizedMesh)
+  }, [model, palette, optimizedMesh])
 
   const geometries = useMemo(() => built.groups.map((g) => g.geometry), [built])
 

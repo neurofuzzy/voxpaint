@@ -242,8 +242,6 @@ export class InstancingManager {
   }
 
   tick(elapsedSeconds: number) {
-    // Hover highlight: pulses the hovered instance between slightly darker and slightly lighter
-    // than its own painted color. This is the only per-frame recolor — no palette animation classes.
     if (this.hoverTarget) {
       const { poolId, index } = this.hoverTarget
       const base = this.baseColors[poolId][index]
@@ -257,19 +255,16 @@ export class InstancingManager {
     }
   }
 
-  /** Sets (or clears, on `null`) the cell that should render the hover highlight. Restores the
-   * previously-hovered instance to its resting color first — since `tick()` only touches the
-   * hovered instance, this is the only thing that will ever restore it. */
   setHoveredCell(key: CellKey | null) {
     const resolved = key ? this.cellKeyToInstance.get(key) : undefined
     const next: HoverTarget | null = resolved ? { cellKey: key!, ...resolved } : null
 
     if (this.hoverTarget && (!next || next.poolId !== this.hoverTarget.poolId || next.index !== this.hoverTarget.index)) {
       const { poolId, index } = this.hoverTarget
-      const base = this.baseColors[poolId][index]
-      if (base) {
+      const restore = this.baseColors[poolId][index]
+      if (restore) {
         const mesh = this.meshes[poolId]
-        mesh.setColorAt(index, base)
+        mesh.setColorAt(index, restore)
         if (mesh.instanceColor) mesh.instanceColor.needsUpdate = true
       }
     }

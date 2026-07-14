@@ -147,7 +147,6 @@ export function Viewport3D() {
   const managerRef = useRef<InstancingManager | null>(null)
   const orbitControlsRef = useRef<OrbitControlsImpl | null>(null)
   const mode = useAppStore((s) => s.mode)
-  const optimizedMesh = useAppStore((s) => s.optimizedMesh)
   const setStatusMessage = useAppStore((s) => s.setStatusMessage)
   const [meshStats, setMeshStats] = useState<OptimizedMeshStats | null>(null)
   const containerRef = useRef<HTMLDivElement>(null)
@@ -163,9 +162,6 @@ export function Viewport3D() {
       onPointerEnter={() => setStatusMessage(ORBIT_HINT)}
       onPointerLeave={() => setStatusMessage(null)}
     >
-      {/* flat disables R3F's default ACESFilmicToneMapping — that curve compresses/rolls off
-          brightness at moderate light intensities, which was fighting every lighting change.
-          With it off, on-screen brightness maps linearly and predictably to light intensity. */}
       <Canvas flat camera={{ position: [18, 16, 20], fov: 45 }} gl={{ antialias: true }}>
         <color attach="background" args={['#111114']} />
         <SceneLighting />
@@ -178,8 +174,8 @@ export function Viewport3D() {
           <>
             <ConstructionPlaneVisual />
             <VoxelInstancedMeshes ref={managerRef} />
-            {optimizedMesh && <SceneEnvironment />}
-            {optimizedMesh && <OptimizedMeshView onStats={setMeshStats} />}
+            <SceneEnvironment />
+            <OptimizedMeshView onStats={setMeshStats} />
             <VoxelFaceHighlight />
             <VoxelGhostPreview />
             <ConstructionPlaneGizmo />
@@ -188,7 +184,7 @@ export function Viewport3D() {
         )}
         <OrbitControls ref={orbitControlsRef} makeDefault enableDamping dampingFactor={0.12} minDistance={2} maxDistance={150} />
       </Canvas>
-      <ViewOptionsOverlay stats={!textureMode && optimizedMesh ? meshStats : null} onResetCamera={() => orbitControlsRef.current?.reset()} onOpenSettings={() => setSettingsOpen((v) => !v)} />
+      <ViewOptionsOverlay stats={!textureMode ? meshStats : null} onResetCamera={() => orbitControlsRef.current?.reset()} onOpenSettings={() => setSettingsOpen((v) => !v)} />
       {settingsOpen && <SettingsPalette />}
     </div>
   )
