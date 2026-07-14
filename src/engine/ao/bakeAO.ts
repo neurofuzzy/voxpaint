@@ -40,6 +40,7 @@ function buildOccGrid(model: VoxelModel): {
   const grid = new Uint8Array(gx * gy * gz)
 
   for (const key of model.color.keys()) {
+    if (model.chamfer.has(key)) continue
     const [x, y, z] = decodeKey(key)
     const bx = (x - min[0]) * TEXELS_PER_UNIT
     const by = (y - min[1]) * TEXELS_PER_UNIT
@@ -193,6 +194,7 @@ export function bakeOccupancyField(model: VoxelModel): THREE.Data3DTexture | nul
   const wz = max[2] - min[2] + 1
   const data = new Uint8Array(wx * wy * wz)
   for (const key of model.color.keys()) {
+    if (model.chamfer.has(key)) continue
     const [x, y, z] = decodeKey(key)
     const ix = x - min[0]; const iy = y - min[1]; const iz = z - min[2]
     data[ix + iy * wx + iz * wx * wy] = 255
