@@ -1,4 +1,4 @@
-import { Aperture, Boxes, FlipHorizontal, Grid3x3, Settings, Video } from 'lucide-react'
+import { Boxes, FlipHorizontal, Grid3x3, Video } from 'lucide-react'
 import type { Axis } from '@/engine/grid/types'
 import { useAppStore } from '@/store/useAppStore'
 import type { OptimizedMeshStats } from './OptimizedMeshView'
@@ -33,23 +33,19 @@ function ToggleButton({ on, onClick, label, children, onPointerEnter, onPointerL
 
 /**
  * Frosted overlay pinned to the top-right of the 3D preview. Two clusters, divider-separated:
- * construction-plane controls (cycle axis, flip orientation — offset is driven by shift+wheel / the
- * gizmo) and view toggles (Wireframe, Optimized mesh, with the optimized triangle counts).
+ * construction-plane controls (cycle axis, flip orientation) and view toggles (Wireframe, Optimized mesh).
  * `stopPropagation` keeps clicks/drags off the OrbitControls underneath.
  */
-export function ViewOptionsOverlay({ stats, onResetCamera, onOpenSettings }: {
+export function ViewOptionsOverlay({ stats, onResetCamera }: {
   stats: OptimizedMeshStats | null
   onResetCamera: () => void
-  onOpenSettings: () => void
 }) {
   const plane = useAppStore((s) => s.plane)
   const setPlaneAxisOrientation = useAppStore((s) => s.setPlaneAxisOrientation)
   const wireframe = useAppStore((s) => s.wireframe)
   const optimizedMesh = useAppStore((s) => s.optimizedMesh)
-  const ambientOcclusion = useAppStore((s) => s.ambientOcclusion)
   const setWireframe = useAppStore((s) => s.setWireframe)
   const setOptimizedMesh = useAppStore((s) => s.setOptimizedMesh)
-  const setAmbientOcclusion = useAppStore((s) => s.setAmbientOcclusion)
   const setStatusMessage = useAppStore((s) => s.setStatusMessage)
 
   const cycleAxis = () => setPlaneAxisOrientation(AXES[(AXES.indexOf(plane.axis) + 1) % 3], plane.orientation)
@@ -110,26 +106,6 @@ export function ViewOptionsOverlay({ stats, onResetCamera, onOpenSettings }: {
       >
         <Boxes size={16} />
       </ToggleButton>
-      <ToggleButton
-        on={ambientOcclusion}
-        onClick={() => setAmbientOcclusion(!ambientOcclusion)}
-        label="Ambient occlusion"
-        onPointerEnter={() => setStatusMessage('Toggle baked ambient occlusion')}
-        onPointerLeave={() => setStatusMessage(null)}
-      >
-        <Aperture size={16} />
-      </ToggleButton>
-
-      <button
-        onClick={onOpenSettings}
-        title="Viewport settings"
-        aria-label="Viewport settings"
-        onPointerEnter={() => setStatusMessage('Open viewport settings')}
-        onPointerLeave={() => setStatusMessage(null)}
-        className={BTN_BASE}
-      >
-        <Settings size={16} />
-      </button>
 
       <button
         onClick={onResetCamera}

@@ -44,17 +44,17 @@ export function OptimizedMeshView({ onStats }: { onStats?: (stats: OptimizedMesh
   const geometries = useMemo(() => built.groups.map((g) => g.geometry), [built])
 
   const aoTexture = useMemo(() => {
-    if (!ambientOcclusion) return null
+    if (!ambientOcclusion && noiseLevel <= 0) return null
 
     const result = unwrapGeometries(geometries)
     const atlas = result.atlas
 
-    // Apply uv1 to each geometry
     for (let i = 0; i < geometries.length; i++) {
       geometries[i].setAttribute('uv1', new THREE.Float32BufferAttribute(result.uv1Arrays[i], 2))
     }
 
-    const ao = bakeAOToAtlas(model, atlas, noiseLevel, aoStrength)
+    const effectiveAo = ambientOcclusion ? aoStrength : 1
+    const ao = bakeAOToAtlas(model, atlas, noiseLevel, effectiveAo)
     const tex = new THREE.DataTexture(ao.data, ao.width, ao.height, THREE.RGBAFormat)
     tex.magFilter = THREE.NearestFilter
     tex.minFilter = THREE.NearestFilter
