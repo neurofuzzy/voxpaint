@@ -1,8 +1,8 @@
 ```
 # Auto-generated project map
-# Last updated: 2026-07-13 07:14:32
-# Files: 119
-# Lines of code: ~10143
+# Last updated: 2026-07-14 17:53:28
+# Files: 122
+# Lines of code: ~10894
 ```
 - **/components**
   - **/editor2d**
@@ -58,7 +58,7 @@
       - Function: `TopToolbar`
   - **/panels**
     - [ExportGltfDialog.tsx](../src/components/panels/ExportGltfDialog.tsx)
-      - Function: `ExportGltfDialog` - Export-options modal for the GLTF exporter. Kee...
+      - Function: `ExportGltfDialog`
     - [FileMenu.tsx](../src/components/panels/FileMenu.tsx)
       - Function: `FileMenu`
     - [FloatingPalette.tsx](../src/components/panels/FloatingPalette.tsx)
@@ -91,17 +91,20 @@
       - Variable: `UP`
     - [BoundingBoxFaceSelector.tsx](../src/components/viewport3d/BoundingBoxFaceSelector.tsx)
       - Function: `BoundingBoxFaceSelector` - Texture-mode 3D interaction: an emissive wirefr...
+    - [Compass.tsx](../src/components/viewport3d/Compass.tsx)
+      - Function: `Compass`
     - [ConstructionPlaneGizmo.tsx](../src/components/viewport3d/ConstructionPlaneGizmo.tsx)
       - Function: `ConstructionPlaneGizmo` - Minimal central axis widget — click a cap to se...
     - [ConstructionPlaneVisual.tsx](../src/components/viewport3d/ConstructionPlaneVisual.tsx)
       - Function: `ConstructionPlaneVisual` - Visualizes the active construction plane as a p...
     - [OptimizedMeshView.tsx](../src/components/viewport3d/OptimizedMeshView.tsx)
-      - Type: `OptimizedMeshStats`
       - Function: `OptimizedMeshView` - Renders the whole model as shell-culled, CSG-op...
     - [SceneEnvironment.tsx](../src/components/viewport3d/SceneEnvironment.tsx)
-      - Function: `SceneEnvironment` - Installs a neutral studio image-based lighting ...
+      - Function: `SceneEnvironment`
     - [SceneLighting.tsx](../src/components/viewport3d/SceneLighting.tsx)
       - Function: `SceneLighting` - Lights live in a rig `<group>` synced to the ca...
+    - [SettingsPalette.tsx](../src/components/viewport3d/SettingsPalette.tsx)
+      - Function: `SettingsPalette`
     - [TexturedModelView.tsx](../src/components/viewport3d/TexturedModelView.tsx)
       - Function: `TexturedModelView` - Texture-mode 3D preview: the whole model as one...
     - [ViewOptionsOverlay.tsx](../src/components/viewport3d/ViewOptionsOverlay.tsx)
@@ -129,7 +132,15 @@
       - Variable: `AO_OPTIONS` - The solver options assembled from the tunable c...
     - [bakeAO.test.ts](../src/engine/ao/bakeAO.test.ts)
     - [bakeAO.ts](../src/engine/ao/bakeAO.ts)
-      - Function: `bakeAOAtlas` - Bakes ambient occlusion into an atlas texture a...
+      - Function: `hashNoise` - Deterministic position-based pseudo-random hash...
+      - Function: `specularHash` - Same deterministic hash as `hashNoise` but with...
+      - Function: `makeSpecularNoiseTexture` - Fills an RGBA texture of the given size with sp...
+      - Function: `bakeAOToAtlas` - Bakes ambient occlusion into a uv1-unwrapped at...
+      - Function: `bakeOccupancyField` - Builds a 3D occupancy texture from the model's ...
+    - [uvUnwrap.ts](../src/engine/ao/uvUnwrap.ts)
+      - Interface: `UnwrappedRect`
+      - Interface: `UnwrappedAtlas`
+      - Function: `unwrapGeometries`
     - [voxelAO.test.ts](../src/engine/ao/voxelAO.test.ts)
     - [voxelAO.ts](../src/engine/ao/voxelAO.ts) - Analytical volumetric voxel ambient-occlusion s...
       - Type: `Vec3` - Analytical volumetric voxel ambient-occlusion s...
@@ -204,6 +215,7 @@
       - Interface: `ColorGroupGeometry`
       - Function: `triangleCount` - Triangle count of a (non-indexed or indexed) ge...
       - Function: `optimizeGroupsByCSG` - For each `VoxelGroup`, transform every solid ge...
+      - Function: `csgUnionGroups` - CSG-unioned shell only — no coplanar-face merge...
     - [voxelMeshBuilder.test.ts](../src/engine/instancing/voxelMeshBuilder.test.ts)
     - [voxelMeshBuilder.ts](../src/engine/instancing/voxelMeshBuilder.ts)
       - Type: `VertexUV` - Per-vertex box-map UV generator supplied by the...
@@ -245,14 +257,14 @@
       - Function: `readProjectFile`
     - [schema.ts](../src/engine/persistence/schema.ts)
       - Variable: `CURRENT_SCHEMA_VERSION`
+      - Type: `ViewSettings`
       - Type: `ProjectMeta`
       - Type: `SerializedColorCell`
       - Type: `SerializedChamferCell`
       - Type: `SerializedTexture` - The box-mapped texture, serialized: per-face gr...
       - Type: `VoxPaintProjectFileV1`
       - Type: `VoxPaintProjectFileV2`
-      - Type: `VoxPaintProjectFileV3` - v3: the palette's `blink`/`pulse` groups were r...
-      - Type: `VoxPaintProjectFile`
+      - Type: `VoxPaintProjectFile` - v3: the palette's `blink`/`pulse` groups were r...
     - [serialize.test.ts](../src/engine/persistence/serialize.test.ts)
     - [serialize.ts](../src/engine/persistence/serialize.ts)
       - Function: `serializeProject`

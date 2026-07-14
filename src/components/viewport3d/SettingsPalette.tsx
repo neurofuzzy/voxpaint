@@ -1,3 +1,4 @@
+import { ChevronDown, SlidersHorizontal } from 'lucide-react'
 import { useEffect, useState } from 'react'
 import { useAppStore } from '@/store/useAppStore'
 
@@ -13,14 +14,28 @@ export function SettingsPalette() {
   const glassRoughnessLevel = useAppStore((s) => s.glassRoughnessLevel)
   const setGlassRoughnessLevel = useAppStore((s) => s.setGlassRoughnessLevel)
 
-  // Checkboxes are local state so dragging the slider to 0 never auto-unchecks them.
+  const [minimized, setMinimized] = useState(true)
+
   const [noiseChecked, setNoiseChecked] = useState(noiseLevel > 0)
   const [metalChecked, setMetalChecked] = useState(specularNoiseLevel > 0)
 
-  // Push checkbox to checked when store becomes non-zero externally (e.g. project load).
-  // Never push to unchecked — slider drags legitimately reach 0.
   useEffect(() => { if (noiseLevel > 0) setNoiseChecked(true) }, [noiseLevel])
   useEffect(() => { if (specularNoiseLevel > 0) setMetalChecked(true) }, [specularNoiseLevel])
+
+  if (minimized) {
+    return (
+      <div className="absolute bottom-4 right-3 z-40" onPointerDown={(e) => e.stopPropagation()}>
+        <button
+          onClick={() => setMinimized(false)}
+          title="View settings"
+          className="flex h-8 w-8 items-center justify-center rounded-xl border border-neutral-800
+            bg-neutral-900/80 text-neutral-400 shadow-2xl backdrop-blur-lg hover:text-neutral-200"
+        >
+          <SlidersHorizontal size={16} />
+        </button>
+      </div>
+    )
+  }
 
   return (
     <div
@@ -29,6 +44,16 @@ export function SettingsPalette() {
       onPointerDown={(e) => e.stopPropagation()}
       onPointerMove={(e) => e.stopPropagation()}
     >
+      <div className="flex items-center justify-between">
+        <span className="text-xs font-semibold text-neutral-300 select-none">View Settings</span>
+        <button
+          onClick={() => setMinimized(true)}
+          title="Minimize"
+          className="flex h-5 w-5 items-center justify-center rounded text-neutral-500 hover:text-neutral-200"
+        >
+          <ChevronDown size={14} />
+        </button>
+      </div>
       <div className="flex items-center gap-2">
         <input
           id="ao-toggle"
