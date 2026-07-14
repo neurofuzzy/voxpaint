@@ -34,6 +34,8 @@ import { materialParamsFor } from '@/engine/palette/palette'
  * preview, and the grid is capped at 64³, so a worker isn't warranted.
  */
 
+export type GltfExportAnchor = 'center' | 'bottom' | 'back'
+
 export type GltfExportOptions = {
   /** Bake ambient occlusion into the exported materials (off by default; the AO algorithm is WIP). */
   ambientOcclusion?: boolean
@@ -45,6 +47,10 @@ export type GltfExportOptions = {
   aoStrength?: number
   /** Roughness level for glass materials (0–1, default 0.5 = frosted). */
   glassRoughnessLevel?: number
+  /** Scale factor as a percentage (1–1000, default 100 = no scaling). */
+  scaleFactor?: number
+  /** Anchor point: center (default), bottom of extents, or back of extents. */
+  anchor?: GltfExportAnchor
 }
 
 const hex6 = (colorKey: number) => colorKey.toString(16).padStart(6, '0')
@@ -263,6 +269,18 @@ export async function exportModelToGlb(
       mesh.name = material.name
       root.add(mesh)
       materials.push(material)
+    }
+  }
+
+  const scale = (options.scaleFactor ?? 100) / 100
+  const anchor = options.anchor ?? 'center'
+  if (scale !== 1 || anchor !== 'center') {
+    const box = new THREE.Box3().setFromObject(root)
+    root.scale.setScalar(scale)
+    if (anchor === 'bottom') {
+      root.position.y = -box.min.y * scale
+    } else if (anchor === 'back') {
+      root.position.z = -box.min.z * scale
     }
   }
 
