@@ -1,5 +1,6 @@
 import type { StateCreator } from 'zustand'
 import type { VoxelModel } from '@/engine/grid/types'
+import { beginFreshChamferTracking, endFreshChamferTracking } from './paintActions'
 import type { AppState, HistorySlice } from './types'
 
 type Slice = StateCreator<AppState, [['zustand/immer', never]], [], HistorySlice>
@@ -17,11 +18,13 @@ export const createHistorySlice: Slice = (set, get) => ({
 
   beginStroke: () => {
     strokeBaseline = get().model
+    beginFreshChamferTracking()
   },
 
   commitStroke: () => {
     const baseline = strokeBaseline
     strokeBaseline = null
+    endFreshChamferTracking()
     if (!baseline || baseline === get().model) return // no-op gesture, nothing changed
     set((state) => {
       state.past.push(baseline)
