@@ -9,6 +9,7 @@ import { planeFromFaceHit } from '@/engine/plane/constructionPlane'
 import { useAppStore } from '@/store/useAppStore'
 import { usePlaneLayerScroll } from '@/components/usePlaneLayerScroll'
 import { BoundingBoxFaceSelector } from './BoundingBoxFaceSelector'
+import { Compass } from './Compass'
 import { ConstructionPlaneGizmo } from './ConstructionPlaneGizmo'
 import { ConstructionPlaneVisual } from './ConstructionPlaneVisual'
 import { OptimizedMeshView } from './OptimizedMeshView'
@@ -181,7 +182,8 @@ export function Viewport3D() {
             <VoxelInteractionHandler managerRef={managerRef} />
           </>
         )}
-        <OrbitControls ref={orbitControlsRef} makeDefault enableDamping dampingFactor={0.12} minDistance={2} maxDistance={150} />
+          <OrbitControls ref={orbitControlsRef} makeDefault enableDamping dampingFactor={0.12} minDistance={2} maxDistance={150} />
+          <Compass />
       </Canvas>
       <ViewOptionsOverlay stats={!textureMode ? meshStats : null} onResetCamera={() => orbitControlsRef.current?.reset()} />
       <SettingsPalette />
