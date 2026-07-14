@@ -15,7 +15,7 @@ export function Compass() {
   })
 
   return (
-    <Html fullscreen>
+    <Html fullscreen style={{ pointerEvents: 'none' }}>
       <div className="pointer-events-none absolute left-5 top-5 z-40 select-none">
         <div className="flex h-8 w-8 items-center justify-center rounded-full bg-neutral-800/50 shadow ring-1 ring-white/10 backdrop-blur-sm text-neutral-300">
           <div ref={iconRef} style={{ willChange: 'transform' }}>
