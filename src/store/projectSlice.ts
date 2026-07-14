@@ -23,6 +23,13 @@ export const createProjectSlice: Slice = (set) => ({
 
   setPalette: (palette) => set((state) => { state.palette = palette }),
 
+  setProjectName: (name) =>
+    set((state) => {
+      state.meta.name = name
+      state.meta.modifiedAt = new Date().toISOString()
+      state.dirty = true
+    }),
+
   newProject: () =>
     set((state) => {
       state.model = emptyModel()

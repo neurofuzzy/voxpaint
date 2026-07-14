@@ -3,6 +3,7 @@ import { Package } from 'lucide-react'
 import { useState } from 'react'
 import type { GltfExportAnchor } from '@/engine/export/gltfExport'
 import { downloadGlb, exportModelToGlb } from '@/engine/export/gltfExport'
+import { normalizeProjectFilename } from '@/engine/persistence/projectFile'
 import { useAppStore } from '@/store/useAppStore'
 import { showToast } from '@/components/ui/toastBus'
 
@@ -48,7 +49,7 @@ export function ExportGltfDialog({ open, onOpenChange }: { open: boolean; onOpen
         scaleFactor,
         anchor,
       })
-      downloadGlb(glb, meta.name || 'voxpaint-model')
+      downloadGlb(glb, normalizeProjectFilename(meta.name || 'voxpaint-model'))
       showToast('GLTF exported.')
       onOpenChange(false)
     } catch (err) {

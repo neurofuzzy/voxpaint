@@ -43,6 +43,7 @@ export type ProjectSlice = {
   meta: ProjectMeta
   setModel: (model: VoxelModel) => void
   setPalette: (palette: PaletteState) => void
+  setProjectName: (name: string) => void
   newProject: () => void
 }
 
