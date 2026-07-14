@@ -9,6 +9,21 @@ function Swatch({ kind, index, hex }: { kind: PaletteSlotKind; index: number; he
   const setActivePaletteSlot = useAppStore((s) => s.setActivePaletteSlot)
   const active = activeSlot.kind === kind && activeSlot.index === index
 
+  let swatchStyle: React.CSSProperties
+  if (kind === 'metal') {
+    swatchStyle = {
+      background: `linear-gradient(180deg, rgba(255,255,255,0.35) 15%, transparent 50%, rgba(0,0,0,0.2) 85%), ${hex}`,
+      backgroundClip: 'padding-box',
+    }
+  } else if (kind === 'glass') {
+    swatchStyle = {
+      background: `linear-gradient(${hex}9a, ${hex}9a), repeating-conic-gradient(#fff 0% 25%, #d4d4d4 0% 50%) 0 0 / 6px 6px`,
+      backgroundClip: 'padding-box',
+    }
+  } else {
+    swatchStyle = { backgroundColor: hex }
+  }
+
   return (
     <button
       aria-label={`${kind} ${index}`}
@@ -18,7 +33,7 @@ function Swatch({ kind, index, hex }: { kind: PaletteSlotKind; index: number; he
         `${SWATCH} rounded-full border-2 transition-transform hover:scale-110 ` +
         (active ? 'scale-125 border-white shadow-lg' : 'border-white/10')
       }
-      style={{ backgroundColor: hex }}
+      style={swatchStyle}
     />
   )
 }
