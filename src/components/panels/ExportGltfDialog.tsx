@@ -1,6 +1,6 @@
 import * as Dialog from '@radix-ui/react-dialog'
 import { Package } from 'lucide-react'
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { downloadGlb, exportModelToGlb } from '@/engine/export/gltfExport'
 import { useAppStore } from '@/store/useAppStore'
 import { showToast } from '@/components/ui/toastBus'
@@ -12,8 +12,14 @@ import { showToast } from '@/components/ui/toastBus'
  * on export.
  */
 export function ExportGltfDialog({ open, onOpenChange }: { open: boolean; onOpenChange: (v: boolean) => void }) {
+  const storeAmbientOcclusion = useAppStore((s) => s.ambientOcclusion)
   const [ambientOcclusion, setAmbientOcclusion] = useState(false)
   const [busy, setBusy] = useState(false)
+
+  // When the dialog opens, pick up the current viewport AO toggle as the default.
+  useEffect(() => {
+    if (open) setAmbientOcclusion(storeAmbientOcclusion)
+  }, [open, storeAmbientOcclusion])
 
   async function run() {
     const { model, palette, meta, texture, noiseLevel, aoStrength } = useAppStore.getState()
