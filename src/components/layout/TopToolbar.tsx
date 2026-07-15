@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
+import logoUrl from '@/assets/logo.svg'
 import { FileMenu } from '@/components/panels/FileMenu'
 import { FullscreenToggle } from '@/components/panels/FullscreenToggle'
 import { ModeTabs } from '@/components/panels/ModeTabs'
@@ -52,7 +53,7 @@ function ProjectName() {
   return (
     <button
       onClick={startEdit}
-      className="max-w-48 truncate rounded px-1.5 py-0.5 text-sm text-neutral-400 hover:bg-neutral-800 hover:text-neutral-200"
+      className="max-w-48 truncate rounded px-1.5 py-0.5 text-sm text-blue-400 hover:bg-neutral-800 hover:text-blue-300"
       title="Click to rename project"
     >
       {name}
@@ -63,7 +64,7 @@ function ProjectName() {
 export function TopToolbar() {
   return (
     <div className="flex h-11 items-center gap-3 border-b border-neutral-800 bg-neutral-900 px-2">
-      <span className="px-1 text-sm font-semibold tracking-tight text-neutral-100">VoxPaint</span>
+      <img src={logoUrl} alt="VoxPaint" className="h-5 w-auto" />
       <FileMenu />
       <ModeTabs />
       <ProjectName />
