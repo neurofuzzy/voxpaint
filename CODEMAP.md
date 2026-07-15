@@ -1,8 +1,8 @@
 ```
 # Auto-generated project map
-# Last updated: 2026-07-14 17:53:28
-# Files: 122
-# Lines of code: ~10894
+# Last updated: 2026-07-15 02:56:09
+# Files: 129
+# Lines of code: ~12455
 ```
 - **/components**
   - **/editor2d**
@@ -57,6 +57,8 @@
     - [TopToolbar.tsx](../src/components/layout/TopToolbar.tsx)
       - Function: `TopToolbar`
   - **/panels**
+    - [AnimationPalette.tsx](../src/components/panels/AnimationPalette.tsx)
+      - Function: `AnimationPalette`
     - [ExportGltfDialog.tsx](../src/components/panels/ExportGltfDialog.tsx)
       - Function: `ExportGltfDialog`
     - [FileMenu.tsx](../src/components/panels/FileMenu.tsx)
@@ -85,6 +87,8 @@
     - [ToastRegion.tsx](../src/components/ui/ToastRegion.tsx)
       - Function: `ToastRegion`
   - **/viewport3d**
+    - [AnimatedModelView.tsx](../src/components/viewport3d/AnimatedModelView.tsx)
+      - Function: `AnimatedModelView`
     - [axisVectors.ts](../src/components/viewport3d/axisVectors.ts)
       - Function: `toVector3` - Small Coord -> THREE.Vector3 boundary conversio...
       - Variable: `AXIS_UNIT_VECTOR` - THREE.Vector3 view of planeGeometry.ts's AXIS_U...
@@ -120,6 +124,32 @@
   - [usePlaneLayerScroll.ts](../src/components/usePlaneLayerScroll.ts)
     - Function: `usePlaneLayerScroll` - Shift + mouse wheel steps the construction-plan...
 - **/engine**
+  - **/animation**
+    - [animationGLTF.ts](../src/engine/animation/animationGLTF.ts)
+      - Interface: `AnimNodeInfo`
+      - Function: `buildAnimationClip`
+      - Function: `buildAllAnimationClips`
+    - [animationLayers.ts](../src/engine/animation/animationLayers.ts)
+      - Function: `encodeSliceKey`
+      - Function: `decodeSliceKey`
+      - Function: `sliceKeyFromPlane`
+      - Function: `isActiveAnimation`
+      - Function: `isSlideMode`
+      - Function: `isRotateMode`
+      - Function: `sliceVoxelKeys`
+      - Function: `bboxCenterOfKeys`
+      - Function: `sliceBBoxCenter`
+      - Function: `sliceWorldBasis`
+      - Function: `assignVoxelsToNodes`
+      - Function: `defaultAnimationSettings`
+      - Variable: `SLIDE_AMOUNT_MIN`
+      - Variable: `SLIDE_AMOUNT_MAX`
+    - [types.ts](../src/engine/animation/types.ts)
+      - Type: `AnimationType`
+      - Type: `AnimationSpeed`
+      - Type: `SliceKey`
+      - Type: `SliceAnimSettings`
+      - Type: `AnimLayer`
   - **/ao**
     - [aoConstants.ts](../src/engine/ao/aoConstants.ts)
       - Variable: `AO_SEARCH_RADIUS` - Depth of the directional search projection, in ...
@@ -169,7 +199,8 @@
       - Function: `ThreeCSGFactory`
   - **/export**
     - [gltfExport.ts](../src/engine/export/gltfExport.ts)
-      - Type: `GltfExportOptions` - GLTF export pipeline. Replaces the originally-s...
+      - Type: `GltfExportAnchor` - GLTF export pipeline. Replaces the originally-s...
+      - Type: `GltfExportOptions`
       - Function: `exportModelToGlb` - Build the export scene and serialize it to a bi...
       - Function: `downloadGlb` - Trigger a browser download of a .glb ArrayBuffer.
   - **/grid**
@@ -224,8 +255,12 @@
       - Interface: `OptimizedVoxelGroups`
       - Function: `buildOptimizedVoxelGroups` - Build per-voxel solid geometry grouped by (mate...
       - Function: `buildOptimizedVoxelGeometryByMaterial` - Per-(materialClass, colorKey) optimized geometr...
+      - Interface: `SliceGroupGeometry`
+      - Interface: `SliceGroupResult`
+      - Function: `buildOptimizedVoxelGroupsBySlice` - Build per-voxel solid geometry grouped by (mate...
       - Function: `buildTexturedShellGeometry` - Build the shell-culled mesh with per-vertex box...
       - Function: `buildTexturedShellGeometryByColor` - Per-(color, material class) split of the textur...
+      - Function: `buildTexturedShellGeometryBySliceColor` - Per-(color, material class, animation slice) sp...
   - **/palette**
     - [defaultPalette.ts](../src/engine/palette/defaultPalette.ts)
       - Variable: `DEFAULT_PALETTE` - Slightly desaturated "vintage retro" default pa...
@@ -253,6 +288,7 @@
       - Class: `UnsupportedSchemaVersionError`
       - Function: `migrateToCurrent`
     - [projectFile.ts](../src/engine/persistence/projectFile.ts)
+      - Function: `normalizeProjectFilename`
       - Function: `downloadProjectFile`
       - Function: `readProjectFile`
     - [schema.ts](../src/engine/persistence/schema.ts)
@@ -262,6 +298,8 @@
       - Type: `SerializedColorCell`
       - Type: `SerializedChamferCell`
       - Type: `SerializedTexture` - The box-mapped texture, serialized: per-face gr...
+      - Type: `SerializedAnimLayer`
+      - Type: `SerializedSliceMask` - A slice's animation mask: which of its occupied...
       - Type: `VoxPaintProjectFileV1`
       - Type: `VoxPaintProjectFileV2`
       - Type: `VoxPaintProjectFile` - v3: the palette's `blink`/`pulse` groups were r...
@@ -317,6 +355,7 @@
     - [texturedGeometry.ts](../src/engine/texture/texturedGeometry.ts)
       - Function: `buildTexturedGeometry` - Box-mapped shell geometry for the Texture-mode ...
       - Function: `buildTexturedGeometryByColor` - Box-mapped shell geometry split per (color, emi...
+      - Function: `buildTexturedGeometryBySlice` - Box-mapped shell geometry split per (color, emi...
     - [TextureStore.ts](../src/engine/texture/TextureStore.ts)
       - Function: `texelIndex` - Flat index into a face's texel array for texel ...
       - Function: `withinFace` - True when (u, v) is inside a face's `FACE_SIZE²...
@@ -348,7 +387,8 @@
     - [cloneTool.ts](../src/engine/tools/cloneTool.ts)
       - Variable: `cloneTool`
     - [editToolFactory.ts](../src/engine/tools/editToolFactory.ts)
-      - Function: `makeEditTool` - Shared shell for paint/erase: both follow the s...
+      - Type: `EditToolHooks` - Shared shell for paint/erase: both follow the s...
+      - Function: `makeEditTool` - `hooks` lets a caller redirect which undo stack...
     - [eraseTool.ts](../src/engine/tools/eraseTool.ts)
       - Variable: `eraseTool`
     - [eyedropperTool.ts](../src/engine/tools/eyedropperTool.ts)
@@ -359,9 +399,13 @@
       - Function: `floodFillRegion` - 4-connected flood fill over the active plane's ...
     - [index.ts](../src/engine/tools/index.ts)
       - Variable: `toolMap`
+      - Variable: `animateToolMap` - Animate-mode tool dispatch: only paint/erase ha...
     - [lineUtils.ts](../src/engine/tools/lineUtils.ts) - Bresenham line, inclusive of both endpoints.
       - Function: `bresenhamLine` - Bresenham line, inclusive of both endpoints.
       - Function: `snapToOrtho` - Snaps (u1,v1) so the vector from (u0,v0) lands ...
+    - [maskTools.ts](../src/engine/tools/maskTools.ts)
+      - Variable: `maskPaintTool` - Animate-mode analog of `paintTool`/`eraseTool`:...
+      - Variable: `maskEraseTool`
     - [moveTool.ts](../src/engine/tools/moveTool.ts)
       - Variable: `moveTool` - Move directly translates voxels — no selection,...
     - [paintTool.ts](../src/engine/tools/paintTool.ts)
@@ -385,6 +429,8 @@
       - Type: `ToolDragState`
       - Interface: `ToolHandler`
 - **/store**
+  - [animationSlice.ts](../src/store/animationSlice.ts)
+    - Function: `createAnimationSlice`
   - [historySlice.ts](../src/store/historySlice.ts)
     - Function: `createHistorySlice`
   - [modeSlice.ts](../src/store/modeSlice.ts)
@@ -392,6 +438,8 @@
   - [moveActions.ts](../src/store/moveActions.ts)
     - Function: `createMoveActionsSlice` - The Move tool's engine: a **direct, live transl...
   - [paintActions.ts](../src/store/paintActions.ts)
+    - Function: `beginFreshChamferTracking`
+    - Function: `endFreshChamferTracking`
     - Function: `createPaintActionsSlice`
   - [persistenceSlice.ts](../src/store/persistenceSlice.ts)
     - Function: `createPersistenceSlice`
@@ -431,6 +479,8 @@
     - Type: `EditorMode` - The top-level authoring mode. `model` = voxel m...
     - Type: `ModeSlice`
     - Type: `TextureSlice` - Texture authoring state — a fully parallel stac...
+    - Type: `AnimationSlice`
+    - Type: `AnimSnapshot` - One Animate-mode undo/redo snapshot: animation ...
     - Type: `AppState`
   - [useAppStore.ts](../src/store/useAppStore.ts)
     - Variable: `useAppStore`

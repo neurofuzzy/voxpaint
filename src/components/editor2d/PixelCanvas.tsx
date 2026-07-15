@@ -4,6 +4,7 @@ import { gridCoordFromPixel } from '@/engine/plane/constructionPlane'
 import { toDisplayU, toDisplayV } from '@/engine/plane/planeDisplay'
 import { resolveSlotColor, shadeColor } from '@/engine/palette/palette'
 import { forEachSelectedCell, traceSelectionOutline } from '@/engine/tools/selectionMask'
+import { encodeSliceKey } from '@/engine/animation/animationLayers'
 import { useAppStore } from '@/store/useAppStore'
 import { worldToScreen } from './cameraTransform'
 import { BASE_CELL_PX, HALF } from './canvasConstants'
@@ -82,6 +83,8 @@ export function PixelCanvas() {
   const selection = useAppStore((s) => s.selection)
   const floatContent = useAppStore((s) => s.floatContent)
   const floatOrigin = useAppStore((s) => s.floatOrigin)
+  const mode = useAppStore((s) => s.mode)
+  const sliceMasks = useAppStore((s) => s.sliceMasks)
 
   const { onPointerDown, onPointerMove, onPointerUp, onPointerLeave, linePreview, selectPreview, hoverCellRef, size, pan, zoom } =
     usePixelCanvasTools(canvasRef)
@@ -208,6 +211,28 @@ export function PixelCanvas() {
       }
     }
 
+    // Animate-mode mask overlay — violet tint over cells painted into the current slice's
+    // animation mask (matches AnimationPalette's accent color). No overlay at all when the slice
+    // has no mask painted, since that means "whole slice animates" (nothing to highlight).
+    if (mode === 'animate') {
+      const currentMask = sliceMasks.get(encodeSliceKey(plane.axis, plane.offset))
+      if (currentMask && currentMask.size > 0) {
+        for (let u = -HALF; u < HALF; u++) {
+          for (let v = -HALF; v < HALF; v++) {
+            const coord = gridCoordFromPixel(plane, u, v)
+            const key = encodeKey(...coord)
+            if (!currentMask.has(key)) continue
+            const [sx, sy] = worldToScreen(toDisplayU(plane, u), toDisplayV(plane, v), size, pan, zoom)
+            ctx.fillStyle = 'rgba(167, 139, 250, 0.35)'
+            ctx.fillRect(sx, sy, cellPx, cellPx)
+            ctx.strokeStyle = 'rgba(167, 139, 250, 0.9)'
+            ctx.lineWidth = 1
+            ctx.strokeRect(sx + 0.5, sy + 0.5, cellPx - 1, cellPx - 1)
+          }
+        }
+      }
+    }
+
     // paint-tool shift-line preview
     if (linePreview) {
       const [ax, ay] = worldToScreen(
@@ -284,7 +309,7 @@ export function PixelCanvas() {
       }
       ctx.setLineDash([])
     }
-  }, [model, palette, plane, linePreview, selection, selectPreview, floatContent, floatOrigin, antPhase, size, pan, zoom])
+  }, [model, palette, plane, linePreview, selection, selectPreview, floatContent, floatOrigin, antPhase, size, pan, zoom, mode, sliceMasks])
 
   useEffect(() => {
     draw()

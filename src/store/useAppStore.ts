@@ -1,6 +1,7 @@
 import { enableMapSet } from 'immer'
 import { create } from 'zustand'
 import { immer } from 'zustand/middleware/immer'
+import { createAnimationSlice } from './animationSlice'
 import { createHistorySlice } from './historySlice'
 import { createModeSlice } from './modeSlice'
 import { createPaintActionsSlice } from './paintActions'
@@ -31,5 +32,6 @@ export const useAppStore = create<AppState>()(
     ...createMoveActionsSlice(...a),
     ...createModeSlice(...a),
     ...createTextureSlice(...a),
+    ...createAnimationSlice(...a),
   })),
 )

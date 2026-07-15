@@ -14,10 +14,20 @@ const TOOLS: Array<{ id: ToolId; label: string; icon: typeof Brush; hint: string
   { id: 'move', label: 'Move / Transform', icon: Move, hint: 'drag to shift the current slice · r/h/v: rotate/mirror' },
 ]
 
+/** Animate mode only supports masking which voxels of the current slice animate — paint/erase
+ * repurposed to mark/unmark cells instead of color, everything else hidden. */
+const ANIMATE_TOOLS: Array<{ id: ToolId; label: string; icon: typeof Brush; hint: string }> = [
+  { id: 'paint', label: 'Paint Mask', icon: Brush, hint: 'click or drag to mark voxels to animate · unpainted = whole slice animates' },
+  { id: 'erase', label: 'Erase Mask', icon: Eraser, hint: 'click or drag to unmark voxels · right-click: quick erase' },
+]
+
 export function ToolPalette() {
   const activeTool = useAppStore((s) => s.activeTool)
   const setActiveTool = useAppStore((s) => s.setActiveTool)
   const setStatusMessage = useAppStore((s) => s.setStatusMessage)
+  const mode = useAppStore((s) => s.mode)
+
+  const tools = mode === 'animate' ? ANIMATE_TOOLS : TOOLS
 
   return (
     <Tooltip.Provider delayDuration={300}>
@@ -27,7 +37,7 @@ export function ToolPalette() {
         onValueChange={(v) => v && setActiveTool(v as ToolId)}
         className="flex flex-col gap-1 p-2"
       >
-        {TOOLS.map(({ id, label, icon: Icon, hint }) => (
+        {tools.map(({ id, label, icon: Icon, hint }) => (
           <Tooltip.Root key={id}>
             <Tooltip.Trigger asChild>
               <ToggleGroup.Item

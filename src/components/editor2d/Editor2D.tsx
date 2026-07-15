@@ -20,6 +20,11 @@ export function Editor2D() {
             <TextureCanvas />
             <TextureOverlay />
           </>
+        ) : mode === 'animate' ? (
+          <>
+            <PixelCanvas />
+            <PlaneControlsOverlay />
+          </>
         ) : (
           <>
             <PixelCanvas />

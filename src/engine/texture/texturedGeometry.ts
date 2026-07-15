@@ -1,8 +1,9 @@
 import type * as THREE from 'three'
-import type { VoxelModel } from '@/engine/grid/types'
+import type { CellKey, VoxelModel } from '@/engine/grid/types'
 import type { PaletteState } from '@/engine/palette/types'
-import type { ColorGroupGeometry, VertexUV } from '@/engine/instancing/voxelMeshBuilder'
-import { buildTexturedShellGeometry, buildTexturedShellGeometryByColor } from '@/engine/instancing/voxelMeshBuilder'
+import type { SliceKey } from '@/engine/animation/types'
+import type { ColorGroupGeometry, SliceGroupGeometry, VertexUV } from '@/engine/instancing/voxelMeshBuilder'
+import { buildTexturedShellGeometry, buildTexturedShellGeometryByColor, buildTexturedShellGeometryBySliceColor } from '@/engine/instancing/voxelMeshBuilder'
 import { atlasUVFor, boxFaceForCell, worldToTexel } from './boxMapping'
 
 /**
@@ -24,4 +25,13 @@ export function buildTexturedGeometry(model: VoxelModel, palette: PaletteState):
 /** Box-mapped shell geometry split per (color, emissive class) for GLTF export. */
 export function buildTexturedGeometryByColor(model: VoxelModel, palette: PaletteState): ColorGroupGeometry[] {
   return buildTexturedShellGeometryByColor(model, palette, uvFor)
+}
+
+/** Box-mapped shell geometry split per (color, emissive class, animation slice) for animated GLTF export. */
+export function buildTexturedGeometryBySlice(
+  model: VoxelModel,
+  palette: PaletteState,
+  nodeAssignment: Map<CellKey, SliceKey>,
+): SliceGroupGeometry[] {
+  return buildTexturedShellGeometryBySliceColor(model, palette, uvFor, nodeAssignment)
 }

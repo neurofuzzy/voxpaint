@@ -1,6 +1,6 @@
 import * as THREE from 'three'
 import { decodeKey } from '@/engine/grid/GridStore'
-import type { VoxelModel } from '@/engine/grid/types'
+import type { CellKey, VoxelModel } from '@/engine/grid/types'
 import type { UnwrappedAtlas } from './uvUnwrap'
 
 const TEXELS_PER_UNIT = 4
@@ -85,8 +85,12 @@ export function makeSpecularNoiseTexture(
 /**
  * Builds a high-resolution 3D occupancy grid (TEXELS_PER_UNIT cells per world unit).
  * Each occupied voxel fills a TEXELS_PER_UNIT³ block.
+ *
+ * `excludeKeys`, when given, omits those cells from the occupancy grid entirely — used to keep
+ * animated-slice voxels from acting as AO occluders for the rest of the model, since they won't
+ * be in their rest-pose position once the exported animation plays.
  */
-function buildOccGrid(model: VoxelModel): {
+function buildOccGrid(model: VoxelModel, excludeKeys?: Set<CellKey>): {
   grid: Uint8Array
   gx: number; gy: number; gz: number
   min: [number, number, number]
@@ -103,6 +107,7 @@ function buildOccGrid(model: VoxelModel): {
 
   for (const key of model.color.keys()) {
     if (model.chamfer.has(key)) continue
+    if (excludeKeys?.has(key)) continue
     const [x, y, z] = decodeKey(key)
     const bx = (x - min[0]) * TEXELS_PER_UNIT
     const by = (y - min[1]) * TEXELS_PER_UNIT
@@ -158,7 +163,13 @@ function hemisphereDirs(): [number, number, number][] {
  * average across all rays gives the per-texel AO value. Nearby occluding
  * geometry blocks more rays at shorter distances → darker AO with smooth falloff.
  */
-export function bakeAOToAtlas(model: VoxelModel, atlas: UnwrappedAtlas, noiseLevel = 0, aoStrength = 1): {
+export function bakeAOToAtlas(
+  model: VoxelModel,
+  atlas: UnwrappedAtlas,
+  noiseLevel = 0,
+  aoStrength = 1,
+  excludeKeys?: Set<CellKey>,
+): {
   data: Uint8ClampedArray
   width: number
   height: number
@@ -167,7 +178,7 @@ export function bakeAOToAtlas(model: VoxelModel, atlas: UnwrappedAtlas, noiseLev
   const data = new Uint8ClampedArray(size * size * 4)
   data.fill(255)
 
-  const occ = buildOccGrid(model)
+  const occ = buildOccGrid(model, excludeKeys)
   if (!occ) return { data, width: size, height: size }
 
   const { grid, gx, gy, gz, min: occMin } = occ

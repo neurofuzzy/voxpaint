@@ -1,9 +1,10 @@
 import * as THREE from 'three'
 import { decodeKey } from '@/engine/grid/GridStore'
-import type { ChamferCell, Coord, VoxelModel } from '@/engine/grid/types'
+import type { CellKey, ChamferCell, Coord, VoxelModel } from '@/engine/grid/types'
 import { concaveCornerGeometry, convexCornerGeometry, mirrorVGeometry, rampGeometry } from '@/engine/chamfer/chamferGeometry'
 import { materialClassFor, resolveSlotColor, type MaterialClass } from '@/engine/palette/palette'
 import type { PaletteState } from '@/engine/palette/types'
+import type { SliceKey } from '@/engine/animation/types'
 import { chamferBasisIsReflected, chamferInstanceMatrix } from './basis'
 import { optimizeGroupsByCSG, triangleCount, type VoxelGroup } from './meshOptimizer'
 
@@ -40,6 +41,9 @@ interface Face {
   /** The source chamfer cell when this face came from a resolved chamfer prefab, else undefined.
    * Only the box-map UV path reads it (to project a chamfer's faces along its authored axis). */
   chamfer?: ChamferCell
+  /** The voxel cell this face was emitted from — tagged in `buildShellFaces`, read by the
+   * animation-aware shell cull (`removeInteriorFaces`) and by-slice grouping. */
+  cellKey?: CellKey
 }
 
 /**
@@ -170,8 +174,12 @@ function emitChamfer(faces: Face[], base: THREE.BufferGeometry, matrix: THREE.Ma
  * - **Two different opaque classes** (e.g. matte↔metal): both kept — the interface is inside the solid
  *   model, never seen, so there's nothing to z-fight and different classes live in different meshes.
  * Boundary faces (against empty space) and non-coincident faces are always kept.
+ *
+ * When `nodeAssignment` is given (animated export), a pair spanning two *different* animation nodes
+ * is never cancelled even if otherwise eligible — those cells will move apart independently, so the
+ * face between them is a real (if currently coincident) surface, not a hidden interior one.
  */
-export function removeInteriorFaces(faces: Face[]): Face[] {
+export function removeInteriorFaces(faces: Face[], nodeAssignment?: Map<CellKey, SliceKey>): Face[] {
   const byTri = new Map<string, number[]>()
   faces.forEach((f, i) => {
     const key = [qkey(f.a), qkey(f.b), qkey(f.c)].sort().join('|')
@@ -180,11 +188,14 @@ export function removeInteriorFaces(faces: Face[]): Face[] {
     else byTri.set(key, [i])
   })
 
+  const sliceOf = (f: Face) => nodeAssignment?.get(f.cellKey!) ?? ''
+
   const removed = new Set<number>()
   for (const idxs of byTri.values()) {
     if (idxs.length !== 2) continue
     const [i, j] = idxs
     if (faces[i].normal.dot(faces[j].normal) >= -0.9) continue // not back-to-back
+    if (nodeAssignment && sliceOf(faces[i]) !== sliceOf(faces[j])) continue // different animation nodes
 
     if (faces[i].materialClass === faces[j].materialClass) {
       removed.add(i) // same material → both sides hidden
@@ -205,7 +216,11 @@ export function removeInteriorFaces(faces: Face[]): Face[] {
  * between differently-coloured cells must still cancel — so grouping by colour happens afterward.
  * Returns the surviving faces plus the pre-shell triangle total (for the overlay's raw stat).
  */
-function buildShellFaces(model: VoxelModel, palette: PaletteState): { faces: Face[]; rawTriangles: number } {
+function buildShellFaces(
+  model: VoxelModel,
+  palette: PaletteState,
+  nodeAssignment?: Map<CellKey, SliceKey>,
+): { faces: Face[]; rawTriangles: number } {
   const faces: Face[] = []
   const matrix = new THREE.Matrix4()
   const color = new THREE.Color()
@@ -216,20 +231,21 @@ function buildShellFaces(model: VoxelModel, palette: PaletteState): { faces: Fac
     const mat: Mat = { colorKey: color.set(resolveSlotColor(palette, slot)).getHex(), materialClass: materialClassFor(slot.kind) }
     const chamfer = model.chamfer.get(key)
 
+    const start = faces.length
     if (chamfer?.resolvedTo) {
       const variant = chamferBasisIsReflected(chamfer.planeAxis, chamfer.planeOrientation) ? 'M' : ''
       const base = CHAMFER_BASE[`${chamfer.resolvedTo.shapeKind}${variant}`]
       chamferInstanceMatrix(coord, chamfer.planeAxis, chamfer.planeOrientation, chamfer.resolvedTo.rotation, matrix)
-      const start = faces.length
       emitChamfer(faces, base, matrix, mat)
       for (let i = start; i < faces.length; i++) faces[i].chamfer = chamfer
     } else {
       emitCube(faces, coord, mat)
     }
+    for (let i = start; i < faces.length; i++) faces[i].cellKey = key
   }
 
   const rawTriangles = faces.length
-  return { faces: removeInteriorFaces(faces), rawTriangles }
+  return { faces: removeInteriorFaces(faces, nodeAssignment), rawTriangles }
 }
 
 export interface ColorGroupGeometry {
@@ -303,6 +319,74 @@ export function buildOptimizedVoxelGeometryByMaterial(model: VoxelModel, palette
   return buildOptimizedVoxelGroups(model, palette).groups
 }
 
+export interface SliceGroupGeometry extends ColorGroupGeometry {
+  sliceKey: SliceKey
+}
+
+export interface SliceGroupResult {
+  groups: SliceGroupGeometry[]
+  rawTriangles: number
+  optimizedTriangles: number
+}
+
+/**
+ * Build per-voxel solid geometry grouped by (materialClass, colorKey, sliceKey), then CSG-union
+ * each group. This splits voxels into separate meshes per animation node so each animated slice
+ * gets its own GLTF node. Voxels assigned to the remainder (sliceKey = "") live in the root group.
+ *
+ * `nodeAssignment` maps each CellKey to the SliceKey of the animation node that owns it.
+ * Voxels not in the map are treated as remainder.
+ */
+export function buildOptimizedVoxelGroupsBySlice(
+  model: VoxelModel,
+  palette: PaletteState,
+  nodeAssignment: Map<CellKey, SliceKey>,
+  mergeCoplanar?: boolean,
+): SliceGroupResult {
+  const byGroup = new Map<string, VoxelGroup & { sliceKey: SliceKey }>()
+  const color = new THREE.Color()
+  const matrix = new THREE.Matrix4()
+  let rawTriangles = 0
+
+  for (const key of model.color.keys()) {
+    const coord = decodeKey(key)
+    const slot = model.color.get(key)!.paletteSlot
+    const materialClass = materialClassFor(slot.kind)
+    const colorKey = color.set(resolveSlotColor(palette, slot)).getHex()
+    const chamfer = model.chamfer.get(key)
+
+    const sliceKey = nodeAssignment.get(key) ?? ''
+
+    const groupKey = `${materialClass}:${colorKey}:${sliceKey}`
+    let group = byGroup.get(groupKey)
+    if (!group) {
+      group = { colorKey, materialClass, geometries: [], sliceKey }
+      byGroup.set(groupKey, group)
+    }
+
+    let geom: THREE.BufferGeometry
+    if (chamfer?.resolvedTo) {
+      const variant = chamferBasisIsReflected(chamfer.planeAxis, chamfer.planeOrientation) ? 'M' : ''
+      const base = CHAMFER_BASE[`${chamfer.resolvedTo.shapeKind}${variant}`]
+      geom = base.clone()
+      chamferInstanceMatrix(coord, chamfer.planeAxis, chamfer.planeOrientation, chamfer.resolvedTo.rotation, matrix)
+      geom.applyMatrix4(matrix)
+    } else {
+      geom = new THREE.BoxGeometry(1, 1, 1)
+      geom.translate(coord[0] + 0.5, coord[1] + 0.5, coord[2] + 0.5)
+    }
+
+    rawTriangles += triangleCount(geom)
+    group.geometries.push(geom)
+  }
+
+  const groups: SliceGroupGeometry[] = optimizeGroupsByCSG(Array.from(byGroup.values()), mergeCoplanar ?? true)
+  let optimizedTriangles = 0
+  for (const g of groups) optimizedTriangles += triangleCount(g.geometry)
+
+  return { groups, rawTriangles, optimizedTriangles }
+}
+
 /**
  * Like `geometryFromFaces` but for the box-map texture path: carries per-vertex `color` (RGB, for the
  * shade/multiply material) **and** a `uv` attribute from the injected generator. The coplanar-merge
@@ -355,6 +439,32 @@ export function buildTexturedShellGeometryByColor(model: VoxelModel, palette: Pa
   const out: ColorGroupGeometry[] = []
   for (const group of byMaterial.values()) {
     out.push({ colorKey: group[0].colorKey, materialClass: group[0].materialClass, geometry: geometryFromFacesUV(group, uvFor) })
+  }
+  return out
+}
+
+/** Per-(color, material class, animation slice) split of the textured shell, for animated GLTF
+ * export. Faces spanning two different animation nodes are never shell-culled (see
+ * `removeInteriorFaces`), so each node's mesh stays watertight once it moves independently. */
+export function buildTexturedShellGeometryBySliceColor(
+  model: VoxelModel,
+  palette: PaletteState,
+  uvFor: VertexUV,
+  nodeAssignment: Map<CellKey, SliceKey>,
+): SliceGroupGeometry[] {
+  const { faces } = buildShellFaces(model, palette, nodeAssignment)
+  const byGroup = new Map<string, Face[]>()
+  for (const f of faces) {
+    const sliceKey = nodeAssignment.get(f.cellKey!) ?? ''
+    const groupKey = `${f.colorKey}:${f.materialClass}:${sliceKey}`
+    const group = byGroup.get(groupKey)
+    if (group) group.push(f)
+    else byGroup.set(groupKey, [f])
+  }
+  const out: SliceGroupGeometry[] = []
+  for (const group of byGroup.values()) {
+    const sliceKey = nodeAssignment.get(group[0].cellKey!) ?? ''
+    out.push({ colorKey: group[0].colorKey, materialClass: group[0].materialClass, sliceKey, geometry: geometryFromFacesUV(group, uvFor) })
   }
   return out
 }

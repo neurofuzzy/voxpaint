@@ -36,6 +36,14 @@ MIGRATIONS[2] = (doc) => {
   return { ...doc, schemaVersion: 3, palette, model: { ...doc.model, colorCells } }
 }
 
+/** v3 → v4: the `animations` field was added for per-slice animation settings. v3 projects simply
+ * get an empty animations array (no animations). */
+MIGRATIONS[3] = (doc) => ({ ...doc, schemaVersion: 4 })
+
+/** v4 → v5: the `masks` field was added for per-slice animation masks. v4 projects simply get no
+ * masks (every animated slice keeps animating as a whole, matching their pre-mask behavior). */
+MIGRATIONS[4] = (doc) => ({ ...doc, schemaVersion: 5 })
+
 export class UnsupportedSchemaVersionError extends Error {
   constructor(foundVersion: unknown) {
     super(`This file is from a newer version of VoxPaint (schemaVersion=${String(foundVersion)}). Please update the app.`)

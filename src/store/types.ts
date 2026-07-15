@@ -5,6 +5,7 @@ import type { ConstructionPlane } from '@/engine/plane/types'
 import type { ProjectMeta } from '@/engine/persistence/schema'
 import type { BoxFace, TextureModel } from '@/engine/texture/types'
 import type { TexelClip } from '@/engine/texture/texelOps'
+import type { AnimationSpeed, AnimationType, SliceAnimSettings, SliceKey } from '@/engine/animation/types'
 
 export type ToolId = 'paint' | 'erase' | 'eyedropper' | 'select' | 'fill' | 'clone' | 'move'
 export type VoxelKind = 'cube' | 'ramp'
@@ -205,9 +206,10 @@ export type MoveActionsSlice = {
   endMove: () => void
 }
 
-/** The top-level authoring mode. `model` = voxel modeling (the original app); `texture` = box-mapped
- * surface texturing. The one shared switch every mode-aware component keys off. */
-export type EditorMode = 'model' | 'texture'
+/** The top-level authoring mode. `model` = voxel modeling (the original app); `animate` = per-slice
+ * animation assignment (same 2D/3D views as model, animation palette instead of color palette);
+ * `texture` = box-mapped surface texturing. The one shared switch every mode-aware component keys off. */
+export type EditorMode = 'model' | 'animate' | 'texture'
 
 export type ModeSlice = {
   mode: EditorMode
@@ -268,6 +270,51 @@ export type TextureSlice = {
   texturePasteAt: (u: number, v: number) => void
 }
 
+export type AnimationSlice = {
+  /** Per-slice animation settings keyed by encodeSliceKey(axis, offset). */
+  animSettings: Map<SliceKey, SliceAnimSettings>
+  /** Per-slice animation mask: which occupied cells of that slice actually animate, keyed by
+   * encodeSliceKey(axis, offset). Absent or empty for a slice means "animate the whole slice"
+   * (the pre-mask default behavior). */
+  sliceMasks: Map<SliceKey, Set<CellKey>>
+  /** Undo/redo stacks for animation changes (independent of model undo) — one shared stack for
+   * both animation-settings changes and mask paint strokes, since both are Animate-mode-only
+   * edits a user expects to undo together. */
+  animPast: AnimSnapshot[]
+  animFuture: AnimSnapshot[]
+
+  /** Set or clear the animation for a slice. Wrapped in begin/commit stroke for undo. */
+  setAnimSettingsForSlice: (axis: Axis, offset: number, settings: SliceAnimSettings | null) => void
+  /** Remove all animation settings and masks (e.g. on new project). */
+  clearAllAnimations: () => void
+
+  /** Set the animation type for the current construction-plane slice, carrying over its existing
+   * speed/slideAmount (or defaults for a previously unanimated slice). Passing 'none' clears it. */
+  setAnimationTypeForCurrentSlice: (type: AnimationType) => void
+  /** Set the animation speed for the current slice, defaulting the rest of its settings if unset. */
+  setAnimationSpeedForCurrentSlice: (speed: AnimationSpeed) => void
+  /** Set the slide amount for the current slice, defaulting the rest of its settings if unset. */
+  setSlideAmountForCurrentSlice: (amount: number) => void
+
+  /** Paints one cell of the current plane's slice into its animation mask. Only occupied cells
+   * (voxels that already hold color) can be masked. Returns false when out of bounds or empty. */
+  paintMaskCell: (u: number, v: number) => boolean
+  /** Removes one cell from the current plane's slice's animation mask. Deletes the slice's mask
+   * entirely once it becomes empty, reverting to whole-slice-animates. */
+  eraseMaskCell: (coord: Coord) => void
+
+  animBeginStroke: () => void
+  animCommitStroke: () => void
+  animUndo: () => void
+  animRedo: () => void
+}
+
+/** One Animate-mode undo/redo snapshot: animation settings and mask paint state travel together. */
+export type AnimSnapshot = {
+  animSettings: Map<SliceKey, SliceAnimSettings>
+  sliceMasks: Map<SliceKey, Set<CellKey>>
+}
+
 export type AppState = ProjectSlice &
   HistorySlice &
   PlaneSlice &
@@ -279,4 +326,5 @@ export type AppState = ProjectSlice &
   ToolActionsSlice &
   MoveActionsSlice &
   ModeSlice &
-  TextureSlice
+  TextureSlice &
+  AnimationSlice

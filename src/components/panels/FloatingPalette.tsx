@@ -1,6 +1,7 @@
 import { useAppStore } from '@/store/useAppStore'
 import type { PaletteSlotKind } from '@/engine/palette/types'
 import { GRAYSCALE } from '@/engine/texture/types'
+import { AnimationPalette } from './AnimationPalette'
 
 const SWATCH = 'h-6 w-6 shrink-0'
 
@@ -89,6 +90,8 @@ export function FloatingPalette() {
     >
       {mode === 'texture' ? (
         <GrayscalePalette />
+      ) : mode === 'animate' ? (
+        <AnimationPalette />
       ) : (
       <div className="flex flex-col gap-1">
         <div className="flex items-center gap-1">

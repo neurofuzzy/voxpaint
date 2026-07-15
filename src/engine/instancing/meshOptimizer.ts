@@ -68,8 +68,11 @@ function unionAll(bsps: ThreeBSP[]): ThreeBSP | null {
  * and convert the result back to BufferGeometry. Each output entry carries the group's `colorKey`
  * and `materialClass` — the caller applies a solid-colour material (no vertex colors).
  */
-export function optimizeGroupsByCSG(groups: VoxelGroup[], mergeCoplanar = true): ColorGroupGeometry[] {
-  const results: ColorGroupGeometry[] = []
+export function optimizeGroupsByCSG<T extends VoxelGroup>(
+  groups: T[],
+  mergeCoplanar = true,
+): (ColorGroupGeometry & Omit<T, keyof VoxelGroup>)[] {
+  const results: (ColorGroupGeometry & Omit<T, keyof VoxelGroup>)[] = []
 
   for (const group of groups) {
     if (group.geometries.length === 0) continue
@@ -84,11 +87,13 @@ export function optimizeGroupsByCSG(groups: VoxelGroup[], mergeCoplanar = true):
       const csgGeom = toNonIndexed(merged.toGeometry())
       const optimized = mergeCoplanar ? mergeCoplanarFaces(csgGeom) : csgGeom
       if (mergeCoplanar) csgGeom.dispose()
+      const { geometries: _geometries, colorKey, materialClass, ...rest } = group
       results.push({
-        colorKey: group.colorKey,
-        materialClass: group.materialClass,
+        colorKey,
+        materialClass,
         geometry: optimized,
-      })
+        ...rest,
+      } as ColorGroupGeometry & Omit<T, keyof VoxelGroup>)
     }
   }
 

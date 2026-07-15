@@ -4,10 +4,12 @@ import { useEffect, useRef } from 'react'
 import * as THREE from 'three'
 import type { OrbitControls as OrbitControlsImpl } from 'three-stdlib'
 import { decodeKey } from '@/engine/grid/GridStore'
+import { hasActiveAnimations } from '@/engine/animation/animationLayers'
 import type { InstancingManager } from '@/engine/instancing/InstancingManager'
 import { planeFromFaceHit } from '@/engine/plane/constructionPlane'
 import { useAppStore } from '@/store/useAppStore'
 import { usePlaneLayerScroll } from '@/components/usePlaneLayerScroll'
+import { AnimatedModelView } from './AnimatedModelView'
 import { BoundingBoxFaceSelector } from './BoundingBoxFaceSelector'
 import { Compass } from './Compass'
 import { ConstructionPlaneGizmo } from './ConstructionPlaneGizmo'
@@ -147,11 +149,14 @@ export function Viewport3D() {
   const managerRef = useRef<InstancingManager | null>(null)
   const orbitControlsRef = useRef<OrbitControlsImpl | null>(null)
   const mode = useAppStore((s) => s.mode)
+  const animSettings = useAppStore((s) => s.animSettings)
   const setStatusMessage = useAppStore((s) => s.setStatusMessage)
   const containerRef = useRef<HTMLDivElement>(null)
   usePlaneLayerScroll(containerRef)
 
   const textureMode = mode === 'texture'
+  const animateMode = mode === 'animate'
+  const hasAnimations = animateMode && hasActiveAnimations(animSettings)
 
   return (
     <div
@@ -171,9 +176,10 @@ export function Viewport3D() {
         ) : (
           <>
             <ConstructionPlaneVisual />
-            <VoxelInstancedMeshes ref={managerRef} />
+            {!hasAnimations && <VoxelInstancedMeshes ref={managerRef} />}
             <SceneEnvironment />
-            <OptimizedMeshView />
+            {!hasAnimations && <OptimizedMeshView />}
+            {hasAnimations && <AnimatedModelView />}
             <VoxelFaceHighlight />
             <VoxelGhostPreview />
             <ConstructionPlaneGizmo />

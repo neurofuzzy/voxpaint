@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import { gridCoordFromPixel } from '@/engine/plane/constructionPlane'
 import { toDisplayU, toDisplayV } from '@/engine/plane/planeDisplay'
 import { toNormalizedPointerEvent } from '@/engine/input/PointerInputController'
-import { toolMap } from '@/engine/tools'
+import { animateToolMap, toolMap } from '@/engine/tools'
 import type { ToolContext, ToolDragState } from '@/engine/tools/types'
 import type { ConstructionPlane } from '@/engine/plane/types'
 import { useAppStore } from '@/store/useAppStore'
@@ -143,6 +143,10 @@ export function usePixelCanvasTools(canvasRef: React.RefObject<HTMLCanvasElement
     paintCell: store.paintCell,
     eraseCell: store.eraseCell,
     floodFill: store.floodFill,
+    paintMaskCell: store.paintMaskCell,
+    eraseMaskCell: store.eraseMaskCell,
+    animBeginStroke: store.animBeginStroke,
+    animCommitStroke: store.animCommitStroke,
     cloneStampCell: store.cloneStampCell,
     beginMove: store.beginMove,
     updateMove: store.updateMove,
@@ -183,7 +187,9 @@ export function usePixelCanvasTools(canvasRef: React.RefObject<HTMLCanvasElement
       hoverCellRef.current = cell
       setHoverCell(gridCoordFromPixel(ctxRef.current.plane, cell[0], cell[1]), null)
       canvas.setPointerCapture(e.pointerId)
-      toolMap[activeToolRef.current].onDown?.(ctxRef.current, toNormalizedPointerEvent(e, cell))
+      const store = useAppStore.getState()
+      const map = store.mode === 'animate' ? animateToolMap : toolMap
+      map[activeToolRef.current]?.onDown?.(ctxRef.current, toNormalizedPointerEvent(e, cell))
     },
     [canvasRef, size, pan, zoom, setHoverCell],
   )
@@ -213,7 +219,9 @@ export function usePixelCanvasTools(canvasRef: React.RefObject<HTMLCanvasElement
       if (!prevCell || prevCell[0] !== cell[0] || prevCell[1] !== cell[1]) {
         setHoverCell(gridCoordFromPixel(ctxRef.current.plane, cell[0], cell[1]), null)
       }
-      toolMap[activeToolRef.current].onMove?.(ctxRef.current, toNormalizedPointerEvent(e, cell))
+      const store = useAppStore.getState()
+      const map = store.mode === 'animate' ? animateToolMap : toolMap
+      map[activeToolRef.current]?.onMove?.(ctxRef.current, toNormalizedPointerEvent(e, cell))
     },
     [canvasRef, size, pan, zoom, setHoverCell],
   )
@@ -235,19 +243,28 @@ export function usePixelCanvasTools(canvasRef: React.RefObject<HTMLCanvasElement
         canvas.releasePointerCapture(e.pointerId)
         // A stationary right-click (no drag) erases the cell under the cursor — a quick-erase
         // shortcut on the paint/erase tools now that right-click-drag means "pan the camera."
+        const store = useAppStore.getState()
         if (!panDrag.hasMoved && (activeToolRef.current === 'paint' || activeToolRef.current === 'erase')) {
           const cell = pixelToCell(canvas, e.clientX, e.clientY, size, pan, zoom, ctxRef.current.plane)
           const c = ctxRef.current
-          c.bakeFloatIfAny()
-          c.beginStroke()
-          c.eraseCell(gridCoordFromPixel(c.plane, cell[0], cell[1]))
-          c.commitStroke()
+          if (store.mode === 'animate') {
+            c.animBeginStroke()
+            c.eraseMaskCell(gridCoordFromPixel(c.plane, cell[0], cell[1]))
+            c.animCommitStroke()
+          } else {
+            c.bakeFloatIfAny()
+            c.beginStroke()
+            c.eraseCell(gridCoordFromPixel(c.plane, cell[0], cell[1]))
+            c.commitStroke()
+          }
         }
         return
       }
 
       const cell = pixelToCell(canvas, e.clientX, e.clientY, size, pan, zoom, ctxRef.current.plane)
-      toolMap[activeToolRef.current].onUp?.(ctxRef.current, toNormalizedPointerEvent(e, cell))
+      const store = useAppStore.getState()
+      const map = store.mode === 'animate' ? animateToolMap : toolMap
+      map[activeToolRef.current]?.onUp?.(ctxRef.current, toNormalizedPointerEvent(e, cell))
       canvas.releasePointerCapture(e.pointerId)
     },
     [canvasRef, size, pan, zoom],
