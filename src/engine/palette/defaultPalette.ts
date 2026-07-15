@@ -23,4 +23,5 @@ export const DEFAULT_PALETTE: PaletteState = {
   emissive: ['#ff6b4a', '#4ad9ff', '#b04aff', '#7aff6b'],
   metal: ['#f0f0f0', '#ffe17d', '#c69269', '#f1967a'], // silver, gold, bronze, copper
   glass: ['#9aa0a6', '#5a86c9', '#d9a441', '#5aa06e'], // gray, blue, amber, green
+  emissiveAnim: ['none', 'none', 'none', 'none'],
 }

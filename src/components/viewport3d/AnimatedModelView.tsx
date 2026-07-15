@@ -5,6 +5,7 @@ import type { Axis } from '@/engine/grid/types'
 import { buildAnimatedSliceMeshes } from '@/engine/animation/animatedPreviewBuild'
 import { isActiveAnimation, updateAnimatedGroupTransform } from '@/engine/animation/animationLayers'
 import type { SliceKey } from '@/engine/animation/types'
+import { tickEmissiveAnimation } from '@/engine/instancing/previewMaterial'
 import { useAppStore } from '@/store/useAppStore'
 
 type AnimGroup = {
@@ -99,15 +100,17 @@ export function AnimatedModelView() {
   }, [built, rootGroup])
 
   useFrame(() => {
-    const groups = animGroupRefs.current
-    if (groups.size === 0) return
-
     const elapsed = performance.now() / 1000
 
+    const groups = animGroupRefs.current
     for (const g of groups.values()) {
       const settings = animSettings.get(g.sliceKey)
       if (!settings || !isActiveAnimation(settings.animationType)) continue
       updateAnimatedGroupTransform(g.group, g.center, g.axis, settings, elapsed)
+    }
+
+    if (built) {
+      for (const m of built.materials) tickEmissiveAnimation(m, elapsed)
     }
   })
 

@@ -1,5 +1,6 @@
 import { decodeKey, emptyModel, encodeKey, recomputeBounds } from '@/engine/grid/GridStore'
 import type { CellKey, GridExtent, VoxelModel } from '@/engine/grid/types'
+import { DEFAULT_PALETTE } from '@/engine/palette/defaultPalette'
 import type { PaletteState } from '@/engine/palette/types'
 import type { BoxFace, TextureModel } from '@/engine/texture/types'
 import { BOX_FACES, faceSizeFor, TEXEL_SCALE } from '@/engine/texture/types'
@@ -120,5 +121,9 @@ export function deserializeProject(file: VoxPaintProjectFile): { model: VoxelMod
   const view: ViewSettings = { ambientOcclusion: false, noiseLevel: 0, specularNoiseLevel: 0, aoStrength: 1, glassRoughnessLevel: 0.3, exposure: 1, exportScaleFactor: 100, exportAnchor: 'center', exportAlignToObjectBounds: false, ...file.view }
   const animSettings = file.animations ? deserializeAnimations(file.animations) : new Map()
   const sliceMasks = file.masks ? deserializeSliceMasks(file.masks) : new Map()
-  return { model: { ...built, bounds: recomputeBounds(built) }, palette: file.palette, meta: file.meta, texture, view, animSettings, sliceMasks }
+  // `emissiveAnim` was added to PaletteState after this field was already required elsewhere in the
+  // palette shape — older files simply don't have it, so default-merge rather than bump the schema
+  // (same treatment `exportAlignToObjectBounds` got for `view`).
+  const palette: PaletteState = { ...DEFAULT_PALETTE, ...file.palette }
+  return { model: { ...built, bounds: recomputeBounds(built) }, palette, meta: file.meta, texture, view, animSettings, sliceMasks }
 }

@@ -1,12 +1,14 @@
 import { useEffect, useMemo } from 'react'
 import * as THREE from 'three'
+import { useFrame } from '@react-three/fiber'
 import { buildBlendAtlas } from '@/engine/texture/boxMapping'
 import { bakeOverlayTexturesByColor } from '@/engine/texture/overlay'
 import { buildTexturedGeometryByColor } from '@/engine/texture/texturedGeometry'
 import { hasTextureContent } from '@/engine/texture/TextureStore'
 import { buildOptimizedVoxelGroups } from '@/engine/instancing/voxelMeshBuilder'
 import { triangleCount } from '@/engine/instancing/meshOptimizer'
-import { buildPreviewMaterial } from '@/engine/instancing/previewMaterial'
+import { buildPreviewMaterial, tickEmissiveAnimation } from '@/engine/instancing/previewMaterial'
+import { buildEmissiveAnimIndex } from '@/engine/palette/emissiveAnimation'
 import { useAppStore } from '@/store/useAppStore'
 import { usePreviewAOMaps } from './usePreviewAOMaps'
 
@@ -76,6 +78,8 @@ export function OptimizedMeshView() {
   )
   useEffect(() => () => { for (const tex of overlayByColor?.values() ?? []) tex.dispose() }, [overlayByColor])
 
+  const emissiveAnimIndex = useMemo(() => buildEmissiveAnimIndex(palette), [palette])
+
   // One MeshPhysicalMaterial per colour group. PBR params per class, plus the baked overlay map
   // when textured. Wireframe-overlay z-fighting avoidance (polygonOffset) applies to both branches.
   const materials = useMemo(() => {
@@ -83,13 +87,19 @@ export function OptimizedMeshView() {
       const m = buildPreviewMaterial(materialClass, colorKey, {
         overlayMap: overlayByColor?.get(colorKey) ?? null,
         glassRoughnessLevel,
+        emissiveAnimMode: emissiveAnimIndex.get(colorKey),
       })
       m.polygonOffset = true
       m.polygonOffsetFactor = 1
       m.polygonOffsetUnits = 1
       return m
     })
-  }, [built.groups, overlayByColor, glassRoughnessLevel])
+  }, [built.groups, overlayByColor, glassRoughnessLevel, emissiveAnimIndex])
+
+  useFrame(() => {
+    const elapsed = performance.now() / 1000
+    for (const m of materials) tickEmissiveAnimation(m, elapsed)
+  })
 
   // Bind (or clear) the AO, metalness, roughness, and metal base-colour maps on every material
   // (reads uv1/uv). A textured (overlay-mapped) metal group keeps its baked overlay as `.map` —

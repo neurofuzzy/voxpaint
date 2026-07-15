@@ -24,6 +24,12 @@ export const createProjectSlice: Slice = (set) => ({
 
   setPalette: (palette) => set((state) => { state.palette = palette }),
 
+  setEmissiveAnimMode: (index, mode) =>
+    set((state) => {
+      state.palette.emissiveAnim[index] = mode
+      state.dirty = true
+    }),
+
   setProjectName: (name) =>
     set((state) => {
       state.meta.name = name

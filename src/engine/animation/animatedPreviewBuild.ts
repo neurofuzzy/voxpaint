@@ -8,6 +8,7 @@ import { buildTexturedGeometryBySlice } from '@/engine/texture/texturedGeometry'
 import { hasTextureContent } from '@/engine/texture/TextureStore'
 import { buildOptimizedVoxelGroupsBySlice } from '@/engine/instancing/voxelMeshBuilder'
 import { buildPreviewMaterial } from '@/engine/instancing/previewMaterial'
+import { buildEmissiveAnimIndex } from '@/engine/palette/emissiveAnimation'
 import { assignVoxelsToNodes, bboxCenterOfKeys } from './animationLayers'
 import type { SliceAnimSettings, SliceKey } from './types'
 
@@ -53,6 +54,7 @@ export function buildAnimatedSliceMeshes(
     ? bakeOverlayTexturesByColor(groups.map((g) => g.colorKey), buildBlendAtlas(texture, gridExtent))
     : null
 
+  const emissiveAnimIndex = buildEmissiveAnimIndex(palette)
   const materials: THREE.MeshPhysicalMaterial[] = []
   const materialIndexMap = new Map<string, number>()
 
@@ -68,6 +70,7 @@ export function buildAnimatedSliceMeshes(
       materials.push(buildPreviewMaterial(g.materialClass, g.colorKey, {
         overlayMap: overlayByColor?.get(g.colorKey) ?? null,
         glassRoughnessLevel,
+        emissiveAnimMode: emissiveAnimIndex.get(g.colorKey),
       }))
     }
 

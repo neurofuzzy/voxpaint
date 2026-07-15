@@ -1,8 +1,10 @@
 import { useEffect, useMemo } from 'react'
+import { useFrame } from '@react-three/fiber'
 import { buildBlendAtlas } from '@/engine/texture/boxMapping'
 import { bakeOverlayTexturesByColor } from '@/engine/texture/overlay'
 import { buildTexturedGeometryByColor } from '@/engine/texture/texturedGeometry'
-import { buildPreviewMaterial } from '@/engine/instancing/previewMaterial'
+import { buildPreviewMaterial, tickEmissiveAnimation } from '@/engine/instancing/previewMaterial'
+import { buildEmissiveAnimIndex } from '@/engine/palette/emissiveAnimation'
 import { useAppStore } from '@/store/useAppStore'
 import { usePreviewAOMaps } from './usePreviewAOMaps'
 
@@ -45,14 +47,22 @@ export function TexturedModelView() {
   )
   useEffect(() => () => { for (const tex of overlayByColor.values()) tex.dispose() }, [overlayByColor])
 
+  const emissiveAnimIndex = useMemo(() => buildEmissiveAnimIndex(palette), [palette])
+
   const materials = useMemo(
     () => groups.map((g) => buildPreviewMaterial(g.materialClass, g.colorKey, {
       overlayMap: overlayByColor.get(g.colorKey) ?? null,
       glassRoughnessLevel,
+      emissiveAnimMode: emissiveAnimIndex.get(g.colorKey),
     })),
-    [groups, overlayByColor, glassRoughnessLevel],
+    [groups, overlayByColor, glassRoughnessLevel, emissiveAnimIndex],
   )
   useEffect(() => () => { for (const m of materials) m.dispose() }, [materials])
+
+  useFrame(() => {
+    const elapsed = performance.now() / 1000
+    for (const m of materials) tickEmissiveAnimation(m, elapsed)
+  })
 
   // Bind AO/specular-noise maps after creation, mirroring Model mode: the baked overlay set at
   // creation stays as `.map` (metal's specular-noise base-colour texture only applies when there's

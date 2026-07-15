@@ -1,6 +1,6 @@
 import type { Axis, CellKey, ChamferCell, Coord, GridExtent, Orientation, VoxelModel } from '@/engine/grid/types'
 import type { GltfExportAnchor } from '@/engine/export/gltfExport'
-import type { PaletteSlotRef, PaletteState } from '@/engine/palette/types'
+import type { EmissiveAnimMode, PaletteSlotRef, PaletteState } from '@/engine/palette/types'
 import type { ConstructionPlane } from '@/engine/plane/types'
 import type { ProjectMeta } from '@/engine/persistence/schema'
 import type { BoxFace, TextureModel } from '@/engine/texture/types'
@@ -45,6 +45,8 @@ export type ProjectSlice = {
   meta: ProjectMeta
   setModel: (model: VoxelModel) => void
   setPalette: (palette: PaletteState) => void
+  /** Sets the blink/pulse animation mode for one emissive palette slot (0–3). */
+  setEmissiveAnimMode: (index: number, mode: EmissiveAnimMode) => void
   setProjectName: (name: string) => void
   newProject: (name: string, gridExtent: GridExtent) => void
 }

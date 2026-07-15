@@ -1,5 +1,7 @@
 import * as THREE from 'three'
 import { materialParamsFor, type MaterialClass } from '@/engine/palette/palette'
+import { emissiveAnimFactor } from '@/engine/palette/emissiveAnimation'
+import type { EmissiveAnimMode } from '@/engine/palette/types'
 
 export type PreviewMaterialOptions = {
   /** Roughness for glass materials (0–1); ignored for other classes. */
@@ -13,6 +15,19 @@ export type PreviewMaterialOptions = {
   metalnessMap?: THREE.Texture | null
   roughnessMap?: THREE.Texture | null
   metalBaseColorMap?: THREE.Texture | null
+  /** Emissive-only: blink/pulse this material's glow live (see `tickEmissiveAnimation`). */
+  emissiveAnimMode?: EmissiveAnimMode
+}
+
+type EmissiveAnimUserData = { emissiveAnimMode: EmissiveAnimMode; emissiveAnimBaseIntensity: number }
+
+/** Advances one material's live blink/pulse, if `buildPreviewMaterial` tagged it with an animated
+ * mode. Safe to call on every material every frame — untagged (or 'none') materials no-op. */
+export function tickEmissiveAnimation(material: THREE.Material, elapsedSeconds: number): void {
+  const anim = (material as THREE.Material & { userData: Partial<EmissiveAnimUserData> }).userData
+  if (!anim.emissiveAnimMode || anim.emissiveAnimMode === 'none') return
+  const physical = material as THREE.MeshPhysicalMaterial
+  physical.emissiveIntensity = anim.emissiveAnimBaseIntensity! * emissiveAnimFactor(anim.emissiveAnimMode, elapsedSeconds)
 }
 
 /**
@@ -41,6 +56,11 @@ export function buildPreviewMaterial(materialClass: MaterialClass, colorKey: num
   if (params.emissiveIntensity > 0) {
     material.emissive = color
     material.emissiveIntensity = params.emissiveIntensity
+    const animMode = options.emissiveAnimMode ?? 'none'
+    if (animMode !== 'none') {
+      material.userData.emissiveAnimMode = animMode
+      material.userData.emissiveAnimBaseIntensity = params.emissiveIntensity
+    }
   }
   if (options.aoMap) material.aoMap = options.aoMap
   if (materialClass === 'metal') {

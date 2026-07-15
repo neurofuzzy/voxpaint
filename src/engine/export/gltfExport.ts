@@ -11,9 +11,11 @@ import { buildTexturedGeometryByColor, buildTexturedGeometryBySlice } from '@/en
 import { hasTextureContent } from '@/engine/texture/TextureStore'
 import { buildOptimizedVoxelGeometryByMaterial, buildOptimizedVoxelGroupsBySlice } from '@/engine/instancing/voxelMeshBuilder'
 import { materialParamsFor, type MaterialClass } from '@/engine/palette/palette'
+import { buildEmissiveAnimIndex } from '@/engine/palette/emissiveAnimation'
 import type { SliceAnimSettings, SliceKey } from '@/engine/animation/types'
 import { assignVoxelsToNodes, bboxCenterOfKeys, hasActiveAnimations } from '@/engine/animation/animationLayers'
 import { buildAllAnimationClips, type AnimNodeInfo } from '@/engine/animation/animationGLTF'
+import { registerEmissiveAnimationExtension, type EmissiveAnimExportTarget } from './emissiveAnimationExport'
 
 /**
  * GLTF export pipeline. Replaces the originally-specced `three-bvh-csg` union/weld path: the mesh
@@ -148,6 +150,8 @@ export async function exportModelToGlb(
   const materials: THREE.Material[] = []
   const textures: THREE.Texture[] = []
   const geometries: THREE.BufferGeometry[] = []
+  const emissiveAnimIndex = buildEmissiveAnimIndex(palette)
+  const emissiveAnimTargets: EmissiveAnimExportTarget[] = []
 
   const hasAnimations = !!animSettings && hasActiveAnimations(animSettings)
   let nodeAssignment: Map<CellKey, SliceKey> | undefined
@@ -244,6 +248,8 @@ export async function exportModelToGlb(
         if (materialClass === 'emissive') {
           material.emissive = new THREE.Color(colorKey)
           material.emissiveIntensity = params.emissiveIntensity
+          const animMode = emissiveAnimIndex.get(colorKey)
+          if (animMode) emissiveAnimTargets.push({ material, mode: animMode })
         }
         if (materialClass === 'metal') {
           material.specularIntensity = 0
@@ -313,6 +319,8 @@ export async function exportModelToGlb(
       if (params.emissiveIntensity > 0) {
         material.emissive = new THREE.Color(colorKey)
         material.emissiveIntensity = params.emissiveIntensity
+        const animMode = emissiveAnimIndex.get(colorKey)
+        if (animMode) emissiveAnimTargets.push({ material, mode: animMode })
       }
       if (aoTex) {
         material.aoMap = aoTex
@@ -362,7 +370,9 @@ export async function exportModelToGlb(
   }
 
   try {
-    const result = await new GLTFExporter().parseAsync(root, { binary: true, animations: clips })
+    const exporter = new GLTFExporter()
+    registerEmissiveAnimationExtension(exporter, emissiveAnimTargets)
+    const result = await exporter.parseAsync(root, { binary: true, animations: clips })
     return result as ArrayBuffer // `binary: true` always resolves to an ArrayBuffer
   } finally {
     for (const g of geometries) g.dispose()
