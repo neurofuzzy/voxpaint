@@ -16,6 +16,7 @@ import { ConstructionPlaneGizmo } from './ConstructionPlaneGizmo'
 import { ConstructionPlaneVisual } from './ConstructionPlaneVisual'
 import { ExposureSlider } from './ExposureSlider'
 import { OptimizedMeshView } from './OptimizedMeshView'
+import { PivotGizmo } from './PivotGizmo'
 import { SceneEnvironment } from './SceneEnvironment'
 import { SceneLighting } from './SceneLighting'
 import { TexturedModelView } from './TexturedModelView'
@@ -205,6 +206,7 @@ export function Viewport3D() {
             <VoxelFaceHighlight />
             <VoxelGhostPreview />
             <ConstructionPlaneGizmo />
+            <PivotGizmo />
             <VoxelInteractionHandler managerRef={managerRef} />
           </>
         )}

@@ -1,6 +1,6 @@
 import * as ToggleGroup from '@radix-ui/react-toggle-group'
 import * as Tooltip from '@radix-ui/react-tooltip'
-import { Brush, Copy, Eraser, Move, Pipette, SquareDashedMousePointer, PaintBucket } from 'lucide-react'
+import { Brush, Copy, Eraser, Move, Pin, Pipette, SquareDashedMousePointer, PaintBucket } from 'lucide-react'
 import { useAppStore } from '@/store/useAppStore'
 import type { ToolId } from '@/store/types'
 
@@ -19,6 +19,7 @@ const TOOLS: Array<{ id: ToolId; label: string; icon: typeof Brush; hint: string
 const ANIMATE_TOOLS: Array<{ id: ToolId; label: string; icon: typeof Brush; hint: string }> = [
   { id: 'paint', label: 'Paint Mask', icon: Brush, hint: 'click or drag to mark voxels to animate · unpainted = whole slice animates' },
   { id: 'erase', label: 'Erase Mask', icon: Eraser, hint: 'click or drag to unmark voxels · right-click: quick erase' },
+  { id: 'pivot', label: 'Pivot Point', icon: Pin, hint: 'click to pin the rotation/pendulum pivot for this slice · right-click: clear' },
 ]
 
 export function ToolPalette() {

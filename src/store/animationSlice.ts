@@ -24,13 +24,22 @@ function cloneSliceMasks(map: Map<SliceKey, Set<CellKey>>): Map<SliceKey, Set<Ce
   return clone
 }
 
-function cloneSnapshot(state: { animSettings: Map<SliceKey, SliceAnimSettings>; sliceMasks: Map<SliceKey, Set<CellKey>> }): AnimSnapshot {
-  return { animSettings: cloneAnimSettings(state.animSettings), sliceMasks: cloneSliceMasks(state.sliceMasks) }
+function cloneSlicePivots(map: Map<SliceKey, CellKey>): Map<SliceKey, CellKey> {
+  return new Map(map)
+}
+
+function cloneSnapshot(state: { animSettings: Map<SliceKey, SliceAnimSettings>; sliceMasks: Map<SliceKey, Set<CellKey>>; slicePivots: Map<SliceKey, CellKey> }): AnimSnapshot {
+  return {
+    animSettings: cloneAnimSettings(state.animSettings),
+    sliceMasks: cloneSliceMasks(state.sliceMasks),
+    slicePivots: cloneSlicePivots(state.slicePivots),
+  }
 }
 
 export const createAnimationSlice: Slice = (set, get) => ({
   animSettings: new Map(),
   sliceMasks: new Map(),
+  slicePivots: new Map(),
   animPast: [],
   animFuture: [],
 
@@ -52,6 +61,7 @@ export const createAnimationSlice: Slice = (set, get) => ({
     set((state) => {
       state.animSettings = new Map()
       state.sliceMasks = new Map()
+      state.slicePivots = new Map()
       state.animPast = []
       state.animFuture = []
     }),
@@ -79,6 +89,13 @@ export const createAnimationSlice: Slice = (set, get) => ({
     const key = encodeSliceKey(axis, offset)
     const prev = get().animSettings.get(key) ?? defaultAnimationSettings()
     get().setAnimSettingsForSlice(axis, offset, { ...prev, slideAmount: amount })
+  },
+
+  setSwingAmountForCurrentSlice: (amount: number) => {
+    const { axis, offset } = get().plane
+    const key = encodeSliceKey(axis, offset)
+    const prev = get().animSettings.get(key) ?? defaultAnimationSettings()
+    get().setAnimSettingsForSlice(axis, offset, { ...prev, swingAmount: amount })
   },
 
   paintMaskCell: (u: number, v: number) => {
@@ -116,6 +133,32 @@ export const createAnimationSlice: Slice = (set, get) => ({
     })
   },
 
+  setPivotForCurrentSlice: (u: number, v: number) => {
+    const { plane, meta } = get()
+    const coord = gridCoordFromPixel(plane, u, v)
+    if (!withinWorkingBounds(coord, meta.gridExtent)) return false
+    const sliceKey = encodeSliceKey(plane.axis, plane.offset)
+    const cellKey = encodeKey(...coord)
+    get().animBeginStroke()
+    set((state) => {
+      state.slicePivots.set(sliceKey, cellKey)
+      state.dirty = true
+    })
+    get().animCommitStroke()
+    return true
+  },
+
+  clearPivotForCurrentSlice: () => {
+    const { plane } = get()
+    const sliceKey = encodeSliceKey(plane.axis, plane.offset)
+    get().animBeginStroke()
+    set((state) => {
+      state.slicePivots.delete(sliceKey)
+      state.dirty = true
+    })
+    get().animCommitStroke()
+  },
+
   animBeginStroke: () => {
     animStrokeBaseline = cloneSnapshot(get())
   },
@@ -140,6 +183,7 @@ export const createAnimationSlice: Slice = (set, get) => ({
       state.animFuture.unshift(cloneSnapshot(state))
       state.animSettings = prev.animSettings
       state.sliceMasks = prev.sliceMasks
+      state.slicePivots = prev.slicePivots
       state.dirty = true
     })
   },
@@ -151,6 +195,7 @@ export const createAnimationSlice: Slice = (set, get) => ({
       state.animPast.push(cloneSnapshot(state))
       state.animSettings = next.animSettings
       state.sliceMasks = next.sliceMasks
+      state.slicePivots = next.slicePivots
       state.dirty = true
     })
   },
@@ -164,6 +209,7 @@ function mapsEqual(a: Map<SliceKey, SliceAnimSettings>, b: Map<SliceKey, SliceAn
     if (settings.animationType !== other.animationType) return false
     if (settings.speed !== other.speed) return false
     if (settings.slideAmount !== other.slideAmount) return false
+    if (settings.swingAmount !== other.swingAmount) return false
   }
   return true
 }
@@ -178,6 +224,14 @@ function sliceMasksEqual(a: Map<SliceKey, Set<CellKey>>, b: Map<SliceKey, Set<Ce
   return true
 }
 
-function snapshotsEqual(a: AnimSnapshot, b: { animSettings: Map<SliceKey, SliceAnimSettings>; sliceMasks: Map<SliceKey, Set<CellKey>> }): boolean {
-  return mapsEqual(a.animSettings, b.animSettings) && sliceMasksEqual(a.sliceMasks, b.sliceMasks)
+function slicePivotsEqual(a: Map<SliceKey, CellKey>, b: Map<SliceKey, CellKey>): boolean {
+  if (a.size !== b.size) return false
+  for (const [key, cellKey] of a) {
+    if (b.get(key) !== cellKey) return false
+  }
+  return true
+}
+
+function snapshotsEqual(a: AnimSnapshot, b: { animSettings: Map<SliceKey, SliceAnimSettings>; sliceMasks: Map<SliceKey, Set<CellKey>>; slicePivots: Map<SliceKey, CellKey> }): boolean {
+  return mapsEqual(a.animSettings, b.animSettings) && sliceMasksEqual(a.sliceMasks, b.sliceMasks) && slicePivotsEqual(a.slicePivots, b.slicePivots)
 }

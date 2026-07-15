@@ -57,6 +57,8 @@ export type SerializedAnimLayer = {
   animationType: AnimationType
   speed: AnimationSpeed
   slideAmount: number
+  /** Pendulum swing amplitude in degrees. Optional — older files predate pendulum animations. */
+  swingAmount?: number
 }
 
 /** A slice's animation mask: which of its occupied cells (by "x,y,z" key) actually animate.
@@ -65,6 +67,14 @@ export type SerializedSliceMask = {
   axis: Axis
   offset: number
   cellKeys: string[]
+}
+
+/** A slice's rotation/pendulum pivot override: the pivot cell's own "x,y,z" key (world center is
+ * that cell's coordinate +0.5 per axis). Absent for a slice means "use the inferred bbox center". */
+export type SerializedSlicePivot = {
+  axis: Axis
+  offset: number
+  cellKey: string
 }
 
 export type VoxPaintProjectFileV1 = {
@@ -118,4 +128,5 @@ export type VoxPaintProjectFile = {
   view?: ViewSettings
   animations?: SerializedAnimLayer[]
   masks?: SerializedSliceMask[]
+  pivots?: SerializedSlicePivot[]
 }

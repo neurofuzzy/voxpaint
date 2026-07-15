@@ -7,7 +7,7 @@ import { BOX_FACES, faceSizeFor, TEXEL_SCALE } from '@/engine/texture/types'
 import { emptyTextureModel } from '@/engine/texture/TextureStore'
 import type { SliceAnimSettings, SliceKey } from '@/engine/animation/types'
 import { encodeSliceKey } from '@/engine/animation/animationLayers'
-import { CURRENT_SCHEMA_VERSION, type ProjectMeta, type SerializedAnimLayer, type SerializedSliceMask, type SerializedTexture, type ViewSettings, type VoxPaintProjectFile } from './schema'
+import { CURRENT_SCHEMA_VERSION, type ProjectMeta, type SerializedAnimLayer, type SerializedSliceMask, type SerializedSlicePivot, type SerializedTexture, type ViewSettings, type VoxPaintProjectFile } from './schema'
 
 function u8ToBase64(a: Uint8Array): string {
   let s = ''
@@ -45,7 +45,7 @@ function serializeAnimations(animSettings: Map<SliceKey, SliceAnimSettings>): Se
   const layers: SerializedAnimLayer[] = []
   for (const [key, settings] of animSettings) {
     const { axis, offset } = (() => { const [a, o] = key.split(','); return { axis: a as any, offset: Number(o) } })()
-    layers.push({ axis, offset, animationType: settings.animationType, speed: settings.speed, slideAmount: settings.slideAmount })
+    layers.push({ axis, offset, animationType: settings.animationType, speed: settings.speed, slideAmount: settings.slideAmount, swingAmount: settings.swingAmount })
   }
   return layers
 }
@@ -57,6 +57,7 @@ function deserializeAnimations(layers: SerializedAnimLayer[]): Map<SliceKey, Sli
       animationType: layer.animationType,
       speed: layer.speed,
       slideAmount: layer.slideAmount,
+      swingAmount: layer.swingAmount ?? 30,
     })
   }
   return map
@@ -79,7 +80,24 @@ function deserializeSliceMasks(layers: SerializedSliceMask[]): Map<SliceKey, Set
   return map
 }
 
-export function serializeProject(model: VoxelModel, palette: PaletteState, meta: ProjectMeta, texture: TextureModel, view?: ViewSettings, animSettings?: Map<SliceKey, SliceAnimSettings>, sliceMasks?: Map<SliceKey, Set<CellKey>>): VoxPaintProjectFile {
+function serializeSlicePivots(slicePivots: Map<SliceKey, CellKey>): SerializedSlicePivot[] {
+  const pivots: SerializedSlicePivot[] = []
+  for (const [key, cellKey] of slicePivots) {
+    const [axis, offsetStr] = key.split(',')
+    pivots.push({ axis: axis as any, offset: Number(offsetStr), cellKey })
+  }
+  return pivots
+}
+
+function deserializeSlicePivots(pivots: SerializedSlicePivot[]): Map<SliceKey, CellKey> {
+  const map = new Map<SliceKey, CellKey>()
+  for (const pivot of pivots) {
+    map.set(encodeSliceKey(pivot.axis, pivot.offset), pivot.cellKey)
+  }
+  return map
+}
+
+export function serializeProject(model: VoxelModel, palette: PaletteState, meta: ProjectMeta, texture: TextureModel, view?: ViewSettings, animSettings?: Map<SliceKey, SliceAnimSettings>, sliceMasks?: Map<SliceKey, Set<CellKey>>, slicePivots?: Map<SliceKey, CellKey>): VoxPaintProjectFile {
   const colorCells = Array.from(model.color.entries()).map(([key, cell]) => {
     const [x, y, z] = decodeKey(key)
     return { x, y, z, paletteSlot: cell.paletteSlot }
@@ -97,10 +115,11 @@ export function serializeProject(model: VoxelModel, palette: PaletteState, meta:
     view,
     animations: animSettings ? serializeAnimations(animSettings) : undefined,
     masks: sliceMasks ? serializeSliceMasks(sliceMasks) : undefined,
+    pivots: slicePivots ? serializeSlicePivots(slicePivots) : undefined,
   }
 }
 
-export function deserializeProject(file: VoxPaintProjectFile): { model: VoxelModel; palette: PaletteState; meta: ProjectMeta; texture: TextureModel; view: ViewSettings; animSettings: Map<SliceKey, SliceAnimSettings>; sliceMasks: Map<SliceKey, Set<CellKey>> } {
+export function deserializeProject(file: VoxPaintProjectFile): { model: VoxelModel; palette: PaletteState; meta: ProjectMeta; texture: TextureModel; view: ViewSettings; animSettings: Map<SliceKey, SliceAnimSettings>; sliceMasks: Map<SliceKey, Set<CellKey>>; slicePivots: Map<SliceKey, CellKey> } {
   const model = emptyModel()
   const color = new Map(model.color)
   const chamfer = new Map(model.chamfer)
@@ -121,6 +140,7 @@ export function deserializeProject(file: VoxPaintProjectFile): { model: VoxelMod
   const view: ViewSettings = { ambientOcclusion: false, noiseLevel: 0, specularNoiseLevel: 0, aoStrength: 1, glassRoughnessLevel: 0.3, exposure: 1, exportScaleFactor: 100, exportAnchor: 'center', exportAlignToObjectBounds: false, ...file.view }
   const animSettings = file.animations ? deserializeAnimations(file.animations) : new Map()
   const sliceMasks = file.masks ? deserializeSliceMasks(file.masks) : new Map()
+  const slicePivots = file.pivots ? deserializeSlicePivots(file.pivots) : new Map()
   // `emissiveAnim` was added to PaletteState after this field was already required elsewhere in the
   // palette shape — older files simply don't have it, so default-merge rather than bump the schema
   // (same treatment `exportAlignToObjectBounds` got for `view`).
@@ -129,5 +149,5 @@ export function deserializeProject(file: VoxPaintProjectFile): { model: VoxelMod
   // hash functions' unseeded behavior) rather than a fresh random seed, so an old project's noise
   // looks exactly the same as it always did instead of visibly shifting on next load.
   const meta: ProjectMeta = { ...file.meta, noiseSeed: file.meta.noiseSeed ?? 0 }
-  return { model: { ...built, bounds: recomputeBounds(built) }, palette, meta, texture, view, animSettings, sliceMasks }
+  return { model: { ...built, bounds: recomputeBounds(built) }, palette, meta, texture, view, animSettings, sliceMasks, slicePivots }
 }

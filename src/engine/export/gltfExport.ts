@@ -13,7 +13,7 @@ import { buildOptimizedVoxelGeometryByMaterial, buildOptimizedVoxelGroupsBySlice
 import { materialParamsFor, type MaterialClass } from '@/engine/palette/palette'
 import { buildEmissiveAnimIndex } from '@/engine/palette/emissiveAnimation'
 import type { SliceAnimSettings, SliceKey } from '@/engine/animation/types'
-import { assignVoxelsToNodes, bboxCenterOfKeys, hasActiveAnimations } from '@/engine/animation/animationLayers'
+import { assignVoxelsToNodes, hasActiveAnimations, resolveAnimCenter } from '@/engine/animation/animationLayers'
 import { buildAllAnimationClips, type AnimNodeInfo } from '@/engine/animation/animationGLTF'
 import { registerEmissiveAnimationExtension, type EmissiveAnimExportTarget } from './emissiveAnimationExport'
 
@@ -85,15 +85,16 @@ function attachToSliceOrRoot(
   sliceNodes: Map<SliceKey, THREE.Group> | undefined,
   animNodes: AnimNodeInfo[] | undefined,
   root: THREE.Group,
+  slicePivots: Map<SliceKey, CellKey> | undefined,
 ) {
   if (sliceNodes && sliceKey) {
     let node = sliceNodes.get(sliceKey)
     if (!node) {
       node = new THREE.Group()
       const entry = nodeInfo!.get(sliceKey)!
-      const center = bboxCenterOfKeys(entry.cellKeys)
-      if (center) node.position.copy(center)
       const settings = animSettings!.get(sliceKey)!
+      const center = resolveAnimCenter(entry.cellKeys, entry.axis, entry.offset, settings.animationType, slicePivots)
+      if (center) node.position.copy(center)
       node.name = `anim_${sliceKey}`
       sliceNodes.set(sliceKey, node)
       animNodes!.push({ node, sliceKey, settings, axis: entry.axis, center: center ?? new THREE.Vector3() })
@@ -147,6 +148,7 @@ export async function exportModelToGlb(
   options: GltfExportOptions = {},
   animSettings?: Map<SliceKey, SliceAnimSettings>,
   sliceMasks?: Map<SliceKey, Set<CellKey>>,
+  slicePivots?: Map<SliceKey, CellKey>,
 ): Promise<ArrayBuffer> {
   const textured = !!texture && hasTextureContent(texture)
   const root = new THREE.Group()
@@ -241,7 +243,7 @@ export async function exportModelToGlb(
         material.name = `voxel_${hex6(colorKey)}_${materialClass}`
         const mesh = new THREE.Mesh(geometry, material)
         mesh.name = material.name
-        attachToSliceOrRoot(mesh, sliceKey, animSettings, sliceNodeInfo, sliceNodes, animNodes, root)
+        attachToSliceOrRoot(mesh, sliceKey, animSettings, sliceNodeInfo, sliceNodes, animNodes, root, slicePivots)
         materials.push(material)
       } else {
         const map = bakeOverlayTexture(blend.data, blend.width, blend.height, colorKey)
@@ -268,7 +270,7 @@ export async function exportModelToGlb(
         material.name = `voxel_${hex6(colorKey)}_${materialClass}`
         const mesh = new THREE.Mesh(geometry, material)
         mesh.name = material.name
-        attachToSliceOrRoot(mesh, sliceKey, animSettings, sliceNodeInfo, sliceNodes, animNodes, root)
+        attachToSliceOrRoot(mesh, sliceKey, animSettings, sliceNodeInfo, sliceNodes, animNodes, root, slicePivots)
         materials.push(material)
       }
     }
@@ -345,7 +347,7 @@ export async function exportModelToGlb(
       material.name = `voxel_${hex6(colorKey)}_${materialClass}`
       const mesh = new THREE.Mesh(geometry, material)
       mesh.name = material.name
-      attachToSliceOrRoot(mesh, sliceKey, animSettings, sliceNodeInfo, sliceNodes, animNodes, root)
+      attachToSliceOrRoot(mesh, sliceKey, animSettings, sliceNodeInfo, sliceNodes, animNodes, root, slicePivots)
       materials.push(material)
     }
   }

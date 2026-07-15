@@ -42,6 +42,10 @@ export function isRotateMode(type: AnimationType): boolean {
   return type === 'rotate-cw' || type === 'rotate-ccw'
 }
 
+export function isPendulumMode(type: AnimationType): boolean {
+  return type === 'pendulum' || type === 'pendulum-rev'
+}
+
 /** Signed direction vector for a slide mode: base axis (uDir for horizontal, vDir for vertical)
  * negated for the `-rev` variant, so the phase of the shared sine wave flips. */
 export function slideDirection(type: AnimationType, uDir: THREE.Vector3, vDir: THREE.Vector3): THREE.Vector3 {
@@ -86,6 +90,27 @@ export function sliceBBoxCenter(model: VoxelModel, axis: Axis, offset: number): 
   return bboxCenterOfKeys(sliceVoxelKeys(model, axis, offset))
 }
 
+/** Rotation/pendulum node center: an explicit per-slice pivot cell (its +0.5 cell-center) when one
+ * is set for this slice, else the slice's painted-voxel bbox center. Slide modes always use the
+ * bbox center (pivots don't apply there). Returns null only when the slice has no voxels and no
+ * pivot is set. */
+export function resolveAnimCenter(
+  cellKeys: CellKey[],
+  axis: Axis,
+  offset: number,
+  animationType: AnimationType,
+  slicePivots: Map<SliceKey, CellKey> | undefined,
+): THREE.Vector3 | null {
+  if ((isRotateMode(animationType) || isPendulumMode(animationType)) && slicePivots) {
+    const pivotKey = slicePivots.get(encodeSliceKey(axis, offset))
+    if (pivotKey) {
+      const [x, y, z] = decodeKey(pivotKey)
+      return new THREE.Vector3(x + 0.5, y + 0.5, z + 0.5)
+    }
+  }
+  return bboxCenterOfKeys(cellKeys)
+}
+
 export function sliceWorldBasis(axis: Axis): { uDir: THREE.Vector3; vDir: THREE.Vector3; normal: THREE.Vector3 } {
   const { uDir, vDir } = planeLogicalBasis(axis)
   const n = outwardNormal(axis, 1)
@@ -126,6 +151,12 @@ export function updateAnimatedGroupTransform(
     const offset = Math.sin(t * Math.PI * 2)
     group.position.copy(center).addScaledVector(dir, offset * amplitude)
     group.quaternion.identity()
+  } else if (isPendulumMode(settings.animationType)) {
+    const { normal } = sliceWorldBasis(axis)
+    const sign = settings.animationType === 'pendulum' ? 1 : -1
+    const angle = sign * THREE.MathUtils.degToRad(settings.swingAmount) * Math.sin(t * Math.PI * 2)
+    group.position.copy(center)
+    group.quaternion.setFromAxisAngle(normal, angle)
   }
 }
 
@@ -181,8 +212,11 @@ export function assignVoxelsToNodes(
 }
 
 export function defaultAnimationSettings(): SliceAnimSettings {
-  return { animationType: 'none', speed: 1, slideAmount: 4 }
+  return { animationType: 'none', speed: 1, slideAmount: 4, swingAmount: 30 }
 }
 
 export const SLIDE_AMOUNT_MIN = 1
 export const SLIDE_AMOUNT_MAX = 8
+
+export const PENDULUM_AMOUNT_MIN = 5
+export const PENDULUM_AMOUNT_MAX = 90

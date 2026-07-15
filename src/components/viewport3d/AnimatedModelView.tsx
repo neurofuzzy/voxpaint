@@ -20,6 +20,7 @@ export function AnimatedModelView() {
   const palette = useAppStore((s) => s.palette)
   const animSettings = useAppStore((s) => s.animSettings)
   const sliceMasks = useAppStore((s) => s.sliceMasks)
+  const slicePivots = useAppStore((s) => s.slicePivots)
   const texture = useAppStore((s) => s.texture)
   const glassRoughnessLevel = useAppStore((s) => s.glassRoughnessLevel)
   const gridExtent = useAppStore((s) => s.meta.gridExtent)
@@ -28,8 +29,8 @@ export function AnimatedModelView() {
   const rootGroup = useMemo(() => new THREE.Group(), [])
 
   const built = useMemo(
-    () => buildAnimatedSliceMeshes(model, palette, animSettings, sliceMasks, texture, gridExtent, glassRoughnessLevel),
-    [model, palette, animSettings, sliceMasks, texture, gridExtent, glassRoughnessLevel],
+    () => buildAnimatedSliceMeshes(model, palette, animSettings, sliceMasks, texture, gridExtent, glassRoughnessLevel, slicePivots),
+    [model, palette, animSettings, sliceMasks, texture, gridExtent, glassRoughnessLevel, slicePivots],
   )
 
   // Build the scene graph imperatively — one Group per slice, with mesh children added directly.

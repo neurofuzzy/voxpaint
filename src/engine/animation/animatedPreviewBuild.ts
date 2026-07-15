@@ -9,7 +9,7 @@ import { hasTextureContent } from '@/engine/texture/TextureStore'
 import { buildOptimizedVoxelGroupsBySlice } from '@/engine/instancing/voxelMeshBuilder'
 import { buildPreviewMaterial } from '@/engine/instancing/previewMaterial'
 import { buildEmissiveAnimIndex } from '@/engine/palette/emissiveAnimation'
-import { assignVoxelsToNodes, bboxCenterOfKeys } from './animationLayers'
+import { assignVoxelsToNodes, resolveAnimCenter } from './animationLayers'
 import type { SliceAnimSettings, SliceKey } from './types'
 
 export type AnimatedSliceMeshes = {
@@ -34,6 +34,7 @@ export function buildAnimatedSliceMeshes(
   texture: TextureModel,
   gridExtent: GridExtent,
   glassRoughnessLevel: number,
+  slicePivots: Map<SliceKey, CellKey>,
 ): AnimatedSliceMeshes | null {
   if (animSettings.size === 0) return null
   const { nodes } = assignVoxelsToNodes(model, animSettings, sliceMasks)
@@ -84,7 +85,8 @@ export function buildAnimatedSliceMeshes(
     if (g.sliceKey && !sliceInfo.has(g.sliceKey)) {
       const entry = nodes.get(g.sliceKey)
       if (entry) {
-        const center = bboxCenterOfKeys(entry.cellKeys)
+        const settings = animSettings.get(g.sliceKey)!
+        const center = resolveAnimCenter(entry.cellKeys, entry.axis, entry.offset, settings.animationType, slicePivots)
         if (center) {
           sliceInfo.set(g.sliceKey, { axis: entry.axis, offset: entry.offset, center })
         }

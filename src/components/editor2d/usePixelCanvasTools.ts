@@ -148,6 +148,8 @@ export function usePixelCanvasTools(canvasRef: React.RefObject<HTMLCanvasElement
     floodFill: store.floodFill,
     paintMaskCell: store.paintMaskCell,
     eraseMaskCell: store.eraseMaskCell,
+    setPivotForCurrentSlice: store.setPivotForCurrentSlice,
+    clearPivotForCurrentSlice: store.clearPivotForCurrentSlice,
     animBeginStroke: store.animBeginStroke,
     animCommitStroke: store.animCommitStroke,
     cloneStampCell: store.cloneStampCell,
@@ -246,8 +248,12 @@ export function usePixelCanvasTools(canvasRef: React.RefObject<HTMLCanvasElement
         canvas.releasePointerCapture(e.pointerId)
         // A stationary right-click (no drag) erases the cell under the cursor — a quick-erase
         // shortcut on the paint/erase tools now that right-click-drag means "pan the camera."
+        // The pivot tool (Animate mode only) reuses this same gesture to clear its slice's pivot.
         const store = useAppStore.getState()
-        if (!panDrag.hasMoved && (activeToolRef.current === 'paint' || activeToolRef.current === 'erase')) {
+        const isAnimatePivot = store.mode === 'animate' && activeToolRef.current === 'pivot'
+        if (!panDrag.hasMoved && isAnimatePivot) {
+          ctxRef.current.clearPivotForCurrentSlice() // self-brackets its own undo stroke
+        } else if (!panDrag.hasMoved && (activeToolRef.current === 'paint' || activeToolRef.current === 'erase')) {
           const cell = pixelToCell(canvas, e.clientX, e.clientY, size, pan, zoom, ctxRef.current.plane)
           const c = ctxRef.current
           if (store.mode === 'animate') {

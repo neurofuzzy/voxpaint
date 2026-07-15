@@ -15,15 +15,15 @@ export function FileMenu() {
   const setStatusMessage = useAppStore((s) => s.setStatusMessage)
 
   function handleExport() {
-    const { model, palette, meta, texture, ambientOcclusion, noiseLevel, specularNoiseLevel, aoStrength, glassRoughnessLevel, exposure, exportScaleFactor, exportAnchor, exportAlignToObjectBounds, animSettings, sliceMasks } = useAppStore.getState()
-    downloadProjectFile(serializeProject(model, palette, meta, texture, { ambientOcclusion, noiseLevel, specularNoiseLevel, aoStrength, glassRoughnessLevel, exposure, exportScaleFactor, exportAnchor, exportAlignToObjectBounds }, animSettings, sliceMasks))
+    const { model, palette, meta, texture, ambientOcclusion, noiseLevel, specularNoiseLevel, aoStrength, glassRoughnessLevel, exposure, exportScaleFactor, exportAnchor, exportAlignToObjectBounds, animSettings, sliceMasks, slicePivots } = useAppStore.getState()
+    downloadProjectFile(serializeProject(model, palette, meta, texture, { ambientOcclusion, noiseLevel, specularNoiseLevel, aoStrength, glassRoughnessLevel, exposure, exportScaleFactor, exportAnchor, exportAlignToObjectBounds }, animSettings, sliceMasks, slicePivots))
     showToast('Project exported.')
   }
 
   async function handleImportFile(file: File) {
     try {
       const parsed = await readProjectFile(file)
-      const { model, palette, meta, texture, view, animSettings, sliceMasks } = deserializeProject(parsed)
+      const { model, palette, meta, texture, view, animSettings, sliceMasks, slicePivots } = deserializeProject(parsed)
       useAppStore.getState().setModel(model)
       useAppStore.getState().setPalette(palette)
       useAppStore.getState().setTexture(texture)
@@ -40,6 +40,7 @@ export function FileMenu() {
         s.exportAlignToObjectBounds = view.exportAlignToObjectBounds ?? false
         s.animSettings = animSettings
         s.sliceMasks = sliceMasks
+        s.slicePivots = slicePivots
         s.animPast = []
         s.animFuture = []
       })

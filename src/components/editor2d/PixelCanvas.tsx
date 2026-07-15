@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { encodeKey } from '@/engine/grid/GridStore'
-import { gridCoordFromPixel } from '@/engine/plane/constructionPlane'
+import { decodeKey, encodeKey } from '@/engine/grid/GridStore'
+import { gridCoordFromPixel, pixelFromGridCoord } from '@/engine/plane/constructionPlane'
 import { toDisplayU, toDisplayV } from '@/engine/plane/planeDisplay'
 import { resolveSlotColor, shadeColor } from '@/engine/palette/palette'
 import { forEachSelectedCell, traceSelectionOutline } from '@/engine/tools/selectionMask'
@@ -85,6 +85,7 @@ export function PixelCanvas() {
   const floatOrigin = useAppStore((s) => s.floatOrigin)
   const mode = useAppStore((s) => s.mode)
   const sliceMasks = useAppStore((s) => s.sliceMasks)
+  const slicePivots = useAppStore((s) => s.slicePivots)
   const gridExtent = useAppStore((s) => s.meta.gridExtent)
 
   const { onPointerDown, onPointerMove, onPointerUp, onPointerLeave, linePreview, selectPreview, hoverCellRef, size, pan, zoom } =
@@ -235,6 +236,25 @@ export function PixelCanvas() {
       }
     }
 
+    // Animate-mode pivot marker — a small violet dot at the current slice's rotation/pendulum
+    // pivot cell, if one is set (matches PivotGizmo.tsx's 3D marker and the mask overlay's accent
+    // color). The map is keyed by slice identity itself, so a hit here already means "on this slice".
+    if (mode === 'animate') {
+      const pivotKey = slicePivots.get(encodeSliceKey(plane.axis, plane.offset))
+      if (pivotKey) {
+        const { u: pu, v: pv } = pixelFromGridCoord(plane, decodeKey(pivotKey))
+        const [px, py] = worldToScreen(toDisplayU(plane, pu) + 0.5, toDisplayV(plane, pv) + 0.5, size, pan, zoom)
+        const radius = cellPx * 0.22
+        ctx.beginPath()
+        ctx.arc(px, py, radius, 0, Math.PI * 2)
+        ctx.fillStyle = '#8b5cf6'
+        ctx.fill()
+        ctx.strokeStyle = '#ffffff'
+        ctx.lineWidth = 1.5
+        ctx.stroke()
+      }
+    }
+
     // paint-tool shift-line preview
     if (linePreview) {
       const [ax, ay] = worldToScreen(
@@ -311,7 +331,7 @@ export function PixelCanvas() {
       }
       ctx.setLineDash([])
     }
-  }, [model, palette, plane, linePreview, selection, selectPreview, floatContent, floatOrigin, antPhase, size, pan, zoom, mode, sliceMasks, gridExtent])
+  }, [model, palette, plane, linePreview, selection, selectPreview, floatContent, floatOrigin, antPhase, size, pan, zoom, mode, sliceMasks, slicePivots, gridExtent])
 
   useEffect(() => {
     draw()

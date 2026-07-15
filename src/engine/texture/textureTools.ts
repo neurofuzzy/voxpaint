@@ -244,4 +244,6 @@ export const textureToolMap: Record<ToolId, TextureToolHandler> = {
   fill: fillTool,
   clone: cloneTool,
   move: moveTool,
+  // Pivot is Animate-mode-only (see ToolPalette.tsx's ANIMATE_TOOLS) — harmless no-op here.
+  pivot: {},
 }

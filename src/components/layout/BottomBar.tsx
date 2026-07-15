@@ -10,6 +10,7 @@ const TOOL_HINTS: Record<ToolId, string> = {
   fill: 'click to flood-fill connected cells',
   clone: 'alt+click to set a clone source, then drag to stamp',
   move: 'drag to shift every pixel on this slice · r/h/v: rotate/mirror',
+  pivot: 'click to pin the rotation/pendulum pivot for this slice · right-click: clear',
 }
 
 /**

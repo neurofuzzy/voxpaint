@@ -41,7 +41,7 @@ export function ExportGltfDialog({ open, onOpenChange }: { open: boolean; onOpen
 
   async function run() {
     const state = useAppStore.getState()
-    const { model, palette, meta, texture, noiseLevel, specularNoiseLevel, aoStrength, glassRoughnessLevel, animSettings, sliceMasks } = state
+    const { model, palette, meta, texture, noiseLevel, specularNoiseLevel, aoStrength, glassRoughnessLevel, animSettings, sliceMasks, slicePivots } = state
     const { gridExtent } = meta
     const sf = state.exportScaleFactor
     const anchor = state.exportAnchor
@@ -64,7 +64,7 @@ export function ExportGltfDialog({ open, onOpenChange }: { open: boolean; onOpen
         anchor,
         alignToObjectBounds,
         noiseSeed: meta.noiseSeed,
-      }, animSettings, sliceMasks)
+      }, animSettings, sliceMasks, slicePivots)
       downloadGlb(glb, normalizeProjectFilename(meta.name || 'voxpaint-model'))
       showToast('GLTF exported.')
       onOpenChange(false)

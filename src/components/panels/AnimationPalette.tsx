@@ -1,8 +1,8 @@
 import type { ReactNode } from 'react'
-import { ArrowDownUp, ArrowLeftRight, ArrowRightLeft, ArrowUpDown } from 'lucide-react'
+import { ArrowDownUp, ArrowLeftRight, ArrowRightLeft, ArrowUpDown, RedoDot, UndoDot } from 'lucide-react'
 import { useAppStore } from '@/store/useAppStore'
 import type { AnimationType, AnimationSpeed } from '@/engine/animation/types'
-import { SLIDE_AMOUNT_MAX, SLIDE_AMOUNT_MIN, encodeSliceKey, isSlideMode } from '@/engine/animation/animationLayers'
+import { PENDULUM_AMOUNT_MAX, PENDULUM_AMOUNT_MIN, SLIDE_AMOUNT_MAX, SLIDE_AMOUNT_MIN, encodeSliceKey, isPendulumMode, isSlideMode } from '@/engine/animation/animationLayers'
 
 const ANIM_TYPES: Array<{ id: AnimationType; label: string }> = [
   { id: 'none', label: 'None' },
@@ -12,6 +12,8 @@ const ANIM_TYPES: Array<{ id: AnimationType; label: string }> = [
   { id: 'slide-vertical-rev', label: 'Translate Down-Up' },
   { id: 'slide-horizontal', label: 'Translate Left-Right' },
   { id: 'slide-horizontal-rev', label: 'Translate Right-Left' },
+  { id: 'pendulum', label: 'Pendulum' },
+  { id: 'pendulum-rev', label: 'Pendulum Reverse' },
 ]
 
 const SPEEDS: AnimationSpeed[] = [1, 2, 3]
@@ -22,6 +24,7 @@ export function AnimationPalette() {
   const handleSelectType = useAppStore((s) => s.setAnimationTypeForCurrentSlice)
   const handleSelectSpeed = useAppStore((s) => s.setAnimationSpeedForCurrentSlice)
   const handleSlideAmount = useAppStore((s) => s.setSlideAmountForCurrentSlice)
+  const handleSwingAmount = useAppStore((s) => s.setSwingAmountForCurrentSlice)
 
   const sliceKey = encodeSliceKey(plane.axis, plane.offset)
   const currentSettings = animSettings.get(sliceKey) ?? null
@@ -29,8 +32,10 @@ export function AnimationPalette() {
   const activeType = currentSettings?.animationType ?? 'none'
   const activeSpeed = currentSettings?.speed ?? 1
   const activeSlideAmount = currentSettings?.slideAmount ?? 4
+  const activeSwingAmount = currentSettings?.swingAmount ?? 30
 
-  const showSlider = isSlideMode(activeType)
+  const showSlideSlider = isSlideMode(activeType)
+  const showSwingSlider = isPendulumMode(activeType)
 
   return (
     <div
@@ -50,6 +55,8 @@ export function AnimationPalette() {
             case 'slide-vertical-rev': content = <ArrowDownUp size={14} />; break
             case 'slide-horizontal': content = <ArrowLeftRight size={14} />; break
             case 'slide-horizontal-rev': content = <ArrowRightLeft size={14} />; break
+            case 'pendulum': content = <UndoDot size={14} />; break
+            case 'pendulum-rev': content = <RedoDot size={14} />; break
           }
           return (
             <button
@@ -92,7 +99,7 @@ export function AnimationPalette() {
           })}
         </div>
 
-        {showSlider && (
+        {showSlideSlider && (
           <>
             <span className="text-[10px] font-medium text-neutral-500">slide</span>
             <input
@@ -104,6 +111,20 @@ export function AnimationPalette() {
               className="h-4 w-16 accent-violet-500"
             />
             <span className="w-4 text-center text-[10px] tabular-nums text-neutral-400">{activeSlideAmount}</span>
+          </>
+        )}
+        {showSwingSlider && (
+          <>
+            <span className="text-[10px] font-medium text-neutral-500">swing</span>
+            <input
+              type="range"
+              min={PENDULUM_AMOUNT_MIN}
+              max={PENDULUM_AMOUNT_MAX}
+              value={activeSwingAmount}
+              onChange={(e) => handleSwingAmount(Number(e.target.value))}
+              className="h-4 w-16 accent-violet-500"
+            />
+            <span className="w-6 text-center text-[10px] tabular-nums text-neutral-400">{activeSwingAmount}°</span>
           </>
         )}
       </div>

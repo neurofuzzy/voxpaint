@@ -7,7 +7,7 @@ import type { BoxFace, TextureModel } from '@/engine/texture/types'
 import type { TexelClip } from '@/engine/texture/texelOps'
 import type { AnimationSpeed, AnimationType, SliceAnimSettings, SliceKey } from '@/engine/animation/types'
 
-export type ToolId = 'paint' | 'erase' | 'eyedropper' | 'select' | 'fill' | 'clone' | 'move'
+export type ToolId = 'paint' | 'erase' | 'eyedropper' | 'select' | 'fill' | 'clone' | 'move' | 'pivot'
 export type VoxelKind = 'cube' | 'ramp'
 
 export type SelectionRegion = {
@@ -290,6 +290,11 @@ export type AnimationSlice = {
    * encodeSliceKey(axis, offset). Absent or empty for a slice means "animate the whole slice"
    * (the pre-mask default behavior). */
   sliceMasks: Map<SliceKey, Set<CellKey>>
+  /** Per-slice rotation/pendulum pivot override, keyed by encodeSliceKey(axis, offset) — the pivot
+   * cell's own key (its world center is the cell's coordinate +0.5 per axis). Absent for a slice
+   * means "use the inferred bounding-box center" (the pre-pivot default behavior). Ignored by slide
+   * animation types. At most one entry per slice — setting a new pivot replaces the old one. */
+  slicePivots: Map<SliceKey, CellKey>
   /** Undo/redo stacks for animation changes (independent of model undo) — one shared stack for
    * both animation-settings changes and mask paint strokes, since both are Animate-mode-only
    * edits a user expects to undo together. */
@@ -298,16 +303,20 @@ export type AnimationSlice = {
 
   /** Set or clear the animation for a slice. Wrapped in begin/commit stroke for undo. */
   setAnimSettingsForSlice: (axis: Axis, offset: number, settings: SliceAnimSettings | null) => void
-  /** Remove all animation settings and masks (e.g. on new project). */
+  /** Remove all animation settings, masks, and pivots (e.g. on new project). */
   clearAllAnimations: () => void
 
   /** Set the animation type for the current construction-plane slice, carrying over its existing
-   * speed/slideAmount (or defaults for a previously unanimated slice). Passing 'none' clears it. */
+   * speed/slideAmount/swingAmount (or defaults for a previously unanimated slice). Passing 'none'
+   * clears it. */
   setAnimationTypeForCurrentSlice: (type: AnimationType) => void
   /** Set the animation speed for the current slice, defaulting the rest of its settings if unset. */
   setAnimationSpeedForCurrentSlice: (speed: AnimationSpeed) => void
   /** Set the slide amount for the current slice, defaulting the rest of its settings if unset. */
   setSlideAmountForCurrentSlice: (amount: number) => void
+  /** Set the pendulum swing amount (degrees) for the current slice, defaulting the rest of its
+   * settings if unset. */
+  setSwingAmountForCurrentSlice: (amount: number) => void
 
   /** Paints one cell of the current plane's slice into its animation mask. Only occupied cells
    * (voxels that already hold color) can be masked. Returns false when out of bounds or empty. */
@@ -316,16 +325,25 @@ export type AnimationSlice = {
    * entirely once it becomes empty, reverting to whole-slice-animates. */
   eraseMaskCell: (coord: Coord) => void
 
+  /** Sets (replacing any existing one) the current construction-plane slice's rotation/pendulum
+   * pivot to the cell at plane-space (u,v) — occupied or not. Self-brackets its own undo stroke.
+   * Returns false when out of bounds. */
+  setPivotForCurrentSlice: (u: number, v: number) => boolean
+  /** Clears the current slice's pivot override, reverting to the inferred bounding-box center.
+   * Self-brackets its own undo stroke. */
+  clearPivotForCurrentSlice: () => void
+
   animBeginStroke: () => void
   animCommitStroke: () => void
   animUndo: () => void
   animRedo: () => void
 }
 
-/** One Animate-mode undo/redo snapshot: animation settings and mask paint state travel together. */
+/** One Animate-mode undo/redo snapshot: animation settings, mask paint state, and pivots travel together. */
 export type AnimSnapshot = {
   animSettings: Map<SliceKey, SliceAnimSettings>
   sliceMasks: Map<SliceKey, Set<CellKey>>
+  slicePivots: Map<SliceKey, CellKey>
 }
 
 export type AppState = ProjectSlice &
