@@ -11,7 +11,7 @@ export type PreviewAOMaps = {
   metalBaseColorTexture: THREE.Texture | null
 }
 
-function canvasTexture(data: Uint8ClampedArray, width: number, height: number, srgb: boolean): THREE.CanvasTexture {
+function canvasTexture(data: Uint8ClampedArray, width: number, height: number, srgb: boolean, channel: number): THREE.CanvasTexture {
   const canvas = document.createElement('canvas')
   canvas.width = width
   canvas.height = height
@@ -25,17 +25,21 @@ function canvasTexture(data: Uint8ClampedArray, width: number, height: number, s
   t.generateMipmaps = false
   t.flipY = false
   t.colorSpace = srgb ? THREE.SRGBColorSpace : THREE.NoColorSpace
+  t.channel = channel
   t.needsUpdate = true
   return t
 }
 
 /**
  * Shared AO + specular-noise texture baking for the live 3D preview, so Model and Texture mode
- * apply the exact same View Settings-driven maps. Unwraps `geometries` into a shared `uv1` atlas
- * (mutates each geometry, adding the `uv1` attribute) — reused by both bakes. `shareUv0` should be
- * true only when the geometries have no other use for `uv` (untextured groups); it doubles `uv`
- * onto the same unwrap so the specular-noise maps (which sample `uv`, not `uv1`) still work.
- * Textured groups already need `uv` for their box-map/overlay texture, so pass `shareUv0: false`.
+ * apply the exact same View Settings-driven maps. Unwraps `geometries` into a `uv1` atlas (mutates
+ * each geometry, adding the `uv1` attribute) — reused by both bakes. Every returned texture is
+ * pinned to the UV channel that actually holds the unwrap (`texture.channel`, same mechanism the
+ * built-in `aoMap` uses) rather than relying on the default channel-0/`uv` sampling, since `uv`
+ * doesn't always hold the unwrap: pass `shareUv0: true` only when the geometries have no other use
+ * for `uv` (untextured groups), which also copies the unwrap onto `uv` so channel-0 consumers still
+ * work; textured groups need `uv` for their box-map/overlay texture, so pass `shareUv0: false` and
+ * every map here samples `uv1` (channel 1) instead.
  */
 export function usePreviewAOMaps(
   model: VoxelModel,
@@ -74,12 +78,13 @@ export function usePreviewAOMaps(
   const specularTexture = useMemo(() => {
     if (specularNoiseLevel <= 0) return null
     const spec = makeSpecularNoiseTexture(unwrap.atlas, specularNoiseLevel)
+    const channel = shareUv0 ? 0 : 1
     return {
-      metalness: canvasTexture(spec.metalness.data, spec.metalness.width, spec.metalness.height, false),
-      roughness: canvasTexture(spec.roughness.data, spec.roughness.width, spec.roughness.height, false),
-      baseColor: canvasTexture(spec.baseColor.data, spec.baseColor.width, spec.baseColor.height, true),
+      metalness: canvasTexture(spec.metalness.data, spec.metalness.width, spec.metalness.height, false, channel),
+      roughness: canvasTexture(spec.roughness.data, spec.roughness.width, spec.roughness.height, false, channel),
+      baseColor: canvasTexture(spec.baseColor.data, spec.baseColor.width, spec.baseColor.height, true, channel),
     }
-  }, [unwrap, specularNoiseLevel])
+  }, [unwrap, specularNoiseLevel, shareUv0])
   useEffect(() => {
     return () => {
       specularTexture?.metalness.dispose()
