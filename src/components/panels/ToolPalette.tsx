@@ -38,7 +38,9 @@ export function ToolPalette() {
         onValueChange={(v) => v && setActiveTool(v as ToolId)}
         className="flex flex-col gap-1 p-2"
       >
-        {tools.map(({ id, label, icon: Icon, hint }) => (
+        {tools.map(({ id, label, icon: Icon, hint }) => {
+          const active = activeTool === id
+          return (
           <Tooltip.Root key={id}>
             <Tooltip.Trigger asChild>
               <ToggleGroup.Item
@@ -46,7 +48,10 @@ export function ToolPalette() {
                 aria-label={label}
                 onPointerEnter={() => setStatusMessage(hint)}
                 onPointerLeave={() => setStatusMessage(null)}
-                className="flex h-9 w-9 items-center justify-center rounded-md text-neutral-400 hover:bg-neutral-800 hover:text-neutral-100 data-[state=on]:bg-violet-500/20 data-[state=on]:text-violet-300"
+                className={
+                  'flex h-9 w-9 items-center justify-center rounded-md transition ' +
+                  (active ? 'bg-violet-500/70 text-white' : 'text-neutral-400 hover:bg-neutral-800 hover:text-neutral-100')
+                }
               >
                 <Icon size={17} />
               </ToggleGroup.Item>
@@ -58,7 +63,8 @@ export function ToolPalette() {
               </Tooltip.Content>
             </Tooltip.Portal>
           </Tooltip.Root>
-        ))}
+          )
+        })}
       </ToggleGroup.Root>
     </Tooltip.Provider>
   )
