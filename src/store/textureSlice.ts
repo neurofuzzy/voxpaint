@@ -1,6 +1,7 @@
 import type { StateCreator } from 'zustand'
+import { DEFAULT_GRID_EXTENT } from '@/engine/grid/GridStore'
 import type { BoxFace, TextureModel } from '@/engine/texture/types'
-import { EMPTY, FACE_SIZE } from '@/engine/texture/types'
+import { EMPTY, faceSizeFor } from '@/engine/texture/types'
 import { cloneTextureModel, emptyTextureModel, texelIndex, withinFace } from '@/engine/texture/TextureStore'
 import { applyClipAt, clearRegion, copyRegion, floodFillFace, mirrorClip, rotateClip90 } from '@/engine/texture/texelOps'
 import { isCellSelected, mirrorRegion, rotateRegion90 } from '@/engine/tools/selectionMask'
@@ -38,14 +39,15 @@ export const createTextureSlice: Slice = (set, get) => {
   const writeTexels = (writes: Array<readonly [number, number, number]>): boolean => {
     const face = get().activeBoxFace
     if (!face) return false
+    const faceSize = faceSizeFor(get().meta.gridExtent)
     const next = cloneTextureModel(get().texture, face)
     const arr = next.faces[face]
     const sel = get().textureSelection
     let changed = false
     for (const [u, v, value] of writes) {
-      if (!withinFace(u, v)) continue
+      if (!withinFace(u, v, faceSize)) continue
       if (sel && !isCellSelected(sel, u, v)) continue
-      const i = texelIndex(u, v)
+      const i = texelIndex(u, v, faceSize)
       if (arr[i] === value) continue
       arr[i] = value
       changed = true
@@ -55,7 +57,9 @@ export const createTextureSlice: Slice = (set, get) => {
   }
 
   return {
-    texture: emptyTextureModel(),
+    // Not yet a real project's own gridExtent (get() isn't ready this early in slice construction)
+    // — overwritten by newProject()/deserializeProject() before any painting is possible.
+    texture: emptyTextureModel(DEFAULT_GRID_EXTENT),
     activeBoxFace: null,
     activeGrayIndex: 0,
     texturePast: [],
@@ -113,25 +117,27 @@ export const createTextureSlice: Slice = (set, get) => {
       get().textureBakeFloatIfAny()
       const face = get().activeBoxFace
       if (!face) return
-      let cells = floodFillFace(get().texture.faces[face], u, v)
+      const faceSize = faceSizeFor(get().meta.gridExtent)
+      let cells = floodFillFace(get().texture.faces[face], u, v, faceSize)
       const sel = get().textureSelection
       if (sel) cells = cells.filter(([cu, cv]) => isCellSelected(sel, cu, cv))
       if (cells.length === 0) return
       get().textureBeginStroke()
       const gray = get().activeGrayIndex
       const next = cloneTextureModel(get().texture, face)
-      for (const [cu, cv] of cells) next.faces[face][texelIndex(cu, cv)] = gray
+      for (const [cu, cv] of cells) next.faces[face][texelIndex(cu, cv, faceSize)] = gray
       commit(next)
       get().textureCommitStroke()
     },
 
     cloneStampTexel: (srcU, srcV, destU, destV) => {
       const face = get().activeBoxFace
-      if (!face || !withinFace(destU, destV)) return
+      const faceSize = faceSizeFor(get().meta.gridExtent)
+      if (!face || !withinFace(destU, destV, faceSize)) return
       const arr = get().texture.faces[face]
-      const value = withinFace(srcU, srcV) ? arr[texelIndex(srcU, srcV)] : EMPTY
+      const value = withinFace(srcU, srcV, faceSize) ? arr[texelIndex(srcU, srcV, faceSize)] : EMPTY
       const next = cloneTextureModel(get().texture, face)
-      next.faces[face][texelIndex(destU, destV)] = value
+      next.faces[face][texelIndex(destU, destV, faceSize)] = value
       commit(next)
     },
 
@@ -147,16 +153,17 @@ export const createTextureSlice: Slice = (set, get) => {
     updateTextureMove: (du, dv) => {
       const g = textureMoveGesture
       if (!g) return
+      const faceSize = faceSizeFor(get().meta.gridExtent)
       const next = cloneTextureModel(get().texture, g.face)
       const arr = next.faces[g.face]
       arr.fill(EMPTY)
-      for (let v = 0; v < FACE_SIZE; v++) {
-        for (let u = 0; u < FACE_SIZE; u++) {
-          const value = g.base[texelIndex(u, v)]
+      for (let v = 0; v < faceSize; v++) {
+        for (let u = 0; u < faceSize; u++) {
+          const value = g.base[texelIndex(u, v, faceSize)]
           if (value === EMPTY) continue
           const nu = u + du
           const nv = v + dv
-          if (withinFace(nu, nv)) arr[texelIndex(nu, nv)] = value
+          if (withinFace(nu, nv, faceSize)) arr[texelIndex(nu, nv, faceSize)] = value
         }
       }
       commit(next)
@@ -175,12 +182,13 @@ export const createTextureSlice: Slice = (set, get) => {
     },
 
     textureLiftToFloat: () => {
-      const { textureSelection, textureFloat, activeBoxFace, texture } = get()
+      const { textureSelection, textureFloat, activeBoxFace, texture, meta } = get()
       if (!textureSelection || textureFloat || !activeBoxFace) return
-      const content = copyRegion(texture.faces[activeBoxFace], textureSelection)
+      const faceSize = faceSizeFor(meta.gridExtent)
+      const content = copyRegion(texture.faces[activeBoxFace], textureSelection, faceSize)
       get().textureBeginStroke()
       const next = cloneTextureModel(texture, activeBoxFace)
-      clearRegion(next.faces[activeBoxFace], textureSelection)
+      clearRegion(next.faces[activeBoxFace], textureSelection, faceSize)
       set((state) => {
         state.texture = next
         state.textureFloat = content
@@ -213,10 +221,10 @@ export const createTextureSlice: Slice = (set, get) => {
     },
 
     textureBakeFloatIfAny: () => {
-      const { textureFloat, textureFloatOrigin, activeBoxFace, texture } = get()
+      const { textureFloat, textureFloatOrigin, activeBoxFace, texture, meta } = get()
       if (!textureFloat || !textureFloatOrigin || !activeBoxFace) return
       const next = cloneTextureModel(texture, activeBoxFace)
-      applyClipAt(next.faces[activeBoxFace], textureFloat, textureFloatOrigin.originU, textureFloatOrigin.originV)
+      applyClipAt(next.faces[activeBoxFace], textureFloat, textureFloatOrigin.originU, textureFloatOrigin.originV, faceSizeFor(meta.gridExtent))
       set((state) => {
         state.texture = next
         state.dirty = true
@@ -231,9 +239,9 @@ export const createTextureSlice: Slice = (set, get) => {
 
     textureCopy: () => {
       get().textureBakeFloatIfAny()
-      const { textureSelection, activeBoxFace, texture } = get()
+      const { textureSelection, activeBoxFace, texture, meta } = get()
       if (!textureSelection || !activeBoxFace) return
-      const clip = copyRegion(texture.faces[activeBoxFace], textureSelection)
+      const clip = copyRegion(texture.faces[activeBoxFace], textureSelection, faceSizeFor(meta.gridExtent))
       set((state) => { state.textureClipboard = clip })
     },
 
@@ -245,11 +253,11 @@ export const createTextureSlice: Slice = (set, get) => {
 
     textureDelete: () => {
       get().textureBakeFloatIfAny()
-      const { textureSelection, activeBoxFace } = get()
+      const { textureSelection, activeBoxFace, meta } = get()
       if (!textureSelection || !activeBoxFace) return
       get().textureBeginStroke()
       const next = cloneTextureModel(get().texture, activeBoxFace)
-      clearRegion(next.faces[activeBoxFace], textureSelection)
+      clearRegion(next.faces[activeBoxFace], textureSelection, faceSizeFor(meta.gridExtent))
       commit(next)
       get().textureCommitStroke()
     },

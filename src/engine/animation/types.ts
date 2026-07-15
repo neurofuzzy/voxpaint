@@ -8,6 +8,8 @@ export type AnimationType =
   | 'slide-vertical-rev'
   | 'slide-horizontal'
   | 'slide-horizontal-rev'
+  | 'pendulum'
+  | 'pendulum-rev'
 export type AnimationSpeed = 1 | 2 | 3
 export type SliceKey = string
 
@@ -15,6 +17,8 @@ export type SliceAnimSettings = {
   animationType: AnimationType
   speed: AnimationSpeed
   slideAmount: number
+  /** Pendulum swing amplitude in degrees (5-90). Unused by other animation types. */
+  swingAmount: number
 }
 
 export type AnimLayer = {

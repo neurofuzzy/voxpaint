@@ -29,6 +29,10 @@ export interface ToolContext {
    * separate from the voxel model's beginStroke/commitStroke above. */
   paintMaskCell: (u: number, v: number) => boolean
   eraseMaskCell: (coord: [number, number, number]) => void
+  /** Animate-mode pivot tool: sets/clears the current slice's rotation/pendulum pivot. Both
+   * self-bracket their own (Animate-mode-scoped) undo stroke. */
+  setPivotForCurrentSlice: (u: number, v: number) => boolean
+  clearPivotForCurrentSlice: () => void
   animBeginStroke: () => void
   animCommitStroke: () => void
   beginMove: (wholeModel: boolean) => void

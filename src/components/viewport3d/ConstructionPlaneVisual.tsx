@@ -1,6 +1,5 @@
 import { useMemo } from 'react'
 import * as THREE from 'three'
-import { DEFAULT_GRID_EXTENT } from '@/engine/grid/GridStore'
 import { outwardNormal } from '@/engine/plane/planeGeometry'
 import { useAppStore } from '@/store/useAppStore'
 import { AXIS_UNIT_VECTOR, UP, toVector3 } from './axisVectors'
@@ -13,6 +12,7 @@ const PLANE_CENTER_ADJUST = 0.5
  */
 export function ConstructionPlaneVisual() {
   const plane = useAppStore((s) => s.plane)
+  const gridExtent = useAppStore((s) => s.meta.gridExtent)
 
   const axisVec = AXIS_UNIT_VECTOR[plane.axis]
   const position = useMemo(
@@ -30,11 +30,11 @@ export function ConstructionPlaneVisual() {
     <group>
       <group position={position} quaternion={quaternion}>
         <mesh rotation-x={-Math.PI / 2} raycast={() => null}>
-          <planeGeometry args={[DEFAULT_GRID_EXTENT, DEFAULT_GRID_EXTENT]} />
+          <planeGeometry args={[gridExtent, gridExtent]} />
           <meshBasicMaterial color="#4ad9ff" transparent opacity={0.035} depthWrite={false} side={THREE.DoubleSide} />
         </mesh>
-        <gridHelper args={[DEFAULT_GRID_EXTENT, DEFAULT_GRID_EXTENT, '#3a5a70', '#22303a']} />
-        <gridHelper args={[DEFAULT_GRID_EXTENT, DEFAULT_GRID_EXTENT / 8, '#7ac8ff', '#3d6d8a']} />
+        <gridHelper args={[gridExtent, gridExtent, '#3a5a70', '#22303a']} />
+        <gridHelper args={[gridExtent, gridExtent / 8, '#7ac8ff', '#3d6d8a']} />
       </group>
 
       <group position={position} quaternion={arrowQuaternion}>

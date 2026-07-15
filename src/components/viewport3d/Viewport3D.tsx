@@ -1,6 +1,6 @@
 import { Canvas, useThree } from '@react-three/fiber'
 import { OrbitControls } from '@react-three/drei'
-import { useEffect, useRef } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import * as THREE from 'three'
 import type { OrbitControls as OrbitControlsImpl } from 'three-stdlib'
 import { decodeKey } from '@/engine/grid/GridStore'
@@ -14,7 +14,9 @@ import { BoundingBoxFaceSelector } from './BoundingBoxFaceSelector'
 import { Compass } from './Compass'
 import { ConstructionPlaneGizmo } from './ConstructionPlaneGizmo'
 import { ConstructionPlaneVisual } from './ConstructionPlaneVisual'
+import { ExposureSlider } from './ExposureSlider'
 import { OptimizedMeshView } from './OptimizedMeshView'
+import { PivotGizmo } from './PivotGizmo'
 import { SceneEnvironment } from './SceneEnvironment'
 import { SceneLighting } from './SceneLighting'
 import { TexturedModelView } from './TexturedModelView'
@@ -25,6 +27,24 @@ import { VoxelGhostPreview } from './VoxelGhostPreview'
 import { VoxelInstancedMeshes } from './VoxelInstancedMeshes'
 
 const CLICK_DRAG_THRESHOLD_PX = 4
+
+/**
+ * Khronos "PBR Neutral" tone mapping (`NeutralToneMapping`) — the same curve the glTF Sample
+ * Viewer defaults to — so this preview's highlight rolloff/contrast matches how the exported
+ * model actually looks in a reference PBR viewer instead of the flat, unrolled-off output of
+ * `NoToneMapping`. Applied imperatively (not via `Canvas`'s `gl` prop) so `exposure` stays
+ * reactive to the store without needing to recreate the renderer.
+ */
+function ToneMappingController({ exposure }: { exposure: number }) {
+  const gl = useThree((s) => s.gl)
+  useEffect(() => {
+    gl.toneMapping = THREE.NeutralToneMapping
+  }, [gl])
+  useEffect(() => {
+    gl.toneMappingExposure = exposure
+  }, [gl, exposure])
+  return null
+}
 
 /**
  * Owns hover tracking — both the whole-voxel hover blink (InstancingManager, via the shared
@@ -151,8 +171,10 @@ export function Viewport3D() {
   const mode = useAppStore((s) => s.mode)
   const animSettings = useAppStore((s) => s.animSettings)
   const setStatusMessage = useAppStore((s) => s.setStatusMessage)
+  const exposure = useAppStore((s) => s.exposure)
   const containerRef = useRef<HTMLDivElement>(null)
   usePlaneLayerScroll(containerRef)
+  const [showExposure, setShowExposure] = useState(false)
 
   const textureMode = mode === 'texture'
   const animateMode = mode === 'animate'
@@ -165,9 +187,11 @@ export function Viewport3D() {
       onPointerEnter={() => setStatusMessage(ORBIT_HINT)}
       onPointerLeave={() => setStatusMessage(null)}
     >
-      <Canvas flat camera={{ position: [18, 16, 20], fov: 45 }} gl={{ antialias: true }}>
+      <Canvas camera={{ position: [18, 16, 20], fov: 45 }} gl={{ antialias: true }}>
+        <ToneMappingController exposure={exposure} />
         <color attach="background" args={['#111114']} />
         <SceneLighting />
+        <SceneEnvironment />
         {textureMode ? (
           <>
             <TexturedModelView />
@@ -177,20 +201,25 @@ export function Viewport3D() {
           <>
             <ConstructionPlaneVisual />
             {!hasAnimations && <VoxelInstancedMeshes ref={managerRef} />}
-            <SceneEnvironment />
             {!hasAnimations && <OptimizedMeshView />}
             {hasAnimations && <AnimatedModelView />}
             <VoxelFaceHighlight />
             <VoxelGhostPreview />
             <ConstructionPlaneGizmo />
+            <PivotGizmo />
             <VoxelInteractionHandler managerRef={managerRef} />
           </>
         )}
           <OrbitControls ref={orbitControlsRef} makeDefault enableDamping dampingFactor={0.12} minDistance={2} maxDistance={150} />
           <Compass />
       </Canvas>
-      <ViewOptionsOverlay onResetCamera={() => orbitControlsRef.current?.reset()} />
+      <ViewOptionsOverlay
+        onResetCamera={() => orbitControlsRef.current?.reset()}
+        showExposure={showExposure}
+        onToggleExposure={() => setShowExposure((v) => !v)}
+      />
       <SettingsPalette />
+      {showExposure && <ExposureSlider />}
     </div>
   )
 }

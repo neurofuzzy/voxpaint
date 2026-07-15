@@ -18,6 +18,7 @@ export interface TextureToolContext {
   texture: TextureModel
   activeBoxFace: BoxFace | null
   activeGrayIndex: number
+  faceSize: number
   selection: SelectionRegion | null
   floatContent: TexelClip | null
   floatOrigin: FloatOrigin | null
@@ -108,7 +109,7 @@ const eraseTool: TextureToolHandler = makeTextureEditTool((ctx, u, v) => ctx.era
 const eyedropperTool: TextureToolHandler = {
   onDown(ctx, e) {
     if (!ctx.activeBoxFace) return
-    const value = getTexel(ctx.texture, ctx.activeBoxFace, e.u, e.v)
+    const value = getTexel(ctx.texture, ctx.activeBoxFace, e.u, e.v, ctx.faceSize)
     if (value === EMPTY) return
     ctx.setActiveGrayIndex(value)
     ctx.setActiveTool('paint')
@@ -243,4 +244,6 @@ export const textureToolMap: Record<ToolId, TextureToolHandler> = {
   fill: fillTool,
   clone: cloneTool,
   move: moveTool,
+  // Pivot is Animate-mode-only (see ToolPalette.tsx's ANIMATE_TOOLS) — harmless no-op here.
+  pivot: {},
 }

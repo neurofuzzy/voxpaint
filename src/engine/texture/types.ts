@@ -1,5 +1,4 @@
-import { DEFAULT_GRID_EXTENT } from '@/engine/grid/GridStore'
-import type { Axis, Orientation } from '@/engine/grid/types'
+import type { Axis, GridExtent, Orientation } from '@/engine/grid/types'
 
 /**
  * The 6 box-map directions. A box face **is** a construction plane facing outward, so it reuses the
@@ -31,13 +30,19 @@ export function boxFaceOf(axis: Axis, orientation: Orientation): BoxFace {
  * 0.25 voxel). */
 export const TEXEL_SCALE = 4
 
-/** Texels along one edge of a single box face = grid extent × texel scale (64 at the default 16³
- * working volume). Each face is `FACE_SIZE²` texels. */
-export const FACE_SIZE = DEFAULT_GRID_EXTENT * TEXEL_SCALE
+/** Texels along one edge of a single box face for a given project = its `gridExtent` × texel scale
+ * (e.g. 64 at the 16³ "Medium" size). Each face is `faceSizeFor(gridExtent)²` texels. Scales with
+ * the project's own locked-in size — every texture-engine function takes `gridExtent` explicitly
+ * rather than assuming a fixed size. */
+export function faceSizeFor(gridExtent: GridExtent): number {
+  return gridExtent * TEXEL_SCALE
+}
 
 /** Half the working volume in world units — the in-plane world coordinate range a face covers is
- * `[-HALF_WORLD, HALF_WORLD)`. */
-export const HALF_WORLD = DEFAULT_GRID_EXTENT / 2
+ * `[-halfWorldFor(gridExtent), halfWorldFor(gridExtent))`. */
+export function halfWorldFor(gridExtent: GridExtent): number {
+  return gridExtent / 2
+}
 
 /**
  * The texture palette — 8 grayscale values: **4 dark** (indices 0–3) and **4 light** (indices 4–7),
@@ -55,9 +60,9 @@ export const GRAYSCALE: readonly string[] = ['#000000', '#242424', '#494949', '#
 export const EMPTY = 255
 
 /**
- * The box-mapped texture: 6 independent grayscale faces, each a flat `FACE_SIZE²` `Uint8Array` of
- * grayscale indices (0..4) or `EMPTY`. Parallel to `VoxelModel`; treat as immutable outside Immer
- * producers (the store diffs on reference equality).
+ * The box-mapped texture: 6 independent grayscale faces, each a flat `faceSizeFor(gridExtent)²`
+ * `Uint8Array` of grayscale indices (0..4) or `EMPTY`. Parallel to `VoxelModel`; treat as immutable
+ * outside Immer producers (the store diffs on reference equality).
  */
 export type TextureModel = {
   faces: Record<BoxFace, Uint8Array>

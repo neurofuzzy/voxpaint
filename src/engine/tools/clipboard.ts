@@ -1,4 +1,4 @@
-import type { ChamferCell, VoxelModel } from '@/engine/grid/types'
+import type { ChamferCell, GridExtent, VoxelModel } from '@/engine/grid/types'
 import type { ConstructionPlane } from '@/engine/plane/types'
 import { encodeKey, expandBounds, withinWorkingBounds } from '@/engine/grid/GridStore'
 import { gridCoordFromPixel } from '@/engine/plane/constructionPlane'
@@ -48,10 +48,11 @@ export function applyClipboardAt(
   clipboard: ClipboardData,
   destOriginU: number,
   destOriginV: number,
+  gridExtent: GridExtent,
 ): void {
   for (const cell of clipboard.cells) {
     const coord = gridCoordFromPixel(plane, destOriginU + cell.du, destOriginV + cell.dv)
-    if (!withinWorkingBounds(coord)) continue
+    if (!withinWorkingBounds(coord, gridExtent)) continue
 
     const key = encodeKey(...coord)
 

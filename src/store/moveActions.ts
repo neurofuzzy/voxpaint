@@ -70,7 +70,7 @@ export const createMoveActionsSlice: Slice = (set, get) => ({
           cell.coord[1] + du * g.uDir[1] + dv * g.vDir[1],
           cell.coord[2] + du * g.uDir[2] + dv * g.vDir[2],
         ]
-        if (!withinWorkingBounds(nc)) continue
+        if (!withinWorkingBounds(nc, state.meta.gridExtent)) continue
         const nk = encodeKey(...nc)
         if (cell.color) state.model.color.set(nk, { paletteSlot: cell.color.paletteSlot })
         if (cell.chamfer) state.model.chamfer.set(nk, cloneChamfer(cell.chamfer))

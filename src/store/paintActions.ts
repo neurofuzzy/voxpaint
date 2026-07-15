@@ -22,9 +22,9 @@ export function endFreshChamferTracking() {
 export const createPaintActionsSlice: Slice = (set, get) => ({
   paintCell: (u: number, v: number) => {
     get().bakeFloatIfAny()
-    const { plane, activeVoxelKind, activePaletteSlot, selection } = get()
+    const { plane, activeVoxelKind, activePaletteSlot, selection, meta } = get()
     const coord = gridCoordFromPixel(plane, u, v)
-    if (!withinWorkingBounds(coord)) return false
+    if (!withinWorkingBounds(coord, meta.gridExtent)) return false
     // An active selection clips editing to its mask (bakeFloatIfAny above already resolved any float).
     if (selection && !isCellSelected(selection, u, v)) return false
 

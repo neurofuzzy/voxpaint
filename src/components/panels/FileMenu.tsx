@@ -6,27 +6,24 @@ import { deserializeProject, serializeProject } from '@/engine/persistence/seria
 import { useAppStore } from '@/store/useAppStore'
 import { showToast } from '@/components/ui/toastBus'
 import { ExportGltfDialog } from './ExportGltfDialog'
+import { NewProjectDialog } from './NewProjectDialog'
 
 export function FileMenu() {
   const fileInputRef = useRef<HTMLInputElement>(null)
   const [gltfDialogOpen, setGltfDialogOpen] = useState(false)
+  const [newProjectDialogOpen, setNewProjectDialogOpen] = useState(false)
   const setStatusMessage = useAppStore((s) => s.setStatusMessage)
 
-  function handleNew() {
-    if (!confirm('Start a new project? Unsaved changes in this project will be lost from the autosave slot.')) return
-    useAppStore.getState().newProject()
-  }
-
   function handleExport() {
-    const { model, palette, meta, texture, ambientOcclusion, noiseLevel, specularNoiseLevel, aoStrength, glassRoughnessLevel, exportScaleFactor, exportAnchor, animSettings, sliceMasks } = useAppStore.getState()
-    downloadProjectFile(serializeProject(model, palette, meta, texture, { ambientOcclusion, noiseLevel, specularNoiseLevel, aoStrength, glassRoughnessLevel, exportScaleFactor, exportAnchor }, animSettings, sliceMasks))
+    const { model, palette, meta, texture, ambientOcclusion, noiseLevel, specularNoiseLevel, aoStrength, glassRoughnessLevel, exposure, exportScaleFactor, exportAnchor, exportAlignToObjectBounds, animSettings, sliceMasks, slicePivots } = useAppStore.getState()
+    downloadProjectFile(serializeProject(model, palette, meta, texture, { ambientOcclusion, noiseLevel, specularNoiseLevel, aoStrength, glassRoughnessLevel, exposure, exportScaleFactor, exportAnchor, exportAlignToObjectBounds }, animSettings, sliceMasks, slicePivots))
     showToast('Project exported.')
   }
 
   async function handleImportFile(file: File) {
     try {
       const parsed = await readProjectFile(file)
-      const { model, palette, meta, texture, view, animSettings, sliceMasks } = deserializeProject(parsed)
+      const { model, palette, meta, texture, view, animSettings, sliceMasks, slicePivots } = deserializeProject(parsed)
       useAppStore.getState().setModel(model)
       useAppStore.getState().setPalette(palette)
       useAppStore.getState().setTexture(texture)
@@ -37,10 +34,13 @@ export function FileMenu() {
         s.specularNoiseLevel = view.specularNoiseLevel ?? 0
         s.aoStrength = view.aoStrength ?? 1
         s.glassRoughnessLevel = view.glassRoughnessLevel ?? 0.3
+        s.exposure = view.exposure ?? 1
         s.exportScaleFactor = view.exportScaleFactor ?? 100
         s.exportAnchor = view.exportAnchor ?? 'center'
+        s.exportAlignToObjectBounds = view.exportAlignToObjectBounds ?? false
         s.animSettings = animSettings
         s.sliceMasks = sliceMasks
+        s.slicePivots = slicePivots
         s.animPast = []
         s.animFuture = []
       })
@@ -70,10 +70,10 @@ export function FileMenu() {
           className="z-50 min-w-48 rounded-md border border-neutral-800 bg-neutral-900 p-1 text-sm text-neutral-200 shadow-xl"
         >
           <DropdownMenu.Item
-            onSelect={handleNew}
+            onSelect={() => setNewProjectDialogOpen(true)}
             className="flex cursor-pointer items-center gap-2 rounded px-2 py-1.5 outline-none hover:bg-neutral-800"
           >
-            <FilePlus size={14} /> New Project
+            <FilePlus size={14} /> New Project…
           </DropdownMenu.Item>
           <DropdownMenu.Item
             onSelect={handleExport}
@@ -109,6 +109,7 @@ export function FileMenu() {
       />
     </DropdownMenu.Root>
     <ExportGltfDialog open={gltfDialogOpen} onOpenChange={setGltfDialogOpen} />
+    <NewProjectDialog open={newProjectDialogOpen} onOpenChange={setNewProjectDialogOpen} />
     </>
   )
 }

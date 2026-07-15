@@ -5,6 +5,10 @@ export type Orientation = 1 | -1
 export type Rotation = 0 | 1 | 2 | 3
 export type ChamferShapeKind = 'ramp' | 'convex' | 'concave'
 
+/** Locked-in project size (edge length of the working cube), chosen once at project creation and
+ * never changed after. Small/Medium/Large — all well under `MAX_GRID_EXTENT`. */
+export type GridExtent = 8 | 16 | 24
+
 /** Grid coordinate, always integer. Mutable tuple (not readonly) so Immer drafts accept it directly. */
 export type Coord = [x: number, y: number, z: number]
 

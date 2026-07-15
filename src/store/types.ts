@@ -1,13 +1,13 @@
-import type { Axis, CellKey, ChamferCell, Coord, Orientation, VoxelModel } from '@/engine/grid/types'
+import type { Axis, CellKey, ChamferCell, Coord, GridExtent, Orientation, VoxelModel } from '@/engine/grid/types'
 import type { GltfExportAnchor } from '@/engine/export/gltfExport'
-import type { PaletteSlotRef, PaletteState } from '@/engine/palette/types'
+import type { EmissiveAnimMode, PaletteSlotRef, PaletteState } from '@/engine/palette/types'
 import type { ConstructionPlane } from '@/engine/plane/types'
 import type { ProjectMeta } from '@/engine/persistence/schema'
 import type { BoxFace, TextureModel } from '@/engine/texture/types'
 import type { TexelClip } from '@/engine/texture/texelOps'
 import type { AnimationSpeed, AnimationType, SliceAnimSettings, SliceKey } from '@/engine/animation/types'
 
-export type ToolId = 'paint' | 'erase' | 'eyedropper' | 'select' | 'fill' | 'clone' | 'move'
+export type ToolId = 'paint' | 'erase' | 'eyedropper' | 'select' | 'fill' | 'clone' | 'move' | 'pivot'
 export type VoxelKind = 'cube' | 'ramp'
 
 export type SelectionRegion = {
@@ -45,8 +45,13 @@ export type ProjectSlice = {
   meta: ProjectMeta
   setModel: (model: VoxelModel) => void
   setPalette: (palette: PaletteState) => void
+  /** Sets the blink/pulse animation mode for one emissive palette slot (0–3). */
+  setEmissiveAnimMode: (index: number, mode: EmissiveAnimMode) => void
   setProjectName: (name: string) => void
-  newProject: () => void
+  /** Re-rolls `meta.noiseSeed`, changing the baked noise/specular grain's pattern without touching
+   * the model — for when the current project's noise happened to land on an unflattering roll. */
+  randomizeNoiseSeed: () => void
+  newProject: (name: string, gridExtent: GridExtent) => void
 }
 
 export type HistorySlice = {
@@ -123,6 +128,10 @@ export type ViewSlice = {
   meshTriangles: { optimized: number; raw: number } | null
   /** 3D preview: AO strength multiplier applied during bake (1.0–5.0, default 1.0). */
   aoStrength: number
+  /** 3D preview: renderer tone-mapping exposure (0.1–4, default 1.0). Applied on top of
+   * NeutralToneMapping (Canvas.tsx), so it's the user-facing lever for brightness since the
+   * baked-in light intensities can't be tuned by eye from here. */
+  exposure: number
   /** Dynamic status message shown in the footer's center area. Components set this on hover to
    * show contextual info; cleared on pointer leave. Falls back to the active tool hint when null. */
   statusMessage: string | null
@@ -132,6 +141,8 @@ export type ViewSlice = {
   exportScaleFactor: number
   /** GLTF export: anchor point (center, bottom, back). */
   exportAnchor: GltfExportAnchor
+  /** GLTF export: anchor relative to the voxels' own AABB instead of the canvas origin. */
+  exportAlignToObjectBounds: boolean
   setFullscreen: (v: boolean) => void
   setHoverCell: (coord: Coord | null, chamferValid: boolean | null) => void
   setHoveredFace: (face: HoveredFace | null) => void
@@ -142,11 +153,13 @@ export type ViewSlice = {
   setSpecularNoiseLevel: (v: number) => void
   setGlassRoughnessLevel: (v: number) => void
   setMeshTriangles: (v: { optimized: number; raw: number } | null) => void
+  setExposure: (v: number) => void
   setAoStrength: (v: number) => void
   setStatusMessage: (msg: string | null) => void
   setOnionSkin: (v: boolean) => void
   setExportScaleFactor: (v: number) => void
   setExportAnchor: (v: GltfExportAnchor) => void
+  setExportAlignToObjectBounds: (v: boolean) => void
 }
 
 export type PersistenceSlice = {
@@ -277,6 +290,11 @@ export type AnimationSlice = {
    * encodeSliceKey(axis, offset). Absent or empty for a slice means "animate the whole slice"
    * (the pre-mask default behavior). */
   sliceMasks: Map<SliceKey, Set<CellKey>>
+  /** Per-slice rotation/pendulum pivot override, keyed by encodeSliceKey(axis, offset) — the pivot
+   * cell's own key (its world center is the cell's coordinate +0.5 per axis). Absent for a slice
+   * means "use the inferred bounding-box center" (the pre-pivot default behavior). Ignored by slide
+   * animation types. At most one entry per slice — setting a new pivot replaces the old one. */
+  slicePivots: Map<SliceKey, CellKey>
   /** Undo/redo stacks for animation changes (independent of model undo) — one shared stack for
    * both animation-settings changes and mask paint strokes, since both are Animate-mode-only
    * edits a user expects to undo together. */
@@ -285,16 +303,20 @@ export type AnimationSlice = {
 
   /** Set or clear the animation for a slice. Wrapped in begin/commit stroke for undo. */
   setAnimSettingsForSlice: (axis: Axis, offset: number, settings: SliceAnimSettings | null) => void
-  /** Remove all animation settings and masks (e.g. on new project). */
+  /** Remove all animation settings, masks, and pivots (e.g. on new project). */
   clearAllAnimations: () => void
 
   /** Set the animation type for the current construction-plane slice, carrying over its existing
-   * speed/slideAmount (or defaults for a previously unanimated slice). Passing 'none' clears it. */
+   * speed/slideAmount/swingAmount (or defaults for a previously unanimated slice). Passing 'none'
+   * clears it. */
   setAnimationTypeForCurrentSlice: (type: AnimationType) => void
   /** Set the animation speed for the current slice, defaulting the rest of its settings if unset. */
   setAnimationSpeedForCurrentSlice: (speed: AnimationSpeed) => void
   /** Set the slide amount for the current slice, defaulting the rest of its settings if unset. */
   setSlideAmountForCurrentSlice: (amount: number) => void
+  /** Set the pendulum swing amount (degrees) for the current slice, defaulting the rest of its
+   * settings if unset. */
+  setSwingAmountForCurrentSlice: (amount: number) => void
 
   /** Paints one cell of the current plane's slice into its animation mask. Only occupied cells
    * (voxels that already hold color) can be masked. Returns false when out of bounds or empty. */
@@ -303,16 +325,25 @@ export type AnimationSlice = {
    * entirely once it becomes empty, reverting to whole-slice-animates. */
   eraseMaskCell: (coord: Coord) => void
 
+  /** Sets (replacing any existing one) the current construction-plane slice's rotation/pendulum
+   * pivot to the cell at plane-space (u,v) — occupied or not. Self-brackets its own undo stroke.
+   * Returns false when out of bounds. */
+  setPivotForCurrentSlice: (u: number, v: number) => boolean
+  /** Clears the current slice's pivot override, reverting to the inferred bounding-box center.
+   * Self-brackets its own undo stroke. */
+  clearPivotForCurrentSlice: () => void
+
   animBeginStroke: () => void
   animCommitStroke: () => void
   animUndo: () => void
   animRedo: () => void
 }
 
-/** One Animate-mode undo/redo snapshot: animation settings and mask paint state travel together. */
+/** One Animate-mode undo/redo snapshot: animation settings, mask paint state, and pivots travel together. */
 export type AnimSnapshot = {
   animSettings: Map<SliceKey, SliceAnimSettings>
   sliceMasks: Map<SliceKey, Set<CellKey>>
+  slicePivots: Map<SliceKey, CellKey>
 }
 
 export type AppState = ProjectSlice &

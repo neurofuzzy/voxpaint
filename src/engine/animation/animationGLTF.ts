@@ -1,7 +1,7 @@
 import * as THREE from 'three'
 import type { Axis } from '@/engine/grid/types'
 import type { SliceAnimSettings, SliceKey } from './types'
-import { BASE_CYCLE_SECONDS, isRotateMode, isSlideMode, slideDirection, sliceWorldBasis } from './animationLayers'
+import { BASE_CYCLE_SECONDS, isPendulumMode, isRotateMode, isSlideMode, slideDirection, sliceWorldBasis } from './animationLayers'
 
 function cycleDuration(speed: number): number {
   return BASE_CYCLE_SECONDS / speed
@@ -60,9 +60,9 @@ class CubicSplineVectorInterpolant extends THREE.Interpolant {
  * than a `getInterpolation()` value, since `createInterpolant` isn't in `KeyframeTrack`'s public
  * type surface. `track.values` must already be laid out as `[inTangent, value, outTangent]` triples
  * per keyframe before calling this. */
-function markCubicSpline(track: THREE.VectorKeyframeTrack): void {
+function markCubicSpline(track: THREE.VectorKeyframeTrack | THREE.QuaternionKeyframeTrack): void {
   const t = track as unknown as { createInterpolant: ((result?: Float32Array) => THREE.Interpolant) & { isInterpolantFactoryMethodGLTFCubicSpline?: boolean } }
-  t.createInterpolant = function (this: THREE.VectorKeyframeTrack, result?: Float32Array) {
+  t.createInterpolant = function (this: THREE.VectorKeyframeTrack | THREE.QuaternionKeyframeTrack, result?: Float32Array) {
     return new CubicSplineVectorInterpolant(this.times, this.values, this.getValueSize() / 3, result)
   } as typeof t.createInterpolant
   t.createInterpolant.isInterpolantFactoryMethodGLTFCubicSpline = true
@@ -134,6 +134,44 @@ function buildTranslationClip(
   return new THREE.AnimationClip(`anim_${node.name}`, duration, [track])
 }
 
+/**
+ * Pendulum swing: angle(t) = sign·A·sin(ωt), amplitude A = swingAmount in radians. Encoded as a
+ * quaternion CUBICSPLINE track (5 samples, analytic tangents) exactly like `buildTranslationClip`'s
+ * sine-wave position, but for rotation. `theta` below is the HALF-angle fed into the quaternion's
+ * sin/cos components ([axis·sin(θ), cos(θ)] represents a rotation of 2θ) — this is intentional, not
+ * a bug: the live preview (`updateAnimatedGroupTransform`) computes the full angle and calls
+ * `setFromAxisAngle` (which halves internally), so both agree on a peak deflection of ±swingAmount.
+ */
+function buildPendulumClip(
+  node: THREE.Group,
+  settings: SliceAnimSettings,
+  axis: Axis,
+  _center: THREE.Vector3,
+): THREE.AnimationClip {
+  const duration = cycleDuration(settings.speed)
+  const { normal } = sliceWorldBasis(axis)
+  const sign = settings.animationType === 'pendulum' ? 1 : -1
+  const amplitude = THREE.MathUtils.degToRad(settings.swingAmount)
+  const omega = (2 * Math.PI) / duration
+  const times = [0, duration / 4, duration / 2, (duration * 3) / 4, duration]
+
+  const values: number[] = []
+  for (const t of times) {
+    const theta = ((sign * amplitude) / 2) * Math.sin(omega * t)
+    const dtheta = ((sign * amplitude * omega) / 2) * Math.cos(omega * t)
+    const s = Math.sin(theta)
+    const c = Math.cos(theta)
+    const value = [normal.x * s, normal.y * s, normal.z * s, c]
+    const tangent = [normal.x * c * dtheta, normal.y * c * dtheta, normal.z * c * dtheta, -s * dtheta]
+    values.push(...tangent, ...value, ...tangent)
+  }
+
+  const track = new THREE.QuaternionKeyframeTrack(`${node.name}.quaternion`, times, values)
+  markCubicSpline(track)
+
+  return new THREE.AnimationClip(`anim_${node.name}`, duration, [track])
+}
+
 export function buildAnimationClip(
   node: THREE.Group,
   settings: SliceAnimSettings,
@@ -145,6 +183,9 @@ export function buildAnimationClip(
   }
   if (isSlideMode(settings.animationType)) {
     return buildTranslationClip(node, settings, axis, center)
+  }
+  if (isPendulumMode(settings.animationType)) {
+    return buildPendulumClip(node, settings, axis, center)
   }
   return null
 }

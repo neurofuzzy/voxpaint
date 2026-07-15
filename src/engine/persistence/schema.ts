@@ -1,10 +1,10 @@
 import type { AnimationType, AnimationSpeed } from '@/engine/animation/types'
-import type { Axis, BBox, ChamferClassification, Orientation } from '@/engine/grid/types'
+import type { Axis, BBox, ChamferClassification, GridExtent, Orientation } from '@/engine/grid/types'
 import type { PaletteSlotRef, PaletteState } from '@/engine/palette/types'
 import type { BoxFace } from '@/engine/texture/types'
 import type { GltfExportAnchor } from '@/engine/export/gltfExport'
 
-export const CURRENT_SCHEMA_VERSION = 5 as const
+export const CURRENT_SCHEMA_VERSION = 6 as const
 
 export type ViewSettings = {
   ambientOcclusion: boolean
@@ -12,14 +12,23 @@ export type ViewSettings = {
   specularNoiseLevel: number
   aoStrength: number
   glassRoughnessLevel: number
+  exposure: number
   exportScaleFactor: number
   exportAnchor: GltfExportAnchor
+  /** GLTF export: anchor relative to the voxels' own AABB instead of the canvas origin. */
+  exportAlignToObjectBounds: boolean
 }
 
 export type ProjectMeta = {
   name: string
   createdAt: string // ISO 8601
   modifiedAt: string
+  /** Locked in at project creation (see engine/grid/types.ts `GridExtent`) — never changes after. */
+  gridExtent: GridExtent
+  /** Seeds `hashNoise`/`specularHash` (engine/ao/bakeAO.ts) so each project's baked noise and metal
+   * specular grain looks unique instead of every project sharing identical noise at the same voxel
+   * coordinates. Generated once at project creation, then frozen for the project's lifetime. */
+  noiseSeed: number
 }
 
 export type SerializedColorCell = { x: number; y: number; z: number; paletteSlot: PaletteSlotRef }
@@ -48,6 +57,8 @@ export type SerializedAnimLayer = {
   animationType: AnimationType
   speed: AnimationSpeed
   slideAmount: number
+  /** Pendulum swing amplitude in degrees. Optional — older files predate pendulum animations. */
+  swingAmount?: number
 }
 
 /** A slice's animation mask: which of its occupied cells (by "x,y,z" key) actually animate.
@@ -56,6 +67,14 @@ export type SerializedSliceMask = {
   axis: Axis
   offset: number
   cellKeys: string[]
+}
+
+/** A slice's rotation/pendulum pivot override: the pivot cell's own "x,y,z" key (world center is
+ * that cell's coordinate +0.5 per axis). Absent for a slice means "use the inferred bbox center". */
+export type SerializedSlicePivot = {
+  axis: Axis
+  offset: number
+  cellKey: string
 }
 
 export type VoxPaintProjectFileV1 = {
@@ -91,7 +110,11 @@ export type VoxPaintProjectFileV2 = {
  * v4: adds an optional `animations` array for per-slice animation settings (axis, offset, type, speed).
  *
  * v5: adds an optional `masks` array for per-slice animation masks (which occupied cells of a
- * slice animate, vs the whole slice). */
+ * slice animate, vs the whole slice).
+ *
+ * v6: `meta.gridExtent` becomes required — the project's locked-in working-cube size, chosen at
+ * creation (see engine/grid/types.ts `GridExtent`). Older files didn't have per-project sizing at
+ * all (every project used the same fixed 16 extent), so the v5→v6 migration just stamps `16`. */
 export type VoxPaintProjectFile = {
   schemaVersion: typeof CURRENT_SCHEMA_VERSION
   meta: ProjectMeta
@@ -105,4 +128,5 @@ export type VoxPaintProjectFile = {
   view?: ViewSettings
   animations?: SerializedAnimLayer[]
   masks?: SerializedSliceMask[]
+  pivots?: SerializedSlicePivot[]
 }

@@ -1,34 +1,42 @@
 import { useEffect, useMemo } from 'react'
 import * as THREE from 'three'
-import { bakeAOToAtlas, makeSpecularNoiseTexture } from '@/engine/ao/bakeAO'
-import { unwrapGeometries } from '@/engine/ao/uvUnwrap'
+import { useFrame } from '@react-three/fiber'
+import { buildBlendAtlas } from '@/engine/texture/boxMapping'
+import { bakeOverlayTexturesByColor } from '@/engine/texture/overlay'
+import { buildTexturedGeometryByColor } from '@/engine/texture/texturedGeometry'
+import { hasTextureContent } from '@/engine/texture/TextureStore'
 import { buildOptimizedVoxelGroups } from '@/engine/instancing/voxelMeshBuilder'
-import { materialParamsFor } from '@/engine/palette/palette'
+import { triangleCount } from '@/engine/instancing/meshOptimizer'
+import { buildPreviewMaterial, tickEmissiveAnimation } from '@/engine/instancing/previewMaterial'
+import { buildEmissiveAnimIndex } from '@/engine/palette/emissiveAnimation'
 import { useAppStore } from '@/store/useAppStore'
+import { usePreviewAOMaps } from './usePreviewAOMaps'
 
 const wireframeOverlayMaterial = new THREE.MeshBasicMaterial({ color: 0xffffff, wireframe: true })
 
 /**
- * Renders the whole model as shell-culled, CSG-optimized geometry — the 3D preview's "optimized
- * mesh" mode — split into **one mesh per (materialClass, colour) pair**. Each colour group is
- * CSG-unioned independently via ThreeBSP; the boolean union removes interior faces between same-
- * colour adjacent voxels and never bridges across disconnected voxel groups. Different colours
- * and material classes are kept in separate meshes.
+ * Renders the whole model split into **one mesh per (materialClass, colour) pair**, each carrying
+ * a `MeshPhysicalMaterial` (`buildPreviewMaterial` — the same recipe Texture and Animate mode use,
+ * mirrored again by the glTF export) with PBR params from `materialParamsFor`.
  *
- * Each mesh carries a `MeshPhysicalMaterial` with a solid `color` from its palette slot (no
- * per-vertex colours), plus PBR params from `materialParamsFor`. The emissive class sets
- * `material.emissive` + `emissiveIntensity` directly instead of a shader patch.
+ * When the model has no painted texture, geometry is shell-culled and CSG-optimized (the "optimized
+ * mesh" toggle merges coplanar faces on top) — solid palette colour, no vertex colours. When the
+ * model *does* have painted texture content, this instead uses the same box-mapped, baked-overlay
+ * geometry Texture mode uses (bypassing CSG optimization, which doesn't preserve per-face UVs), so
+ * Model mode shows paint too. The `optimizedMesh` toggle and triangle-reduction stat are therefore
+ * inert while textured — there's nothing to reduce without the CSG pass.
  *
  * Ambient occlusion is baked into a uv1-unwrapped atlas (non-overlapping, depth-correct hemisphere
- * sampling from the 3D voxel occupancy field) and applied via `material.aoMap`.
+ * sampling from the 3D voxel occupancy field) and applied via `material.aoMap`, in both branches.
  *
- * Geometry rebuilds only when the model or palette changes; the AO atlas re-bakes when the model
- * or the toggle changes. `onStats` surfaces the before/after triangle counts. When wireframe is
- * on, each group also draws a white unlit wireframe overlay.
+ * Geometry rebuilds only when the model, palette, or texture changes; the AO atlas re-bakes when
+ * the model or the toggle changes. `onStats` surfaces the before/after triangle counts. When
+ * wireframe is on, each group also draws a white unlit wireframe overlay.
  */
 export function OptimizedMeshView() {
   const model = useAppStore((s) => s.model)
   const palette = useAppStore((s) => s.palette)
+  const texture = useAppStore((s) => s.texture)
   const wireframe = useAppStore((s) => s.wireframe)
   const optimizedMesh = useAppStore((s) => s.optimizedMesh)
   const ambientOcclusion = useAppStore((s) => s.ambientOcclusion)
@@ -36,116 +44,87 @@ export function OptimizedMeshView() {
   const specularNoiseLevel = useAppStore((s) => s.specularNoiseLevel)
   const aoStrength = useAppStore((s) => s.aoStrength)
   const glassRoughnessLevel = useAppStore((s) => s.glassRoughnessLevel)
+  const gridExtent = useAppStore((s) => s.meta.gridExtent)
+  const noiseSeed = useAppStore((s) => s.meta.noiseSeed)
 
   const setMeshTriangles = useAppStore((s) => s.setMeshTriangles)
 
+  const textured = hasTextureContent(texture)
+
   const built = useMemo(() => {
+    if (textured) {
+      const groups = buildTexturedGeometryByColor(model, palette, gridExtent)
+      const triangles = groups.reduce((sum, g) => sum + triangleCount(g.geometry), 0)
+      return { groups, rawTriangles: triangles, optimizedTriangles: triangles }
+    }
     return buildOptimizedVoxelGroups(model, palette, optimizedMesh)
-  }, [model, palette, optimizedMesh])
+  }, [model, palette, optimizedMesh, textured, gridExtent])
 
-  const geometries = useMemo(() => built.groups.map((g) => g.geometry), [built])
+  // Emissive materials skip AO/noise baking entirely (a glowing surface shouldn't be shadowed or
+  // dirtied) — excluded here so the unwrap atlas never allocates space for them; they still act as
+  // AO occluders for everything else, since occlusion sampling reads the 3D model, not the atlas.
+  const geometries = useMemo(
+    () => built.groups.filter((g) => g.materialClass !== 'emissive').map((g) => g.geometry),
+    [built],
+  )
 
-  // Shared UV-unwrap — computed once, reused by AO and specular-noise textures.
-  const unwrap = useMemo(() => {
-    const result = unwrapGeometries(geometries)
-    for (let i = 0; i < geometries.length; i++) {
-      const uv1 = new THREE.Float32BufferAttribute(result.uv1Arrays[i], 2)
-      geometries[i].setAttribute('uv1', uv1)
-      geometries[i].setAttribute('uv', uv1)
-    }
-    return result
-  }, [geometries])
+  const { aoTexture, metalnessTexture, roughnessTexture, metalBaseColorTexture } = usePreviewAOMaps(
+    model,
+    geometries,
+    !textured,
+    { ambientOcclusion, noiseLevel, specularNoiseLevel, aoStrength, noiseSeed },
+  )
 
-  const aoTexture = useMemo(() => {
-    if (!ambientOcclusion && noiseLevel <= 0) return null
-    const effectiveAo = ambientOcclusion ? aoStrength : 1
-    const baked = bakeAOToAtlas(model, unwrap.atlas, noiseLevel, effectiveAo)
-    const tex = new THREE.DataTexture(baked.data, baked.width, baked.height, THREE.RGBAFormat)
-    tex.magFilter = THREE.NearestFilter
-    tex.minFilter = THREE.NearestFilter
-    tex.generateMipmaps = false
-    tex.flipY = false
-    tex.colorSpace = THREE.NoColorSpace
-    tex.channel = 1
-    tex.needsUpdate = true
-    return tex
-  }, [model, unwrap, ambientOcclusion, noiseLevel, aoStrength])
-  useEffect(() => () => aoTexture?.dispose(), [aoTexture])
+  // Painted texture bakes to an overlay map (color × blend), one per distinct colour, reused by
+  // the plain-untextured branch too (where it's simply empty — buildPreviewMaterial then falls
+  // back to solid colour).
+  const blend = useMemo(() => (textured ? buildBlendAtlas(texture, gridExtent) : null), [textured, texture, gridExtent])
+  const overlayByColor = useMemo(
+    () => (blend ? bakeOverlayTexturesByColor(built.groups.map((g) => g.colorKey), blend) : null),
+    [built.groups, blend],
+  )
+  useEffect(() => () => { for (const tex of overlayByColor?.values() ?? []) tex.dispose() }, [overlayByColor])
 
-  const specularTexture = useMemo(() => {
-    if (specularNoiseLevel <= 0) return null
-    const spec = makeSpecularNoiseTexture(unwrap.atlas, specularNoiseLevel)
-    const mkt = (d: Uint8ClampedArray, w: number, h: number, srgb: boolean) => {
-      const canvas = document.createElement('canvas')
-      canvas.width = w
-      canvas.height = h
-      const ctx = canvas.getContext('2d')!
-      const img = ctx.createImageData(w, h)
-      img.data.set(d)
-      ctx.putImageData(img, 0, 0)
-      const t = new THREE.CanvasTexture(canvas)
-      t.magFilter = THREE.NearestFilter
-      t.minFilter = THREE.NearestFilter
-      t.generateMipmaps = false
-      t.flipY = false
-      t.colorSpace = srgb ? THREE.SRGBColorSpace : THREE.NoColorSpace
-      t.needsUpdate = true
-      return t
-    }
-    return {
-      metalness: mkt(spec.metalness.data, spec.metalness.width, spec.metalness.height, false),
-      roughness: mkt(spec.roughness.data, spec.roughness.width, spec.roughness.height, false),
-      baseColor: mkt(spec.baseColor.data, spec.baseColor.width, spec.baseColor.height, true),
-    }
-  }, [unwrap, specularNoiseLevel])
-  useEffect(() => {
-    return () => {
-      specularTexture?.metalness.dispose()
-      specularTexture?.roughness.dispose()
-      specularTexture?.baseColor.dispose()
-    }
-  }, [specularTexture])
+  const emissiveAnimIndex = useMemo(() => buildEmissiveAnimIndex(palette), [palette])
 
-  // One MeshPhysicalMaterial per colour group. Solid colour (no vertexColors), PBR params per class.
+  // One MeshPhysicalMaterial per colour group. PBR params per class, plus the baked overlay map
+  // when textured. Wireframe-overlay z-fighting avoidance (polygonOffset) applies to both branches.
   const materials = useMemo(() => {
     return built.groups.map(({ materialClass, colorKey }) => {
-      const params = materialParamsFor(materialClass)
-      const color = new THREE.Color(colorKey)
-      const isGlass = materialClass === 'glass'
-      const m = new THREE.MeshPhysicalMaterial({
-        color,
-        metalness: params.metalness,
-        roughness: isGlass ? glassRoughnessLevel : params.roughness,
-        transmission: params.transmission,
-        side: THREE.DoubleSide,
+      const m = buildPreviewMaterial(materialClass, colorKey, {
+        overlayMap: overlayByColor?.get(colorKey) ?? null,
+        glassRoughnessLevel,
+        emissiveAnimMode: emissiveAnimIndex.get(colorKey),
       })
-      if (params.transmission > 0) {
-        m.ior = 1.5
-        m.thickness = 0.5
-      }
-      if (params.emissiveIntensity > 0) {
-        m.emissive = color
-        m.emissiveIntensity = params.emissiveIntensity
-      }
       m.polygonOffset = true
       m.polygonOffsetFactor = 1
       m.polygonOffsetUnits = 1
       return m
     })
-  }, [built, glassRoughnessLevel])
+  }, [built.groups, overlayByColor, glassRoughnessLevel, emissiveAnimIndex])
 
-  // Bind (or clear) the AO, metalness, roughness, and base-colour maps on every material (reads uv1/uv).
+  useFrame(() => {
+    const elapsed = performance.now() / 1000
+    for (const m of materials) tickEmissiveAnimation(m, elapsed)
+  })
+
+  // Bind (or clear) the AO, metalness, roughness, and metal base-colour maps on every material
+  // (reads uv1/uv). A textured (overlay-mapped) metal group keeps its baked overlay as `.map` —
+  // the specular-noise base-colour texture only applies to solid (untextured) metal, matching
+  // buildPreviewMaterial's own overlay-takes-priority rule at creation time.
   useEffect(() => {
     for (let i = 0; i < materials.length; i++) {
       const m = materials[i]
-      const isMetal = built.groups[i].materialClass === 'metal'
-      m.aoMap = aoTexture ?? null
-      m.metalnessMap = isMetal ? (specularTexture?.metalness ?? null) : null
-      m.roughnessMap = isMetal ? (specularTexture?.roughness ?? null) : null
-      m.map = isMetal ? (specularTexture?.baseColor ?? null) : null
+      const group = built.groups[i]
+      const isMetal = group.materialClass === 'metal'
+      const hasOverlay = !!overlayByColor?.get(group.colorKey)
+      m.aoMap = group.materialClass !== 'emissive' ? (aoTexture ?? null) : null
+      m.metalnessMap = isMetal ? metalnessTexture : null
+      m.roughnessMap = isMetal ? roughnessTexture : null
+      if (isMetal && !hasOverlay && metalBaseColorTexture) m.map = metalBaseColorTexture
       m.needsUpdate = true
     }
-  }, [materials, built.groups, aoTexture, specularTexture])
+  }, [materials, built.groups, aoTexture, metalnessTexture, roughnessTexture, metalBaseColorTexture, overlayByColor])
 
   useEffect(() => {
     setMeshTriangles({ optimized: built.optimizedTriangles, raw: built.rawTriangles })

@@ -1,19 +1,21 @@
 import * as THREE from 'three'
 import { GLTFExporter } from 'three/addons/exporters/GLTFExporter.js'
-import type { Axis, VoxelModel, CellKey } from '@/engine/grid/types'
+import type { Axis, VoxelModel, CellKey, GridExtent } from '@/engine/grid/types'
 import type { PaletteState } from '@/engine/palette/types'
 import type { TextureModel } from '@/engine/texture/types'
 import { bakeAOToAtlas, makeSpecularNoiseTexture } from '@/engine/ao/bakeAO'
 import { unwrapGeometries } from '@/engine/ao/uvUnwrap'
 import { buildBlendAtlas } from '@/engine/texture/boxMapping'
-import { overlayChannel } from '@/engine/texture/overlay'
+import { bakeOverlayTexture } from '@/engine/texture/overlay'
 import { buildTexturedGeometryByColor, buildTexturedGeometryBySlice } from '@/engine/texture/texturedGeometry'
 import { hasTextureContent } from '@/engine/texture/TextureStore'
 import { buildOptimizedVoxelGeometryByMaterial, buildOptimizedVoxelGroupsBySlice } from '@/engine/instancing/voxelMeshBuilder'
 import { materialParamsFor, type MaterialClass } from '@/engine/palette/palette'
+import { buildEmissiveAnimIndex } from '@/engine/palette/emissiveAnimation'
 import type { SliceAnimSettings, SliceKey } from '@/engine/animation/types'
-import { assignVoxelsToNodes, bboxCenterOfKeys, hasActiveAnimations } from '@/engine/animation/animationLayers'
+import { assignVoxelsToNodes, hasActiveAnimations, resolveAnimCenter } from '@/engine/animation/animationLayers'
 import { buildAllAnimationClips, type AnimNodeInfo } from '@/engine/animation/animationGLTF'
+import { registerEmissiveAnimationExtension, type EmissiveAnimExportTarget } from './emissiveAnimationExport'
 
 /**
  * GLTF export pipeline. Replaces the originally-specced `three-bvh-csg` union/weld path: the mesh
@@ -54,6 +56,17 @@ export type GltfExportOptions = {
   scaleFactor?: number
   /** Anchor point: center (default), bottom of extents, or back of extents. */
   anchor?: GltfExportAnchor
+  /** Anchor relative to the voxels' own AABB rather than the construction-plane canvas origin
+   * (default off, for backward compatibility). Off, `anchor: 'center'` is a no-op — the model
+   * exports at its raw canvas-relative position, which is only actually centered if the voxels
+   * happen to be painted symmetrically around the canvas origin. On, all three anchors reposition
+   * relative to the model's own bounding box, so an off-center paint still exports centered/
+   * grounded/backed correctly. */
+  alignToObjectBounds?: boolean
+  /** Seeds the baked noise/specular grain (`engine/ao/bakeAO.ts`) so this project's noise differs
+   * from every other project's at the same voxel coordinates (default 0 = unseeded). Pass
+   * `meta.noiseSeed`. */
+  noiseSeed?: number
 }
 
 const hex6 = (colorKey: number) => colorKey.toString(16).padStart(6, '0')
@@ -72,15 +85,16 @@ function attachToSliceOrRoot(
   sliceNodes: Map<SliceKey, THREE.Group> | undefined,
   animNodes: AnimNodeInfo[] | undefined,
   root: THREE.Group,
+  slicePivots: Map<SliceKey, CellKey> | undefined,
 ) {
   if (sliceNodes && sliceKey) {
     let node = sliceNodes.get(sliceKey)
     if (!node) {
       node = new THREE.Group()
       const entry = nodeInfo!.get(sliceKey)!
-      const center = bboxCenterOfKeys(entry.cellKeys)
-      if (center) node.position.copy(center)
       const settings = animSettings!.get(sliceKey)!
+      const center = resolveAnimCenter(entry.cellKeys, entry.axis, entry.offset, settings.animationType, slicePivots)
+      if (center) node.position.copy(center)
       node.name = `anim_${sliceKey}`
       sliceNodes.set(sliceKey, node)
       animNodes!.push({ node, sliceKey, settings, axis: entry.axis, center: center ?? new THREE.Vector3() })
@@ -90,34 +104,6 @@ function attachToSliceOrRoot(
   } else {
     root.add(mesh)
   }
-}
-
-/**
- * Bake `overlay(color, blend)` into an sRGB RGBA texture for one color group. `blendData` is the
- * shared blend atlas (R = blend·255); `colorKey` is the group's packed sRGB color. The result is a
- * standard `baseColorTexture` (with `baseColorFactor` = white), so any glTF viewer reproduces the
- * in-app overlay preview with no custom shader.
- */
-function bakeOverlayTexture(blendData: Uint8ClampedArray, width: number, height: number, colorKey: number): THREE.DataTexture {
-  const r = ((colorKey >> 16) & 255) / 255
-  const g = ((colorKey >> 8) & 255) / 255
-  const b = (colorKey & 255) / 255
-  const out = new Uint8ClampedArray(width * height * 4)
-  for (let i = 0; i < width * height; i++) {
-    const blend = blendData[i * 4] / 255
-    out[i * 4] = overlayChannel(r, blend) * 255
-    out[i * 4 + 1] = overlayChannel(g, blend) * 255
-    out[i * 4 + 2] = overlayChannel(b, blend) * 255
-    out[i * 4 + 3] = 255
-  }
-  const tex = new THREE.DataTexture(out, width, height, THREE.RGBAFormat)
-  tex.magFilter = THREE.NearestFilter
-  tex.minFilter = THREE.NearestFilter
-  tex.generateMipmaps = false
-  tex.flipY = false
-  tex.colorSpace = THREE.SRGBColorSpace
-  tex.needsUpdate = true
-  return tex
 }
 
 function noiseMapTexture(data: Uint8ClampedArray, width: number, height: number): THREE.CanvasTexture {
@@ -157,10 +143,12 @@ function aoMapTexture(data: Uint8ClampedArray, width: number, height: number): T
 export async function exportModelToGlb(
   model: VoxelModel,
   palette: PaletteState,
+  gridExtent: GridExtent,
   texture?: TextureModel,
   options: GltfExportOptions = {},
   animSettings?: Map<SliceKey, SliceAnimSettings>,
   sliceMasks?: Map<SliceKey, Set<CellKey>>,
+  slicePivots?: Map<SliceKey, CellKey>,
 ): Promise<ArrayBuffer> {
   const textured = !!texture && hasTextureContent(texture)
   const root = new THREE.Group()
@@ -168,6 +156,8 @@ export async function exportModelToGlb(
   const materials: THREE.Material[] = []
   const textures: THREE.Texture[] = []
   const geometries: THREE.BufferGeometry[] = []
+  const emissiveAnimIndex = buildEmissiveAnimIndex(palette)
+  const emissiveAnimTargets: EmissiveAnimExportTarget[] = []
 
   const hasAnimations = !!animSettings && hasActiveAnimations(animSettings)
   let nodeAssignment: Map<CellKey, SliceKey> | undefined
@@ -198,26 +188,31 @@ export async function exportModelToGlb(
     // for glass we emit a solid-colour material (no baked map, no unused TEXCOORD_0).
     const groups: Array<{ geometry: THREE.BufferGeometry; colorKey: number; materialClass: MaterialClass; sliceKey?: string }> =
       hasAnimations && nodeAssignment
-        ? buildTexturedGeometryBySlice(model, palette, nodeAssignment)
-        : buildTexturedGeometryByColor(model, palette).map((g) => ({ ...g, sliceKey: undefined }))
+        ? buildTexturedGeometryBySlice(model, palette, nodeAssignment, gridExtent)
+        : buildTexturedGeometryByColor(model, palette, gridExtent).map((g) => ({ ...g, sliceKey: undefined }))
     for (const { geometry } of groups) geometries.push(geometry)
 
     let aoTex: THREE.DataTexture | null = null
     let metalTex: THREE.Texture | null = null
     let roughTex: THREE.Texture | null = null
     let colorTex: THREE.Texture | null = null
-    if ((options.ambientOcclusion || (options.specularNoiseLevel ?? 0) > 0) && groups.length > 0) {
-      const unwrapped = unwrapGeometries(groups.map((g) => g.geometry))
-      for (let i = 0; i < groups.length; i++) {
-        groups[i].geometry.setAttribute('uv1', new THREE.Float32BufferAttribute(unwrapped.uv1Arrays[i], 2))
+    // Emissive materials skip both AO darkening and the noise grain baked into the same atlas —
+    // a glowing surface shouldn't be shadowed or dirtied by either. They still act as occluders for
+    // everything else (bakeAOToAtlas samples the full `model`, not the atlas contents), so excluding
+    // them here only means they never get an aoMap of their own.
+    const aoGroups = groups.filter((g) => g.materialClass !== 'emissive')
+    if ((options.ambientOcclusion || (options.specularNoiseLevel ?? 0) > 0) && aoGroups.length > 0) {
+      const unwrapped = unwrapGeometries(aoGroups.map((g) => g.geometry))
+      for (let i = 0; i < aoGroups.length; i++) {
+        aoGroups[i].geometry.setAttribute('uv1', new THREE.Float32BufferAttribute(unwrapped.uv1Arrays[i], 2))
       }
-      const baked = bakeAOToAtlas(model, unwrapped.atlas, options.noiseLevel ?? 0, options.aoStrength ?? 1, animatedKeys)
+      const baked = bakeAOToAtlas(model, unwrapped.atlas, options.noiseLevel ?? 0, options.aoStrength ?? 1, animatedKeys, options.noiseSeed ?? 0)
       aoTex = aoMapTexture(baked.data, baked.width, baked.height)
       textures.push(aoTex)
 
       const sl = options.specularNoiseLevel ?? 0
       if (sl > 0) {
-        const spec = makeSpecularNoiseTexture(unwrapped.atlas, sl)
+        const spec = makeSpecularNoiseTexture(unwrapped.atlas, sl, options.noiseSeed ?? 0)
         metalTex = noiseMapTexture(spec.metalness.data, spec.metalness.width, spec.metalness.height)
         roughTex = noiseMapTexture(spec.roughness.data, spec.roughness.width, spec.roughness.height)
         colorTex = noiseMapTexture(spec.baseColor.data, spec.baseColor.width, spec.baseColor.height)
@@ -226,7 +221,7 @@ export async function exportModelToGlb(
       }
     }
 
-    const blend = buildBlendAtlas(texture!)
+    const blend = buildBlendAtlas(texture!, gridExtent)
     for (const { colorKey, materialClass, geometry, sliceKey } of groups) {
       geometry.deleteAttribute('color')
       const params = materialParamsFor(materialClass)
@@ -248,7 +243,7 @@ export async function exportModelToGlb(
         material.name = `voxel_${hex6(colorKey)}_${materialClass}`
         const mesh = new THREE.Mesh(geometry, material)
         mesh.name = material.name
-        attachToSliceOrRoot(mesh, sliceKey, animSettings, sliceNodeInfo, sliceNodes, animNodes, root)
+        attachToSliceOrRoot(mesh, sliceKey, animSettings, sliceNodeInfo, sliceNodes, animNodes, root, slicePivots)
         materials.push(material)
       } else {
         const map = bakeOverlayTexture(blend.data, blend.width, blend.height, colorKey)
@@ -260,10 +255,12 @@ export async function exportModelToGlb(
           roughness: params.roughness,
           transmission: params.transmission,
         })
-        if (aoTex) material.aoMap = aoTex
+        if (aoTex && materialClass !== 'emissive') material.aoMap = aoTex
         if (materialClass === 'emissive') {
           material.emissive = new THREE.Color(colorKey)
           material.emissiveIntensity = params.emissiveIntensity
+          const animMode = emissiveAnimIndex.get(colorKey)
+          if (animMode) emissiveAnimTargets.push({ material, mode: animMode })
         }
         if (materialClass === 'metal') {
           material.specularIntensity = 0
@@ -273,7 +270,7 @@ export async function exportModelToGlb(
         material.name = `voxel_${hex6(colorKey)}_${materialClass}`
         const mesh = new THREE.Mesh(geometry, material)
         mesh.name = material.name
-        attachToSliceOrRoot(mesh, sliceKey, animSettings, sliceNodeInfo, sliceNodes, animNodes, root)
+        attachToSliceOrRoot(mesh, sliceKey, animSettings, sliceNodeInfo, sliceNodes, animNodes, root, slicePivots)
         materials.push(material)
       }
     }
@@ -294,20 +291,22 @@ export async function exportModelToGlb(
     let metalTex: THREE.Texture | null = null
     let roughTex: THREE.Texture | null = null
     let colorTex: THREE.Texture | null = null
-    if (options.ambientOcclusion || (options.specularNoiseLevel ?? 0) > 0) {
-      const unwrapped = unwrapGeometries(groups.map((g) => g.geometry))
-      for (let i = 0; i < groups.length; i++) {
+    // See the textured path above: emissive materials skip AO/noise entirely.
+    const aoGroups = groups.filter((g) => g.materialClass !== 'emissive')
+    if ((options.ambientOcclusion || (options.specularNoiseLevel ?? 0) > 0) && aoGroups.length > 0) {
+      const unwrapped = unwrapGeometries(aoGroups.map((g) => g.geometry))
+      for (let i = 0; i < aoGroups.length; i++) {
         const uv1 = new THREE.Float32BufferAttribute(unwrapped.uv1Arrays[i], 2)
-        groups[i].geometry.setAttribute('uv1', uv1)
-        groups[i].geometry.setAttribute('uv', uv1)
+        aoGroups[i].geometry.setAttribute('uv1', uv1)
+        aoGroups[i].geometry.setAttribute('uv', uv1)
       }
-      const baked = bakeAOToAtlas(model, unwrapped.atlas, options.noiseLevel ?? 0, options.aoStrength ?? 1, animatedKeys)
+      const baked = bakeAOToAtlas(model, unwrapped.atlas, options.noiseLevel ?? 0, options.aoStrength ?? 1, animatedKeys, options.noiseSeed ?? 0)
       aoTex = aoMapTexture(baked.data, baked.width, baked.height)
       textures.push(aoTex)
 
       const sl = options.specularNoiseLevel ?? 0
       if (sl > 0) {
-        const spec = makeSpecularNoiseTexture(unwrapped.atlas, sl)
+        const spec = makeSpecularNoiseTexture(unwrapped.atlas, sl, options.noiseSeed ?? 0)
         metalTex = noiseMapTexture(spec.metalness.data, spec.metalness.width, spec.metalness.height)
         roughTex = noiseMapTexture(spec.roughness.data, spec.roughness.width, spec.roughness.height)
         colorTex = noiseMapTexture(spec.baseColor.data, spec.baseColor.width, spec.baseColor.height)
@@ -333,8 +332,10 @@ export async function exportModelToGlb(
       if (params.emissiveIntensity > 0) {
         material.emissive = new THREE.Color(colorKey)
         material.emissiveIntensity = params.emissiveIntensity
+        const animMode = emissiveAnimIndex.get(colorKey)
+        if (animMode) emissiveAnimTargets.push({ material, mode: animMode })
       }
-      if (aoTex) {
+      if (aoTex && materialClass !== 'emissive') {
         material.aoMap = aoTex
       }
       if (materialClass === 'metal') {
@@ -346,7 +347,7 @@ export async function exportModelToGlb(
       material.name = `voxel_${hex6(colorKey)}_${materialClass}`
       const mesh = new THREE.Mesh(geometry, material)
       mesh.name = material.name
-      attachToSliceOrRoot(mesh, sliceKey, animSettings, sliceNodeInfo, sliceNodes, animNodes, root)
+      attachToSliceOrRoot(mesh, sliceKey, animSettings, sliceNodeInfo, sliceNodes, animNodes, root, slicePivots)
       materials.push(material)
     }
   }
@@ -362,10 +363,19 @@ export async function exportModelToGlb(
 
   const scale = (options.scaleFactor ?? 100) / 100
   const anchor = options.anchor ?? 'center'
-  if (scale !== 1 || anchor !== 'center') {
+  const alignToObjectBounds = options.alignToObjectBounds ?? false
+  if (scale !== 1 || anchor !== 'center' || alignToObjectBounds) {
     const box = new THREE.Box3().setFromObject(root)
     root.scale.setScalar(scale)
-    if (anchor === 'bottom') {
+    if (alignToObjectBounds) {
+      // All three axes reposition relative to the voxels' own AABB: the anchor's axis goes flush
+      // to its bound (Y=0 for bottom, Z=0 for back), the other two always center on the AABB —
+      // so an off-center paint still exports centered/grounded/backed, not canvas-relative.
+      const center = box.getCenter(new THREE.Vector3())
+      root.position.x = -center.x * scale
+      root.position.y = anchor === 'bottom' ? -box.min.y * scale : -center.y * scale
+      root.position.z = anchor === 'back' ? -box.min.z * scale : -center.z * scale
+    } else if (anchor === 'bottom') {
       root.position.y = -box.min.y * scale
     } else if (anchor === 'back') {
       root.position.z = -box.min.z * scale
@@ -373,7 +383,9 @@ export async function exportModelToGlb(
   }
 
   try {
-    const result = await new GLTFExporter().parseAsync(root, { binary: true, animations: clips })
+    const exporter = new GLTFExporter()
+    registerEmissiveAnimationExtension(exporter, emissiveAnimTargets)
+    const result = await exporter.parseAsync(root, { binary: true, animations: clips })
     return result as ArrayBuffer // `binary: true` always resolves to an ArrayBuffer
   } finally {
     for (const g of geometries) g.dispose()

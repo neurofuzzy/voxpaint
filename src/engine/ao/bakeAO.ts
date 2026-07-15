@@ -10,23 +10,34 @@ const SEARCH_RADIUS_CELLS = 32 // 8 world units — wide enough for smooth fallo
 
 /**
  * Deterministic position-based pseudo-random hash producing a value in [0, 1].
- * Same world-space position always yields the same noise — static surface grain suitable for
- * simulating dust, dirt, and subtle surface variation baked into the AO texture.
+ * Same world-space position (and `seed`) always yields the same noise — static surface grain
+ * suitable for simulating dust, dirt, and subtle surface variation baked into the AO texture.
+ * `seed` (default 0, i.e. unseeded — matches pre-seed behavior for old projects) folds in via its
+ * own large prime so different projects get visually distinct noise instead of every project
+ * sharing the exact same grain at the same voxel coordinates.
  */
-export function hashNoise(wx: number, wy: number, wz: number): number {
-  let h = wx * 374761393 + wy * 668265263 + wz * 1274126177
+export function hashNoise(wx: number, wy: number, wz: number, seed = 0): number {
+  let h = wx * 374761393 + wy * 668265263 + wz * 1274126177 + seed * 2246822519
   h = (h ^ (h >> 13)) * 1274126177
   h = h ^ (h >> 16)
   return (h & 0x7fffffff) / 0x7fffffff
 }
 
-/** Same deterministic hash as `hashNoise` but with a different prime set so the noise pattern is
- * decorrelated from the AO noise — useful for a separate specular-colour grain on metal materials. */
-export function specularHash(wx: number, wy: number, wz: number): number {
-  let h = wx * 1597334677 + wy * 3266487767 + wz * 2503832273
+/** Same deterministic hash as `hashNoise` but with a different prime set (including for `seed`) so
+ * the noise pattern is decorrelated from the AO noise even under the same project seed — useful for
+ * a separate specular-colour grain on metal materials. */
+export function specularHash(wx: number, wy: number, wz: number, seed = 0): number {
+  let h = wx * 1597334677 + wy * 3266487767 + wz * 2503832273 + seed * 3266489917
   h = (h ^ (h >> 13)) * 2503832273
   h = h ^ (h >> 16)
   return (h & 0x7fffffff) / 0x7fffffff
+}
+
+/** Fresh random per-project noise seed, generated once at project creation (`newProject`) and
+ * persisted in `ProjectMeta` so `hashNoise`/`specularHash` reproduce the same grain on reload while
+ * differing from every other project's. */
+export function generateNoiseSeed(): number {
+  return Math.floor(Math.random() * 0x7fffffff)
 }
 
 /**
@@ -37,6 +48,7 @@ export function specularHash(wx: number, wy: number, wz: number): number {
 export function makeSpecularNoiseTexture(
   atlas: UnwrappedAtlas,
   level: number,
+  seed = 0,
 ): {
   metalness: { data: Uint8ClampedArray; width: number; height: number }
   roughness: { data: Uint8ClampedArray; width: number; height: number }
@@ -60,7 +72,7 @@ export function makeSpecularNoiseTexture(
         const wx = rect.normal.x * rect.depthCoord + rect.tangent1.x * u + rect.tangent2.x * v
         const wy = rect.normal.y * rect.depthCoord + rect.tangent1.y * u + rect.tangent2.y * v
         const wz = rect.normal.z * rect.depthCoord + rect.tangent1.z * u + rect.tangent2.z * v
-        const n = specularHash(wx, wy, wz)
+        const n = specularHash(wx, wy, wz, seed)
         const rust = Math.max(0, Math.min(1, level * n))
         const idx = ((rect.atlasY + ty) * atlas.size + (rect.atlasX + tx)) * 4
 
@@ -169,6 +181,7 @@ export function bakeAOToAtlas(
   noiseLevel = 0,
   aoStrength = 1,
   excludeKeys?: Set<CellKey>,
+  seed = 0,
 ): {
   data: Uint8ClampedArray
   width: number
@@ -237,7 +250,7 @@ export function bakeAOToAtlas(
 
         const ao = totalOcclusion / dirs.length
         const shaded = 1 - aoStrength * ao
-        const noiseVal = noiseLevel > 0 ? hashNoise(wx, wy, wz) : 0
+        const noiseVal = noiseLevel > 0 ? hashNoise(wx, wy, wz, seed) : 0
         const noised = Math.max(0, Math.min(1, shaded - noiseLevel * noiseVal))
         const value = Math.round(noised * 255)
 

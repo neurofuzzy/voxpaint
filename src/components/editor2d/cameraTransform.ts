@@ -1,4 +1,4 @@
-import { BASE_CELL_PX, HALF, PAN_PADDING_PX } from './canvasConstants'
+import { BASE_CELL_PX, PAN_PADDING_PX } from './canvasConstants'
 
 export interface CanvasSize {
   width: number
@@ -23,16 +23,16 @@ export function screenToWorld(sx: number, sy: number, size: CanvasSize, pan: Can
 }
 
 /**
- * Clamps pan so the grid's bounding box ([-HALF,HALF] world units) can never be dragged
- * entirely off-screen — each edge is allowed to retreat only until `PAN_PADDING_PX` of the
- * grid remains visible.
+ * Clamps pan so the grid's bounding box ([-half,half] world units, half the project's own
+ * `meta.gridExtent`) can never be dragged entirely off-screen — each edge is allowed to retreat
+ * only until `PAN_PADDING_PX` of the grid remains visible.
  */
-export function clampPan(pan: CanvasPan, size: CanvasSize, zoom: number): CanvasPan {
+export function clampPan(pan: CanvasPan, size: CanvasSize, zoom: number, half: number): CanvasPan {
   const cellPx = BASE_CELL_PX * zoom
-  const minX = (PAN_PADDING_PX - size.width / 2) / cellPx - HALF
-  const maxX = (size.width / 2 - PAN_PADDING_PX) / cellPx + HALF
-  const minY = (PAN_PADDING_PX - size.height / 2) / cellPx - HALF
-  const maxY = (size.height / 2 - PAN_PADDING_PX) / cellPx + HALF
+  const minX = (PAN_PADDING_PX - size.width / 2) / cellPx - half
+  const maxX = (size.width / 2 - PAN_PADDING_PX) / cellPx + half
+  const minY = (PAN_PADDING_PX - size.height / 2) / cellPx - half
+  const maxY = (size.height / 2 - PAN_PADDING_PX) / cellPx + half
   return {
     x: Math.min(Math.max(pan.x, minX), maxX),
     y: Math.min(Math.max(pan.y, minY), maxY),
