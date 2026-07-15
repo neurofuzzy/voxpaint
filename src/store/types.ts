@@ -5,7 +5,7 @@ import type { ConstructionPlane } from '@/engine/plane/types'
 import type { ProjectMeta } from '@/engine/persistence/schema'
 import type { BoxFace, TextureModel } from '@/engine/texture/types'
 import type { TexelClip } from '@/engine/texture/texelOps'
-import type { SliceAnimSettings, SliceKey } from '@/engine/animation/types'
+import type { AnimationSpeed, AnimationType, SliceAnimSettings, SliceKey } from '@/engine/animation/types'
 
 export type ToolId = 'paint' | 'erase' | 'eyedropper' | 'select' | 'fill' | 'clone' | 'move'
 export type VoxelKind = 'cube' | 'ramp'
@@ -287,6 +287,14 @@ export type AnimationSlice = {
   setAnimSettingsForSlice: (axis: Axis, offset: number, settings: SliceAnimSettings | null) => void
   /** Remove all animation settings and masks (e.g. on new project). */
   clearAllAnimations: () => void
+
+  /** Set the animation type for the current construction-plane slice, carrying over its existing
+   * speed/slideAmount (or defaults for a previously unanimated slice). Passing 'none' clears it. */
+  setAnimationTypeForCurrentSlice: (type: AnimationType) => void
+  /** Set the animation speed for the current slice, defaulting the rest of its settings if unset. */
+  setAnimationSpeedForCurrentSlice: (speed: AnimationSpeed) => void
+  /** Set the slide amount for the current slice, defaulting the rest of its settings if unset. */
+  setSlideAmountForCurrentSlice: (amount: number) => void
 
   /** Paints one cell of the current plane's slice into its animation mask. Only occupied cells
    * (voxels that already hold color) can be masked. Returns false when out of bounds or empty. */

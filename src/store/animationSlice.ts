@@ -1,8 +1,8 @@
 import type { StateCreator } from 'zustand'
 import type { CellKey, Coord } from '@/engine/grid/types'
 import { encodeKey, withinWorkingBounds } from '@/engine/grid/GridStore'
-import type { SliceAnimSettings, SliceKey } from '@/engine/animation/types'
-import { encodeSliceKey } from '@/engine/animation/animationLayers'
+import type { AnimationSpeed, AnimationType, SliceAnimSettings, SliceKey } from '@/engine/animation/types'
+import { defaultAnimationSettings, encodeSliceKey } from '@/engine/animation/animationLayers'
 import { gridCoordFromPixel } from '@/engine/plane/constructionPlane'
 import type { AnimSnapshot, AppState, AnimationSlice } from './types'
 
@@ -55,6 +55,31 @@ export const createAnimationSlice: Slice = (set, get) => ({
       state.animPast = []
       state.animFuture = []
     }),
+
+  setAnimationTypeForCurrentSlice: (type: AnimationType) => {
+    const { axis, offset } = get().plane
+    if (type === 'none') {
+      get().setAnimSettingsForSlice(axis, offset, null)
+      return
+    }
+    const key = encodeSliceKey(axis, offset)
+    const prev = get().animSettings.get(key) ?? defaultAnimationSettings()
+    get().setAnimSettingsForSlice(axis, offset, { ...prev, animationType: type })
+  },
+
+  setAnimationSpeedForCurrentSlice: (speed: AnimationSpeed) => {
+    const { axis, offset } = get().plane
+    const key = encodeSliceKey(axis, offset)
+    const prev = get().animSettings.get(key) ?? defaultAnimationSettings()
+    get().setAnimSettingsForSlice(axis, offset, { ...prev, speed })
+  },
+
+  setSlideAmountForCurrentSlice: (amount: number) => {
+    const { axis, offset } = get().plane
+    const key = encodeSliceKey(axis, offset)
+    const prev = get().animSettings.get(key) ?? defaultAnimationSettings()
+    get().setAnimSettingsForSlice(axis, offset, { ...prev, slideAmount: amount })
+  },
 
   paintMaskCell: (u: number, v: number) => {
     const { plane, model } = get()

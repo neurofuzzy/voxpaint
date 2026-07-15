@@ -1,9 +1,8 @@
-import { useCallback } from 'react'
 import type { ReactNode } from 'react'
 import { ArrowDownUp, ArrowLeftRight, ArrowRightLeft, ArrowUpDown } from 'lucide-react'
 import { useAppStore } from '@/store/useAppStore'
 import type { AnimationType, AnimationSpeed } from '@/engine/animation/types'
-import { SLIDE_AMOUNT_MAX, SLIDE_AMOUNT_MIN, defaultAnimationSettings, encodeSliceKey, isSlideMode } from '@/engine/animation/animationLayers'
+import { SLIDE_AMOUNT_MAX, SLIDE_AMOUNT_MIN, encodeSliceKey, isSlideMode } from '@/engine/animation/animationLayers'
 
 const ANIM_TYPES: Array<{ id: AnimationType; label: string }> = [
   { id: 'none', label: 'None' },
@@ -20,7 +19,9 @@ const SPEEDS: AnimationSpeed[] = [1, 2, 3]
 export function AnimationPalette() {
   const plane = useAppStore((s) => s.plane)
   const animSettings = useAppStore((s) => s.animSettings)
-  const setAnimSettingsForSlice = useAppStore((s) => s.setAnimSettingsForSlice)
+  const handleSelectType = useAppStore((s) => s.setAnimationTypeForCurrentSlice)
+  const handleSelectSpeed = useAppStore((s) => s.setAnimationSpeedForCurrentSlice)
+  const handleSlideAmount = useAppStore((s) => s.setSlideAmountForCurrentSlice)
 
   const sliceKey = encodeSliceKey(plane.axis, plane.offset)
   const currentSettings = animSettings.get(sliceKey) ?? null
@@ -28,35 +29,6 @@ export function AnimationPalette() {
   const activeType = currentSettings?.animationType ?? 'none'
   const activeSpeed = currentSettings?.speed ?? 1
   const activeSlideAmount = currentSettings?.slideAmount ?? 4
-
-  const handleSelectType = useCallback((type: AnimationType) => {
-    const { axis, offset } = useAppStore.getState().plane
-    if (type === 'none') {
-      setAnimSettingsForSlice(axis, offset, null)
-    } else {
-      const key = encodeSliceKey(axis, offset)
-      const prev = useAppStore.getState().animSettings.get(key) ?? defaultAnimationSettings()
-      setAnimSettingsForSlice(axis, offset, {
-        animationType: type,
-        speed: prev.speed,
-        slideAmount: prev.slideAmount,
-      })
-    }
-  }, [setAnimSettingsForSlice])
-
-  const handleSelectSpeed = useCallback((speed: AnimationSpeed) => {
-    const { axis, offset } = useAppStore.getState().plane
-    const key = encodeSliceKey(axis, offset)
-    const prev = useAppStore.getState().animSettings.get(key) ?? defaultAnimationSettings()
-    setAnimSettingsForSlice(axis, offset, { ...prev, speed })
-  }, [setAnimSettingsForSlice])
-
-  const handleSlideAmount = useCallback((v: number) => {
-    const { axis, offset } = useAppStore.getState().plane
-    const key = encodeSliceKey(axis, offset)
-    const prev = useAppStore.getState().animSettings.get(key) ?? defaultAnimationSettings()
-    setAnimSettingsForSlice(axis, offset, { ...prev, slideAmount: v })
-  }, [setAnimSettingsForSlice])
 
   const showSlider = isSlideMode(activeType)
 
