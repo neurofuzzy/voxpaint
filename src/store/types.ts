@@ -48,6 +48,9 @@ export type ProjectSlice = {
   /** Sets the blink/pulse animation mode for one emissive palette slot (0–3). */
   setEmissiveAnimMode: (index: number, mode: EmissiveAnimMode) => void
   setProjectName: (name: string) => void
+  /** Re-rolls `meta.noiseSeed`, changing the baked noise/specular grain's pattern without touching
+   * the model — for when the current project's noise happened to land on an unflattering roll. */
+  randomizeNoiseSeed: () => void
   newProject: (name: string, gridExtent: GridExtent) => void
 }
 

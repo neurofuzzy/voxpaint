@@ -39,6 +39,13 @@ export const createProjectSlice: Slice = (set) => ({
       state.dirty = true
     }),
 
+  randomizeNoiseSeed: () =>
+    set((state) => {
+      state.meta.noiseSeed = generateNoiseSeed()
+      state.meta.modifiedAt = new Date().toISOString()
+      state.dirty = true
+    }),
+
   newProject: (name, gridExtent) =>
     set((state) => {
       state.model = emptyModel()

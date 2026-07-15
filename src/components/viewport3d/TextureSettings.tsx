@@ -1,3 +1,4 @@
+import { RefreshCw } from 'lucide-react'
 import { useEffect, useState } from 'react'
 import { useAppStore } from '@/store/useAppStore'
 
@@ -7,6 +8,7 @@ export function TextureSettings() {
   const setNoiseLevel = useAppStore((s) => s.setNoiseLevel)
   const specularNoiseLevel = useAppStore((s) => s.specularNoiseLevel)
   const setSpecularNoiseLevel = useAppStore((s) => s.setSpecularNoiseLevel)
+  const randomizeNoiseSeed = useAppStore((s) => s.randomizeNoiseSeed)
 
   const [noiseChecked, setNoiseChecked] = useState(noiseLevel > 0)
   const [metalChecked, setMetalChecked] = useState(specularNoiseLevel > 0)
@@ -82,6 +84,15 @@ export function TextureSettings() {
           {Math.round(specularNoiseLevel * 100)}%
         </span>
       </div>
+      <button
+        onClick={randomizeNoiseSeed}
+        title="Reroll the noise/metal grain pattern for this project"
+        className="flex items-center gap-1.5 self-start pl-[1.375rem] text-[11px] font-medium
+          text-neutral-500 hover:text-neutral-200"
+      >
+        <RefreshCw size={11} />
+        Randomize grain
+      </button>
     </>
   )
 }
