@@ -15,6 +15,8 @@ export type ViewSettings = {
   exposure: number
   exportScaleFactor: number
   exportAnchor: GltfExportAnchor
+  /** GLTF export: anchor relative to the voxels' own AABB instead of the canvas origin. */
+  exportAlignToObjectBounds: boolean
 }
 
 export type ProjectMeta = {

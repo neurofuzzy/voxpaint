@@ -54,6 +54,13 @@ export type GltfExportOptions = {
   scaleFactor?: number
   /** Anchor point: center (default), bottom of extents, or back of extents. */
   anchor?: GltfExportAnchor
+  /** Anchor relative to the voxels' own AABB rather than the construction-plane canvas origin
+   * (default off, for backward compatibility). Off, `anchor: 'center'` is a no-op — the model
+   * exports at its raw canvas-relative position, which is only actually centered if the voxels
+   * happen to be painted symmetrically around the canvas origin. On, all three anchors reposition
+   * relative to the model's own bounding box, so an off-center paint still exports centered/
+   * grounded/backed correctly. */
+  alignToObjectBounds?: boolean
 }
 
 const hex6 = (colorKey: number) => colorKey.toString(16).padStart(6, '0')
@@ -335,10 +342,19 @@ export async function exportModelToGlb(
 
   const scale = (options.scaleFactor ?? 100) / 100
   const anchor = options.anchor ?? 'center'
-  if (scale !== 1 || anchor !== 'center') {
+  const alignToObjectBounds = options.alignToObjectBounds ?? false
+  if (scale !== 1 || anchor !== 'center' || alignToObjectBounds) {
     const box = new THREE.Box3().setFromObject(root)
     root.scale.setScalar(scale)
-    if (anchor === 'bottom') {
+    if (alignToObjectBounds) {
+      // All three axes reposition relative to the voxels' own AABB: the anchor's axis goes flush
+      // to its bound (Y=0 for bottom, Z=0 for back), the other two always center on the AABB —
+      // so an off-center paint still exports centered/grounded/backed, not canvas-relative.
+      const center = box.getCenter(new THREE.Vector3())
+      root.position.x = -center.x * scale
+      root.position.y = anchor === 'bottom' ? -box.min.y * scale : -center.y * scale
+      root.position.z = anchor === 'back' ? -box.min.z * scale : -center.z * scale
+    } else if (anchor === 'bottom') {
       root.position.y = -box.min.y * scale
     } else if (anchor === 'back') {
       root.position.z = -box.min.z * scale

@@ -18,8 +18,10 @@ export function ExportGltfDialog({ open, onOpenChange }: { open: boolean; onOpen
   const [scaleInput, setScaleInput] = useState('100')
   const exportScaleFactor = useAppStore((s) => s.exportScaleFactor)
   const exportAnchor = useAppStore((s) => s.exportAnchor)
+  const exportAlignToObjectBounds = useAppStore((s) => s.exportAlignToObjectBounds)
   const setExportScaleFactor = useAppStore((s) => s.setExportScaleFactor)
   const setExportAnchor = useAppStore((s) => s.setExportAnchor)
+  const setExportAlignToObjectBounds = useAppStore((s) => s.setExportAlignToObjectBounds)
 
   useEffect(() => {
     if (open) setScaleInput(String(exportScaleFactor))
@@ -43,6 +45,7 @@ export function ExportGltfDialog({ open, onOpenChange }: { open: boolean; onOpen
     const { gridExtent } = meta
     const sf = state.exportScaleFactor
     const anchor = state.exportAnchor
+    const alignToObjectBounds = state.exportAlignToObjectBounds
     if (model.color.size === 0) {
       showToast('Nothing to export — the model is empty.')
       onOpenChange(false)
@@ -59,6 +62,7 @@ export function ExportGltfDialog({ open, onOpenChange }: { open: boolean; onOpen
         glassRoughnessLevel,
         scaleFactor: sf,
         anchor,
+        alignToObjectBounds,
       }, animSettings, sliceMasks)
       downloadGlb(glb, normalizeProjectFilename(meta.name || 'voxpaint-model'))
       showToast('GLTF exported.')
@@ -117,6 +121,16 @@ export function ExportGltfDialog({ open, onOpenChange }: { open: boolean; onOpen
                 ))}
               </select>
             </div>
+
+            <label className="flex items-center gap-2 pl-16 cursor-pointer select-none">
+              <input
+                type="checkbox"
+                checked={exportAlignToObjectBounds}
+                onChange={(e) => setExportAlignToObjectBounds(e.target.checked)}
+                className="h-3.5 w-3.5 cursor-pointer accent-violet-500"
+              />
+              <span className="text-xs text-neutral-400">Align to object bounds</span>
+            </label>
           </div>
 
           <div className="mt-5 flex justify-end gap-2">

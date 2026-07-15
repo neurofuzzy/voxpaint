@@ -22,6 +22,7 @@ export const createViewSlice: Slice = (set) => ({
   onionSkin: true,
   exportScaleFactor: 100,
   exportAnchor: 'center',
+  exportAlignToObjectBounds: false,
 
   setFullscreen: (v) => set((state) => { state.fullscreen = v }),
   setWireframe: (v) => set((state) => { state.wireframe = v }),
@@ -43,4 +44,5 @@ export const createViewSlice: Slice = (set) => ({
   setOnionSkin: (v) => set((state) => { state.onionSkin = v }),
   setExportScaleFactor: (v) => set((state) => { state.exportScaleFactor = v; state.dirty = true }),
   setExportAnchor: (v) => set((state) => { state.exportAnchor = v; state.dirty = true }),
+  setExportAlignToObjectBounds: (v) => set((state) => { state.exportAlignToObjectBounds = v; state.dirty = true }),
 })

@@ -136,6 +136,8 @@ export type ViewSlice = {
   exportScaleFactor: number
   /** GLTF export: anchor point (center, bottom, back). */
   exportAnchor: GltfExportAnchor
+  /** GLTF export: anchor relative to the voxels' own AABB instead of the canvas origin. */
+  exportAlignToObjectBounds: boolean
   setFullscreen: (v: boolean) => void
   setHoverCell: (coord: Coord | null, chamferValid: boolean | null) => void
   setHoveredFace: (face: HoveredFace | null) => void
@@ -152,6 +154,7 @@ export type ViewSlice = {
   setOnionSkin: (v: boolean) => void
   setExportScaleFactor: (v: number) => void
   setExportAnchor: (v: GltfExportAnchor) => void
+  setExportAlignToObjectBounds: (v: boolean) => void
 }
 
 export type PersistenceSlice = {
