@@ -23,6 +23,17 @@ export function isActiveAnimation(type: AnimationType): boolean {
   return type !== 'none'
 }
 
+/** True iff at least one slice has an active (non-'none') animation. Settings can persist with
+ * animationType 'none' (e.g. speed adjusted before an animation type is chosen), so callers
+ * deciding whether to switch into the animated render/export path must check this rather than
+ * `animSettings.size > 0`. */
+export function hasActiveAnimations(animSettings: Map<SliceKey, SliceAnimSettings>): boolean {
+  for (const settings of animSettings.values()) {
+    if (isActiveAnimation(settings.animationType)) return true
+  }
+  return false
+}
+
 export function isSlideMode(type: AnimationType): boolean {
   return type === 'slide-vertical' || type === 'slide-vertical-rev' || type === 'slide-horizontal' || type === 'slide-horizontal-rev'
 }

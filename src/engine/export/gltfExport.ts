@@ -12,7 +12,7 @@ import { hasTextureContent } from '@/engine/texture/TextureStore'
 import { buildOptimizedVoxelGeometryByMaterial, buildOptimizedVoxelGroupsBySlice } from '@/engine/instancing/voxelMeshBuilder'
 import { materialParamsFor, type MaterialClass } from '@/engine/palette/palette'
 import type { SliceAnimSettings, SliceKey } from '@/engine/animation/types'
-import { assignVoxelsToNodes, bboxCenterOfKeys } from '@/engine/animation/animationLayers'
+import { assignVoxelsToNodes, bboxCenterOfKeys, hasActiveAnimations } from '@/engine/animation/animationLayers'
 import { buildAllAnimationClips, type AnimNodeInfo } from '@/engine/animation/animationGLTF'
 
 /**
@@ -169,7 +169,7 @@ export async function exportModelToGlb(
   const textures: THREE.Texture[] = []
   const geometries: THREE.BufferGeometry[] = []
 
-  const hasAnimations = animSettings && animSettings.size > 0
+  const hasAnimations = !!animSettings && hasActiveAnimations(animSettings)
   let nodeAssignment: Map<CellKey, SliceKey> | undefined
   let sliceNodeInfo: Map<SliceKey, { cellKeys: CellKey[]; axis: Axis; offset: number }> | undefined
   let animNodes: AnimNodeInfo[] | undefined

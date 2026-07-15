@@ -4,6 +4,7 @@ import { useEffect, useRef } from 'react'
 import * as THREE from 'three'
 import type { OrbitControls as OrbitControlsImpl } from 'three-stdlib'
 import { decodeKey } from '@/engine/grid/GridStore'
+import { hasActiveAnimations } from '@/engine/animation/animationLayers'
 import type { InstancingManager } from '@/engine/instancing/InstancingManager'
 import { planeFromFaceHit } from '@/engine/plane/constructionPlane'
 import { useAppStore } from '@/store/useAppStore'
@@ -155,7 +156,7 @@ export function Viewport3D() {
 
   const textureMode = mode === 'texture'
   const animateMode = mode === 'animate'
-  const hasAnimations = animateMode && animSettings.size > 0
+  const hasAnimations = animateMode && hasActiveAnimations(animSettings)
 
   return (
     <div
