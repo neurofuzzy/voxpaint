@@ -9,6 +9,7 @@ import { buildOptimizedVoxelGroups } from '@/engine/instancing/voxelMeshBuilder'
 import { triangleCount } from '@/engine/instancing/meshOptimizer'
 import { buildPreviewMaterial, tickEmissiveAnimation } from '@/engine/instancing/previewMaterial'
 import { buildEmissiveAnimIndex } from '@/engine/palette/emissiveAnimation'
+import { darkestBaseColor } from '@/engine/palette/palette'
 import { useAppStore } from '@/store/useAppStore'
 import { usePreviewAOMaps } from './usePreviewAOMaps'
 
@@ -86,6 +87,7 @@ export function OptimizedMeshView() {
   useEffect(() => () => { for (const tex of overlayByColor?.values() ?? []) tex.dispose() }, [overlayByColor])
 
   const emissiveAnimIndex = useMemo(() => buildEmissiveAnimIndex(palette), [palette])
+  const emissiveAnimOffColor = useMemo(() => new THREE.Color(darkestBaseColor(palette)), [palette])
 
   // One MeshPhysicalMaterial per colour group. PBR params per class, plus the baked overlay map
   // when textured. Wireframe-overlay z-fighting avoidance (polygonOffset) applies to both branches.
@@ -95,13 +97,14 @@ export function OptimizedMeshView() {
         overlayMap: overlayByColor?.get(colorKey) ?? null,
         glassRoughnessLevel,
         emissiveAnimMode: emissiveAnimIndex.get(colorKey),
+        emissiveAnimOffColor,
       })
       m.polygonOffset = true
       m.polygonOffsetFactor = 1
       m.polygonOffsetUnits = 1
       return m
     })
-  }, [built.groups, overlayByColor, glassRoughnessLevel, emissiveAnimIndex])
+  }, [built.groups, overlayByColor, glassRoughnessLevel, emissiveAnimIndex, emissiveAnimOffColor])
 
   useFrame(() => {
     const elapsed = performance.now() / 1000

@@ -68,3 +68,19 @@ export function shadeColor(hex: string, delta: number): string {
   }
   return `#${channel(0)}${channel(2)}${channel(4)}`
 }
+
+/** Rec. 601 luma of a `#rrggbb` hex string — cheap "how dark is this" ordering, not a perceptual model. */
+function luma(hex: string): number {
+  const clean = hex.replace('#', '')
+  const r = parseInt(clean.slice(0, 2), 16)
+  const g = parseInt(clean.slice(2, 4), 16)
+  const b = parseInt(clean.slice(4, 6), 16)
+  return 0.299 * r + 0.587 * g + 0.114 * b
+}
+
+/** The darkest swatch in the base (matte) palette — used as the "off" color for a blinking/pulsing
+ * emissive material, so a dimmed light reads as an ordinary unlit surface (matching the model's own
+ * shadow tone) instead of fading to pure black. */
+export function darkestBaseColor(palette: PaletteState): string {
+  return palette.base.reduce((darkest, hex) => (luma(hex) < luma(darkest) ? hex : darkest), palette.base[0])
+}

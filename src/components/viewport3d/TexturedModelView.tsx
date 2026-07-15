@@ -1,10 +1,12 @@
 import { useEffect, useMemo } from 'react'
+import * as THREE from 'three'
 import { useFrame } from '@react-three/fiber'
 import { buildBlendAtlas } from '@/engine/texture/boxMapping'
 import { bakeOverlayTexturesByColor } from '@/engine/texture/overlay'
 import { buildTexturedGeometryByColor } from '@/engine/texture/texturedGeometry'
 import { buildPreviewMaterial, tickEmissiveAnimation } from '@/engine/instancing/previewMaterial'
 import { buildEmissiveAnimIndex } from '@/engine/palette/emissiveAnimation'
+import { darkestBaseColor } from '@/engine/palette/palette'
 import { useAppStore } from '@/store/useAppStore'
 import { usePreviewAOMaps } from './usePreviewAOMaps'
 
@@ -54,14 +56,16 @@ export function TexturedModelView() {
   useEffect(() => () => { for (const tex of overlayByColor.values()) tex.dispose() }, [overlayByColor])
 
   const emissiveAnimIndex = useMemo(() => buildEmissiveAnimIndex(palette), [palette])
+  const emissiveAnimOffColor = useMemo(() => new THREE.Color(darkestBaseColor(palette)), [palette])
 
   const materials = useMemo(
     () => groups.map((g) => buildPreviewMaterial(g.materialClass, g.colorKey, {
       overlayMap: overlayByColor.get(g.colorKey) ?? null,
       glassRoughnessLevel,
       emissiveAnimMode: emissiveAnimIndex.get(g.colorKey),
+      emissiveAnimOffColor,
     })),
-    [groups, overlayByColor, glassRoughnessLevel, emissiveAnimIndex],
+    [groups, overlayByColor, glassRoughnessLevel, emissiveAnimIndex, emissiveAnimOffColor],
   )
   useEffect(() => () => { for (const m of materials) m.dispose() }, [materials])
 

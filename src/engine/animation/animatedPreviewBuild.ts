@@ -9,6 +9,7 @@ import { hasTextureContent } from '@/engine/texture/TextureStore'
 import { buildOptimizedVoxelGroupsBySlice } from '@/engine/instancing/voxelMeshBuilder'
 import { buildPreviewMaterial } from '@/engine/instancing/previewMaterial'
 import { buildEmissiveAnimIndex } from '@/engine/palette/emissiveAnimation'
+import { darkestBaseColor } from '@/engine/palette/palette'
 import { assignVoxelsToNodes, resolveAnimCenter } from './animationLayers'
 import type { SliceAnimSettings, SliceKey } from './types'
 
@@ -56,6 +57,7 @@ export function buildAnimatedSliceMeshes(
     : null
 
   const emissiveAnimIndex = buildEmissiveAnimIndex(palette)
+  const emissiveAnimOffColor = new THREE.Color(darkestBaseColor(palette))
   const materials: THREE.MeshPhysicalMaterial[] = []
   const materialIndexMap = new Map<string, number>()
 
@@ -72,6 +74,7 @@ export function buildAnimatedSliceMeshes(
         overlayMap: overlayByColor?.get(g.colorKey) ?? null,
         glassRoughnessLevel,
         emissiveAnimMode: emissiveAnimIndex.get(g.colorKey),
+        emissiveAnimOffColor,
       }))
     }
 

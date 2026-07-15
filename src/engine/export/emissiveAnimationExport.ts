@@ -8,11 +8,14 @@ export type EmissiveAnimExportTarget = { material: THREE.Material; mode: Emissiv
 type VectorSampler = { times: Float32Array; values: Float32Array; itemSize: number; interpolation: 'STEP' | 'CUBICSPLINE' }
 
 /**
- * `peak` is the property's value at "on"; `scales[i] === false` pins that component at its peak
- * value for the whole cycle instead of animating it (used to hold `baseColorFactor`'s alpha
- * constant while its RGB drops to black).
+ * `peak` is the property's value at "on"; `floor[i] === null` pins that component at its peak value
+ * for the whole cycle instead of animating it (used to hold `baseColorFactor`'s alpha constant while
+ * its RGB fades toward the palette's darkest base color). A non-null `floor[i]` is the value that
+ * component fades DOWN to at "off" — 0 for emissive strength (the glow itself always fully turns
+ * off), the off-color's channel for `baseColorFactor` (so the albedo reads as an ordinary unlit
+ * surface, matching the live preview's `tickEmissiveAnimation`, rather than pure black).
  */
-function buildBlinkSampler(peak: number[], scales: boolean[]): VectorSampler {
+function buildBlinkSampler(peak: number[], floor: (number | null)[]): VectorSampler {
   // Hard on/off: two states per cycle, STEP interpolation holds each value until the next keyframe.
   // The trailing keyframe (equal to the first) exists only for a byte-for-byte inspectable JSON —
   // playback loops back to t=0 immediately after t=duration regardless.
@@ -20,17 +23,20 @@ function buildBlinkSampler(peak: number[], scales: boolean[]): VectorSampler {
   const times = new Float32Array([0, EMISSIVE_ANIM_CYCLE_SECONDS / 2, EMISSIVE_ANIM_CYCLE_SECONDS])
   const values = new Float32Array(3 * n)
   ;[1, 0, 1].forEach((factor, k) => {
-    for (let c = 0; c < n; c++) values[k * n + c] = scales[c] ? peak[c] * factor : peak[c]
+    for (let c = 0; c < n; c++) {
+      const f = floor[c]
+      values[k * n + c] = f === null ? peak[c] : f + (peak[c] - f) * factor
+    }
   })
   return { times, values, itemSize: n, interpolation: 'STEP' }
 }
 
-function buildPulseSampler(peak: number[], scales: boolean[]): VectorSampler {
-  // Raised-cosine "breathing" curve: value(t) = peak · (1 − cos(ωt)) / 2 — zero derivative at both
-  // the trough (t=0) and peak (t=T/2), so a CUBICSPLINE loop has no visible seam. Same analytic-
-  // tangent technique as buildTranslationClip in animationGLTF.ts, generalized to an N-component
-  // vector output. CUBICSPLINE keyframes are laid out as [inTangent, value, outTangent] triples per
-  // keyframe (glTF spec appx C), each itself an N-component group.
+function buildPulseSampler(peak: number[], floor: (number | null)[]): VectorSampler {
+  // Raised-cosine "breathing" curve: value(t) = floor + (peak-floor) · (1 − cos(ωt)) / 2 — zero
+  // derivative at both the trough (t=0) and peak (t=T/2), so a CUBICSPLINE loop has no visible seam.
+  // Same analytic-tangent technique as buildTranslationClip in animationGLTF.ts, generalized to an
+  // N-component vector output. CUBICSPLINE keyframes are laid out as [inTangent, value, outTangent]
+  // triples per keyframe (glTF spec appx C), each itself an N-component group.
   const n = peak.length
   const omega = (2 * Math.PI) / EMISSIVE_ANIM_CYCLE_SECONDS
   const sampleTimes = [0, EMISSIVE_ANIM_CYCLE_SECONDS / 4, EMISSIVE_ANIM_CYCLE_SECONDS / 2, (EMISSIVE_ANIM_CYCLE_SECONDS * 3) / 4, EMISSIVE_ANIM_CYCLE_SECONDS]
@@ -41,8 +47,9 @@ function buildPulseSampler(peak: number[], scales: boolean[]): VectorSampler {
     const dFactor = (omega * Math.sin(omega * t)) / 2
     const base = i * n * 3
     for (let c = 0; c < n; c++) {
-      const value = scales[c] ? peak[c] * factor : peak[c]
-      const tangent = scales[c] ? peak[c] * dFactor : 0
+      const f = floor[c]
+      const value = f === null ? peak[c] : f + (peak[c] - f) * factor
+      const tangent = f === null ? 0 : (peak[c] - f) * dFactor
       values[base + c] = tangent // inTangent
       values[base + n + c] = value // value
       values[base + 2 * n + c] = tangent // outTangent
@@ -53,10 +60,11 @@ function buildPulseSampler(peak: number[], scales: boolean[]): VectorSampler {
 
 /**
  * Registers a `GLTFExporter` plugin that bakes each flagged material's emissive blink/pulse into the
- * exported glTF via `KHR_animation_pointer`, on two synced channels so "off" reads as true black
- * rather than just a non-glowing lit surface:
- *  - `/materials/{n}/extensions/KHR_materials_emissive_strength/emissiveStrength` (the glow)
- *  - `/materials/{n}/pbrMetallicRoughness/baseColorFactor` (the albedo, RGB only — alpha held constant)
+ * exported glTF via `KHR_animation_pointer`, on two synced channels so "off" reads as an ordinary
+ * unlit surface (the palette's darkest base color) rather than the glow just switching off over the
+ * lit albedo — matching the live preview's `tickEmissiveAnimation`:
+ *  - `/materials/{n}/extensions/KHR_materials_emissive_strength/emissiveStrength` (the glow, fades to 0)
+ *  - `/materials/{n}/pbrMetallicRoughness/baseColorFactor` (the albedo, RGB fades to `offColor` — alpha held constant)
  *
  * glTF's core animation channels can only target a node's TRS/morph weights — there's no channel type
  * for material properties — so `three`'s `GLTFExporter` (as of r185) has no built-in support for this,
@@ -72,7 +80,7 @@ function buildPulseSampler(peak: number[], scales: boolean[]): VectorSampler {
  * materials whose actual hue comes from the baked map) — it's force-written here so the pointer target
  * always resolves to a concrete value rather than relying on viewers applying the schema default.
  */
-export function registerEmissiveAnimationExtension(exporter: GLTFExporter, targets: EmissiveAnimExportTarget[]): void {
+export function registerEmissiveAnimationExtension(exporter: GLTFExporter, targets: EmissiveAnimExportTarget[], offColor: THREE.Color): void {
   const active = targets.filter((t) => t.mode !== 'none')
   if (active.length === 0) return
 
@@ -82,8 +90,8 @@ export function registerEmissiveAnimationExtension(exporter: GLTFExporter, targe
       const channels: object[] = []
       const samplers: object[] = []
 
-      const addChannel = (peak: number[], scales: boolean[], mode: EmissiveAnimMode, pointer: string) => {
-        const sample = mode === 'blink' ? buildBlinkSampler(peak, scales) : buildPulseSampler(peak, scales)
+      const addChannel = (peak: number[], floor: (number | null)[], mode: EmissiveAnimMode, pointer: string) => {
+        const sample = mode === 'blink' ? buildBlinkSampler(peak, floor) : buildPulseSampler(peak, floor)
         const input = writer.processAccessor(new THREE.BufferAttribute(sample.times, 1))
         const output = writer.processAccessor(new THREE.BufferAttribute(sample.values, sample.itemSize))
         samplers.push({ input, output, interpolation: sample.interpolation })
@@ -100,12 +108,12 @@ export function registerEmissiveAnimationExtension(exporter: GLTFExporter, targe
         if (!materialDef) continue
 
         const strengthPeak = materialDef.extensions?.KHR_materials_emissive_strength?.emissiveStrength ?? 1
-        addChannel([strengthPeak], [true], mode, `/materials/${materialIndex}/extensions/KHR_materials_emissive_strength/emissiveStrength`)
+        addChannel([strengthPeak], [0], mode, `/materials/${materialIndex}/extensions/KHR_materials_emissive_strength/emissiveStrength`)
 
         materialDef.pbrMetallicRoughness = materialDef.pbrMetallicRoughness || {}
         if (!materialDef.pbrMetallicRoughness.baseColorFactor) materialDef.pbrMetallicRoughness.baseColorFactor = [1, 1, 1, 1]
         const baseColorPeak: number[] = materialDef.pbrMetallicRoughness.baseColorFactor
-        addChannel(baseColorPeak, [true, true, true, false], mode, `/materials/${materialIndex}/pbrMetallicRoughness/baseColorFactor`)
+        addChannel(baseColorPeak, [offColor.r, offColor.g, offColor.b, null], mode, `/materials/${materialIndex}/pbrMetallicRoughness/baseColorFactor`)
       }
 
       if (channels.length === 0) return

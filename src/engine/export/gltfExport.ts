@@ -10,7 +10,7 @@ import { bakeOverlayTexture } from '@/engine/texture/overlay'
 import { buildTexturedGeometryByColor, buildTexturedGeometryBySlice } from '@/engine/texture/texturedGeometry'
 import { hasTextureContent } from '@/engine/texture/TextureStore'
 import { buildOptimizedVoxelGeometryByMaterial, buildOptimizedVoxelGroupsBySlice } from '@/engine/instancing/voxelMeshBuilder'
-import { materialParamsFor, type MaterialClass } from '@/engine/palette/palette'
+import { darkestBaseColor, materialParamsFor, type MaterialClass } from '@/engine/palette/palette'
 import { buildEmissiveAnimIndex } from '@/engine/palette/emissiveAnimation'
 import type { SliceAnimSettings, SliceKey } from '@/engine/animation/types'
 import { assignVoxelsToNodes, hasActiveAnimations, resolveAnimCenter } from '@/engine/animation/animationLayers'
@@ -384,7 +384,7 @@ export async function exportModelToGlb(
 
   try {
     const exporter = new GLTFExporter()
-    registerEmissiveAnimationExtension(exporter, emissiveAnimTargets)
+    registerEmissiveAnimationExtension(exporter, emissiveAnimTargets, new THREE.Color(darkestBaseColor(palette)))
     const result = await exporter.parseAsync(root, { binary: true, animations: clips })
     return result as ArrayBuffer // `binary: true` always resolves to an ArrayBuffer
   } finally {
