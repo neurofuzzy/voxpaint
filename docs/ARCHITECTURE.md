@@ -261,6 +261,11 @@ preview + Bresenham flush, or a Bresenham-interpolated drag stroke). Tools never
 directly or import the store — they operate purely in plane-space `(u,v)` through the
 `ToolContext` passed in, keeping them plane-agnostic and unit-testable.
 
+**Mode-specific tool dispatch**: `usePixelCanvasTools.ts` picks between `toolMap` (Model/Texture modes)
+or `animateToolMap` (Animate mode) based on `store.mode`. Animate mode only has paint/erase handlers
+(which operate on slice masks, see [Animation](#animation) above); other tools are no-ops. See also the
+`maskTools.ts` discussion in the Animation tools section.
+
 Selection/clipboard support lives in `selectionMask.ts` (rect/lasso regions, rotate/mirror,
 boundary tracing for the marching-ants outline) and `clipboard.ts`/`transform.ts` (copy/paste with
 live chamfer re-validation at the destination, dropping invalid cells with a toast).
@@ -308,12 +313,14 @@ live chamfer re-validation at the destination, dropping invalid cells with a toa
   (`cellKeyForPick`) and a clean ±axis face normal (fed to `planeFromFaceHit`). The pick mesh is added
   to `.group` with `visible = false` (never rendered) but is still raycastable when passed explicitly
   to the `Raycaster`. `InstancingManager.test.ts` covers this with real raycasts.
-- **Construction plane visuals**: `ConstructionPlaneVisual.tsx` (the plane-aligned grid + draggable
-  offset arrow), `ConstructionPlaneGizmo.tsx` (axis-select spheres), `VoxelFaceHighlight.tsx`
-  (live hovered-face quad), `VoxelGhostPreview.tsx` (empty-cell paint preview). The plane grid renders
-  through the **centers** of its layer's voxels (`plane.offset + 0.5` along the axis, for either
-  orientation), not flush against a cell face; the drag-snap in `ConstructionPlaneVisual.tsx` mirrors
-  that same +0.5 so dragging still lands on whole offsets.
+- **Construction plane visuals**: `ConstructionPlaneVisual.tsx` (the plane-aligned grid, now non-interactive),
+  `ConstructionPlaneGizmo.tsx` (axis-select spheres), `VoxelFaceHighlight.tsx` (live hovered-face quad),
+  `VoxelGhostPreview.tsx` (empty-cell paint preview). The plane grid renders through the **centers** of its
+  layer's voxels (`plane.offset + 0.5` along the axis, for either orientation), not flush against a cell face.
+  **Note**: drag-to-move-the-plane interaction was removed; the plane is moved via gizmo, flip button, or
+  two-click object-mode advance on voxel faces (unchanged, still documented in "Construction plane geometry
+  mediator" above). `Viewport3D.tsx` now shows contextual `voxelHint` status text (face direction + "again" hint
+  for two-click advance, tracked via `objectModeTarget`).
 
 ### Mesh optimization (CSG pipeline), PBR export, and ambient occlusion
 
@@ -326,17 +333,22 @@ The optimized-mesh path builds a watertight surface from per-voxel solid geometr
   cloned chamfer prefab with the instance matrix for chamfer cells), and buckets them into
   `VoxelGroup` objects keyed by `materialClass:colorKey`.
 - **CSG union** (`optimizeGroupsByCSG` in `meshOptimizer.ts`): each group's per-voxel BSP trees are
-  binary-tree-unioned. The boolean union naturally discards interior faces between adjacent same-colour
-  voxels and never bridges disconnected voxel components (fixing the old coplanar optimizer's tendency
-  to merge faces from separate voxel groups via shared quantized edge keys).
+  binary-tree-unioned **unconditionally** — CSG union always runs, there is no raw/uncombined render mode.
+  The boolean union naturally discards interior faces between adjacent same-colour voxels and never bridges
+  disconnected voxel components (fixing the old coplanar optimizer's tendency to merge faces from separate
+  voxel groups via shared quantized edge keys).
 - **Post-CSG coplanar face merge** (`mergeCoplanarFaces` in `meshOptimizer.ts`): The CSG output still
   contains coplanar-adjacent polygon pairs (e.g. the top face of a 2×1 union still has two quads).
   These are grouped by coplanarity + edge connectivity, merged into boundary loops (outer + holes), and
-  re-triangulated via earcut to reduce triangle count. **Boundary-loop ordering**: loops discovered by
-  edge flood-fill can arrive in arbitrary order (Map iteration); the outer boundary is identified by
-  largest 2D bounding-box extent, and all loops have their 2D winding corrected (`ensureWinding`) to
-  match earcut's expectation (outer CCW, holes CW), since the tangent/bitangent projection can invert
-  winding for some face normals.
+  re-triangulated via earcut to reduce triangle count. **This step is user-toggleable** via
+  `store/viewSlice.ts`'s `optimizedMesh: boolean` (default `false`), which gates `mergeCoplanar` in
+  `buildOptimizedVoxelGroups`. UI: `ViewOptionsOverlay.tsx`'s "Optimized mesh" toggle button (Boxes icon).
+  Export defaults to merging coplanar faces (`mergeCoplanar ?? true` in both `buildOptimizedVoxelGeometryByMaterial`
+  and `buildOptimizedVoxelGroupsBySlice`).
+  **Boundary-loop ordering**: loops discovered by edge flood-fill can arrive in arbitrary order (Map iteration);
+  the outer boundary is identified by largest 2D bounding-box extent, and all loops have their 2D winding
+  corrected (`ensureWinding`) to match earcut's expectation (outer CCW, holes CW), since the tangent/bitangent
+  projection can invert winding for some face normals.
 - **Per-color output**: each CSG group returns one mesh with a solid `colorKey` — the consumer creates
   one `MeshPhysicalMaterial` per group with the palette colour as `color` (no `vertexColors`). Different
   colours and material classes are never merged.
@@ -362,6 +374,15 @@ exports as a named `MeshPhysicalMaterial` mesh (`voxel_rrggbb_materialClass`) wi
 `KHR_materials_transmission` + `KHR_materials_volume`). **Emissive glow is exported** as
 `material.emissive` + `emissiveIntensity` (no longer per-vertex, since each mesh is a single colour).
 
+**UV unwrapping for AO and specular maps** (`src/engine/ao/uvUnwrap.ts`): Independent unwrap decoupled from
+the paint texture atlas, used by both AO baking and specular-noise-map baking (both live preview and export):
+- `unwrapGeometries(geometries: THREE.BufferGeometry[])` — groups each geometry's triangles by connected
+  components (shared normal direction + edge adjacency), projects each onto its own tangent-space rect, sizes
+  via `TEXELS_PER_UNIT = 4`, and packs all rects into one square atlas via greedy shelf-packing. Returns
+  per-geometry `uv1Arrays` mapping every vertex into atlas space. Called once per bake, shared by both preview
+  and export, **only on the untextured PBR path** (CSG-optimized color groups), not the textured/box-mapped path.
+- This replaces the earlier "box-map atlas limitation" where stacked/overhang surfaces would share an AO value.
+
 **Textured export**: When a texture is present, `exportModelToGlb` uses the box-mapped textured
 geometry and **bakes** the overlay blend into a per-(color, materialClass) `baseColorTexture` via
 `bakeOverlayTexture` (one 192×128 RGBA texture per group). **Glass exclusion**: glass materials use a
@@ -370,15 +391,58 @@ solid `baseColorFactor` instead of a baked texture because `KHR_materials_volume
 through to white — the glTF spec is valid, but viewer compatibility is broken for this combination.
 For glass, the geometry also drops its `TEXCOORD_0` attribute so no unused UV channel is exported.
 
-**Ambient occlusion** (`engine/ao/`): A renderer-agnostic analytical voxel AO solver bakes per-face AO
-values into a grayscale atlas (same resolution/layout as the paint box-map atlas, 0.25 voxel/texel).
-`computeVoxelAO` performs 6-axis directional sampling with falloff controls; `bakeAOAtlas` rasterizes it
-into the atlas (frontmost voxel per texel, sampling on outer surface plane). In the preview, AO renders
-as a grayscale `map` on each material; box-map UVs are pre-computed but only attached to geometry when
-AO is active (`useEffect` on `ambientOcclusion` toggle), so unused `TEXCOORD_0` never leaks into
-exports. Export is opt-in via `GltfExportOptions { ambientOcclusion?: boolean }`. **Known limitation**:
-AO rides the box-map atlas, so stacked/overhang surfaces sharing a face-column share one AO value
-(frontmost wins) — the same depth ambiguity the paint atlas has.
+**Ambient occlusion** (`engine/ao/`): Bakes analytical per-texel AO values into a dedicated unwrapped atlas
+(see `uvUnwrap.ts` below — not the paint box-map atlas), decoupled to avoid the box-map's stacking/overhang
+ambiguity. `src/engine/ao/bakeAO.ts`:
+- `buildOccGrid(model, excludeKeys?)` — builds a 4×-resolution occupancy grid (`TEXELS_PER_UNIT = 4`) from
+  `model.color` (chamfer cells approximated as empty). `excludeKeys` omits animated-slice voxels from occlusion
+  (see [Animation](#animation) below).
+- `buildHemisphereDirs()` — 80 precomputed hemisphere-sample directions (5 polar rings × up to 16 azimuthal
+  steps), reused per texel via a per-texel basis transform (cheaper than per-texel spherical raycast setup).
+- `bakeAOToAtlas(model, atlas, noiseLevel = 0, aoStrength = 1, excludeKeys?)` — ray-marches through the
+  occupancy grid along all 80 directions per texel; per-ray occlusion is `1/(1+hitDistCells·CELL_SIZE)`,
+  averaged, then `shaded = 1 - aoStrength·ao`, optionally darkened by deterministic noise (`hashNoise`) before
+  quantizing to grayscale RGBA.
+- Tunables in `src/engine/ao/aoConstants.ts`: `AO_STRENGTH = 1.0`, `AO_DEFAULT_ENABLED = false`.
+
+In the preview, AO renders as a grayscale `map` on each material via the UV1 unwrap. Export is opt-in via
+`GltfExportOptions { ambientOcclusion?: boolean }`. **Note**: `src/engine/ao/voxelAO.ts` is now dead runtime
+code (kept only for its tests `voxelAO.test.ts`), superseded by the bakeAO pipeline — same pattern as
+`resolveChamferCellsOnPlane`.
+
+**Specular and metal-noise texture maps** (`bakeAO.ts`): New in the same `bakeAO.ts` module:
+- `specularHash` — a hash decorrelated from the monochrome AO grain via different prime multipliers.
+- `makeSpecularNoiseTexture(atlas, level)` — returns three RGBA buffers (metalness, roughness, baseColor).
+  Per-texel, a "rust" value `level · specularHash(worldPos)` drives: metalness down, roughness up,
+  baseColor darkened toward gray. `level = 0` short-circuits to flat neutral textures (no-op).
+- Consumed only by **`metal`-class materials** (matte/emissive/glass unaffected). State: `store/viewSlice.ts`'s
+  `specularNoiseLevel: number` (default `0`), action `setSpecularNoiseLevel`. Bound to preview materials via
+  `OptimizedMeshView.tsx`'s three `CanvasTexture`s. Also threaded into `GltfExportOptions` so export matches
+  preview exactly.
+
+**Glass roughness** — `store/viewSlice.ts`'s `glassRoughnessLevel: number` (default `0.3`), action
+`setGlassRoughnessLevel`. User-adjustable per-session (not a fixed constant). Consumed identically in
+`OptimizedMeshView.tsx`'s material builder (`roughness: isGlass ? glassRoughnessLevel : params.roughness`)
+and in `gltfExport.ts`'s glass material branch — live preview and export always match.
+
+### Viewport settings and UI overlays
+
+`components/viewport3d/ViewOptionsOverlay.tsx` — top-right frosted pill; controls: construction-plane
+axis-cycle/flip buttons, **Wireframe** toggle (`store.wireframe`, renders a second unlit-white `MeshBasicMaterial`
+pass with `polygonOffset` to avoid z-fighting), **Optimized mesh** toggle (`store.optimizedMesh`, gates
+coplanar-face merge; see [Mesh optimization](#mesh-optimization-csg-pipeline-pbr-export-and-ambient-occlusion)
+above), and camera-reset button.
+
+`components/viewport3d/SettingsPalette.tsx` — new file, bottom-right, collapsible via a `SlidersHorizontal` icon
+button, starts minimized. Settings panel (not the voxel-color palette): Ambient Occlusion (checkbox + strength
+slider 1–5×), Noise (checkbox + 0–100% slider — the AO-texture monochrome grain, `noiseLevel`), Metal noise
+(checkbox + 0–100% slider — specular noise, `specularNoiseLevel`), Glass roughness (0–100% slider, always
+enabled). Each checkbox-off zeroes the numeric value via local component state (`noiseChecked`/`metalChecked`),
+so re-enabling restores the last nonzero value. All sliders write to `store.viewSlice`.
+
+`components/viewport3d/Compass.tsx` — always-visible top-left HUD overlay (`@react-three/drei`'s `Html`):
+a `Navigation2` icon rotated per frame to track camera yaw (`atan2(camera.position.x, camera.position.z)`),
+giving an N-up orientation reference while orbiting. No store state — purely frame-derived.
 
 ---
 
@@ -394,11 +458,12 @@ with `enableMapSet()` since `VoxelModel` uses `Map`):
 | plane | `planeSlice.ts` | `plane`, `objectModeTarget`, plane-setting actions |
 | tool | `toolSlice.ts` | `activeTool`, `activeLayer`, `activePaletteSlot` |
 | selection | `selectionSlice.ts` | `selection`, `clipboard`, `floatContent`/`floatOrigin` (pending move/paste buffer) |
-| view | `viewSlice.ts` | `fullscreen`, `hoverCell`, `hoveredFace`, `chamferHoverValid`, `ambientOcclusion` (ephemeral, not snapshotted) |
+| view | `viewSlice.ts` | `fullscreen`, `hoverCell`, `hoveredFace`, `chamferHoverValid`, `wireframe`, `optimizedMesh`, `ambientOcclusion`, `noiseLevel`, `specularNoiseLevel`, `glassRoughnessLevel`, `aoStrength`, `meshTriangles` (render stats), `exportScaleFactor`/`exportAnchor` (ephemeral, not snapshotted) |
 | persistence | `persistenceSlice.ts` | `dirty`, `lastSavedAt`, `lastError` |
 | paintActions | `paintActions.ts` | `paintColorCell`, `paintChamferCell`, `eraseCell` |
 | toolActions | `toolActionsSlice.ts` | flood fill, clone-stamp, copy/cut/delete, float lift/move/transform/bake |
-| mode | `modeSlice.ts` | `mode` (`'model'`\|`'texture'`), `setMode` (the top-level authoring mode switch) |
+| mode | `modeSlice.ts` | `mode` (`'model'`\|`'animate'`\|`'texture'`), `setMode` (the top-level authoring mode switch) |
+| animation | `animationSlice.ts` | `animSettings` (Map<SliceKey, SliceAnimSettings>), `sliceMasks` (Map<SliceKey, Set<CellKey>>), `animPast`/`animFuture` (separate undo/redo stack), `animBeginStroke`/`animCommitStroke`/`animUndo`/`animRedo`, mask paint/erase actions |
 | texture | `textureSlice.ts` | `texture`, `activeBoxFace`, `activeGrayIndex`, separate `texturePast`/`textureFuture` history, texture-mode selection/float/clipboard, and all texture-editing actions |
 
 **Undo/redo**: atomic whole-`VoxelModel` snapshots (cheap — Immer structural sharing means a
@@ -414,10 +479,22 @@ whole lift→move→rotate→mirror→bake sequence is one undo step. Capped at 
 
 `engine/persistence/`:
 
-- `schema.ts` — `VoxPaintProjectFileV3` (current, `CURRENT_SCHEMA_VERSION = 3`) replaces blink/pulse palette slots with metal/glass. `VoxPaintProjectFile` now aliases V3. Texture is optional (added in v2).
-- `serialize.ts` — `serializeProject(model, palette, meta, texture)` and `deserializeProject` include/restore the palette with material kinds and texture (base64 per face). Existing v1 projects load with defaults.
-- `migrations.ts` — `MIGRATIONS[1]` (v1 → v2) sets `schemaVersion = 2` and adds optional empty texture. `MIGRATIONS[2]` (v2 → v3) reshapes the palette: drops blink/pulse hex values, seeds metal/glass swatches from defaults, and remaps any cell referencing a blink/pulse slot to emissive (index clamped to 0–3) — the nearest surviving "glow" concept. **Open caveat**: this remap is lossy for old projects (blink/pulse animation is lost on import).
-- `autosave.ts` — debounced (800ms, `store/wireAutosave.ts`) `localStorage` read/write, one serialize/deserialize path shared with explicit export/import (`projectFile.ts`'s `downloadProjectFile`/`readProjectFile`) so autosave and file I/O can never diverge.
+- `schema.ts` — `VoxPaintProjectFileV5` (current, `CURRENT_SCHEMA_VERSION = 5`). `VoxPaintProjectFile` now aliases V5.
+  - **V3** (prior): replaced blink/pulse palette slots with metal/glass. Texture is optional (added in v2).
+  - **V4**: adds optional `animations?: SerializedAnimLayer[]` (`{axis, offset, animationType, speed, slideAmount}`).
+  - **V5**: adds optional `masks?: SerializedSliceMask[]` (`{axis, offset, cellKeys: string[]}`).
+- `serialize.ts` — `serializeProject(model, palette, meta, texture, animSettings, sliceMasks)` and `deserializeProject`
+  include/restore the palette with material kinds, texture (base64 per face), animations and masks. Existing v1 projects
+  load with defaults; v3 projects load with empty animations array; v4 projects load with no masks (reverting all
+  previously-animated slices to whole-slice animation, no behavior change).
+- `migrations.ts` — `MIGRATIONS[1]` (v1 → v2) sets `schemaVersion = 2` and adds optional empty texture. `MIGRATIONS[2]`
+  (v2 → v3) reshapes the palette: drops blink/pulse hex values, seeds metal/glass swatches from defaults, and remaps
+  any cell referencing a blink/pulse slot to emissive (index clamped to 0–3) — the nearest surviving "glow" concept.
+  **Open caveat**: this remap is lossy for old projects (blink/pulse animation is lost on import). `MIGRATIONS[3]` (v3 → v4)
+  adds empty animations array. `MIGRATIONS[4]` (v4 → v5) adds no masks.
+- `autosave.ts` — debounced (800ms, `store/wireAutosave.ts`) `localStorage` read/write, one serialize/deserialize path
+  shared with explicit export/import (`projectFile.ts`'s `downloadProjectFile`/`readProjectFile`) so autosave and file
+  I/O can never diverge. Autosave flushes on `state.texture` or animation/mask changes.
   `QuotaExceededError` surfaces as a toast (`components/ui/toastBus.ts`) rather than failing
   silently.
 - `store/wireAutosave.ts` — `restoreAutosave()` runs once at startup (`App.tsx`); `wireAutosave()`
@@ -492,6 +569,102 @@ See [Persistence](#persistence) below for schema v2 changes (optional texture se
 
 ---
 
+## Animation
+
+A third top-level authoring mode (`store/modeSlice.ts`'s `EditorMode = 'model' | 'animate' | 'texture'`) lets the
+user pick a construction-plane slice and assign it a rigid-body animation (rotate CW/CCW, or slide vertical/
+horizontal), which plays live in the 3D preview and exports as a glTF `AnimationClip`. A slice can be **masked**
+— painting a subset of that slice's voxels so only they animate, while the rest stay static; an unpainted (or
+fully-erased) mask falls back to animating the whole slice.
+
+### Animation data model and engine
+
+`src/engine/animation/`:
+
+- `types.ts`: `AnimationType = 'none'|'rotate-cw'|'rotate-ccw'|'slide-vertical'|'slide-horizontal'`, `AnimationSpeed = 1|2|3`,
+  `SliceKey = string` (`"axis,offset"`), `SliceAnimSettings = {animationType, speed, slideAmount}`, `AnimLayer = {axis, offset, settings}`.
+
+- `animationLayers.ts`: Core partition and pivot logic:
+  - `encodeSliceKey`/`decodeSliceKey` — `"x,5"`-style key encoding.
+  - `sliceVoxelKeys(model, axis, offset)` — every occupied cell at that slice offset.
+  - `sliceBBoxCenter`/`bboxCenterOfKeys` — pivot-point bbox center; the latter takes a cell-key list for
+    **mask-aware pivots** (when a slice has a non-empty mask, pivot is computed from just those cells).
+  - `sliceWorldBasis(axis)` — derives u/v/normal world vectors for rotation axis and slide direction (reuses
+    `planeLogicalBasis`, the same 2D/3D construction-plane mediator already documented above).
+  - **`assignVoxelsToNodes(model, animSettings, sliceMasks?)`** — central partition function: assigns every voxel
+    to at most one animation "node" per active slice (axis-priority x→y→z to avoid double-assignment), plus a
+    `remainder` of unanimated voxels. When a slice has a non-empty mask, its candidate cells are intersected
+    against the mask; empty/absent mask keeps whole-slice behavior. This is the single choke point both the 3D
+    preview and glTF exporter call — masking support required no changes at either call site's mesh-building logic,
+    only to this function and to pivot-computation sites.
+
+- `animationGLTF.ts`: glTF AnimationClip building:
+  - `buildAnimationClip(node, settings, axis, center)` — one `THREE.AnimationClip` per animated slice. Rotation
+    via 3-keyframe quaternion interpolation (linear, full 2π/-2π over the cycle). Slide via sine-wave (5 CUBICSPLINE
+    keyframes with analytically-matched tangents, `buildTranslationClip`), so preview and export motion match
+    exactly. Base cycle is 2 seconds at 1× speed.
+  - `buildAllAnimationClips(nodes)` — one clip per node.
+
+### Animation state and undo/redo
+
+`src/store/animationSlice.ts` (`AnimationSlice` in `store/types.ts`):
+
+- `animSettings: Map<SliceKey, SliceAnimSettings>` and `sliceMasks: Map<SliceKey, Set<CellKey>>` — masks store
+  literal occupied-cell keys, not a geometric region.
+- **One shared undo/redo stack** (`animPast`/`animFuture: AnimSnapshot[]`, `AnimSnapshot = {animSettings, sliceMasks}`)
+  independent of voxel-model history and texture history — a third parallel history system. Both maps are snapshotted/
+  restored together (`animBeginStroke`/`animCommitStroke` bracket a gesture). `animUndo`/`animRedo` swap the pair.
+- Actions: `setAnimSettingsForSlice(axis, offset, settings|null)` — set/clear a slice's animation type/speed/slide
+  amount. `paintMaskCell(u, v)` / `eraseMaskCell(coord)` — paint/erase one cell of the *current plane's* slice mask.
+  Masking only applies to cells that already hold a voxel (`model.color.has(key)`); erasing down to an empty set
+  deletes the map entry (reverting to whole-slice animation).
+
+### Animation tools
+
+`src/engine/tools/`: The shared paint/erase drag-state machine (`editToolFactory.ts`'s `makeEditTool`) now takes
+an optional `hooks: {beginStroke, commitStroke}` param, defaulting to the voxel model's own — this lets the new
+`maskTools.ts` (`maskPaintTool`/`maskEraseTool`) redirect drag logic onto the Animate-mode undo stack
+(`animBeginStroke`/`animCommitStroke`) with zero duplication. `engine/tools/index.ts` exports a second dispatch
+table `animateToolMap` (`{paint: maskPaintTool, erase: maskEraseTool}`, everything else no-op). `usePixelCanvasTools.ts`
+picks between the two tables based on `store.mode === 'animate'` (previously tool dispatch was blocked entirely in
+Animate mode). Switching into Animate mode via `store/modeSlice.ts`'s `setMode` resets `activeTool` to `'paint'`
+if it was something Animate mode doesn't handle (e.g. `'select'`/`'move'` from Model mode).
+
+### Animation UI
+
+- `components/panels/AnimationPalette.tsx` (mounted by `FloatingPalette.tsx` in place of the color palette when
+  `mode === 'animate'`) — 5 animation-type buttons (×/↻/↺/↕/↔ symbols), speed selector (1–3×), slide-amount slider
+  (1–8, shown only for slide types). Reads/writes whichever slice the construction plane currently sits on (`plane.axis`/
+  `plane.offset`) — the system is plane-centric: "select a slice" means "move the construction plane there."
+
+- `components/panels/ToolPalette.tsx` — shows Paint Mask / Erase Mask toggle group in Animate mode.
+
+- `components/editor2d/PixelCanvas.tsx` — renders violet tint + outline over any cell in the current slice's mask,
+  only if that slice has a non-empty mask (an unpainted slice shows no overlay, signaling "whole slice will animate").
+
+- `components/viewport3d/AnimatedModelView.tsx` — live 3D preview: builds one `THREE.Group` per animated slice at
+  its pivot center, drives rotation/slide live via `useFrame` (sine-wave slide matching the CUBICSPLINE curve),
+  everything not assigned to a slice renders as an unanimated remainder group.
+
+- `components/panels/ModeTabs.tsx` — third `'animate'` tab, between Model and Texture.
+
+### Animation export
+
+`engine/export/gltfExport.ts`: when `animSettings` is non-empty, `assignVoxelsToNodes` (also passed `sliceMasks`)
+partitions voxels into per-slice `THREE.Group` nodes (named `anim_<sliceKey>`), each positioned at its (mask-aware)
+pivot center via `bboxCenterOfKeys`; meshes are recentered by `-center` so geometry (absolute grid coordinates) and
+group transform don't double-offset. `buildAllAnimationClips` generates clips, passed via `options.animations`
+(three's `GLTFExporter` ignores `Object3D.animations`, must use the option). **AO exclusion**: animated voxels are
+excluded from AO occupancy grid (`buildOccGrid`'s `excludeKeys`) since they move independently and shouldn't occlude
+the static rest-pose bake.
+
+### Animation known limitations
+
+- Masking only supports whole-cell inclusion/exclusion (`Set<CellKey>`), not soft masks — matches voxel painting's
+  all-or-nothing nature elsewhere in the app.
+
+---
+
 ## Palette
 
 `engine/palette/`: 28 indexed slots (16 base + 4 emissive + 4 metal + 4 glass, `PALETTE_SLOT_COUNTS`).
@@ -517,9 +690,9 @@ and export (which static glTF cannot animate).
 ## React tree
 
 `App.tsx` (wires autosave + a global error-toast subscription) → `MainLayout.tsx` → `TopToolbar`
-(includes `ModeTabs.tsx` for Model/Texture mode switch, right of File menu) → `LeftPanel` (tools + options, disabled/greyed in texture mode), a 2-column split (`Editor2D` | `Viewport3D`), `BottomBar` (undo/redo + contextual hint text) — plus `FloatingPalette` (28-slot voxel palette in model mode; 8-slot grayscale palette in texture mode) and toast region (`components/ui/ToastRegion.tsx`) via Radix primitives.
+(includes `ModeTabs.tsx` for Model/Animate/Texture mode switch, right of File menu) → `LeftPanel` (tools + options, disabled/greyed in texture mode), a 2-column split (`Editor2D` | `Viewport3D`), `BottomBar` (undo/redo + contextual hint text) — plus `FloatingPalette` (28-slot voxel palette in model mode; animation controls in animate mode; 8-slot grayscale palette in texture mode) and toast region (`components/ui/ToastRegion.tsx`) via Radix primitives.
 
-**Mode branching**: `Editor2D` gates on `mode === 'texture'` to show `TextureCanvas` or `PixelCanvas` + `PlaneControlsOverlay`; `Viewport3D` gates to show `TexturedModelView` + `BoundingBoxFaceSelector` or the voxel-mode 3D scene. All mode-aware components check the store's `mode` field. The left toolbar (`LayerToggle` / voxel-kind buttons) and construction-plane controls are disabled in texture mode.
+**Mode branching**: `Editor2D` gates on `mode === 'texture'` to show `TextureCanvas`, on `mode === 'animate'` to show `PixelCanvas` with mask overlays, or otherwise `PixelCanvas` + `PlaneControlsOverlay`. `Viewport3D` gates on mode to show `TexturedModelView` + `BoundingBoxFaceSelector` (texture), `AnimatedModelView` (animate), or the voxel-mode 3D scene. All mode-aware components check the store's `mode` field. The left toolbar (`LayerToggle` / voxel-kind buttons) and construction-plane controls are disabled in texture mode; Animate mode disables non-paint/erase tools (see [Tool architecture](#tool-architecture) in "2D editor" above).
 
 ---
 
@@ -576,3 +749,4 @@ is the source of truth — treat the spec as historical context, not a contract:
   corner-anchored cell indices that the spec's prose doesn't call out explicitly — see
   [the corner-anchoring note](#cells-are-corner-anchored--the-recurring--1-correction) above.
 - **Texture authoring** (`engine/texture/`, `store/modeSlice.ts`, `store/textureSlice.ts`, `components/editor2d/TextureCanvas.tsx`, `components/viewport3d/TexturedModelView.tsx`): an entirely new feature not in the original SPEC. A second top-level authoring mode applies a 6-sided, box-mapped grayscale texture (8-level palette, 4× texel resolution) to the model via OVERLAY blend (chosen over multiply because multiply can only darken). Texture is modular and loosely coupled: whole-subtree gating by `mode`, separate history, separate undo/redo — only pure leaf helpers shared with the voxel stack. See [Texture authoring](#texture-authoring) above.
+- **Animation** (`src/engine/animation/`, `store/animationSlice.ts`, `components/panels/AnimationPalette.tsx`, `components/viewport3d/AnimatedModelView.tsx`): an entirely new feature not in the original SPEC. A third top-level authoring mode assigns rigid-body animations (rotate CW/CCW, slide vertical/horizontal) to construction-plane slices, with optional per-voxel masking to animate subsets. Plays live in 3D preview via sine-wave slides and linear quaternion rotations, exports as glTF `AnimationClip`s with frame-accurate timing. Animation state is modular: whole-subtree gating by `mode`, separate undo/redo history (third parallel stack alongside voxel and texture), independent from other systems. See [Animation](#animation) above.
