@@ -85,6 +85,39 @@ export function sliceWorldBasis(axis: Axis): { uDir: THREE.Vector3; vDir: THREE.
   }
 }
 
+/** Shared with the glTF export (animationGLTF.ts) so live preview and exported clips agree on timing. */
+export const BASE_CYCLE_SECONDS = 2
+
+/**
+ * Per-frame transform for one animated slice group's live preview, matching the CUBICSPLINE curve
+ * baked into the glTF export (animationGLTF.ts) — a sine wave for slide, constant angular velocity
+ * for rotate — so the preview always agrees with the exported motion.
+ */
+export function updateAnimatedGroupTransform(
+  group: THREE.Group,
+  center: THREE.Vector3,
+  axis: Axis,
+  settings: SliceAnimSettings,
+  elapsedSeconds: number,
+): void {
+  const duration = BASE_CYCLE_SECONDS / settings.speed
+  const t = (elapsedSeconds % duration) / duration
+
+  if (isRotateMode(settings.animationType)) {
+    const { normal } = sliceWorldBasis(axis)
+    const angle = settings.animationType === 'rotate-cw' ? t * Math.PI * 2 : -t * Math.PI * 2
+    group.position.copy(center)
+    group.quaternion.setFromAxisAngle(normal, angle)
+  } else if (isSlideMode(settings.animationType)) {
+    const { uDir, vDir } = sliceWorldBasis(axis)
+    const dir = slideDirection(settings.animationType, uDir, vDir)
+    const amplitude = settings.slideAmount
+    const offset = Math.sin(t * Math.PI * 2)
+    group.position.copy(center).addScaledVector(dir, offset * amplitude)
+    group.quaternion.identity()
+  }
+}
+
 const AXIS_PRIORITY: Axis[] = ['x', 'y', 'z']
 
 export function assignVoxelsToNodes(

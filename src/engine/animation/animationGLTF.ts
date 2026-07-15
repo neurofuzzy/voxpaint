@@ -1,9 +1,7 @@
 import * as THREE from 'three'
 import type { Axis } from '@/engine/grid/types'
 import type { SliceAnimSettings, SliceKey } from './types'
-import { isRotateMode, isSlideMode, slideDirection, sliceWorldBasis } from './animationLayers'
-
-const BASE_CYCLE_SECONDS = 2
+import { BASE_CYCLE_SECONDS, isRotateMode, isSlideMode, slideDirection, sliceWorldBasis } from './animationLayers'
 
 function cycleDuration(speed: number): number {
   return BASE_CYCLE_SECONDS / speed
