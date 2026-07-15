@@ -1,8 +1,8 @@
 ```
 # Auto-generated project map
-# Last updated: 2026-07-15 02:11:26
-# Files: 128
-# Lines of code: ~12221
+# Last updated: 2026-07-15 02:44:29
+# Files: 129
+# Lines of code: ~12455
 ```
 - **/components**
   - **/editor2d**
@@ -137,6 +137,7 @@
       - Function: `isSlideMode`
       - Function: `isRotateMode`
       - Function: `sliceVoxelKeys`
+      - Function: `bboxCenterOfKeys`
       - Function: `sliceBBoxCenter`
       - Function: `sliceWorldBasis`
       - Function: `assignVoxelsToNodes`
@@ -298,6 +299,7 @@
       - Type: `SerializedChamferCell`
       - Type: `SerializedTexture` - The box-mapped texture, serialized: per-face gr...
       - Type: `SerializedAnimLayer`
+      - Type: `SerializedSliceMask` - A slice's animation mask: which of its occupied...
       - Type: `VoxPaintProjectFileV1`
       - Type: `VoxPaintProjectFileV2`
       - Type: `VoxPaintProjectFile` - v3: the palette's `blink`/`pulse` groups were r...
@@ -385,7 +387,8 @@
     - [cloneTool.ts](../src/engine/tools/cloneTool.ts)
       - Variable: `cloneTool`
     - [editToolFactory.ts](../src/engine/tools/editToolFactory.ts)
-      - Function: `makeEditTool` - Shared shell for paint/erase: both follow the s...
+      - Type: `EditToolHooks` - Shared shell for paint/erase: both follow the s...
+      - Function: `makeEditTool` - `hooks` lets a caller redirect which undo stack...
     - [eraseTool.ts](../src/engine/tools/eraseTool.ts)
       - Variable: `eraseTool`
     - [eyedropperTool.ts](../src/engine/tools/eyedropperTool.ts)
@@ -396,9 +399,13 @@
       - Function: `floodFillRegion` - 4-connected flood fill over the active plane's ...
     - [index.ts](../src/engine/tools/index.ts)
       - Variable: `toolMap`
+      - Variable: `animateToolMap` - Animate-mode tool dispatch: only paint/erase ha...
     - [lineUtils.ts](../src/engine/tools/lineUtils.ts) - Bresenham line, inclusive of both endpoints.
       - Function: `bresenhamLine` - Bresenham line, inclusive of both endpoints.
       - Function: `snapToOrtho` - Snaps (u1,v1) so the vector from (u0,v0) lands ...
+    - [maskTools.ts](../src/engine/tools/maskTools.ts)
+      - Variable: `maskPaintTool` - Animate-mode analog of `paintTool`/`eraseTool`:...
+      - Variable: `maskEraseTool`
     - [moveTool.ts](../src/engine/tools/moveTool.ts)
       - Variable: `moveTool` - Move directly translates voxels — no selection,...
     - [paintTool.ts](../src/engine/tools/paintTool.ts)
@@ -473,6 +480,7 @@
     - Type: `ModeSlice`
     - Type: `TextureSlice` - Texture authoring state — a fully parallel stac...
     - Type: `AnimationSlice`
+    - Type: `AnimSnapshot` - One Animate-mode undo/redo snapshot: animation ...
     - Type: `AppState`
   - [useAppStore.ts](../src/store/useAppStore.ts)
     - Variable: `useAppStore`
