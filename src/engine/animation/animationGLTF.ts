@@ -1,7 +1,7 @@
 import * as THREE from 'three'
 import type { Axis } from '@/engine/grid/types'
 import type { SliceAnimSettings, SliceKey } from './types'
-import { isRotateMode, isSlideMode, sliceWorldBasis } from './animationLayers'
+import { isRotateMode, isSlideMode, slideDirection, sliceWorldBasis } from './animationLayers'
 
 const BASE_CYCLE_SECONDS = 2
 
@@ -111,7 +111,7 @@ function buildTranslationClip(
   const amplitude = settings.slideAmount
   const { uDir, vDir } = sliceWorldBasis(axis)
 
-  const dir = settings.animationType === 'slide-horizontal' ? uDir : vDir
+  const dir = slideDirection(settings.animationType, uDir, vDir)
 
   // Slide motion is an exact sine wave, position(t) = center + amplitude·sin(ωt)·dir — these 5
   // sample times land exactly on its zero-crossings and extrema. CUBICSPLINE keyframes store

@@ -1,4 +1,6 @@
 import { useCallback } from 'react'
+import type { ReactNode } from 'react'
+import { ArrowDownUp, ArrowLeftRight, ArrowRightLeft, ArrowUpDown } from 'lucide-react'
 import { useAppStore } from '@/store/useAppStore'
 import type { AnimationType, AnimationSpeed } from '@/engine/animation/types'
 import { SLIDE_AMOUNT_MAX, SLIDE_AMOUNT_MIN, defaultAnimationSettings, encodeSliceKey, isSlideMode } from '@/engine/animation/animationLayers'
@@ -7,8 +9,10 @@ const ANIM_TYPES: Array<{ id: AnimationType; label: string }> = [
   { id: 'none', label: 'None' },
   { id: 'rotate-cw', label: 'Rotate CW' },
   { id: 'rotate-ccw', label: 'Rotate CCW' },
-  { id: 'slide-vertical', label: 'Slide Vert' },
-  { id: 'slide-horizontal', label: 'Slide Horiz' },
+  { id: 'slide-vertical', label: 'Translate Up-Down' },
+  { id: 'slide-vertical-rev', label: 'Translate Down-Up' },
+  { id: 'slide-horizontal', label: 'Translate Left-Right' },
+  { id: 'slide-horizontal-rev', label: 'Translate Right-Left' },
 ]
 
 const SPEEDS: AnimationSpeed[] = [1, 2, 3]
@@ -65,13 +69,15 @@ export function AnimationPalette() {
       <div className="flex items-center gap-1.5">
         {ANIM_TYPES.map(({ id, label }) => {
           const active = activeType === id
-          let symbol: string
+          let content: ReactNode
           switch (id) {
-            case 'none': symbol = '\u00D7'; break
-            case 'rotate-cw': symbol = '\u21BB'; break
-            case 'rotate-ccw': symbol = '\u21BA'; break
-            case 'slide-vertical': symbol = '\u2195'; break
-            case 'slide-horizontal': symbol = '\u2194'; break
+            case 'none': content = '\u00D7'; break
+            case 'rotate-cw': content = '\u21BB'; break
+            case 'rotate-ccw': content = '\u21BA'; break
+            case 'slide-vertical': content = <ArrowUpDown size={14} />; break
+            case 'slide-vertical-rev': content = <ArrowDownUp size={14} />; break
+            case 'slide-horizontal': content = <ArrowLeftRight size={14} />; break
+            case 'slide-horizontal-rev': content = <ArrowRightLeft size={14} />; break
           }
           return (
             <button
@@ -86,7 +92,7 @@ export function AnimationPalette() {
                   : 'text-neutral-400 hover:bg-neutral-800 hover:text-neutral-200')
               }
             >
-              {symbol}
+              {content}
             </button>
           )
         })}

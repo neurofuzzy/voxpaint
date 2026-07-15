@@ -3,7 +3,7 @@ import * as THREE from 'three'
 import { useFrame } from '@react-three/fiber'
 import { buildOptimizedVoxelGroupsBySlice } from '@/engine/instancing/voxelMeshBuilder'
 import { materialParamsFor } from '@/engine/palette/palette'
-import { assignVoxelsToNodes, bboxCenterOfKeys, isActiveAnimation, isRotateMode, isSlideMode, sliceWorldBasis } from '@/engine/animation/animationLayers'
+import { assignVoxelsToNodes, bboxCenterOfKeys, isActiveAnimation, isRotateMode, isSlideMode, slideDirection, sliceWorldBasis } from '@/engine/animation/animationLayers'
 import type { SliceKey } from '@/engine/animation/types'
 import { useAppStore } from '@/store/useAppStore'
 
@@ -182,7 +182,7 @@ export function AnimatedModelView() {
         g.group.quaternion.setFromAxisAngle(normal, angle)
       } else if (isSlideMode(settings.animationType)) {
         const { uDir, vDir } = sliceWorldBasis(g.axis as any)
-        const dir = settings.animationType === 'slide-horizontal' ? uDir : vDir
+        const dir = slideDirection(settings.animationType, uDir, vDir)
         const amplitude = settings.slideAmount
 
         // Sine wave, matching the CUBICSPLINE curve baked into the GLTF export (animationGLTF.ts)

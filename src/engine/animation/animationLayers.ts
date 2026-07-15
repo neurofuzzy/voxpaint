@@ -24,11 +24,20 @@ export function isActiveAnimation(type: AnimationType): boolean {
 }
 
 export function isSlideMode(type: AnimationType): boolean {
-  return type === 'slide-vertical' || type === 'slide-horizontal'
+  return type === 'slide-vertical' || type === 'slide-vertical-rev' || type === 'slide-horizontal' || type === 'slide-horizontal-rev'
 }
 
 export function isRotateMode(type: AnimationType): boolean {
   return type === 'rotate-cw' || type === 'rotate-ccw'
+}
+
+/** Signed direction vector for a slide mode: base axis (uDir for horizontal, vDir for vertical)
+ * negated for the `-rev` variant, so the phase of the shared sine wave flips. */
+export function slideDirection(type: AnimationType, uDir: THREE.Vector3, vDir: THREE.Vector3): THREE.Vector3 {
+  const horizontal = type === 'slide-horizontal' || type === 'slide-horizontal-rev'
+  const base = horizontal ? uDir : vDir
+  const reversed = type === 'slide-horizontal-rev' || type === 'slide-vertical-rev'
+  return reversed ? base.clone().negate() : base.clone()
 }
 
 export function sliceVoxelKeys(model: VoxelModel, axis: Axis, offset: number): CellKey[] {
