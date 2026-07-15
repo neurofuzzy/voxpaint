@@ -1,4 +1,4 @@
-import { Boxes, FlipHorizontal, Grid3x3, Video } from 'lucide-react'
+import { Boxes, FlipHorizontal, Grid3x3, Sun, Video } from 'lucide-react'
 import type { Axis } from '@/engine/grid/types'
 import { useAppStore } from '@/store/useAppStore'
 
@@ -35,8 +35,10 @@ function ToggleButton({ on, onClick, label, children, onPointerEnter, onPointerL
  * construction-plane controls (cycle axis, flip orientation) and view toggles (Wireframe, Optimized mesh).
  * `stopPropagation` keeps clicks/drags off the OrbitControls underneath.
  */
-export function ViewOptionsOverlay({ onResetCamera }: {
+export function ViewOptionsOverlay({ onResetCamera, showExposure, onToggleExposure }: {
   onResetCamera: () => void
+  showExposure: boolean
+  onToggleExposure: () => void
 }) {
   const plane = useAppStore((s) => s.plane)
   const setPlaneAxisOrientation = useAppStore((s) => s.setPlaneAxisOrientation)
@@ -108,6 +110,15 @@ export function ViewOptionsOverlay({ onResetCamera }: {
       >
         <Video size={16} />
       </button>
+      <ToggleButton
+        on={showExposure}
+        onClick={onToggleExposure}
+        label="Exposure"
+        onPointerEnter={() => setStatusMessage('Toggle the exposure slider')}
+        onPointerLeave={() => setStatusMessage(null)}
+      >
+        <Sun size={16} />
+      </ToggleButton>
     </div>
   )
 }

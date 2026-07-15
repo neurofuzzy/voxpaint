@@ -1,6 +1,6 @@
 import { Canvas, useThree } from '@react-three/fiber'
 import { OrbitControls } from '@react-three/drei'
-import { useEffect, useRef } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import * as THREE from 'three'
 import type { OrbitControls as OrbitControlsImpl } from 'three-stdlib'
 import { decodeKey } from '@/engine/grid/GridStore'
@@ -14,6 +14,7 @@ import { BoundingBoxFaceSelector } from './BoundingBoxFaceSelector'
 import { Compass } from './Compass'
 import { ConstructionPlaneGizmo } from './ConstructionPlaneGizmo'
 import { ConstructionPlaneVisual } from './ConstructionPlaneVisual'
+import { ExposureSlider } from './ExposureSlider'
 import { OptimizedMeshView } from './OptimizedMeshView'
 import { SceneEnvironment } from './SceneEnvironment'
 import { SceneLighting } from './SceneLighting'
@@ -172,6 +173,7 @@ export function Viewport3D() {
   const exposure = useAppStore((s) => s.exposure)
   const containerRef = useRef<HTMLDivElement>(null)
   usePlaneLayerScroll(containerRef)
+  const [showExposure, setShowExposure] = useState(false)
 
   const textureMode = mode === 'texture'
   const animateMode = mode === 'animate'
@@ -209,8 +211,13 @@ export function Viewport3D() {
           <OrbitControls ref={orbitControlsRef} makeDefault enableDamping dampingFactor={0.12} minDistance={2} maxDistance={150} />
           <Compass />
       </Canvas>
-      <ViewOptionsOverlay onResetCamera={() => orbitControlsRef.current?.reset()} />
+      <ViewOptionsOverlay
+        onResetCamera={() => orbitControlsRef.current?.reset()}
+        showExposure={showExposure}
+        onToggleExposure={() => setShowExposure((v) => !v)}
+      />
       <SettingsPalette />
+      {showExposure && <ExposureSlider />}
     </div>
   )
 }
