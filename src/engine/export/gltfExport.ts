@@ -6,7 +6,7 @@ import type { TextureModel } from '@/engine/texture/types'
 import { bakeAOToAtlas, makeSpecularNoiseTexture } from '@/engine/ao/bakeAO'
 import { unwrapGeometries } from '@/engine/ao/uvUnwrap'
 import { buildBlendAtlas } from '@/engine/texture/boxMapping'
-import { overlayChannel } from '@/engine/texture/overlay'
+import { bakeOverlayTexture } from '@/engine/texture/overlay'
 import { buildTexturedGeometryByColor, buildTexturedGeometryBySlice } from '@/engine/texture/texturedGeometry'
 import { hasTextureContent } from '@/engine/texture/TextureStore'
 import { buildOptimizedVoxelGeometryByMaterial, buildOptimizedVoxelGroupsBySlice } from '@/engine/instancing/voxelMeshBuilder'
@@ -90,34 +90,6 @@ function attachToSliceOrRoot(
   } else {
     root.add(mesh)
   }
-}
-
-/**
- * Bake `overlay(color, blend)` into an sRGB RGBA texture for one color group. `blendData` is the
- * shared blend atlas (R = blend·255); `colorKey` is the group's packed sRGB color. The result is a
- * standard `baseColorTexture` (with `baseColorFactor` = white), so any glTF viewer reproduces the
- * in-app overlay preview with no custom shader.
- */
-function bakeOverlayTexture(blendData: Uint8ClampedArray, width: number, height: number, colorKey: number): THREE.DataTexture {
-  const r = ((colorKey >> 16) & 255) / 255
-  const g = ((colorKey >> 8) & 255) / 255
-  const b = (colorKey & 255) / 255
-  const out = new Uint8ClampedArray(width * height * 4)
-  for (let i = 0; i < width * height; i++) {
-    const blend = blendData[i * 4] / 255
-    out[i * 4] = overlayChannel(r, blend) * 255
-    out[i * 4 + 1] = overlayChannel(g, blend) * 255
-    out[i * 4 + 2] = overlayChannel(b, blend) * 255
-    out[i * 4 + 3] = 255
-  }
-  const tex = new THREE.DataTexture(out, width, height, THREE.RGBAFormat)
-  tex.magFilter = THREE.NearestFilter
-  tex.minFilter = THREE.NearestFilter
-  tex.generateMipmaps = false
-  tex.flipY = false
-  tex.colorSpace = THREE.SRGBColorSpace
-  tex.needsUpdate = true
-  return tex
 }
 
 function noiseMapTexture(data: Uint8ClampedArray, width: number, height: number): THREE.CanvasTexture {
