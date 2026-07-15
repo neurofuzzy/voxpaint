@@ -63,6 +63,10 @@ export type GltfExportOptions = {
    * relative to the model's own bounding box, so an off-center paint still exports centered/
    * grounded/backed correctly. */
   alignToObjectBounds?: boolean
+  /** Seeds the baked noise/specular grain (`engine/ao/bakeAO.ts`) so this project's noise differs
+   * from every other project's at the same voxel coordinates (default 0 = unseeded). Pass
+   * `meta.noiseSeed`. */
+  noiseSeed?: number
 }
 
 const hex6 = (colorKey: number) => colorKey.toString(16).padStart(6, '0')
@@ -200,13 +204,13 @@ export async function exportModelToGlb(
       for (let i = 0; i < aoGroups.length; i++) {
         aoGroups[i].geometry.setAttribute('uv1', new THREE.Float32BufferAttribute(unwrapped.uv1Arrays[i], 2))
       }
-      const baked = bakeAOToAtlas(model, unwrapped.atlas, options.noiseLevel ?? 0, options.aoStrength ?? 1, animatedKeys)
+      const baked = bakeAOToAtlas(model, unwrapped.atlas, options.noiseLevel ?? 0, options.aoStrength ?? 1, animatedKeys, options.noiseSeed ?? 0)
       aoTex = aoMapTexture(baked.data, baked.width, baked.height)
       textures.push(aoTex)
 
       const sl = options.specularNoiseLevel ?? 0
       if (sl > 0) {
-        const spec = makeSpecularNoiseTexture(unwrapped.atlas, sl)
+        const spec = makeSpecularNoiseTexture(unwrapped.atlas, sl, options.noiseSeed ?? 0)
         metalTex = noiseMapTexture(spec.metalness.data, spec.metalness.width, spec.metalness.height)
         roughTex = noiseMapTexture(spec.roughness.data, spec.roughness.width, spec.roughness.height)
         colorTex = noiseMapTexture(spec.baseColor.data, spec.baseColor.width, spec.baseColor.height)
@@ -294,13 +298,13 @@ export async function exportModelToGlb(
         aoGroups[i].geometry.setAttribute('uv1', uv1)
         aoGroups[i].geometry.setAttribute('uv', uv1)
       }
-      const baked = bakeAOToAtlas(model, unwrapped.atlas, options.noiseLevel ?? 0, options.aoStrength ?? 1, animatedKeys)
+      const baked = bakeAOToAtlas(model, unwrapped.atlas, options.noiseLevel ?? 0, options.aoStrength ?? 1, animatedKeys, options.noiseSeed ?? 0)
       aoTex = aoMapTexture(baked.data, baked.width, baked.height)
       textures.push(aoTex)
 
       const sl = options.specularNoiseLevel ?? 0
       if (sl > 0) {
-        const spec = makeSpecularNoiseTexture(unwrapped.atlas, sl)
+        const spec = makeSpecularNoiseTexture(unwrapped.atlas, sl, options.noiseSeed ?? 0)
         metalTex = noiseMapTexture(spec.metalness.data, spec.metalness.width, spec.metalness.height)
         roughTex = noiseMapTexture(spec.roughness.data, spec.roughness.width, spec.roughness.height)
         colorTex = noiseMapTexture(spec.baseColor.data, spec.baseColor.width, spec.baseColor.height)

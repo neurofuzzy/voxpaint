@@ -7,7 +7,7 @@ import { migrateToCurrent } from './migrations'
 import { deserializeProject, serializeProject } from './serialize'
 import type { ProjectMeta, VoxPaintProjectFileV1 } from './schema'
 
-const meta: ProjectMeta = { name: 'T', createdAt: '2026-01-01T00:00:00.000Z', modifiedAt: '2026-01-01T00:00:00.000Z', gridExtent: 16 }
+const meta: ProjectMeta = { name: 'T', createdAt: '2026-01-01T00:00:00.000Z', modifiedAt: '2026-01-01T00:00:00.000Z', gridExtent: 16, noiseSeed: 0 }
 const faceSize = faceSizeFor(meta.gridExtent)
 
 describe('serialize with texture', () => {

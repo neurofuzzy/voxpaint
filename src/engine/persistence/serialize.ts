@@ -125,5 +125,9 @@ export function deserializeProject(file: VoxPaintProjectFile): { model: VoxelMod
   // palette shape — older files simply don't have it, so default-merge rather than bump the schema
   // (same treatment `exportAlignToObjectBounds` got for `view`).
   const palette: PaletteState = { ...DEFAULT_PALETTE, ...file.palette }
-  return { model: { ...built, bounds: recomputeBounds(built) }, palette, meta: file.meta, texture, view, animSettings, sliceMasks }
+  // `noiseSeed` likewise post-dates `ProjectMeta` being otherwise fully required. Default to 0 (the
+  // hash functions' unseeded behavior) rather than a fresh random seed, so an old project's noise
+  // looks exactly the same as it always did instead of visibly shifting on next load.
+  const meta: ProjectMeta = { ...file.meta, noiseSeed: file.meta.noiseSeed ?? 0 }
+  return { model: { ...built, bounds: recomputeBounds(built) }, palette, meta, texture, view, animSettings, sliceMasks }
 }

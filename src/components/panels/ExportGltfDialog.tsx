@@ -63,6 +63,7 @@ export function ExportGltfDialog({ open, onOpenChange }: { open: boolean; onOpen
         scaleFactor: sf,
         anchor,
         alignToObjectBounds,
+        noiseSeed: meta.noiseSeed,
       }, animSettings, sliceMasks)
       downloadGlb(glb, normalizeProjectFilename(meta.name || 'voxpaint-model'))
       showToast('GLTF exported.')

@@ -1,4 +1,5 @@
 import type { StateCreator } from 'zustand'
+import { generateNoiseSeed } from '@/engine/ao/bakeAO'
 import { emptyModel, DEFAULT_GRID_EXTENT } from '@/engine/grid/GridStore'
 import { DEFAULT_PALETTE } from '@/engine/palette/defaultPalette'
 import { emptyTextureModel } from '@/engine/texture/TextureStore'
@@ -14,6 +15,7 @@ export const createProjectSlice: Slice = (set) => ({
     createdAt: new Date().toISOString(),
     modifiedAt: new Date().toISOString(),
     gridExtent: DEFAULT_GRID_EXTENT,
+    noiseSeed: generateNoiseSeed(),
   },
 
   setModel: (model) =>
@@ -46,6 +48,7 @@ export const createProjectSlice: Slice = (set) => ({
         createdAt: new Date().toISOString(),
         modifiedAt: new Date().toISOString(),
         gridExtent,
+        noiseSeed: generateNoiseSeed(),
       }
       state.past = []
       state.future = []

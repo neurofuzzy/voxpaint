@@ -45,9 +45,9 @@ export function usePreviewAOMaps(
   model: VoxelModel,
   geometries: THREE.BufferGeometry[],
   shareUv0: boolean,
-  options: { ambientOcclusion: boolean; noiseLevel: number; specularNoiseLevel: number; aoStrength: number },
+  options: { ambientOcclusion: boolean; noiseLevel: number; specularNoiseLevel: number; aoStrength: number; noiseSeed: number },
 ): PreviewAOMaps {
-  const { ambientOcclusion, noiseLevel, specularNoiseLevel, aoStrength } = options
+  const { ambientOcclusion, noiseLevel, specularNoiseLevel, aoStrength, noiseSeed } = options
 
   const unwrap = useMemo(() => {
     const result = unwrapGeometries(geometries)
@@ -62,7 +62,7 @@ export function usePreviewAOMaps(
   const aoTexture = useMemo(() => {
     if (!ambientOcclusion && noiseLevel <= 0) return null
     const effectiveAo = ambientOcclusion ? aoStrength : 1
-    const baked = bakeAOToAtlas(model, unwrap.atlas, noiseLevel, effectiveAo)
+    const baked = bakeAOToAtlas(model, unwrap.atlas, noiseLevel, effectiveAo, undefined, noiseSeed)
     const tex = new THREE.DataTexture(baked.data, baked.width, baked.height, THREE.RGBAFormat)
     tex.magFilter = THREE.NearestFilter
     tex.minFilter = THREE.NearestFilter
@@ -72,19 +72,19 @@ export function usePreviewAOMaps(
     tex.channel = 1
     tex.needsUpdate = true
     return tex
-  }, [model, unwrap, ambientOcclusion, noiseLevel, aoStrength])
+  }, [model, unwrap, ambientOcclusion, noiseLevel, aoStrength, noiseSeed])
   useEffect(() => () => aoTexture?.dispose(), [aoTexture])
 
   const specularTexture = useMemo(() => {
     if (specularNoiseLevel <= 0) return null
-    const spec = makeSpecularNoiseTexture(unwrap.atlas, specularNoiseLevel)
+    const spec = makeSpecularNoiseTexture(unwrap.atlas, specularNoiseLevel, noiseSeed)
     const channel = shareUv0 ? 0 : 1
     return {
       metalness: canvasTexture(spec.metalness.data, spec.metalness.width, spec.metalness.height, false, channel),
       roughness: canvasTexture(spec.roughness.data, spec.roughness.width, spec.roughness.height, false, channel),
       baseColor: canvasTexture(spec.baseColor.data, spec.baseColor.width, spec.baseColor.height, true, channel),
     }
-  }, [unwrap, specularNoiseLevel, shareUv0])
+  }, [unwrap, specularNoiseLevel, shareUv0, noiseSeed])
   useEffect(() => {
     return () => {
       specularTexture?.metalness.dispose()

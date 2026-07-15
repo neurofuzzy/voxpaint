@@ -25,6 +25,10 @@ export type ProjectMeta = {
   modifiedAt: string
   /** Locked in at project creation (see engine/grid/types.ts `GridExtent`) — never changes after. */
   gridExtent: GridExtent
+  /** Seeds `hashNoise`/`specularHash` (engine/ao/bakeAO.ts) so each project's baked noise and metal
+   * specular grain looks unique instead of every project sharing identical noise at the same voxel
+   * coordinates. Generated once at project creation, then frozen for the project's lifetime. */
+  noiseSeed: number
 }
 
 export type SerializedColorCell = { x: number; y: number; z: number; paletteSlot: PaletteSlotRef }

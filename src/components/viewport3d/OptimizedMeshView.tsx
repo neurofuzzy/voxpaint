@@ -45,6 +45,7 @@ export function OptimizedMeshView() {
   const aoStrength = useAppStore((s) => s.aoStrength)
   const glassRoughnessLevel = useAppStore((s) => s.glassRoughnessLevel)
   const gridExtent = useAppStore((s) => s.meta.gridExtent)
+  const noiseSeed = useAppStore((s) => s.meta.noiseSeed)
 
   const setMeshTriangles = useAppStore((s) => s.setMeshTriangles)
 
@@ -71,7 +72,7 @@ export function OptimizedMeshView() {
     model,
     geometries,
     !textured,
-    { ambientOcclusion, noiseLevel, specularNoiseLevel, aoStrength },
+    { ambientOcclusion, noiseLevel, specularNoiseLevel, aoStrength, noiseSeed },
   )
 
   // Painted texture bakes to an overlay map (color × blend), one per distinct colour, reused by

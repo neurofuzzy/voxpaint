@@ -27,6 +27,7 @@ export function TexturedModelView() {
   const specularNoiseLevel = useAppStore((s) => s.specularNoiseLevel)
   const aoStrength = useAppStore((s) => s.aoStrength)
   const gridExtent = useAppStore((s) => s.meta.gridExtent)
+  const noiseSeed = useAppStore((s) => s.meta.noiseSeed)
 
   const groups = useMemo(() => buildTexturedGeometryByColor(model, palette, gridExtent), [model, palette, gridExtent])
   useEffect(() => () => { for (const g of groups) g.geometry.dispose() }, [groups])
@@ -41,7 +42,7 @@ export function TexturedModelView() {
     model,
     geometries,
     false,
-    { ambientOcclusion, noiseLevel, specularNoiseLevel, aoStrength },
+    { ambientOcclusion, noiseLevel, specularNoiseLevel, aoStrength, noiseSeed },
   )
 
   const blend = useMemo(() => buildBlendAtlas(texture, gridExtent), [texture, gridExtent])
