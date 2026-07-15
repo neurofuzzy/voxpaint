@@ -3,6 +3,7 @@ import type { EditorMode } from '@/store/types'
 
 const MODES: Array<{ id: EditorMode; label: string }> = [
   { id: 'model', label: 'Model' },
+  { id: 'animate', label: 'Animate' },
   { id: 'texture', label: 'Texture' },
 ]
 

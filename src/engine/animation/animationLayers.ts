@@ -1,0 +1,127 @@
+import * as THREE from 'three'
+import { decodeKey } from '@/engine/grid/GridStore'
+import type { Axis, CellKey, VoxelModel } from '@/engine/grid/types'
+import { axisIndex } from '@/engine/plane/planeGeometry'
+import { planeLogicalBasis } from '@/engine/plane/constructionPlane'
+import { outwardNormal } from '@/engine/plane/planeGeometry'
+import type { AnimLayer, AnimationType, SliceAnimSettings, SliceKey } from './types'
+
+export function encodeSliceKey(axis: Axis, offset: number): SliceKey {
+  return `${axis},${offset}`
+}
+
+export function decodeSliceKey(key: SliceKey): { axis: Axis; offset: number } {
+  const [axis, offsetStr] = key.split(',')
+  return { axis: axis as Axis, offset: Number(offsetStr) }
+}
+
+export function sliceKeyFromPlane(axis: Axis, offset: number): SliceKey {
+  return encodeSliceKey(axis, offset)
+}
+
+export function isActiveAnimation(type: AnimationType): boolean {
+  return type !== 'none'
+}
+
+export function isSlideMode(type: AnimationType): boolean {
+  return type === 'slide-vertical' || type === 'slide-horizontal'
+}
+
+export function isRotateMode(type: AnimationType): boolean {
+  return type === 'rotate-cw' || type === 'rotate-ccw'
+}
+
+export function sliceVoxelKeys(model: VoxelModel, axis: Axis, offset: number): CellKey[] {
+  const ai = axisIndex(axis)
+  const keys: CellKey[] = []
+  for (const key of model.color.keys()) {
+    const coord = decodeKey(key)
+    if (coord[ai] === offset) keys.push(key)
+  }
+  return keys
+}
+
+export function sliceBBoxCenter(model: VoxelModel, axis: Axis, offset: number): THREE.Vector3 | null {
+  const ai = axisIndex(axis)
+  let minX = Infinity, minY = Infinity, minZ = Infinity
+  let maxX = -Infinity, maxY = -Infinity, maxZ = -Infinity
+  let found = false
+
+  for (const key of model.color.keys()) {
+    const coord = decodeKey(key)
+    if (coord[ai] !== offset) continue
+    found = true
+    const cx = coord[0], cy = coord[1], cz = coord[2]
+    if (cx < minX) minX = cx
+    if (cy < minY) minY = cy
+    if (cz < minZ) minZ = cz
+    if (cx + 1 > maxX) maxX = cx + 1
+    if (cy + 1 > maxY) maxY = cy + 1
+    if (cz + 1 > maxZ) maxZ = cz + 1
+  }
+
+  if (!found) return null
+  return new THREE.Vector3((minX + maxX) / 2, (minY + maxY) / 2, (minZ + maxZ) / 2)
+}
+
+export function sliceWorldBasis(axis: Axis): { uDir: THREE.Vector3; vDir: THREE.Vector3; normal: THREE.Vector3 } {
+  const { uDir, vDir } = planeLogicalBasis(axis)
+  const n = outwardNormal(axis, 1)
+  return {
+    uDir: new THREE.Vector3(uDir[0], uDir[1], uDir[2]),
+    vDir: new THREE.Vector3(vDir[0], vDir[1], vDir[2]),
+    normal: new THREE.Vector3(n[0], n[1], n[2]),
+  }
+}
+
+const AXIS_PRIORITY: Axis[] = ['x', 'y', 'z']
+
+export function assignVoxelsToNodes(
+  model: VoxelModel,
+  animSettings: Map<SliceKey, SliceAnimSettings>,
+): { nodes: Map<SliceKey, { cellKeys: CellKey[]; axis: Axis; offset: number }>; remainder: CellKey[] } {
+  const nodes = new Map<SliceKey, { cellKeys: CellKey[]; axis: Axis; offset: number }>()
+  const assigned = new Set<CellKey>()
+  const sortedLayers: AnimLayer[] = []
+
+  for (const [key, settings] of animSettings) {
+    if (!isActiveAnimation(settings.animationType)) continue
+    const { axis, offset } = decodeSliceKey(key)
+    sortedLayers.push({ axis, offset, settings })
+  }
+
+  sortedLayers.sort((a, b) => {
+    const ai = AXIS_PRIORITY.indexOf(a.axis)
+    const bi = AXIS_PRIORITY.indexOf(b.axis)
+    if (ai !== bi) return ai - bi
+    return a.offset - b.offset
+  })
+
+  for (const layer of sortedLayers) {
+    const sliceKey = encodeSliceKey(layer.axis, layer.offset)
+    const cellKeys: CellKey[] = []
+    for (const key of sliceVoxelKeys(model, layer.axis, layer.offset)) {
+      if (!assigned.has(key)) {
+        assigned.add(key)
+        cellKeys.push(key)
+      }
+    }
+    if (cellKeys.length > 0) {
+      nodes.set(sliceKey, { cellKeys, axis: layer.axis, offset: layer.offset })
+    }
+  }
+
+  const remainder: CellKey[] = []
+  for (const key of model.color.keys()) {
+    if (!assigned.has(key)) remainder.push(key)
+  }
+
+  return { nodes, remainder }
+}
+
+export function defaultAnimationSettings(): SliceAnimSettings {
+  return { animationType: 'none', speed: 1, slideAmount: 4 }
+}
+
+export const SLIDE_AMOUNT_MIN = 1
+export const SLIDE_AMOUNT_MAX = 8

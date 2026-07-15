@@ -9,13 +9,16 @@ export function UndoRedoControls() {
   const texturePast = useAppStore((s) => s.texturePast)
   const textureFuture = useAppStore((s) => s.textureFuture)
   const textureFloat = useAppStore((s) => s.textureFloat)
+  const animPast = useAppStore((s) => s.animPast)
+  const animFuture = useAppStore((s) => s.animFuture)
 
-  const texture = mode === 'texture'
-  const past = texture ? texturePast : modelPast
-  const future = texture ? textureFuture : modelFuture
-  const floatContent = texture ? textureFloat : modelFloat
-  const undo = useAppStore((s) => (texture ? s.textureUndo : s.undo))
-  const redo = useAppStore((s) => (texture ? s.textureRedo : s.redo))
+  const isTexture = mode === 'texture'
+  const isAnimate = mode === 'animate'
+  const past = isTexture ? texturePast : isAnimate ? animPast : modelPast
+  const future = isTexture ? textureFuture : isAnimate ? animFuture : modelFuture
+  const floatContent = isTexture ? textureFloat : modelFloat
+  const undo = useAppStore((s) => (isTexture ? s.textureUndo : isAnimate ? s.animUndo : s.undo))
+  const redo = useAppStore((s) => (isTexture ? s.textureRedo : isAnimate ? s.animRedo : s.redo))
 
   return (
     <div className="flex gap-1">

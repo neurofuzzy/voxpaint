@@ -1,8 +1,8 @@
 ```
 # Auto-generated project map
-# Last updated: 2026-07-14 17:53:28
-# Files: 122
-# Lines of code: ~10894
+# Last updated: 2026-07-15 00:36:30
+# Files: 128
+# Lines of code: ~12094
 ```
 - **/components**
   - **/editor2d**
@@ -57,6 +57,8 @@
     - [TopToolbar.tsx](../src/components/layout/TopToolbar.tsx)
       - Function: `TopToolbar`
   - **/panels**
+    - [AnimationPalette.tsx](../src/components/panels/AnimationPalette.tsx)
+      - Function: `AnimationPalette`
     - [ExportGltfDialog.tsx](../src/components/panels/ExportGltfDialog.tsx)
       - Function: `ExportGltfDialog`
     - [FileMenu.tsx](../src/components/panels/FileMenu.tsx)
@@ -85,6 +87,8 @@
     - [ToastRegion.tsx](../src/components/ui/ToastRegion.tsx)
       - Function: `ToastRegion`
   - **/viewport3d**
+    - [AnimatedModelView.tsx](../src/components/viewport3d/AnimatedModelView.tsx)
+      - Function: `AnimatedModelView`
     - [axisVectors.ts](../src/components/viewport3d/axisVectors.ts)
       - Function: `toVector3` - Small Coord -> THREE.Vector3 boundary conversio...
       - Variable: `AXIS_UNIT_VECTOR` - THREE.Vector3 view of planeGeometry.ts's AXIS_U...
@@ -120,6 +124,31 @@
   - [usePlaneLayerScroll.ts](../src/components/usePlaneLayerScroll.ts)
     - Function: `usePlaneLayerScroll` - Shift + mouse wheel steps the construction-plan...
 - **/engine**
+  - **/animation**
+    - [animationGLTF.ts](../src/engine/animation/animationGLTF.ts)
+      - Interface: `AnimNodeInfo`
+      - Function: `buildAnimationClip`
+      - Function: `buildAllAnimationClips`
+    - [animationLayers.ts](../src/engine/animation/animationLayers.ts)
+      - Function: `encodeSliceKey`
+      - Function: `decodeSliceKey`
+      - Function: `sliceKeyFromPlane`
+      - Function: `isActiveAnimation`
+      - Function: `isSlideMode`
+      - Function: `isRotateMode`
+      - Function: `sliceVoxelKeys`
+      - Function: `sliceBBoxCenter`
+      - Function: `sliceWorldBasis`
+      - Function: `assignVoxelsToNodes`
+      - Function: `defaultAnimationSettings`
+      - Variable: `SLIDE_AMOUNT_MIN`
+      - Variable: `SLIDE_AMOUNT_MAX`
+    - [types.ts](../src/engine/animation/types.ts)
+      - Type: `AnimationType`
+      - Type: `AnimationSpeed`
+      - Type: `SliceKey`
+      - Type: `SliceAnimSettings`
+      - Type: `AnimLayer`
   - **/ao**
     - [aoConstants.ts](../src/engine/ao/aoConstants.ts)
       - Variable: `AO_SEARCH_RADIUS` - Depth of the directional search projection, in ...
@@ -169,7 +198,8 @@
       - Function: `ThreeCSGFactory`
   - **/export**
     - [gltfExport.ts](../src/engine/export/gltfExport.ts)
-      - Type: `GltfExportOptions` - GLTF export pipeline. Replaces the originally-s...
+      - Type: `GltfExportAnchor` - GLTF export pipeline. Replaces the originally-s...
+      - Type: `GltfExportOptions`
       - Function: `exportModelToGlb` - Build the export scene and serialize it to a bi...
       - Function: `downloadGlb` - Trigger a browser download of a .glb ArrayBuffer.
   - **/grid**
@@ -224,6 +254,9 @@
       - Interface: `OptimizedVoxelGroups`
       - Function: `buildOptimizedVoxelGroups` - Build per-voxel solid geometry grouped by (mate...
       - Function: `buildOptimizedVoxelGeometryByMaterial` - Per-(materialClass, colorKey) optimized geometr...
+      - Interface: `SliceGroupGeometry`
+      - Interface: `SliceGroupResult`
+      - Function: `buildOptimizedVoxelGroupsBySlice` - Build per-voxel solid geometry grouped by (mate...
       - Function: `buildTexturedShellGeometry` - Build the shell-culled mesh with per-vertex box...
       - Function: `buildTexturedShellGeometryByColor` - Per-(color, material class) split of the textur...
   - **/palette**
@@ -253,6 +286,7 @@
       - Class: `UnsupportedSchemaVersionError`
       - Function: `migrateToCurrent`
     - [projectFile.ts](../src/engine/persistence/projectFile.ts)
+      - Function: `normalizeProjectFilename`
       - Function: `downloadProjectFile`
       - Function: `readProjectFile`
     - [schema.ts](../src/engine/persistence/schema.ts)
@@ -262,6 +296,7 @@
       - Type: `SerializedColorCell`
       - Type: `SerializedChamferCell`
       - Type: `SerializedTexture` - The box-mapped texture, serialized: per-face gr...
+      - Type: `SerializedAnimLayer`
       - Type: `VoxPaintProjectFileV1`
       - Type: `VoxPaintProjectFileV2`
       - Type: `VoxPaintProjectFile` - v3: the palette's `blink`/`pulse` groups were r...
@@ -385,6 +420,8 @@
       - Type: `ToolDragState`
       - Interface: `ToolHandler`
 - **/store**
+  - [animationSlice.ts](../src/store/animationSlice.ts)
+    - Function: `createAnimationSlice`
   - [historySlice.ts](../src/store/historySlice.ts)
     - Function: `createHistorySlice`
   - [modeSlice.ts](../src/store/modeSlice.ts)
@@ -392,6 +429,8 @@
   - [moveActions.ts](../src/store/moveActions.ts)
     - Function: `createMoveActionsSlice` - The Move tool's engine: a **direct, live transl...
   - [paintActions.ts](../src/store/paintActions.ts)
+    - Function: `beginFreshChamferTracking`
+    - Function: `endFreshChamferTracking`
     - Function: `createPaintActionsSlice`
   - [persistenceSlice.ts](../src/store/persistenceSlice.ts)
     - Function: `createPersistenceSlice`
@@ -431,6 +470,7 @@
     - Type: `EditorMode` - The top-level authoring mode. `model` = voxel m...
     - Type: `ModeSlice`
     - Type: `TextureSlice` - Texture authoring state — a fully parallel stac...
+    - Type: `AnimationSlice`
     - Type: `AppState`
   - [useAppStore.ts](../src/store/useAppStore.ts)
     - Variable: `useAppStore`

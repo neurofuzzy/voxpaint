@@ -1,9 +1,10 @@
 import * as THREE from 'three'
 import { decodeKey } from '@/engine/grid/GridStore'
-import type { ChamferCell, Coord, VoxelModel } from '@/engine/grid/types'
+import type { CellKey, ChamferCell, Coord, VoxelModel } from '@/engine/grid/types'
 import { concaveCornerGeometry, convexCornerGeometry, mirrorVGeometry, rampGeometry } from '@/engine/chamfer/chamferGeometry'
 import { materialClassFor, resolveSlotColor, type MaterialClass } from '@/engine/palette/palette'
 import type { PaletteState } from '@/engine/palette/types'
+import type { SliceKey } from '@/engine/animation/types'
 import { chamferBasisIsReflected, chamferInstanceMatrix } from './basis'
 import { optimizeGroupsByCSG, triangleCount, type VoxelGroup } from './meshOptimizer'
 
@@ -301,6 +302,74 @@ export function buildOptimizedVoxelGroups(model: VoxelModel, palette: PaletteSta
 /** Per-(materialClass, colorKey) optimized geometries for GLTF export — one solid-colour mesh per group. */
 export function buildOptimizedVoxelGeometryByMaterial(model: VoxelModel, palette: PaletteState): ColorGroupGeometry[] {
   return buildOptimizedVoxelGroups(model, palette).groups
+}
+
+export interface SliceGroupGeometry extends ColorGroupGeometry {
+  sliceKey: SliceKey
+}
+
+export interface SliceGroupResult {
+  groups: SliceGroupGeometry[]
+  rawTriangles: number
+  optimizedTriangles: number
+}
+
+/**
+ * Build per-voxel solid geometry grouped by (materialClass, colorKey, sliceKey), then CSG-union
+ * each group. This splits voxels into separate meshes per animation node so each animated slice
+ * gets its own GLTF node. Voxels assigned to the remainder (sliceKey = "") live in the root group.
+ *
+ * `nodeAssignment` maps each CellKey to the SliceKey of the animation node that owns it.
+ * Voxels not in the map are treated as remainder.
+ */
+export function buildOptimizedVoxelGroupsBySlice(
+  model: VoxelModel,
+  palette: PaletteState,
+  nodeAssignment: Map<CellKey, SliceKey>,
+  mergeCoplanar?: boolean,
+): SliceGroupResult {
+  const byGroup = new Map<string, VoxelGroup & { sliceKey: SliceKey }>()
+  const color = new THREE.Color()
+  const matrix = new THREE.Matrix4()
+  let rawTriangles = 0
+
+  for (const key of model.color.keys()) {
+    const coord = decodeKey(key)
+    const slot = model.color.get(key)!.paletteSlot
+    const materialClass = materialClassFor(slot.kind)
+    const colorKey = color.set(resolveSlotColor(palette, slot)).getHex()
+    const chamfer = model.chamfer.get(key)
+
+    const sliceKey = nodeAssignment.get(key) ?? ''
+
+    const groupKey = `${materialClass}:${colorKey}:${sliceKey}`
+    let group = byGroup.get(groupKey)
+    if (!group) {
+      group = { colorKey, materialClass, geometries: [], sliceKey }
+      byGroup.set(groupKey, group)
+    }
+
+    let geom: THREE.BufferGeometry
+    if (chamfer?.resolvedTo) {
+      const variant = chamferBasisIsReflected(chamfer.planeAxis, chamfer.planeOrientation) ? 'M' : ''
+      const base = CHAMFER_BASE[`${chamfer.resolvedTo.shapeKind}${variant}`]
+      geom = base.clone()
+      chamferInstanceMatrix(coord, chamfer.planeAxis, chamfer.planeOrientation, chamfer.resolvedTo.rotation, matrix)
+      geom.applyMatrix4(matrix)
+    } else {
+      geom = new THREE.BoxGeometry(1, 1, 1)
+      geom.translate(coord[0] + 0.5, coord[1] + 0.5, coord[2] + 0.5)
+    }
+
+    rawTriangles += triangleCount(geom)
+    group.geometries.push(geom)
+  }
+
+  const groups: SliceGroupGeometry[] = optimizeGroupsByCSG(Array.from(byGroup.values()), mergeCoplanar ?? true)
+  let optimizedTriangles = 0
+  for (const g of groups) optimizedTriangles += triangleCount(g.geometry)
+
+  return { groups, rawTriangles, optimizedTriangles }
 }
 
 /**

@@ -39,7 +39,7 @@ export function ExportGltfDialog({ open, onOpenChange }: { open: boolean; onOpen
 
   async function run() {
     const state = useAppStore.getState()
-    const { model, palette, meta, texture, noiseLevel, specularNoiseLevel, aoStrength, glassRoughnessLevel } = state
+    const { model, palette, meta, texture, noiseLevel, specularNoiseLevel, aoStrength, glassRoughnessLevel, animSettings } = state
     const sf = state.exportScaleFactor
     const anchor = state.exportAnchor
     if (model.color.size === 0) {
@@ -58,7 +58,7 @@ export function ExportGltfDialog({ open, onOpenChange }: { open: boolean; onOpen
         glassRoughnessLevel,
         scaleFactor: sf,
         anchor,
-      })
+      }, animSettings)
       downloadGlb(glb, normalizeProjectFilename(meta.name || 'voxpaint-model'))
       showToast('GLTF exported.')
       onOpenChange(false)

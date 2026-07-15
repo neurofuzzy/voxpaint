@@ -20,13 +20,18 @@ const TOOL_HINTS: Record<ToolId, string> = {
 export function BottomBar() {
   const activeTool = useAppStore((s) => s.activeTool)
   const statusMessage = useAppStore((s) => s.statusMessage)
+  const mode = useAppStore((s) => s.mode)
+
+  const defaultHint = mode === 'animate'
+    ? 'assign animation to the current slice · use construction plane to navigate'
+    : TOOL_HINTS[activeTool]
 
   return (
     <div className="flex h-11 items-center gap-3 border-t border-neutral-800 bg-neutral-900 px-2 py-0 text-xs text-neutral-300">
       <UndoRedoControls />
       <div className="h-5 w-px shrink-0 bg-neutral-800" />
       <span className="flex-1 truncate text-center font-mono text-[11px] text-neutral-300">
-        {statusMessage ?? TOOL_HINTS[activeTool]}
+        {statusMessage ?? defaultHint}
       </span>
     </div>
   )

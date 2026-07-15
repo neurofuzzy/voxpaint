@@ -35,18 +35,19 @@ export function useKeyboardShortcuts(hoverCellRef?: React.RefObject<[number, num
 
       // Mode-specific bindings for a shared set of concepts, resolved up front so the rest of the
       // handler reads the same regardless of mode.
-      const texture = store.mode === 'texture'
-      const undo = texture ? store.textureUndo : store.undo
-      const redo = texture ? store.textureRedo : store.redo
-      const selection = texture ? store.textureSelection : store.selection
-      const clipboard = texture ? store.textureClipboard : store.clipboard
-      const copy = texture ? store.textureCopy : store.copySelection
-      const cut = texture ? store.textureCut : store.cutSelection
-      const pasteAt = texture ? store.texturePasteAt : store.pasteClipboardAt
-      const bakeFloat = texture ? store.textureBakeFloatIfAny : store.bakeFloatIfAny
-      const clearSelection = texture ? () => store.setTextureSelection(null) : () => store.setSelection(null)
-      const deleteSelection = texture ? store.textureDelete : store.deleteSelection
-      const transformFloat = texture ? store.textureTransformFloat : store.transformFloat
+      const isTexture = store.mode === 'texture'
+      const isAnimate = store.mode === 'animate'
+      const undo = isTexture ? store.textureUndo : isAnimate ? store.animUndo : store.undo
+      const redo = isTexture ? store.textureRedo : isAnimate ? store.animRedo : store.redo
+      const selection = isTexture ? store.textureSelection : isAnimate ? null : store.selection
+      const clipboard = isTexture ? store.textureClipboard : isAnimate ? null : store.clipboard
+      const copy = isTexture ? store.textureCopy : store.copySelection
+      const cut = isTexture ? store.textureCut : store.cutSelection
+      const pasteAt = isTexture ? store.texturePasteAt : store.pasteClipboardAt
+      const bakeFloat = isTexture ? store.textureBakeFloatIfAny : store.bakeFloatIfAny
+      const clearSelection = isTexture ? () => store.setTextureSelection(null) : () => store.setSelection(null)
+      const deleteSelection = isTexture ? store.textureDelete : store.deleteSelection
+      const transformFloat = isTexture ? store.textureTransformFloat : store.transformFloat
 
       if (isMeta) {
         if (key === 'z') {
@@ -107,7 +108,7 @@ export function useKeyboardShortcuts(hoverCellRef?: React.RefObject<[number, num
       }
 
       // Rotate/mirror apply to whatever is selected regardless of the active tool.
-      if (selection) {
+      if (selection && !isAnimate) {
         if (key === 'r') {
           transformFloat('rotate')
           e.preventDefault()
@@ -122,6 +123,8 @@ export function useKeyboardShortcuts(hoverCellRef?: React.RefObject<[number, num
           return
         }
       }
+
+      if (isAnimate) return // no tool switching in animate mode
 
       const tool = TOOL_KEYS[key]
       if (tool) {

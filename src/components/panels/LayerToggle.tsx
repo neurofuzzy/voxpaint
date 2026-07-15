@@ -18,8 +18,8 @@ export function VoxelKindToggle() {
   const activeVoxelKind = useAppStore((s) => s.activeVoxelKind)
   const setActiveVoxelKind = useAppStore((s) => s.setActiveVoxelKind)
   const setStatusMessage = useAppStore((s) => s.setStatusMessage)
-  // Voxel kind (cube/chamfer) has no meaning while texturing — disabled in Texture mode.
-  const disabled = useAppStore((s) => s.mode === 'texture')
+  // Voxel kind (cube/chamfer) has no meaning while texturing or animating — disabled in Texture/Animate mode.
+  const disabled = useAppStore((s) => s.mode === 'texture' || s.mode === 'animate')
 
   return (
     <Tooltip.Provider delayDuration={300}>

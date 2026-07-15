@@ -18,6 +18,9 @@ export function ToolPalette() {
   const activeTool = useAppStore((s) => s.activeTool)
   const setActiveTool = useAppStore((s) => s.setActiveTool)
   const setStatusMessage = useAppStore((s) => s.setStatusMessage)
+  const mode = useAppStore((s) => s.mode)
+
+  if (mode === 'animate') return null
 
   return (
     <Tooltip.Provider delayDuration={300}>

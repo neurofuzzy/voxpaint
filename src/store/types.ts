@@ -5,6 +5,7 @@ import type { ConstructionPlane } from '@/engine/plane/types'
 import type { ProjectMeta } from '@/engine/persistence/schema'
 import type { BoxFace, TextureModel } from '@/engine/texture/types'
 import type { TexelClip } from '@/engine/texture/texelOps'
+import type { SliceAnimSettings, SliceKey } from '@/engine/animation/types'
 
 export type ToolId = 'paint' | 'erase' | 'eyedropper' | 'select' | 'fill' | 'clone' | 'move'
 export type VoxelKind = 'cube' | 'ramp'
@@ -205,9 +206,10 @@ export type MoveActionsSlice = {
   endMove: () => void
 }
 
-/** The top-level authoring mode. `model` = voxel modeling (the original app); `texture` = box-mapped
- * surface texturing. The one shared switch every mode-aware component keys off. */
-export type EditorMode = 'model' | 'texture'
+/** The top-level authoring mode. `model` = voxel modeling (the original app); `animate` = per-slice
+ * animation assignment (same 2D/3D views as model, animation palette instead of color palette);
+ * `texture` = box-mapped surface texturing. The one shared switch every mode-aware component keys off. */
+export type EditorMode = 'model' | 'animate' | 'texture'
 
 export type ModeSlice = {
   mode: EditorMode
@@ -268,6 +270,24 @@ export type TextureSlice = {
   texturePasteAt: (u: number, v: number) => void
 }
 
+export type AnimationSlice = {
+  /** Per-slice animation settings keyed by encodeSliceKey(axis, offset). */
+  animSettings: Map<SliceKey, SliceAnimSettings>
+  /** Undo/redo stacks for animation changes (independent of model undo). */
+  animPast: Map<SliceKey, SliceAnimSettings>[]
+  animFuture: Map<SliceKey, SliceAnimSettings>[]
+
+  /** Set or clear the animation for a slice. Wrapped in begin/commit stroke for undo. */
+  setAnimSettingsForSlice: (axis: Axis, offset: number, settings: SliceAnimSettings | null) => void
+  /** Remove all animation settings (e.g. on new project). */
+  clearAllAnimations: () => void
+
+  animBeginStroke: () => void
+  animCommitStroke: () => void
+  animUndo: () => void
+  animRedo: () => void
+}
+
 export type AppState = ProjectSlice &
   HistorySlice &
   PlaneSlice &
@@ -279,4 +299,5 @@ export type AppState = ProjectSlice &
   ToolActionsSlice &
   MoveActionsSlice &
   ModeSlice &
-  TextureSlice
+  TextureSlice &
+  AnimationSlice

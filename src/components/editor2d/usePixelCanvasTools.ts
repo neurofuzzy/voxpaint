@@ -183,7 +183,11 @@ export function usePixelCanvasTools(canvasRef: React.RefObject<HTMLCanvasElement
       hoverCellRef.current = cell
       setHoverCell(gridCoordFromPixel(ctxRef.current.plane, cell[0], cell[1]), null)
       canvas.setPointerCapture(e.pointerId)
-      toolMap[activeToolRef.current].onDown?.(ctxRef.current, toNormalizedPointerEvent(e, cell))
+      // No tool dispatch in animate mode — view-only canvas.
+      const store = useAppStore.getState()
+      if (store.mode !== 'animate') {
+        toolMap[activeToolRef.current].onDown?.(ctxRef.current, toNormalizedPointerEvent(e, cell))
+      }
     },
     [canvasRef, size, pan, zoom, setHoverCell],
   )
@@ -213,7 +217,10 @@ export function usePixelCanvasTools(canvasRef: React.RefObject<HTMLCanvasElement
       if (!prevCell || prevCell[0] !== cell[0] || prevCell[1] !== cell[1]) {
         setHoverCell(gridCoordFromPixel(ctxRef.current.plane, cell[0], cell[1]), null)
       }
-      toolMap[activeToolRef.current].onMove?.(ctxRef.current, toNormalizedPointerEvent(e, cell))
+      const store = useAppStore.getState()
+      if (store.mode !== 'animate') {
+        toolMap[activeToolRef.current].onMove?.(ctxRef.current, toNormalizedPointerEvent(e, cell))
+      }
     },
     [canvasRef, size, pan, zoom, setHoverCell],
   )
@@ -235,7 +242,8 @@ export function usePixelCanvasTools(canvasRef: React.RefObject<HTMLCanvasElement
         canvas.releasePointerCapture(e.pointerId)
         // A stationary right-click (no drag) erases the cell under the cursor — a quick-erase
         // shortcut on the paint/erase tools now that right-click-drag means "pan the camera."
-        if (!panDrag.hasMoved && (activeToolRef.current === 'paint' || activeToolRef.current === 'erase')) {
+        const store = useAppStore.getState()
+        if (!panDrag.hasMoved && store.mode !== 'animate' && (activeToolRef.current === 'paint' || activeToolRef.current === 'erase')) {
           const cell = pixelToCell(canvas, e.clientX, e.clientY, size, pan, zoom, ctxRef.current.plane)
           const c = ctxRef.current
           c.bakeFloatIfAny()
@@ -247,7 +255,10 @@ export function usePixelCanvasTools(canvasRef: React.RefObject<HTMLCanvasElement
       }
 
       const cell = pixelToCell(canvas, e.clientX, e.clientY, size, pan, zoom, ctxRef.current.plane)
-      toolMap[activeToolRef.current].onUp?.(ctxRef.current, toNormalizedPointerEvent(e, cell))
+      const store = useAppStore.getState()
+      if (store.mode !== 'animate') {
+        toolMap[activeToolRef.current].onUp?.(ctxRef.current, toNormalizedPointerEvent(e, cell))
+      }
       canvas.releasePointerCapture(e.pointerId)
     },
     [canvasRef, size, pan, zoom],

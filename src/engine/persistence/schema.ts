@@ -1,9 +1,10 @@
+import type { AnimationType, AnimationSpeed } from '@/engine/animation/types'
 import type { Axis, BBox, ChamferClassification, Orientation } from '@/engine/grid/types'
 import type { PaletteSlotRef, PaletteState } from '@/engine/palette/types'
 import type { BoxFace } from '@/engine/texture/types'
 import type { GltfExportAnchor } from '@/engine/export/gltfExport'
 
-export const CURRENT_SCHEMA_VERSION = 3 as const
+export const CURRENT_SCHEMA_VERSION = 4 as const
 
 export type ViewSettings = {
   ambientOcclusion: boolean
@@ -41,6 +42,14 @@ export type SerializedTexture = {
   faces: Record<BoxFace, string>
 }
 
+export type SerializedAnimLayer = {
+  axis: Axis
+  offset: number
+  animationType: AnimationType
+  speed: AnimationSpeed
+  slideAmount: number
+}
+
 export type VoxPaintProjectFileV1 = {
   schemaVersion: 1
   meta: ProjectMeta
@@ -69,7 +78,9 @@ export type VoxPaintProjectFileV2 = {
  * glTF can't animate). Structurally identical to v2 otherwise; the v2→v3 migration reshapes the
  * palette and remaps any `blink`/`pulse` cell references to `emissive` (see migrations.ts).
  * The optional `view` field stores 3D-viewport settings (noise, AO strength) added after the v3
- * schema was frozen; absent on older files, defaulting to `{ noiseLevel: 0, aoStrength: 1 }`. */
+ * schema was frozen; absent on older files, defaulting to `{ noiseLevel: 0, aoStrength: 1 }`.
+ *
+ * v4: adds an optional `animations` array for per-slice animation settings (axis, offset, type, speed). */
 export type VoxPaintProjectFile = {
   schemaVersion: typeof CURRENT_SCHEMA_VERSION
   meta: ProjectMeta
@@ -81,4 +92,5 @@ export type VoxPaintProjectFile = {
   }
   texture?: SerializedTexture
   view?: ViewSettings
+  animations?: SerializedAnimLayer[]
 }
