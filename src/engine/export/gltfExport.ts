@@ -185,6 +185,10 @@ export async function exportModelToGlb(
     sliceNodes = new Map()
   }
 
+  // Animated voxels move independently at runtime, so they must not act as AO occluders for the
+  // rest of the (baked-once, rest-pose) model — see bakeAOToAtlas calls below.
+  const animatedKeys = nodeAssignment ? new Set(nodeAssignment.keys()) : undefined
+
   if (textured) {
     // Textured overlay path — one baked-texture material per colour (and per animation slice, if any).
     // Glass + KHR_materials_volume + baseColorTexture breaks Mac Preview / Blender;
@@ -204,7 +208,7 @@ export async function exportModelToGlb(
       for (let i = 0; i < groups.length; i++) {
         groups[i].geometry.setAttribute('uv1', new THREE.Float32BufferAttribute(unwrapped.uv1Arrays[i], 2))
       }
-      const baked = bakeAOToAtlas(model, unwrapped.atlas, options.noiseLevel ?? 0, options.aoStrength ?? 1)
+      const baked = bakeAOToAtlas(model, unwrapped.atlas, options.noiseLevel ?? 0, options.aoStrength ?? 1, animatedKeys)
       aoTex = aoMapTexture(baked.data, baked.width, baked.height)
       textures.push(aoTex)
 
@@ -294,7 +298,7 @@ export async function exportModelToGlb(
         groups[i].geometry.setAttribute('uv1', uv1)
         groups[i].geometry.setAttribute('uv', uv1)
       }
-      const baked = bakeAOToAtlas(model, unwrapped.atlas, options.noiseLevel ?? 0, options.aoStrength ?? 1)
+      const baked = bakeAOToAtlas(model, unwrapped.atlas, options.noiseLevel ?? 0, options.aoStrength ?? 1, animatedKeys)
       aoTex = aoMapTexture(baked.data, baked.width, baked.height)
       textures.push(aoTex)
 
