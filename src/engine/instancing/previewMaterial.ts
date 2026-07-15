@@ -19,7 +19,14 @@ export type PreviewMaterialOptions = {
   emissiveAnimMode?: EmissiveAnimMode
 }
 
-type EmissiveAnimUserData = { emissiveAnimMode: EmissiveAnimMode; emissiveAnimBaseIntensity: number }
+type EmissiveAnimUserData = {
+  emissiveAnimMode: EmissiveAnimMode
+  emissiveAnimBaseIntensity: number
+  /** The material's un-animated `color` (its `MeshPhysicalMaterial` base color at "on"), pinned to
+   * the same 0..1 curve as `emissiveIntensity` so "off" reads as true black — a bare intensity drop
+   * to 0 still leaves the lit albedo visible under scene lighting. */
+  emissiveAnimBaseColor: THREE.Color
+}
 
 /** Advances one material's live blink/pulse, if `buildPreviewMaterial` tagged it with an animated
  * mode. Safe to call on every material every frame — untagged (or 'none') materials no-op. */
@@ -27,7 +34,9 @@ export function tickEmissiveAnimation(material: THREE.Material, elapsedSeconds: 
   const anim = (material as THREE.Material & { userData: Partial<EmissiveAnimUserData> }).userData
   if (!anim.emissiveAnimMode || anim.emissiveAnimMode === 'none') return
   const physical = material as THREE.MeshPhysicalMaterial
-  physical.emissiveIntensity = anim.emissiveAnimBaseIntensity! * emissiveAnimFactor(anim.emissiveAnimMode, elapsedSeconds)
+  const factor = emissiveAnimFactor(anim.emissiveAnimMode, elapsedSeconds)
+  physical.emissiveIntensity = anim.emissiveAnimBaseIntensity! * factor
+  physical.color.copy(anim.emissiveAnimBaseColor!).multiplyScalar(factor)
 }
 
 /**
@@ -60,6 +69,7 @@ export function buildPreviewMaterial(materialClass: MaterialClass, colorKey: num
     if (animMode !== 'none') {
       material.userData.emissiveAnimMode = animMode
       material.userData.emissiveAnimBaseIntensity = params.emissiveIntensity
+      material.userData.emissiveAnimBaseColor = material.color.clone()
     }
   }
   if (options.aoMap) material.aoMap = options.aoMap
