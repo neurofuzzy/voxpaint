@@ -11,5 +11,14 @@ type Slice = StateCreator<AppState, [['zustand/immer', never]], [], ModeSlice>
  */
 export const createModeSlice: Slice = (set) => ({
   mode: 'model',
-  setMode: (mode) => set((state) => { state.mode = mode }),
+  setMode: (mode) =>
+    set((state) => {
+      state.mode = mode
+      // Animate mode only has mask paint/erase handlers (see engine/tools's animateToolMap) — land
+      // on a tool that's actually wired up there instead of leaving dispatch pointed at one that
+      // silently no-ops (e.g. 'select' or 'move' from Model mode).
+      if (mode === 'animate' && state.activeTool !== 'paint' && state.activeTool !== 'erase') {
+        state.activeTool = 'paint'
+      }
+    }),
 })

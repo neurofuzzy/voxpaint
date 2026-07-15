@@ -9,7 +9,7 @@ export function restoreAutosave(): void {
   try {
     const file = loadAutosave()
     if (!file) return
-    const { model, palette, meta, texture, view, animSettings } = deserializeProject(file)
+    const { model, palette, meta, texture, view, animSettings, sliceMasks } = deserializeProject(file)
     useAppStore.getState().setModel(model)
     useAppStore.getState().setPalette(palette)
     useAppStore.getState().setTexture(texture)
@@ -23,6 +23,7 @@ export function restoreAutosave(): void {
       state.exportScaleFactor = view.exportScaleFactor ?? 100
       state.exportAnchor = view.exportAnchor ?? 'center'
       state.animSettings = animSettings
+      state.sliceMasks = sliceMasks
     })
   } catch (err) {
     console.error('Failed to restore autosave', err)
@@ -39,6 +40,7 @@ const flush = debounce(() => {
       state.texture,
       { ambientOcclusion: state.ambientOcclusion, noiseLevel: state.noiseLevel, specularNoiseLevel: state.specularNoiseLevel, aoStrength: state.aoStrength, glassRoughnessLevel: state.glassRoughnessLevel, exportScaleFactor: state.exportScaleFactor, exportAnchor: state.exportAnchor },
       state.animSettings,
+      state.sliceMasks,
     )
     saveAutosave(file)
     state.markSaved(new Date().toISOString())
@@ -54,5 +56,6 @@ export function wireAutosave(): () => void {
     else if (state.model !== prevState.model && state.dirty) flush()
     else if (state.texture !== prevState.texture && state.dirty) flush()
     else if (state.animSettings !== prevState.animSettings && state.dirty) flush()
+    else if (state.sliceMasks !== prevState.sliceMasks && state.dirty) flush()
   })
 }

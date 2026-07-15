@@ -23,7 +23,11 @@ export function BottomBar() {
   const mode = useAppStore((s) => s.mode)
 
   const defaultHint = mode === 'animate'
-    ? 'assign animation to the current slice · use construction plane to navigate'
+    ? (activeTool === 'paint'
+        ? 'paint a mask to animate only part of this slice · leave unpainted to animate the whole slice'
+        : activeTool === 'erase'
+          ? 'erase mask cells · right-click: quick erase · unmark all to animate the whole slice again'
+          : 'assign animation to the current slice · use construction plane to navigate')
     : TOOL_HINTS[activeTool]
 
   return (

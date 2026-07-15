@@ -1,12 +1,12 @@
 import { decodeKey, emptyModel, encodeKey, recomputeBounds } from '@/engine/grid/GridStore'
-import type { VoxelModel } from '@/engine/grid/types'
+import type { CellKey, VoxelModel } from '@/engine/grid/types'
 import type { PaletteState } from '@/engine/palette/types'
 import type { BoxFace, TextureModel } from '@/engine/texture/types'
 import { BOX_FACES, FACE_SIZE, TEXEL_SCALE } from '@/engine/texture/types'
 import { emptyTextureModel } from '@/engine/texture/TextureStore'
 import type { SliceAnimSettings, SliceKey } from '@/engine/animation/types'
 import { encodeSliceKey } from '@/engine/animation/animationLayers'
-import { CURRENT_SCHEMA_VERSION, type ProjectMeta, type SerializedAnimLayer, type SerializedTexture, type ViewSettings, type VoxPaintProjectFile } from './schema'
+import { CURRENT_SCHEMA_VERSION, type ProjectMeta, type SerializedAnimLayer, type SerializedSliceMask, type SerializedTexture, type ViewSettings, type VoxPaintProjectFile } from './schema'
 
 function u8ToBase64(a: Uint8Array): string {
   let s = ''
@@ -60,7 +60,24 @@ function deserializeAnimations(layers: SerializedAnimLayer[]): Map<SliceKey, Sli
   return map
 }
 
-export function serializeProject(model: VoxelModel, palette: PaletteState, meta: ProjectMeta, texture: TextureModel, view?: ViewSettings, animSettings?: Map<SliceKey, SliceAnimSettings>): VoxPaintProjectFile {
+function serializeSliceMasks(sliceMasks: Map<SliceKey, Set<CellKey>>): SerializedSliceMask[] {
+  const layers: SerializedSliceMask[] = []
+  for (const [key, mask] of sliceMasks) {
+    const [axis, offsetStr] = key.split(',')
+    layers.push({ axis: axis as any, offset: Number(offsetStr), cellKeys: Array.from(mask) })
+  }
+  return layers
+}
+
+function deserializeSliceMasks(layers: SerializedSliceMask[]): Map<SliceKey, Set<CellKey>> {
+  const map = new Map<SliceKey, Set<CellKey>>()
+  for (const layer of layers) {
+    map.set(encodeSliceKey(layer.axis, layer.offset), new Set(layer.cellKeys))
+  }
+  return map
+}
+
+export function serializeProject(model: VoxelModel, palette: PaletteState, meta: ProjectMeta, texture: TextureModel, view?: ViewSettings, animSettings?: Map<SliceKey, SliceAnimSettings>, sliceMasks?: Map<SliceKey, Set<CellKey>>): VoxPaintProjectFile {
   const colorCells = Array.from(model.color.entries()).map(([key, cell]) => {
     const [x, y, z] = decodeKey(key)
     return { x, y, z, paletteSlot: cell.paletteSlot }
@@ -77,10 +94,11 @@ export function serializeProject(model: VoxelModel, palette: PaletteState, meta:
     texture: serializeTexture(texture),
     view,
     animations: animSettings ? serializeAnimations(animSettings) : undefined,
+    masks: sliceMasks ? serializeSliceMasks(sliceMasks) : undefined,
   }
 }
 
-export function deserializeProject(file: VoxPaintProjectFile): { model: VoxelModel; palette: PaletteState; meta: ProjectMeta; texture: TextureModel; view: ViewSettings; animSettings: Map<SliceKey, SliceAnimSettings> } {
+export function deserializeProject(file: VoxPaintProjectFile): { model: VoxelModel; palette: PaletteState; meta: ProjectMeta; texture: TextureModel; view: ViewSettings; animSettings: Map<SliceKey, SliceAnimSettings>; sliceMasks: Map<SliceKey, Set<CellKey>> } {
   const model = emptyModel()
   const color = new Map(model.color)
   const chamfer = new Map(model.chamfer)
@@ -100,5 +118,6 @@ export function deserializeProject(file: VoxPaintProjectFile): { model: VoxelMod
   const texture = file.texture ? deserializeTexture(file.texture) : emptyTextureModel()
   const view: ViewSettings = { ambientOcclusion: false, noiseLevel: 0, specularNoiseLevel: 0, aoStrength: 1, glassRoughnessLevel: 0.3, exportScaleFactor: 100, exportAnchor: 'center', ...file.view }
   const animSettings = file.animations ? deserializeAnimations(file.animations) : new Map()
-  return { model: { ...built, bounds: recomputeBounds(built) }, palette: file.palette, meta: file.meta, texture, view, animSettings }
+  const sliceMasks = file.masks ? deserializeSliceMasks(file.masks) : new Map()
+  return { model: { ...built, bounds: recomputeBounds(built) }, palette: file.palette, meta: file.meta, texture, view, animSettings, sliceMasks }
 }

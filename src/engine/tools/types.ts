@@ -25,6 +25,12 @@ export interface ToolContext {
   paintCell: (u: number, v: number) => boolean
   eraseCell: (coord: [number, number, number]) => void
   floodFill: (u: number, v: number) => void
+  /** Animate-mode mask paint/erase, plus its own (Animate-mode-scoped) undo stroke bracket —
+   * separate from the voxel model's beginStroke/commitStroke above. */
+  paintMaskCell: (u: number, v: number) => boolean
+  eraseMaskCell: (coord: [number, number, number]) => void
+  animBeginStroke: () => void
+  animCommitStroke: () => void
   beginMove: (wholeModel: boolean) => void
   updateMove: (du: number, dv: number) => void
   endMove: () => void

@@ -41,15 +41,13 @@ export function sliceVoxelKeys(model: VoxelModel, axis: Axis, offset: number): C
   return keys
 }
 
-export function sliceBBoxCenter(model: VoxelModel, axis: Axis, offset: number): THREE.Vector3 | null {
-  const ai = axisIndex(axis)
+export function bboxCenterOfKeys(keys: CellKey[]): THREE.Vector3 | null {
   let minX = Infinity, minY = Infinity, minZ = Infinity
   let maxX = -Infinity, maxY = -Infinity, maxZ = -Infinity
   let found = false
 
-  for (const key of model.color.keys()) {
+  for (const key of keys) {
     const coord = decodeKey(key)
-    if (coord[ai] !== offset) continue
     found = true
     const cx = coord[0], cy = coord[1], cz = coord[2]
     if (cx < minX) minX = cx
@@ -62,6 +60,10 @@ export function sliceBBoxCenter(model: VoxelModel, axis: Axis, offset: number): 
 
   if (!found) return null
   return new THREE.Vector3((minX + maxX) / 2, (minY + maxY) / 2, (minZ + maxZ) / 2)
+}
+
+export function sliceBBoxCenter(model: VoxelModel, axis: Axis, offset: number): THREE.Vector3 | null {
+  return bboxCenterOfKeys(sliceVoxelKeys(model, axis, offset))
 }
 
 export function sliceWorldBasis(axis: Axis): { uDir: THREE.Vector3; vDir: THREE.Vector3; normal: THREE.Vector3 } {
@@ -79,6 +81,7 @@ const AXIS_PRIORITY: Axis[] = ['x', 'y', 'z']
 export function assignVoxelsToNodes(
   model: VoxelModel,
   animSettings: Map<SliceKey, SliceAnimSettings>,
+  sliceMasks?: Map<SliceKey, Set<CellKey>>,
 ): { nodes: Map<SliceKey, { cellKeys: CellKey[]; axis: Axis; offset: number }>; remainder: CellKey[] } {
   const nodes = new Map<SliceKey, { cellKeys: CellKey[]; axis: Axis; offset: number }>()
   const assigned = new Set<CellKey>()
@@ -99,8 +102,13 @@ export function assignVoxelsToNodes(
 
   for (const layer of sortedLayers) {
     const sliceKey = encodeSliceKey(layer.axis, layer.offset)
+    // A non-empty mask paints a subset of the slice to animate; an unpainted (absent or empty)
+    // mask keeps the original whole-slice behavior.
+    const mask = sliceMasks?.get(sliceKey)
+    const candidates = sliceVoxelKeys(model, layer.axis, layer.offset)
     const cellKeys: CellKey[] = []
-    for (const key of sliceVoxelKeys(model, layer.axis, layer.offset)) {
+    for (const key of candidates) {
+      if (mask && mask.size > 0 && !mask.has(key)) continue
       if (!assigned.has(key)) {
         assigned.add(key)
         cellKeys.push(key)

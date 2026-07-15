@@ -273,19 +273,38 @@ export type TextureSlice = {
 export type AnimationSlice = {
   /** Per-slice animation settings keyed by encodeSliceKey(axis, offset). */
   animSettings: Map<SliceKey, SliceAnimSettings>
-  /** Undo/redo stacks for animation changes (independent of model undo). */
-  animPast: Map<SliceKey, SliceAnimSettings>[]
-  animFuture: Map<SliceKey, SliceAnimSettings>[]
+  /** Per-slice animation mask: which occupied cells of that slice actually animate, keyed by
+   * encodeSliceKey(axis, offset). Absent or empty for a slice means "animate the whole slice"
+   * (the pre-mask default behavior). */
+  sliceMasks: Map<SliceKey, Set<CellKey>>
+  /** Undo/redo stacks for animation changes (independent of model undo) — one shared stack for
+   * both animation-settings changes and mask paint strokes, since both are Animate-mode-only
+   * edits a user expects to undo together. */
+  animPast: AnimSnapshot[]
+  animFuture: AnimSnapshot[]
 
   /** Set or clear the animation for a slice. Wrapped in begin/commit stroke for undo. */
   setAnimSettingsForSlice: (axis: Axis, offset: number, settings: SliceAnimSettings | null) => void
-  /** Remove all animation settings (e.g. on new project). */
+  /** Remove all animation settings and masks (e.g. on new project). */
   clearAllAnimations: () => void
+
+  /** Paints one cell of the current plane's slice into its animation mask. Only occupied cells
+   * (voxels that already hold color) can be masked. Returns false when out of bounds or empty. */
+  paintMaskCell: (u: number, v: number) => boolean
+  /** Removes one cell from the current plane's slice's animation mask. Deletes the slice's mask
+   * entirely once it becomes empty, reverting to whole-slice-animates. */
+  eraseMaskCell: (coord: Coord) => void
 
   animBeginStroke: () => void
   animCommitStroke: () => void
   animUndo: () => void
   animRedo: () => void
+}
+
+/** One Animate-mode undo/redo snapshot: animation settings and mask paint state travel together. */
+export type AnimSnapshot = {
+  animSettings: Map<SliceKey, SliceAnimSettings>
+  sliceMasks: Map<SliceKey, Set<CellKey>>
 }
 
 export type AppState = ProjectSlice &

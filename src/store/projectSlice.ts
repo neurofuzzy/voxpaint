@@ -55,6 +55,7 @@ export const createProjectSlice: Slice = (set) => ({
       state.exportScaleFactor = 100
       state.exportAnchor = 'center'
       state.animSettings = new Map()
+      state.sliceMasks = new Map()
       state.animPast = []
       state.animFuture = []
     }),

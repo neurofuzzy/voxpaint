@@ -3,7 +3,7 @@ import * as THREE from 'three'
 import { useFrame } from '@react-three/fiber'
 import { buildOptimizedVoxelGroupsBySlice } from '@/engine/instancing/voxelMeshBuilder'
 import { materialParamsFor } from '@/engine/palette/palette'
-import { assignVoxelsToNodes, isActiveAnimation, isRotateMode, isSlideMode, sliceBBoxCenter, sliceWorldBasis } from '@/engine/animation/animationLayers'
+import { assignVoxelsToNodes, bboxCenterOfKeys, isActiveAnimation, isRotateMode, isSlideMode, sliceWorldBasis } from '@/engine/animation/animationLayers'
 import type { SliceKey } from '@/engine/animation/types'
 import { useAppStore } from '@/store/useAppStore'
 
@@ -20,6 +20,7 @@ export function AnimatedModelView() {
   const model = useAppStore((s) => s.model)
   const palette = useAppStore((s) => s.palette)
   const animSettings = useAppStore((s) => s.animSettings)
+  const sliceMasks = useAppStore((s) => s.sliceMasks)
   const glassRoughnessLevel = useAppStore((s) => s.glassRoughnessLevel)
 
   const animGroupRefs = useRef<Map<SliceKey, AnimGroup>>(new Map())
@@ -27,7 +28,7 @@ export function AnimatedModelView() {
 
   const built = useMemo(() => {
     if (animSettings.size === 0) return null
-    const { nodes } = assignVoxelsToNodes(model, animSettings)
+    const { nodes } = assignVoxelsToNodes(model, animSettings, sliceMasks)
 
     const nodeAssignment = new Map<string, string>()
     for (const [sliceKey, entry] of nodes) {
@@ -81,7 +82,7 @@ export function AnimatedModelView() {
       if (g.sliceKey && !sliceInfo.has(g.sliceKey)) {
         const entry = nodes.get(g.sliceKey)
         if (entry) {
-          const center = sliceBBoxCenter(model, entry.axis, entry.offset)
+          const center = bboxCenterOfKeys(entry.cellKeys)
           if (center) {
             sliceInfo.set(g.sliceKey, { axis: entry.axis, offset: entry.offset, center })
           }
@@ -90,7 +91,7 @@ export function AnimatedModelView() {
     }
 
     return { nodes, sliceMeshes, sliceInfo, materials }
-  }, [model, palette, animSettings, glassRoughnessLevel])
+  }, [model, palette, animSettings, sliceMasks, glassRoughnessLevel])
 
   // Build the scene graph imperatively — one Group per slice, with mesh children added directly.
   useEffect(() => {

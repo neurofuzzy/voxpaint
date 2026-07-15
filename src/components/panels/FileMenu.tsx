@@ -18,15 +18,15 @@ export function FileMenu() {
   }
 
   function handleExport() {
-    const { model, palette, meta, texture, ambientOcclusion, noiseLevel, specularNoiseLevel, aoStrength, glassRoughnessLevel, exportScaleFactor, exportAnchor, animSettings } = useAppStore.getState()
-    downloadProjectFile(serializeProject(model, palette, meta, texture, { ambientOcclusion, noiseLevel, specularNoiseLevel, aoStrength, glassRoughnessLevel, exportScaleFactor, exportAnchor }, animSettings))
+    const { model, palette, meta, texture, ambientOcclusion, noiseLevel, specularNoiseLevel, aoStrength, glassRoughnessLevel, exportScaleFactor, exportAnchor, animSettings, sliceMasks } = useAppStore.getState()
+    downloadProjectFile(serializeProject(model, palette, meta, texture, { ambientOcclusion, noiseLevel, specularNoiseLevel, aoStrength, glassRoughnessLevel, exportScaleFactor, exportAnchor }, animSettings, sliceMasks))
     showToast('Project exported.')
   }
 
   async function handleImportFile(file: File) {
     try {
       const parsed = await readProjectFile(file)
-      const { model, palette, meta, texture, view, animSettings } = deserializeProject(parsed)
+      const { model, palette, meta, texture, view, animSettings, sliceMasks } = deserializeProject(parsed)
       useAppStore.getState().setModel(model)
       useAppStore.getState().setPalette(palette)
       useAppStore.getState().setTexture(texture)
@@ -40,6 +40,7 @@ export function FileMenu() {
         s.exportScaleFactor = view.exportScaleFactor ?? 100
         s.exportAnchor = view.exportAnchor ?? 'center'
         s.animSettings = animSettings
+        s.sliceMasks = sliceMasks
       })
       showToast('Project imported.')
     } catch (err) {

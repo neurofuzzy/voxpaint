@@ -4,7 +4,7 @@ import type { PaletteSlotRef, PaletteState } from '@/engine/palette/types'
 import type { BoxFace } from '@/engine/texture/types'
 import type { GltfExportAnchor } from '@/engine/export/gltfExport'
 
-export const CURRENT_SCHEMA_VERSION = 4 as const
+export const CURRENT_SCHEMA_VERSION = 5 as const
 
 export type ViewSettings = {
   ambientOcclusion: boolean
@@ -50,6 +50,14 @@ export type SerializedAnimLayer = {
   slideAmount: number
 }
 
+/** A slice's animation mask: which of its occupied cells (by "x,y,z" key) actually animate.
+ * Absent/empty means "animate the whole slice" (see engine/animation/animationLayers.ts). */
+export type SerializedSliceMask = {
+  axis: Axis
+  offset: number
+  cellKeys: string[]
+}
+
 export type VoxPaintProjectFileV1 = {
   schemaVersion: 1
   meta: ProjectMeta
@@ -80,7 +88,10 @@ export type VoxPaintProjectFileV2 = {
  * The optional `view` field stores 3D-viewport settings (noise, AO strength) added after the v3
  * schema was frozen; absent on older files, defaulting to `{ noiseLevel: 0, aoStrength: 1 }`.
  *
- * v4: adds an optional `animations` array for per-slice animation settings (axis, offset, type, speed). */
+ * v4: adds an optional `animations` array for per-slice animation settings (axis, offset, type, speed).
+ *
+ * v5: adds an optional `masks` array for per-slice animation masks (which occupied cells of a
+ * slice animate, vs the whole slice). */
 export type VoxPaintProjectFile = {
   schemaVersion: typeof CURRENT_SCHEMA_VERSION
   meta: ProjectMeta
@@ -93,4 +104,5 @@ export type VoxPaintProjectFile = {
   texture?: SerializedTexture
   view?: ViewSettings
   animations?: SerializedAnimLayer[]
+  masks?: SerializedSliceMask[]
 }
