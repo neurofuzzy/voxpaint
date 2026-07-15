@@ -1,11 +1,12 @@
 import * as Tooltip from '@radix-ui/react-tooltip'
 import { useAppStore } from '@/store/useAppStore'
 import type { VoxelKind } from '@/store/types'
-import { ChamferIcon, CubeIcon } from './voxelKindIcons'
+import { ChamferIcon, CubeIcon, WedgeIcon } from './voxelKindIcons'
 
 const KINDS: Array<{ id: VoxelKind; label: string; Icon: typeof CubeIcon; hint: string }> = [
   { id: 'cube', label: 'Cube', Icon: CubeIcon, hint: 'Cube mode: standard block shapes' },
   { id: 'ramp', label: 'Chamfer', Icon: ChamferIcon, hint: 'Chamfer mode: beveled edges and slopes' },
+  { id: 'wedge', label: 'Wedge', Icon: WedgeIcon, hint: 'Wedge mode: quick corner cut, flat diagonal facing you' },
 ]
 
 /**

@@ -134,6 +134,37 @@ export function convexCornerGeometry(rotation: 0 | 1 | 2 | 3 = 0): THREE.BufferG
 }
 
 /**
+ * Model E — corner wedge: a flat diagonal cut, constant through the full outward (z) depth (not a
+ * spec model — an editor-only shortcut shape, see the `wedge` voxel-kind's use of this). 5 sides,
+ * 8 triangles. Full height at both the west and south walls (they meet at a right-angle SW corner);
+ * the NE corner is sliced away entirely by a single flat diagonal face — unlike `convexCornerGeometry`
+ * (which keeps a base vertex at every corner and only omits the *top* vertex at the cut corner), this
+ * shape has **no vertex at all**, top or bottom, at the cut corner. Canonical (rotation-0) walls are
+ * W+S (meeting at SW); the resolver's `rotation` is the *open* (cut) corner index, NE=0 — same
+ * convention as `convexCornerGeometry`, since both shapes cut the same corner for a given rotation.
+ */
+export function wedgeGeometry(rotation: 0 | 1 | 2 | 3 = 0): THREE.BufferGeometry {
+  return buildGeometry(
+    [
+      // bottom (triangular footprint, z=-0.5) — SE, SW, NW only, no NE
+      [b(3), b(2), b(1)],
+      // top (triangular footprint, z=+0.5)
+      [t(1), t(2), t(3)],
+      // west wall (flush quad, full height) — matches a filled W neighbor
+      [b(3), t(3), t(2)],
+      [b(3), t(2), b(2)],
+      // south wall (flush quad, full height) — matches a filled S neighbor
+      [b(2), t(2), t(1)],
+      [b(2), t(1), b(1)],
+      // diagonal cut face (open, full height) — the exposed "/"-or-"\" edge, cut corner NE
+      [b(3), b(1), t(1)],
+      [b(3), t(1), t(3)],
+    ],
+    rotation,
+  )
+}
+
+/**
  * Model D — concave corner ramp: 6 sides, 10 triangles. Full height along all four edges except the
  * single notched corner (north-east), which drops to the base — the inverse of the convex corner.
  * Canonical (rotation-0) notch is at NE, and the resolver's `rotation` is the empty-diagonal index,

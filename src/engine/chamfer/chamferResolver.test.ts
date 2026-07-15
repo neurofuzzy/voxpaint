@@ -80,7 +80,7 @@ const EXPECTED_ROTATION_GRID = [
   '--2111--',
 ]
 
-const SHAPE_LETTER: Record<ChamferShapeKind, string> = { ramp: 'B', convex: 'C', concave: 'D' }
+const SHAPE_LETTER: Record<ChamferShapeKind, string> = { ramp: 'B', convex: 'C', concave: 'D', wedge: 'E' }
 
 function buildSteadyStateModel(): VoxelModel {
   const model = emptyModel()

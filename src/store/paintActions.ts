@@ -1,6 +1,6 @@
 import type { StateCreator } from 'zustand'
 import { decodeKey, encodeKey, expandBounds, withinWorkingBounds } from '@/engine/grid/GridStore'
-import type { Coord } from '@/engine/grid/types'
+import type { ChamferClassification, Coord } from '@/engine/grid/types'
 import { classify, sampleNeighbors } from '@/engine/chamfer/chamferResolver'
 import { gridCoordFromPixel, pixelFromGridCoord } from '@/engine/plane/constructionPlane'
 import { axisIndex } from '@/engine/plane/planeGeometry'
@@ -22,11 +22,20 @@ export function endFreshChamferTracking() {
 export const createPaintActionsSlice: Slice = (set, get) => ({
   paintCell: (u: number, v: number) => {
     get().bakeFloatIfAny()
-    const { plane, activeVoxelKind, activePaletteSlot, selection, meta } = get()
+    const { plane, activeVoxelKind, activePaletteSlot, selection, meta, model } = get()
     const coord = gridCoordFromPixel(plane, u, v)
     if (!withinWorkingBounds(coord, meta.gridExtent)) return false
     // An active selection clips editing to its mask (bakeFloatIfAny above already resolved any float).
     if (selection && !isCellSelected(selection, u, v)) return false
+
+    // Wedge is a shortcut shape: it only ever paints when exactly 2 adjacent orthogonal neighbors
+    // are already filled (the same precondition classify() already enforces for 'convex') — resolve
+    // this BEFORE mutating anything, so an unresolvable spot is a true no-op (no color, no chamfer).
+    let wedgeResolved: ChamferClassification | null = null
+    if (activeVoxelKind === 'wedge') {
+      wedgeResolved = classify(sampleNeighbors(model, plane, u, v))
+      if (!wedgeResolved || wedgeResolved.shapeKind !== 'convex') return false
+    }
 
     set((state) => {
       const key = encodeKey(...coord)
@@ -50,6 +59,12 @@ export const createPaintActionsSlice: Slice = (set, get) => ({
             if (rt) cell.resolvedTo = rt
           }
         }
+      } else if (activeVoxelKind === 'wedge') {
+        state.model.chamfer.set(key, {
+          planeAxis: plane.axis,
+          planeOrientation: plane.orientation,
+          resolvedTo: { shapeKind: 'wedge', rotation: wedgeResolved!.rotation },
+        })
       } else {
         state.model.chamfer.delete(key)
       }

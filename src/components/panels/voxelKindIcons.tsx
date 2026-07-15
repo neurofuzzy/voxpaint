@@ -29,3 +29,14 @@ export function ChamferIcon({ size = 18 }: IconProps) {
     </svg>
   )
 }
+
+export function WedgeIcon({ size = 18 }: IconProps) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 111 107" xmlns="http://www.w3.org/2000/svg" style={{ display: 'block' }}>
+      <g transform="matrix(1,0,0,1,-277.128,-309.108)">
+        <path d="M277.128,416L387.979,416L277.128,309.108L277.128,416Z" fill="rgb(223,223,223)" />
+        <path d="M387.979,416L387.979,380.592L314.378,309.506L277.128,309.108L387.979,416Z" fill="rgb(142,141,141)" />
+      </g>
+    </svg>
+  )
+}

@@ -1,7 +1,7 @@
 import * as THREE from 'three'
 import { decodeKey } from '@/engine/grid/GridStore'
 import type { CellKey, ChamferCell, VoxelModel } from '@/engine/grid/types'
-import { concaveCornerGeometry, convexCornerGeometry, mirrorVGeometry, rampGeometry, unitCubeGeometry } from '@/engine/chamfer/chamferGeometry'
+import { concaveCornerGeometry, convexCornerGeometry, mirrorVGeometry, rampGeometry, unitCubeGeometry, wedgeGeometry } from '@/engine/chamfer/chamferGeometry'
 import { resolveSlotColor } from '@/engine/palette/palette'
 import type { PaletteState } from '@/engine/palette/types'
 import { chamferBasisIsReflected, chamferInstanceMatrix, cubeInstanceMatrix } from './basis'
@@ -9,8 +9,8 @@ import { chamferBasisIsReflected, chamferInstanceMatrix, cubeInstanceMatrix } fr
 // Chamfer shapes split into a plain and a v-mirrored (`…M`) pool: reflected-basis planes (+Z/+X/-Y)
 // use the mirrored geometry so every rendered instance stays a proper rotation and lights correctly.
 // See basis.ts's chamferBasisIsReflected and chamferGeometry.ts's mirrorVGeometry.
-export type PoolId = 'cube' | 'ramp' | 'convex' | 'concave' | 'rampM' | 'convexM' | 'concaveM'
-const POOL_IDS: PoolId[] = ['cube', 'ramp', 'convex', 'concave', 'rampM', 'convexM', 'concaveM']
+export type PoolId = 'cube' | 'ramp' | 'convex' | 'concave' | 'wedge' | 'rampM' | 'convexM' | 'concaveM' | 'wedgeM'
+const POOL_IDS: PoolId[] = ['cube', 'ramp', 'convex', 'concave', 'wedge', 'rampM', 'convexM', 'concaveM', 'wedgeM']
 
 /** The pool a color cell belongs to, accounting for its baked shape and plane handedness. */
 function poolIdFor(chamfer: ChamferCell | undefined): PoolId {
@@ -83,17 +83,30 @@ export class InstancingManager {
     const ramp = rampGeometry(0)
     const convex = convexCornerGeometry(0)
     const concave = concaveCornerGeometry(0)
+    const wedge = wedgeGeometry(0)
     const geometries: Record<PoolId, THREE.BufferGeometry> = {
       cube: unitCubeGeometry(),
       ramp,
       convex,
       concave,
+      wedge,
       rampM: mirrorVGeometry(ramp),
       convexM: mirrorVGeometry(convex),
       concaveM: mirrorVGeometry(concave),
+      wedgeM: mirrorVGeometry(wedge),
     }
 
-    this.capacities = { cube: INITIAL_CAPACITY, ramp: 256, convex: 256, concave: 256, rampM: 256, convexM: 256, concaveM: 256 }
+    this.capacities = {
+      cube: INITIAL_CAPACITY,
+      ramp: 256,
+      convex: 256,
+      concave: 256,
+      wedge: 256,
+      rampM: 256,
+      convexM: 256,
+      concaveM: 256,
+      wedgeM: 256,
+    }
     this.meshes = {} as Record<PoolId, THREE.InstancedMesh>
     this.wireframeMeshes = {} as Record<PoolId, THREE.InstancedMesh>
     for (const id of POOL_IDS) {

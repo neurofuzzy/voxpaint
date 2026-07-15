@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import * as THREE from 'three'
-import { concaveCornerGeometry, convexCornerGeometry, mirrorVGeometry, rampGeometry, unitCubeGeometry } from './chamferGeometry'
+import { concaveCornerGeometry, convexCornerGeometry, mirrorVGeometry, rampGeometry, unitCubeGeometry, wedgeGeometry } from './chamferGeometry'
 
 type Vec = [number, number, number]
 
@@ -67,6 +67,7 @@ const GEOMETRIES = {
   ramp: rampGeometry(),
   convex: convexCornerGeometry(),
   concave: concaveCornerGeometry(),
+  wedge: wedgeGeometry(),
 }
 
 describe('chamfer geometry — centering & footprint (etc/chamfer-tests.md: origin is the voxel center)', () => {
@@ -90,6 +91,7 @@ describe('chamfer geometry — triangle counts (etc/chamfer-tests.md MODELS)', (
     ['ramp', GEOMETRIES.ramp, 8],
     ['convex', GEOMETRIES.convex, 6],
     ['concave', GEOMETRIES.concave, 10],
+    ['wedge', GEOMETRIES.wedge, 8],
   ] as const)('%s has %i triangles', (_name, geometry, count) => {
     expect(triangles(geometry).length).toBe(count)
   })
@@ -103,6 +105,7 @@ describe('chamfer geometry — outward-facing windings', () => {
     ramp: [-0.25, 0, -0.25], // inside the tall (west) half of the wedge
     convex: [-0.25, 0.25, -0.3], // under the SW hip, above the base
     concave: [-0.25, 0.25, -0.25], // deep in the un-notched SW/base corner
+    wedge: [-0.25, 0.25, 0], // on the SW side of the NW-SE diagonal cut, mid-height (full-height solid)
   }
 
   it.each(Object.keys(GEOMETRIES) as (keyof typeof GEOMETRIES)[])('%s: every triangle is wound outward', (name) => {
@@ -175,6 +178,22 @@ describe('chamfer geometry — canonical (rotation-0) topology matches etc/chamf
       expect(tri.filter(isBase)).toHaveLength(1)
     }
   })
+
+  it('wedge: cut at NE has no vertex at all, top or bottom — unlike convex, which keeps a base vertex there', () => {
+    const g = wedgeGeometry()
+    const baseNE: Vec = [0.5, -0.5, -0.5]
+    const baseSE: Vec = [0.5, 0.5, -0.5]
+    const baseSW: Vec = [-0.5, 0.5, -0.5]
+    const baseNW: Vec = [-0.5, -0.5, -0.5]
+    expect(has(g, topNE)).toBe(false)
+    expect(has(g, baseNE)).toBe(false)
+    expect(has(g, topSE)).toBe(true)
+    expect(has(g, baseSE)).toBe(true)
+    expect(has(g, topSW)).toBe(true)
+    expect(has(g, baseSW)).toBe(true)
+    expect(has(g, topNW)).toBe(true)
+    expect(has(g, baseNW)).toBe(true)
+  })
 })
 
 describe('chamfer geometry — v-mirrored variants (reflected-plane pools)', () => {
@@ -182,6 +201,7 @@ describe('chamfer geometry — v-mirrored variants (reflected-plane pools)', () 
     ['ramp', rampGeometry(), [-0.25, 0, -0.25] as Vec],
     ['convex', convexCornerGeometry(), [-0.25, -0.25, -0.3] as Vec],
     ['concave', concaveCornerGeometry(), [-0.25, -0.25, -0.25] as Vec],
+    ['wedge', wedgeGeometry(), [-0.25, -0.25, 0] as Vec],
   ] as const)('mirrorVGeometry(%s) stays centered with outward windings', (_name, geometry, insideMirrored) => {
     const m = mirrorVGeometry(geometry)
 
