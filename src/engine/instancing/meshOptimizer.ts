@@ -67,10 +67,15 @@ function unionAll(bsps: ThreeBSP[]): ThreeBSP | null {
  * them into a single watertight surface, run a coplanar-face merge pass to reduce triangle count,
  * and convert the result back to BufferGeometry. Each output entry carries the group's `colorKey`
  * and `materialClass` — the caller applies a solid-colour material (no vertex colors).
+ *
+ * `isOccupied`, when given, additionally strips any **glass** group's faces that back onto an
+ * occupied grid cell (see `removeOccludedGlassFaces`) — right after the CSG union, before the
+ * coplanar merge, while triangles still correspond ~1:1 to per-voxel faces.
  */
 export function optimizeGroupsByCSG<T extends VoxelGroup>(
   groups: T[],
   mergeCoplanar = true,
+  isOccupied?: (x: number, y: number, z: number) => boolean,
 ): (ColorGroupGeometry & Omit<T, keyof VoxelGroup>)[] {
   const results: (ColorGroupGeometry & Omit<T, keyof VoxelGroup>)[] = []
 
@@ -84,7 +89,12 @@ export function optimizeGroupsByCSG<T extends VoxelGroup>(
 
     const merged = unionAll(bsps)
     if (merged) {
-      const csgGeom = toNonIndexed(merged.toGeometry())
+      let csgGeom = toNonIndexed(merged.toGeometry())
+      if (group.materialClass === 'glass' && isOccupied) {
+        const culled = removeOccludedGlassFaces(csgGeom, isOccupied)
+        csgGeom.dispose()
+        csgGeom = culled
+      }
       const optimized = mergeCoplanar ? mergeCoplanarFaces(csgGeom) : csgGeom
       if (mergeCoplanar) csgGeom.dispose()
       const { geometries: _geometries, colorKey, materialClass, ...rest } = group
@@ -101,8 +111,65 @@ export function optimizeGroupsByCSG<T extends VoxelGroup>(
 }
 
 /** CSG-unioned shell only — no coplanar-face merge. The default 3D-preview path. */
-export function csgUnionGroups(groups: VoxelGroup[]): ColorGroupGeometry[] {
-  return optimizeGroupsByCSG(groups, false)
+export function csgUnionGroups(groups: VoxelGroup[], isOccupied?: (x: number, y: number, z: number) => boolean): ColorGroupGeometry[] {
+  return optimizeGroupsByCSG(groups, false, isOccupied)
+}
+
+/**
+ * Strips triangles of a (post-CSG, pre-coplanar-merge) glass geometry whose outward side sits
+ * against an occupied grid cell — e.g. glass built flush against a solid block, or two adjacent
+ * glass voxels — so the glass doesn't z-fight or double up against whatever's behind it (mirrors
+ * `removeInteriorFaces`'s "drop the glass face" rule for the textured shell path, see
+ * `voxelMeshBuilder.ts`).
+ *
+ * Unlike `removeInteriorFaces`, this doesn't match triangles against a neighbouring group's
+ * geometry (glass and its neighbours are never CSG-unioned together, so there's nothing to match
+ * against without introducing an inter-group correlation this pipeline doesn't otherwise need).
+ * Instead it's a **rough occupancy test**: sample the grid a half-cell past each triangle's own
+ * centroid along its own outward normal and ask `isOccupied`. This is exact for axis-aligned cube
+ * faces (the sample lands squarely in the neighbour cell) and an approximation for sloped chamfer
+ * faces — acceptable here since a triangle at this pipeline stage still corresponds to ~one
+ * original per-voxel face (CSG union only cancels *exactly* coincident coplanar faces within the
+ * same material/colour group; it hasn't re-triangulated anything yet — that's `mergeCoplanarFaces`,
+ * which runs after this).
+ */
+export function removeOccludedGlassFaces(
+  geometry: THREE.BufferGeometry,
+  isOccupied: (x: number, y: number, z: number) => boolean,
+): THREE.BufferGeometry {
+  const positionAttr = geometry.getAttribute('position') as THREE.BufferAttribute
+  const normalAttr = geometry.getAttribute('normal') as THREE.BufferAttribute
+  if (!positionAttr || !normalAttr) return geometry
+
+  const triangleTotal = positionAttr.count / 3
+  const positions: number[] = []
+  const normals: number[] = []
+  const v0 = new THREE.Vector3()
+  const v1 = new THREE.Vector3()
+  const v2 = new THREE.Vector3()
+  const normal = new THREE.Vector3()
+  const sample = new THREE.Vector3()
+
+  for (let t = 0; t < triangleTotal; t++) {
+    const i0 = t * 3
+    v0.fromBufferAttribute(positionAttr, i0)
+    v1.fromBufferAttribute(positionAttr, i0 + 1)
+    v2.fromBufferAttribute(positionAttr, i0 + 2)
+    normal.fromBufferAttribute(normalAttr, i0).normalize()
+
+    sample.copy(v0).add(v1).add(v2).divideScalar(3).addScaledVector(normal, 0.5)
+    if (isOccupied(Math.floor(sample.x), Math.floor(sample.y), Math.floor(sample.z))) continue
+
+    for (const v of [v0, v1, v2]) {
+      positions.push(v.x, v.y, v.z)
+      normals.push(normal.x, normal.y, normal.z)
+    }
+  }
+
+  const out = new THREE.BufferGeometry()
+  out.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3))
+  out.setAttribute('normal', new THREE.Float32BufferAttribute(normals, 3))
+  return out
 }
 
 // ── Coplanar-face merge (post-CSG triangle reduction) ─────────────────────

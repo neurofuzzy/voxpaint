@@ -1,5 +1,5 @@
 import * as THREE from 'three'
-import { decodeKey } from '@/engine/grid/GridStore'
+import { decodeKey, encodeKey } from '@/engine/grid/GridStore'
 import type { CellKey, ChamferCell, Coord, VoxelModel } from '@/engine/grid/types'
 import { concaveCornerGeometry, convexCornerGeometry, mirrorVGeometry, rampGeometry, wedgeGeometry } from '@/engine/chamfer/chamferGeometry'
 import { materialClassFor, resolveSlotColor, type MaterialClass } from '@/engine/palette/palette'
@@ -259,6 +259,19 @@ export interface ColorGroupGeometry {
   geometry: THREE.BufferGeometry
 }
 
+/**
+ * "Occupied" for the glass occlusion cull (see `meshOptimizer.ts`'s `removeOccludedGlassFaces`):
+ * a resolved chamfer cell doesn't fully fill its cube — a wedge or ramp leaves part of the
+ * neighbouring face's view open — so it's treated as unoccupied here even though `model.color`
+ * has an entry for it. An *unresolved* chamfer cell still renders as a plain cube (see
+ * `ChamferCell.resolvedTo`'s doc comment) and counts as occupied like any other solid voxel.
+ */
+function isCellOccupied(model: VoxelModel, x: number, y: number, z: number): boolean {
+  const key = encodeKey(x, y, z)
+  if (!model.color.has(key)) return false
+  return !model.chamfer.get(key)?.resolvedTo
+}
+
 export interface OptimizedVoxelGroups {
   groups: ColorGroupGeometry[]
   rawTriangles: number // total triangles of all per-voxel solid geometries before CSG union
@@ -310,7 +323,8 @@ export function buildOptimizedVoxelGroups(model: VoxelModel, palette: PaletteSta
     group.geometries.push(geom)
   }
 
-  const groups = optimizeGroupsByCSG(Array.from(byGroup.values()), mergeCoplanar ?? true)
+  const isOccupied = (x: number, y: number, z: number) => isCellOccupied(model, x, y, z)
+  const groups = optimizeGroupsByCSG(Array.from(byGroup.values()), mergeCoplanar ?? true, isOccupied)
   let optimizedTriangles = 0
   for (const g of groups) optimizedTriangles += triangleCount(g.geometry)
 
@@ -383,7 +397,8 @@ export function buildOptimizedVoxelGroupsBySlice(
     group.geometries.push(geom)
   }
 
-  const groups: SliceGroupGeometry[] = optimizeGroupsByCSG(Array.from(byGroup.values()), mergeCoplanar ?? true)
+  const isOccupied = (x: number, y: number, z: number) => isCellOccupied(model, x, y, z)
+  const groups: SliceGroupGeometry[] = optimizeGroupsByCSG(Array.from(byGroup.values()), mergeCoplanar ?? true, isOccupied)
   let optimizedTriangles = 0
   for (const g of groups) optimizedTriangles += triangleCount(g.geometry)
 
