@@ -41,6 +41,8 @@ export function FileMenu() {
         s.exportAnchor = view.exportAnchor ?? 'center'
         s.animSettings = animSettings
         s.sliceMasks = sliceMasks
+        s.animPast = []
+        s.animFuture = []
       })
       showToast('Project imported.')
     } catch (err) {
