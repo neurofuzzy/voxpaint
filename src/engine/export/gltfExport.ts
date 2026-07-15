@@ -7,7 +7,7 @@ import { bakeAOToAtlas, makeSpecularNoiseTexture } from '@/engine/ao/bakeAO'
 import { unwrapGeometries } from '@/engine/ao/uvUnwrap'
 import { buildBlendAtlas } from '@/engine/texture/boxMapping'
 import { overlayChannel } from '@/engine/texture/overlay'
-import { buildTexturedGeometryByColor } from '@/engine/texture/texturedGeometry'
+import { buildTexturedGeometryByColor, buildTexturedGeometryBySlice } from '@/engine/texture/texturedGeometry'
 import { hasTextureContent } from '@/engine/texture/TextureStore'
 import { buildOptimizedVoxelGeometryByMaterial, buildOptimizedVoxelGroupsBySlice } from '@/engine/instancing/voxelMeshBuilder'
 import { materialParamsFor, type MaterialClass } from '@/engine/palette/palette'
@@ -57,6 +57,40 @@ export type GltfExportOptions = {
 }
 
 const hex6 = (colorKey: number) => colorKey.toString(16).padStart(6, '0')
+
+/**
+ * Attach `mesh` to its animation slice node (creating the node on first use, keyed by `sliceKey`)
+ * or straight to `root` when unanimated. Geometry vertices carry absolute voxel-grid coordinates,
+ * and the slice node sits at the (also absolute) slice pivot — so the mesh is recentered by
+ * `-center` here, or the two offsets would stack.
+ */
+function attachToSliceOrRoot(
+  mesh: THREE.Mesh,
+  sliceKey: SliceKey | undefined,
+  model: VoxelModel,
+  animSettings: Map<SliceKey, SliceAnimSettings> | undefined,
+  sliceNodes: Map<SliceKey, THREE.Group> | undefined,
+  animNodes: AnimNodeInfo[] | undefined,
+  root: THREE.Group,
+) {
+  if (sliceNodes && sliceKey) {
+    let node = sliceNodes.get(sliceKey)
+    if (!node) {
+      node = new THREE.Group()
+      const { axis, offset } = decodeSliceKey(sliceKey)
+      const center = sliceBBoxCenter(model, axis, offset)
+      if (center) node.position.copy(center)
+      const settings = animSettings!.get(sliceKey)!
+      node.name = `anim_${sliceKey}`
+      sliceNodes.set(sliceKey, node)
+      animNodes!.push({ node, sliceKey, settings, axis, center: center ?? new THREE.Vector3() })
+    }
+    mesh.position.copy(node.position).negate()
+    node.add(mesh)
+  } else {
+    root.add(mesh)
+  }
+}
 
 /**
  * Bake `overlay(color, blend)` into an sRGB RGBA texture for one color group. `blendData` is the
@@ -137,8 +171,9 @@ export async function exportModelToGlb(
   const hasAnimations = animSettings && animSettings.size > 0
   let nodeAssignment: Map<CellKey, SliceKey> | undefined
   let animNodes: AnimNodeInfo[] | undefined
+  let sliceNodes: Map<SliceKey, THREE.Group> | undefined
 
-  if (hasAnimations && !textured) {
+  if (hasAnimations) {
     const { nodes } = assignVoxelsToNodes(model, animSettings)
     nodeAssignment = new Map()
     for (const [sliceKey, entry] of nodes) {
@@ -147,13 +182,17 @@ export async function exportModelToGlb(
       }
     }
     animNodes = []
+    sliceNodes = new Map()
   }
 
   if (textured) {
-    // Textured overlay path — one baked-texture material per colour.
+    // Textured overlay path — one baked-texture material per colour (and per animation slice, if any).
     // Glass + KHR_materials_volume + baseColorTexture breaks Mac Preview / Blender;
     // for glass we emit a solid-colour material (no baked map, no unused TEXCOORD_0).
-    const groups = buildTexturedGeometryByColor(model, palette)
+    const groups: Array<{ geometry: THREE.BufferGeometry; colorKey: number; materialClass: MaterialClass; sliceKey?: string }> =
+      hasAnimations && nodeAssignment
+        ? buildTexturedGeometryBySlice(model, palette, nodeAssignment)
+        : buildTexturedGeometryByColor(model, palette).map((g) => ({ ...g, sliceKey: undefined }))
     for (const { geometry } of groups) geometries.push(geometry)
 
     let aoTex: THREE.DataTexture | null = null
@@ -181,7 +220,7 @@ export async function exportModelToGlb(
     }
 
     const blend = buildBlendAtlas(texture!)
-    for (const { colorKey, materialClass, geometry } of groups) {
+    for (const { colorKey, materialClass, geometry, sliceKey } of groups) {
       geometry.deleteAttribute('color')
       const params = materialParamsFor(materialClass)
 
@@ -202,7 +241,7 @@ export async function exportModelToGlb(
         material.name = `voxel_${hex6(colorKey)}_${materialClass}`
         const mesh = new THREE.Mesh(geometry, material)
         mesh.name = material.name
-        root.add(mesh)
+        attachToSliceOrRoot(mesh, sliceKey, model, animSettings, sliceNodes, animNodes, root)
         materials.push(material)
       } else {
         const map = bakeOverlayTexture(blend.data, blend.width, blend.height, colorKey)
@@ -227,7 +266,7 @@ export async function exportModelToGlb(
         material.name = `voxel_${hex6(colorKey)}_${materialClass}`
         const mesh = new THREE.Mesh(geometry, material)
         mesh.name = material.name
-        root.add(mesh)
+        attachToSliceOrRoot(mesh, sliceKey, model, animSettings, sliceNodes, animNodes, root)
         materials.push(material)
       }
     }
@@ -270,9 +309,6 @@ export async function exportModelToGlb(
       }
     }
 
-    // Index nodes by sliceKey for animation group placement.
-    const sliceNodes = hasAnimations ? new Map<string, THREE.Group>() : undefined
-
     for (const { materialClass, colorKey, geometry, sliceKey } of groups) {
       const params = materialParamsFor(materialClass)
       const isGlass = materialClass === 'glass'
@@ -303,41 +339,19 @@ export async function exportModelToGlb(
       material.name = `voxel_${hex6(colorKey)}_${materialClass}`
       const mesh = new THREE.Mesh(geometry, material)
       mesh.name = material.name
-
-      if (sliceNodes && sliceKey) {
-        let node = sliceNodes.get(sliceKey)
-        if (!node) {
-          node = new THREE.Group()
-          const { axis, offset } = decodeSliceKey(sliceKey)
-          const center = sliceBBoxCenter(model, axis, offset)
-          if (center) node.position.copy(center)
-          const settings = animSettings!.get(sliceKey)!
-          node.name = `anim_${sliceKey}`
-          sliceNodes.set(sliceKey, node)
-          animNodes!.push({ node, sliceKey, settings, axis, center: center ?? new THREE.Vector3() })
-        }
-        node.add(mesh)
-      } else {
-        root.add(mesh)
-      }
+      attachToSliceOrRoot(mesh, sliceKey, model, animSettings, sliceNodes, animNodes, root)
       materials.push(material)
     }
-
-    // Attach animated slice nodes to root.
-    if (sliceNodes) {
-      for (const node of sliceNodes.values()) {
-        root.add(node)
-      }
-    }
   }
 
-  // Build and attach animation clips.
-  if (animNodes && animNodes.length > 0) {
-    const clips = buildAllAnimationClips(animNodes)
-    for (const clip of clips) {
-      root.animations.push(clip)
-    }
+  // Attach animated slice nodes to root.
+  if (sliceNodes) {
+    for (const node of sliceNodes.values()) root.add(node)
   }
+
+  // Build animation clips — GLTFExporter reads these from `options.animations`, not
+  // `Object3D.animations` (which it ignores entirely).
+  const clips = animNodes && animNodes.length > 0 ? buildAllAnimationClips(animNodes) : []
 
   const scale = (options.scaleFactor ?? 100) / 100
   const anchor = options.anchor ?? 'center'
@@ -352,7 +366,7 @@ export async function exportModelToGlb(
   }
 
   try {
-    const result = await new GLTFExporter().parseAsync(root, { binary: true })
+    const result = await new GLTFExporter().parseAsync(root, { binary: true, animations: clips })
     return result as ArrayBuffer // `binary: true` always resolves to an ArrayBuffer
   } finally {
     for (const g of geometries) g.dispose()
