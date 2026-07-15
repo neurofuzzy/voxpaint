@@ -9,9 +9,16 @@ type Slice = StateCreator<AppState, [['zustand/immer', never]], [], ModeSlice>
  * awareness stays at component boundaries (whole-subtree gating) instead of being sprinkled through
  * the code.
  */
-export const createModeSlice: Slice = (set) => ({
+export const createModeSlice: Slice = (set, get) => ({
   mode: 'model',
-  setMode: (mode) =>
+  setMode: (mode) => {
+    // Animate mode's undo/redo dispatches to the animation history stack (animUndo/animRedo),
+    // which cannot revert voxel-model changes. Resolving any pending float here means Animate's
+    // mask tools (which also call bakeFloatIfAny before their own stroke, per editToolFactory)
+    // never silently commit a model change that Animate's undo can't see.
+    if (mode === 'animate') {
+      get().bakeFloatIfAny()
+    }
     set((state) => {
       state.mode = mode
       // Animate mode only has mask paint/erase handlers (see engine/tools's animateToolMap) — land
@@ -20,5 +27,6 @@ export const createModeSlice: Slice = (set) => ({
       if (mode === 'animate' && state.activeTool !== 'paint' && state.activeTool !== 'erase') {
         state.activeTool = 'paint'
       }
-    }),
+    })
+  },
 })
