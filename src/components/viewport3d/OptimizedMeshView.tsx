@@ -59,7 +59,13 @@ export function OptimizedMeshView() {
     return buildOptimizedVoxelGroups(model, palette, optimizedMesh)
   }, [model, palette, optimizedMesh, textured, gridExtent])
 
-  const geometries = useMemo(() => built.groups.map((g) => g.geometry), [built])
+  // Emissive materials skip AO/noise baking entirely (a glowing surface shouldn't be shadowed or
+  // dirtied) — excluded here so the unwrap atlas never allocates space for them; they still act as
+  // AO occluders for everything else, since occlusion sampling reads the 3D model, not the atlas.
+  const geometries = useMemo(
+    () => built.groups.filter((g) => g.materialClass !== 'emissive').map((g) => g.geometry),
+    [built],
+  )
 
   const { aoTexture, metalnessTexture, roughnessTexture, metalBaseColorTexture } = usePreviewAOMaps(
     model,
@@ -111,7 +117,7 @@ export function OptimizedMeshView() {
       const group = built.groups[i]
       const isMetal = group.materialClass === 'metal'
       const hasOverlay = !!overlayByColor?.get(group.colorKey)
-      m.aoMap = aoTexture ?? null
+      m.aoMap = group.materialClass !== 'emissive' ? (aoTexture ?? null) : null
       m.metalnessMap = isMetal ? metalnessTexture : null
       m.roughnessMap = isMetal ? roughnessTexture : null
       if (isMetal && !hasOverlay && metalBaseColorTexture) m.map = metalBaseColorTexture

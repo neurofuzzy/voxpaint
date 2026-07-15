@@ -190,10 +190,15 @@ export async function exportModelToGlb(
     let metalTex: THREE.Texture | null = null
     let roughTex: THREE.Texture | null = null
     let colorTex: THREE.Texture | null = null
-    if ((options.ambientOcclusion || (options.specularNoiseLevel ?? 0) > 0) && groups.length > 0) {
-      const unwrapped = unwrapGeometries(groups.map((g) => g.geometry))
-      for (let i = 0; i < groups.length; i++) {
-        groups[i].geometry.setAttribute('uv1', new THREE.Float32BufferAttribute(unwrapped.uv1Arrays[i], 2))
+    // Emissive materials skip both AO darkening and the noise grain baked into the same atlas —
+    // a glowing surface shouldn't be shadowed or dirtied by either. They still act as occluders for
+    // everything else (bakeAOToAtlas samples the full `model`, not the atlas contents), so excluding
+    // them here only means they never get an aoMap of their own.
+    const aoGroups = groups.filter((g) => g.materialClass !== 'emissive')
+    if ((options.ambientOcclusion || (options.specularNoiseLevel ?? 0) > 0) && aoGroups.length > 0) {
+      const unwrapped = unwrapGeometries(aoGroups.map((g) => g.geometry))
+      for (let i = 0; i < aoGroups.length; i++) {
+        aoGroups[i].geometry.setAttribute('uv1', new THREE.Float32BufferAttribute(unwrapped.uv1Arrays[i], 2))
       }
       const baked = bakeAOToAtlas(model, unwrapped.atlas, options.noiseLevel ?? 0, options.aoStrength ?? 1, animatedKeys)
       aoTex = aoMapTexture(baked.data, baked.width, baked.height)
@@ -244,7 +249,7 @@ export async function exportModelToGlb(
           roughness: params.roughness,
           transmission: params.transmission,
         })
-        if (aoTex) material.aoMap = aoTex
+        if (aoTex && materialClass !== 'emissive') material.aoMap = aoTex
         if (materialClass === 'emissive') {
           material.emissive = new THREE.Color(colorKey)
           material.emissiveIntensity = params.emissiveIntensity
@@ -280,12 +285,14 @@ export async function exportModelToGlb(
     let metalTex: THREE.Texture | null = null
     let roughTex: THREE.Texture | null = null
     let colorTex: THREE.Texture | null = null
-    if (options.ambientOcclusion || (options.specularNoiseLevel ?? 0) > 0) {
-      const unwrapped = unwrapGeometries(groups.map((g) => g.geometry))
-      for (let i = 0; i < groups.length; i++) {
+    // See the textured path above: emissive materials skip AO/noise entirely.
+    const aoGroups = groups.filter((g) => g.materialClass !== 'emissive')
+    if ((options.ambientOcclusion || (options.specularNoiseLevel ?? 0) > 0) && aoGroups.length > 0) {
+      const unwrapped = unwrapGeometries(aoGroups.map((g) => g.geometry))
+      for (let i = 0; i < aoGroups.length; i++) {
         const uv1 = new THREE.Float32BufferAttribute(unwrapped.uv1Arrays[i], 2)
-        groups[i].geometry.setAttribute('uv1', uv1)
-        groups[i].geometry.setAttribute('uv', uv1)
+        aoGroups[i].geometry.setAttribute('uv1', uv1)
+        aoGroups[i].geometry.setAttribute('uv', uv1)
       }
       const baked = bakeAOToAtlas(model, unwrapped.atlas, options.noiseLevel ?? 0, options.aoStrength ?? 1, animatedKeys)
       aoTex = aoMapTexture(baked.data, baked.width, baked.height)
@@ -322,7 +329,7 @@ export async function exportModelToGlb(
         const animMode = emissiveAnimIndex.get(colorKey)
         if (animMode) emissiveAnimTargets.push({ material, mode: animMode })
       }
-      if (aoTex) {
+      if (aoTex && materialClass !== 'emissive') {
         material.aoMap = aoTex
       }
       if (materialClass === 'metal') {

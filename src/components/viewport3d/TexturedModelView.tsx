@@ -31,7 +31,12 @@ export function TexturedModelView() {
   const groups = useMemo(() => buildTexturedGeometryByColor(model, palette, gridExtent), [model, palette, gridExtent])
   useEffect(() => () => { for (const g of groups) g.geometry.dispose() }, [groups])
 
-  const geometries = useMemo(() => groups.map((g) => g.geometry), [groups])
+  // Emissive materials skip AO/noise baking entirely (see OptimizedMeshView) — excluded from the
+  // unwrap atlas; they still occlude everything else, since occlusion sampling reads the 3D model.
+  const geometries = useMemo(
+    () => groups.filter((g) => g.materialClass !== 'emissive').map((g) => g.geometry),
+    [groups],
+  )
   const { aoTexture, metalnessTexture, roughnessTexture } = usePreviewAOMaps(
     model,
     geometries,
@@ -71,7 +76,7 @@ export function TexturedModelView() {
     for (let i = 0; i < materials.length; i++) {
       const m = materials[i]
       const isMetal = groups[i].materialClass === 'metal'
-      m.aoMap = aoTexture ?? null
+      m.aoMap = groups[i].materialClass !== 'emissive' ? (aoTexture ?? null) : null
       m.metalnessMap = isMetal ? metalnessTexture : null
       m.roughnessMap = isMetal ? roughnessTexture : null
       m.needsUpdate = true
