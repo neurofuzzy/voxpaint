@@ -16,8 +16,8 @@ type Slice = StateCreator<AppState, [['zustand/immer', never]], [], ToolActionsS
 export const createToolActionsSlice: Slice = (set, get) => ({
   floodFill: (u, v) => {
     get().bakeFloatIfAny()
-    const { model, plane, activePaletteSlot, selection } = get()
-    let cells = floodFillRegion(model, plane, u, v)
+    const { model, plane, activePaletteSlot, selection, meta } = get()
+    let cells = floodFillRegion(model, plane, u, v, meta.gridExtent)
     // An active selection clips the fill to its mask.
     if (selection) cells = cells.filter(([cu, cv]) => isCellSelected(selection, cu, cv))
     if (cells.length === 0) return
@@ -36,9 +36,9 @@ export const createToolActionsSlice: Slice = (set, get) => ({
 
   cloneStampCell: (srcU, srcV, destU, destV) => {
     get().bakeFloatIfAny()
-    const { model, plane } = get()
+    const { model, plane, meta } = get()
     const destCoord = gridCoordFromPixel(plane, destU, destV)
-    if (!withinWorkingBounds(destCoord)) return
+    if (!withinWorkingBounds(destCoord, meta.gridExtent)) return
     const srcKey = encodeKey(...gridCoordFromPixel(plane, srcU, srcV))
     const srcColor = model.color.get(srcKey)
     const srcChamfer = model.chamfer.get(srcKey)
@@ -159,10 +159,10 @@ export const createToolActionsSlice: Slice = (set, get) => ({
   },
 
   bakeFloatIfAny: () => {
-    const { floatContent, floatOrigin, plane } = get()
+    const { floatContent, floatOrigin, plane, meta } = get()
     if (!floatContent || !floatOrigin) return
     set((state) => {
-      applyClipboardAt(state.model, plane, floatContent, floatOrigin.originU, floatOrigin.originV)
+      applyClipboardAt(state.model, plane, floatContent, floatOrigin.originU, floatOrigin.originV, meta.gridExtent)
       state.meta.modifiedAt = new Date().toISOString()
       state.dirty = true
     })

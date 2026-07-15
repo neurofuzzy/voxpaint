@@ -1,5 +1,5 @@
 import type { StateCreator } from 'zustand'
-import { emptyModel } from '@/engine/grid/GridStore'
+import { emptyModel, DEFAULT_GRID_EXTENT } from '@/engine/grid/GridStore'
 import { DEFAULT_PALETTE } from '@/engine/palette/defaultPalette'
 import { emptyTextureModel } from '@/engine/texture/TextureStore'
 import type { AppState, ProjectSlice } from './types'
@@ -13,6 +13,7 @@ export const createProjectSlice: Slice = (set) => ({
     name: 'Untitled Project',
     createdAt: new Date().toISOString(),
     modifiedAt: new Date().toISOString(),
+    gridExtent: DEFAULT_GRID_EXTENT,
   },
 
   setModel: (model) =>
@@ -30,19 +31,20 @@ export const createProjectSlice: Slice = (set) => ({
       state.dirty = true
     }),
 
-  newProject: () =>
+  newProject: (name, gridExtent) =>
     set((state) => {
       state.model = emptyModel()
       state.palette = DEFAULT_PALETTE
       state.meta = {
-        name: 'Untitled Project',
+        name: name || 'Untitled Project',
         createdAt: new Date().toISOString(),
         modifiedAt: new Date().toISOString(),
+        gridExtent,
       }
       state.past = []
       state.future = []
       // Reset the parallel texture stack too, so a new project starts fully blank.
-      state.texture = emptyTextureModel()
+      state.texture = emptyTextureModel(gridExtent)
       state.texturePast = []
       state.textureFuture = []
       state.textureSelection = null

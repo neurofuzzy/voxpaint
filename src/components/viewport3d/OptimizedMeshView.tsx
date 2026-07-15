@@ -42,6 +42,7 @@ export function OptimizedMeshView() {
   const specularNoiseLevel = useAppStore((s) => s.specularNoiseLevel)
   const aoStrength = useAppStore((s) => s.aoStrength)
   const glassRoughnessLevel = useAppStore((s) => s.glassRoughnessLevel)
+  const gridExtent = useAppStore((s) => s.meta.gridExtent)
 
   const setMeshTriangles = useAppStore((s) => s.setMeshTriangles)
 
@@ -49,12 +50,12 @@ export function OptimizedMeshView() {
 
   const built = useMemo(() => {
     if (textured) {
-      const groups = buildTexturedGeometryByColor(model, palette)
+      const groups = buildTexturedGeometryByColor(model, palette, gridExtent)
       const triangles = groups.reduce((sum, g) => sum + triangleCount(g.geometry), 0)
       return { groups, rawTriangles: triangles, optimizedTriangles: triangles }
     }
     return buildOptimizedVoxelGroups(model, palette, optimizedMesh)
-  }, [model, palette, optimizedMesh, textured])
+  }, [model, palette, optimizedMesh, textured, gridExtent])
 
   const geometries = useMemo(() => built.groups.map((g) => g.geometry), [built])
 
@@ -68,7 +69,7 @@ export function OptimizedMeshView() {
   // Painted texture bakes to an overlay map (color × blend), one per distinct colour, reused by
   // the plain-untextured branch too (where it's simply empty — buildPreviewMaterial then falls
   // back to solid colour).
-  const blend = useMemo(() => (textured ? buildBlendAtlas(texture) : null), [textured, texture])
+  const blend = useMemo(() => (textured ? buildBlendAtlas(texture, gridExtent) : null), [textured, texture, gridExtent])
   const overlayByColor = useMemo(
     () => (blend ? bakeOverlayTexturesByColor(built.groups.map((g) => g.colorKey), blend) : null),
     [built.groups, blend],

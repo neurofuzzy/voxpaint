@@ -1,8 +1,8 @@
 import { decodeKey, emptyModel, encodeKey, recomputeBounds } from '@/engine/grid/GridStore'
-import type { CellKey, VoxelModel } from '@/engine/grid/types'
+import type { CellKey, GridExtent, VoxelModel } from '@/engine/grid/types'
 import type { PaletteState } from '@/engine/palette/types'
 import type { BoxFace, TextureModel } from '@/engine/texture/types'
-import { BOX_FACES, FACE_SIZE, TEXEL_SCALE } from '@/engine/texture/types'
+import { BOX_FACES, faceSizeFor, TEXEL_SCALE } from '@/engine/texture/types'
 import { emptyTextureModel } from '@/engine/texture/TextureStore'
 import type { SliceAnimSettings, SliceKey } from '@/engine/animation/types'
 import { encodeSliceKey } from '@/engine/animation/animationLayers'
@@ -21,17 +21,18 @@ function base64ToU8(b64: string): Uint8Array {
   return a
 }
 
-function serializeTexture(texture: TextureModel): SerializedTexture {
+function serializeTexture(texture: TextureModel, gridExtent: GridExtent): SerializedTexture {
   const faces = {} as Record<BoxFace, string>
   for (const face of BOX_FACES) faces[face] = u8ToBase64(texture.faces[face])
-  return { texelScale: TEXEL_SCALE, faceSize: FACE_SIZE, faces }
+  return { texelScale: TEXEL_SCALE, faceSize: faceSizeFor(gridExtent), faces }
 }
 
-function deserializeTexture(s: SerializedTexture): TextureModel {
-  // Guard against an incompatible face size (e.g. a future project grid-size change) — rather than
-  // remap texels, fall back to an empty texture so the project still loads.
-  if (s.faceSize !== FACE_SIZE) return emptyTextureModel()
-  const texture = emptyTextureModel()
+function deserializeTexture(s: SerializedTexture, gridExtent: GridExtent): TextureModel {
+  // Guard against an incompatible face size (shouldn't happen — faceSize is derived from the
+  // project's own locked-in gridExtent — but a hand-edited or corrupt file could still mismatch)
+  // — rather than remap texels, fall back to an empty texture so the project still loads.
+  if (s.faceSize !== faceSizeFor(gridExtent)) return emptyTextureModel(gridExtent)
+  const texture = emptyTextureModel(gridExtent)
   for (const face of BOX_FACES) {
     const arr = base64ToU8(s.faces[face] ?? '')
     if (arr.length === texture.faces[face].length) texture.faces[face] = arr
@@ -91,7 +92,7 @@ export function serializeProject(model: VoxelModel, palette: PaletteState, meta:
     meta,
     palette,
     model: { bounds: model.bounds, colorCells, chamferCells },
-    texture: serializeTexture(texture),
+    texture: serializeTexture(texture, meta.gridExtent),
     view,
     animations: animSettings ? serializeAnimations(animSettings) : undefined,
     masks: sliceMasks ? serializeSliceMasks(sliceMasks) : undefined,
@@ -115,7 +116,7 @@ export function deserializeProject(file: VoxPaintProjectFile): { model: VoxelMod
   }
 
   const built: VoxelModel = { color, chamfer, bounds: file.model.bounds }
-  const texture = file.texture ? deserializeTexture(file.texture) : emptyTextureModel()
+  const texture = file.texture ? deserializeTexture(file.texture, file.meta.gridExtent) : emptyTextureModel(file.meta.gridExtent)
   const view: ViewSettings = { ambientOcclusion: false, noiseLevel: 0, specularNoiseLevel: 0, aoStrength: 1, glassRoughnessLevel: 0.3, exposure: 1, exportScaleFactor: 100, exportAnchor: 'center', ...file.view }
   const animSettings = file.animations ? deserializeAnimations(file.animations) : new Map()
   const sliceMasks = file.masks ? deserializeSliceMasks(file.masks) : new Map()

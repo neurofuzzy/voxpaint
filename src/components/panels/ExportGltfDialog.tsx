@@ -40,6 +40,7 @@ export function ExportGltfDialog({ open, onOpenChange }: { open: boolean; onOpen
   async function run() {
     const state = useAppStore.getState()
     const { model, palette, meta, texture, noiseLevel, specularNoiseLevel, aoStrength, glassRoughnessLevel, animSettings, sliceMasks } = state
+    const { gridExtent } = meta
     const sf = state.exportScaleFactor
     const anchor = state.exportAnchor
     if (model.color.size === 0) {
@@ -50,7 +51,7 @@ export function ExportGltfDialog({ open, onOpenChange }: { open: boolean; onOpen
     setBusy(true)
     try {
       showToast('Exporting GLTF…')
-      const glb = await exportModelToGlb(model, palette, texture, {
+      const glb = await exportModelToGlb(model, palette, gridExtent, texture, {
         ambientOcclusion: true,
         noiseLevel,
         specularNoiseLevel,

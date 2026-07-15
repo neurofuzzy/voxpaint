@@ -1,4 +1,3 @@
-import { DEFAULT_GRID_EXTENT } from '@/engine/grid/GridStore'
 import { useAppStore } from '@/store/useAppStore'
 
 export function ModelStats() {
@@ -6,13 +5,14 @@ export function ModelStats() {
   const dirty = useAppStore((s) => s.dirty)
   const lastSavedAt = useAppStore((s) => s.lastSavedAt)
   const meshTriangles = useAppStore((s) => s.meshTriangles)
+  const gridExtent = useAppStore((s) => s.meta.gridExtent)
 
   const cellCount = model.color.size
   const bounds = model.bounds
   const span = bounds
     ? Math.max(bounds.max[0] - bounds.min[0], bounds.max[1] - bounds.min[1], bounds.max[2] - bounds.min[2]) + 1
     : 0
-  const nearCap = span >= DEFAULT_GRID_EXTENT - 4
+  const nearCap = span >= gridExtent - 4
 
   return (
     <div className="flex items-center gap-1.5 whitespace-nowrap text-xs text-neutral-500">

@@ -1,5 +1,5 @@
 import * as THREE from 'three'
-import type { Axis, CellKey, VoxelModel } from '@/engine/grid/types'
+import type { Axis, CellKey, GridExtent, VoxelModel } from '@/engine/grid/types'
 import type { PaletteState } from '@/engine/palette/types'
 import type { TextureModel } from '@/engine/texture/types'
 import { buildBlendAtlas } from '@/engine/texture/boxMapping'
@@ -31,6 +31,7 @@ export function buildAnimatedSliceMeshes(
   animSettings: Map<SliceKey, SliceAnimSettings>,
   sliceMasks: Map<SliceKey, Set<CellKey>>,
   texture: TextureModel,
+  gridExtent: GridExtent,
   glassRoughnessLevel: number,
 ): AnimatedSliceMeshes | null {
   if (animSettings.size === 0) return null
@@ -45,11 +46,11 @@ export function buildAnimatedSliceMeshes(
 
   const textured = hasTextureContent(texture)
   const groups = textured
-    ? buildTexturedGeometryBySlice(model, palette, nodeAssignment)
+    ? buildTexturedGeometryBySlice(model, palette, nodeAssignment, gridExtent)
     : buildOptimizedVoxelGroupsBySlice(model, palette, nodeAssignment).groups
 
   const overlayByColor = textured
-    ? bakeOverlayTexturesByColor(groups.map((g) => g.colorKey), buildBlendAtlas(texture))
+    ? bakeOverlayTexturesByColor(groups.map((g) => g.colorKey), buildBlendAtlas(texture, gridExtent))
     : null
 
   const materials: THREE.MeshPhysicalMaterial[] = []

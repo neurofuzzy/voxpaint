@@ -7,7 +7,7 @@ import { forEachSelectedCell, traceSelectionOutline } from '@/engine/tools/selec
 import { encodeSliceKey } from '@/engine/animation/animationLayers'
 import { useAppStore } from '@/store/useAppStore'
 import { worldToScreen } from './cameraTransform'
-import { BASE_CELL_PX, HALF } from './canvasConstants'
+import { BASE_CELL_PX } from './canvasConstants'
 import { useKeyboardShortcuts } from './useKeyboardShortcuts'
 import { usePixelCanvasTools } from './usePixelCanvasTools'
 
@@ -85,6 +85,7 @@ export function PixelCanvas() {
   const floatOrigin = useAppStore((s) => s.floatOrigin)
   const mode = useAppStore((s) => s.mode)
   const sliceMasks = useAppStore((s) => s.sliceMasks)
+  const gridExtent = useAppStore((s) => s.meta.gridExtent)
 
   const { onPointerDown, onPointerMove, onPointerUp, onPointerLeave, linePreview, selectPreview, hoverCellRef, size, pan, zoom } =
     usePixelCanvasTools(canvasRef)
@@ -120,11 +121,12 @@ export function PixelCanvas() {
     ctx.fillRect(0, 0, size.width, size.height)
 
     const cellPx = BASE_CELL_PX * zoom
+    const half = gridExtent / 2
 
-    // checkerboard for empty cells, over the logical -HALF..HALF working span
+    // checkerboard for empty cells, over the logical -half..half working span
     ctx.fillStyle = '#141416'
-    for (let u = -HALF; u < HALF; u++) {
-      for (let v = -HALF; v < HALF; v++) {
+    for (let u = -half; u < half; u++) {
+      for (let v = -half; v < half; v++) {
         if ((u + v) % 2 === 0) continue
         const [sx, sy] = worldToScreen(u, v, size, pan, zoom)
         ctx.fillRect(sx, sy, cellPx, cellPx)
@@ -137,10 +139,10 @@ export function PixelCanvas() {
     // visual hierarchy, adapted from its triangular lattice to a plain rectangular one. Drawn
     // before any content so painted cells, behind-layer outlines, and overlays all sit on top of
     // it instead of the grid cutting through them.
-    const [gridLeft] = worldToScreen(-HALF, 0, size, pan, zoom)
-    const [gridRight] = worldToScreen(HALF, 0, size, pan, zoom)
-    const [, gridTop] = worldToScreen(0, -HALF, size, pan, zoom)
-    const [, gridBottom] = worldToScreen(0, HALF, size, pan, zoom)
+    const [gridLeft] = worldToScreen(-half, 0, size, pan, zoom)
+    const [gridRight] = worldToScreen(half, 0, size, pan, zoom)
+    const [, gridTop] = worldToScreen(0, -half, size, pan, zoom)
+    const [, gridBottom] = worldToScreen(0, half, size, pan, zoom)
 
     const strokeGridLines = (positions: number[], color: string) => {
       if (positions.length === 0) return
@@ -162,7 +164,7 @@ export function PixelCanvas() {
 
     const fineLines: number[] = []
     const subdivLines: number[] = []
-    for (let i = -HALF; i <= HALF; i++) {
+    for (let i = -half; i <= half; i++) {
       if (i === 0) continue // origin drawn separately, below
       if (i % 8 === 0) subdivLines.push(i)
       else fineLines.push(i)
@@ -180,8 +182,8 @@ export function PixelCanvas() {
     // active layer's opaque fill).
     const behindPlane = { ...plane, offset: plane.offset - plane.orientation }
     ctx.lineWidth = 2
-    for (let u = -HALF; u < HALF; u++) {
-      for (let v = -HALF; v < HALF; v++) {
+    for (let u = -half; u < half; u++) {
+      for (let v = -half; v < half; v++) {
         const behindCell = model.color.get(encodeKey(...gridCoordFromPixel(behindPlane, u, v)))
         if (!behindCell) continue
         const [sx, sy] = worldToScreen(toDisplayU(plane, u), toDisplayV(plane, v), size, pan, zoom)
@@ -192,8 +194,8 @@ export function PixelCanvas() {
       }
     }
 
-    for (let u = -HALF; u < HALF; u++) {
-      for (let v = -HALF; v < HALF; v++) {
+    for (let u = -half; u < half; u++) {
+      for (let v = -half; v < half; v++) {
         const coord = gridCoordFromPixel(plane, u, v)
         const key = encodeKey(...coord)
         const colorCell = model.color.get(key)
@@ -217,8 +219,8 @@ export function PixelCanvas() {
     if (mode === 'animate') {
       const currentMask = sliceMasks.get(encodeSliceKey(plane.axis, plane.offset))
       if (currentMask && currentMask.size > 0) {
-        for (let u = -HALF; u < HALF; u++) {
-          for (let v = -HALF; v < HALF; v++) {
+        for (let u = -half; u < half; u++) {
+          for (let v = -half; v < half; v++) {
             const coord = gridCoordFromPixel(plane, u, v)
             const key = encodeKey(...coord)
             if (!currentMask.has(key)) continue
@@ -309,7 +311,7 @@ export function PixelCanvas() {
       }
       ctx.setLineDash([])
     }
-  }, [model, palette, plane, linePreview, selection, selectPreview, floatContent, floatOrigin, antPhase, size, pan, zoom, mode, sliceMasks])
+  }, [model, palette, plane, linePreview, selection, selectPreview, floatContent, floatOrigin, antPhase, size, pan, zoom, mode, sliceMasks, gridExtent])
 
   useEffect(() => {
     draw()

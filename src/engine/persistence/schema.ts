@@ -1,10 +1,10 @@
 import type { AnimationType, AnimationSpeed } from '@/engine/animation/types'
-import type { Axis, BBox, ChamferClassification, Orientation } from '@/engine/grid/types'
+import type { Axis, BBox, ChamferClassification, GridExtent, Orientation } from '@/engine/grid/types'
 import type { PaletteSlotRef, PaletteState } from '@/engine/palette/types'
 import type { BoxFace } from '@/engine/texture/types'
 import type { GltfExportAnchor } from '@/engine/export/gltfExport'
 
-export const CURRENT_SCHEMA_VERSION = 5 as const
+export const CURRENT_SCHEMA_VERSION = 6 as const
 
 export type ViewSettings = {
   ambientOcclusion: boolean
@@ -21,6 +21,8 @@ export type ProjectMeta = {
   name: string
   createdAt: string // ISO 8601
   modifiedAt: string
+  /** Locked in at project creation (see engine/grid/types.ts `GridExtent`) — never changes after. */
+  gridExtent: GridExtent
 }
 
 export type SerializedColorCell = { x: number; y: number; z: number; paletteSlot: PaletteSlotRef }
@@ -92,7 +94,11 @@ export type VoxPaintProjectFileV2 = {
  * v4: adds an optional `animations` array for per-slice animation settings (axis, offset, type, speed).
  *
  * v5: adds an optional `masks` array for per-slice animation masks (which occupied cells of a
- * slice animate, vs the whole slice). */
+ * slice animate, vs the whole slice).
+ *
+ * v6: `meta.gridExtent` becomes required — the project's locked-in working-cube size, chosen at
+ * creation (see engine/grid/types.ts `GridExtent`). Older files didn't have per-project sizing at
+ * all (every project used the same fixed 16 extent), so the v5→v6 migration just stamps `16`. */
 export type VoxPaintProjectFile = {
   schemaVersion: typeof CURRENT_SCHEMA_VERSION
   meta: ProjectMeta

@@ -82,9 +82,9 @@ export const createAnimationSlice: Slice = (set, get) => ({
   },
 
   paintMaskCell: (u: number, v: number) => {
-    const { plane, model } = get()
+    const { plane, model, meta } = get()
     const coord = gridCoordFromPixel(plane, u, v)
-    if (!withinWorkingBounds(coord)) return false
+    if (!withinWorkingBounds(coord, meta.gridExtent)) return false
     const key = encodeKey(...coord)
     // Masking only ever makes sense over voxels that exist — painting empty space would be a no-op
     // that silently does nothing once intersected against sliceVoxelKeys anyway.

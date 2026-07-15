@@ -21,13 +21,14 @@ export function AnimatedModelView() {
   const sliceMasks = useAppStore((s) => s.sliceMasks)
   const texture = useAppStore((s) => s.texture)
   const glassRoughnessLevel = useAppStore((s) => s.glassRoughnessLevel)
+  const gridExtent = useAppStore((s) => s.meta.gridExtent)
 
   const animGroupRefs = useRef<Map<SliceKey, AnimGroup>>(new Map())
   const rootGroup = useMemo(() => new THREE.Group(), [])
 
   const built = useMemo(
-    () => buildAnimatedSliceMeshes(model, palette, animSettings, sliceMasks, texture, glassRoughnessLevel),
-    [model, palette, animSettings, sliceMasks, texture, glassRoughnessLevel],
+    () => buildAnimatedSliceMeshes(model, palette, animSettings, sliceMasks, texture, gridExtent, glassRoughnessLevel),
+    [model, palette, animSettings, sliceMasks, texture, gridExtent, glassRoughnessLevel],
   )
 
   // Build the scene graph imperatively — one Group per slice, with mesh children added directly.

@@ -1,8 +1,8 @@
 import { planeLogicalBasis } from '@/engine/plane/constructionPlane'
 import { axisIndex, ALL_AXES } from '@/engine/plane/planeGeometry'
-import type { Axis, ChamferCell, Coord } from '@/engine/grid/types'
+import type { Axis, ChamferCell, Coord, GridExtent } from '@/engine/grid/types'
 import type { BoxFace, TextureModel } from './types'
-import { BOX_FACE_AXIS, boxFaceOf, EMPTY, FACE_SIZE, GRAYSCALE, HALF_WORLD, TEXEL_SCALE } from './types'
+import { BOX_FACE_AXIS, boxFaceOf, EMPTY, faceSizeFor, GRAYSCALE, halfWorldFor, TEXEL_SCALE } from './types'
 
 /** Grayscale index → overlay blend value in [0,1], evenly spaced (`index/7`): indices 0–3 fall below
  * 0.5 (darken), 4–7 above (lighten), and none is exactly 0.5. Unpainted (`EMPTY`) is neutral 0.5. */
@@ -14,8 +14,12 @@ function blendForIndex(index: number): number {
 // --- Atlas layout: the 6 faces packed into a 3×2 grid -----------------------------------------
 const ATLAS_COLS = 3
 const ATLAS_ROWS = 2
-export const ATLAS_WIDTH = ATLAS_COLS * FACE_SIZE
-export const ATLAS_HEIGHT = ATLAS_ROWS * FACE_SIZE
+
+/** Atlas pixel dimensions for a project's `gridExtent` — 3×2 packed faces, each `faceSizeFor(gridExtent)`. */
+export function atlasDimsFor(gridExtent: GridExtent): { width: number; height: number; faceSize: number } {
+  const faceSize = faceSizeFor(gridExtent)
+  return { width: ATLAS_COLS * faceSize, height: ATLAS_ROWS * faceSize, faceSize }
+}
 
 export const FACE_ATLAS_CELL: Record<BoxFace, { col: number; row: number }> = {
   px: { col: 0, row: 0 },
@@ -68,17 +72,18 @@ const FLIP_V: Record<BoxFace, boolean> = { px: false, nx: false, py: true, ny: f
 
 /**
  * Projects a world vertex onto a box face's two in-plane axes, returning **continuous** texel
- * coordinates in `[0, FACE_SIZE]`. Reuses `planeLogicalBasis` so the projection matches the 2D
- * canvas's u/v convention, plus the per-face `FLIP_U`/`FLIP_V` correction so each face reads the
- * same way it was painted when viewed from outside the model.
+ * coordinates in `[0, faceSizeFor(gridExtent)]`. Reuses `planeLogicalBasis` so the projection
+ * matches the 2D canvas's u/v convention, plus the per-face `FLIP_U`/`FLIP_V` correction so each
+ * face reads the same way it was painted when viewed from outside the model.
  */
-export function worldToTexel(face: BoxFace, x: number, y: number, z: number): [number, number] {
+export function worldToTexel(face: BoxFace, x: number, y: number, z: number, gridExtent: GridExtent): [number, number] {
   const { axis } = BOX_FACE_AXIS[face]
   const { uDir, vDir } = AXIS_BASIS[axis]
   const p: Coord = [x, y, z]
   const pu = FLIP_U[face] ? -dot(p, uDir) : dot(p, uDir)
   const pv = FLIP_V[face] ? -dot(p, vDir) : dot(p, vDir)
-  return [(pu + HALF_WORLD) * TEXEL_SCALE, (pv + HALF_WORLD) * TEXEL_SCALE]
+  const halfWorld = halfWorldFor(gridExtent)
+  return [(pu + halfWorld) * TEXEL_SCALE, (pv + halfWorld) * TEXEL_SCALE]
 }
 
 /**
@@ -86,11 +91,12 @@ export function worldToTexel(face: BoxFace, x: number, y: number, z: number): [n
  * identical placement, so a vertex projected via `worldToTexel` samples the exact texel painted at
  * (tu, tv) on that face.
  */
-export function atlasUVFor(face: BoxFace, tu: number, tv: number): [number, number] {
+export function atlasUVFor(face: BoxFace, tu: number, tv: number, gridExtent: GridExtent): [number, number] {
   const { col, row } = FACE_ATLAS_CELL[face]
-  const atlasX = col * FACE_SIZE + tu
-  const atlasY = row * FACE_SIZE + tv
-  return [atlasX / ATLAS_WIDTH, atlasY / ATLAS_HEIGHT]
+  const { width, height, faceSize } = atlasDimsFor(gridExtent)
+  const atlasX = col * faceSize + tu
+  const atlasY = row * faceSize + tv
+  return [atlasX / width, atlasY / height]
 }
 
 /**
@@ -99,10 +105,10 @@ export function atlasUVFor(face: BoxFace, tu: number, tv: number): [number, numb
  * this per vertex and letting the rasterizer interpolate reproduces the exact per-texel mapping even
  * across the large coplanar quads the mesh optimizer welds together.
  */
-export function atlasUVForVertex(normal: Coord, x: number, y: number, z: number): [number, number] {
+export function atlasUVForVertex(normal: Coord, x: number, y: number, z: number, gridExtent: GridExtent): [number, number] {
   const face = boxFaceForCell(undefined, normal)
-  const [tu, tv] = worldToTexel(face, x, y, z)
-  return atlasUVFor(face, tu, tv)
+  const [tu, tv] = worldToTexel(face, x, y, z, gridExtent)
+  return atlasUVFor(face, tu, tv, gridExtent)
 }
 
 /**
@@ -111,11 +117,12 @@ export function atlasUVForVertex(normal: Coord, x: number, y: number, z: number)
  * Reuses the same axis basis + per-face flips as `worldToTexel`, so the round-trip is exact — used by
  * the AO bake to place a sample point at each atlas texel.
  */
-export function texelCenterToWorld(face: BoxFace, tu: number, tv: number, depthCoord: number): Coord {
+export function texelCenterToWorld(face: BoxFace, tu: number, tv: number, depthCoord: number, gridExtent: GridExtent): Coord {
   const { axis } = BOX_FACE_AXIS[face]
   const { uDir, vDir } = AXIS_BASIS[axis]
-  const su = (tu + 0.5) / TEXEL_SCALE - HALF_WORLD
-  const sv = (tv + 0.5) / TEXEL_SCALE - HALF_WORLD
+  const halfWorld = halfWorldFor(gridExtent)
+  const su = (tu + 0.5) / TEXEL_SCALE - halfWorld
+  const sv = (tv + 0.5) / TEXEL_SCALE - halfWorld
   const du = FLIP_U[face] ? -su : su // = dot(worldPos, uDir)
   const dv = FLIP_V[face] ? -sv : sv // = dot(worldPos, vDir)
   const p: Coord = [0, 0, 0]
@@ -134,11 +141,12 @@ export function texelCenterToWorld(face: BoxFace, tu: number, tv: number, depthC
  * preview shader reads `.r` and overlays it onto the voxel color; the exporter bakes it per color.
  * Stored as raw (non-color) data — consumers must set the texture's colorSpace to no-decode.
  */
-export function buildBlendAtlas(texture: TextureModel): { data: Uint8ClampedArray; width: number; height: number } {
-  const data = new Uint8ClampedArray(ATLAS_WIDTH * ATLAS_HEIGHT * 4)
+export function buildBlendAtlas(texture: TextureModel, gridExtent: GridExtent): { data: Uint8ClampedArray; width: number; height: number } {
+  const { width, height, faceSize } = atlasDimsFor(gridExtent)
+  const data = new Uint8ClampedArray(width * height * 4)
   // Default every pixel to neutral (0.5 blend → 128), so unused/empty atlas regions are no-ops.
   const neutral = Math.round(0.5 * 255)
-  for (let i = 0; i < ATLAS_WIDTH * ATLAS_HEIGHT; i++) {
+  for (let i = 0; i < width * height; i++) {
     data[i * 4] = neutral
     data[i * 4 + 1] = neutral
     data[i * 4 + 2] = neutral
@@ -148,17 +156,17 @@ export function buildBlendAtlas(texture: TextureModel): { data: Uint8ClampedArra
   for (const face of Object.keys(FACE_ATLAS_CELL) as BoxFace[]) {
     const { col, row } = FACE_ATLAS_CELL[face]
     const arr = texture.faces[face]
-    for (let tv = 0; tv < FACE_SIZE; tv++) {
-      for (let tu = 0; tu < FACE_SIZE; tu++) {
-        const value = Math.round(blendForIndex(arr[tv * FACE_SIZE + tu]) * 255)
-        const atlasX = col * FACE_SIZE + tu
-        const atlasY = row * FACE_SIZE + tv
-        const p = (atlasY * ATLAS_WIDTH + atlasX) * 4
+    for (let tv = 0; tv < faceSize; tv++) {
+      for (let tu = 0; tu < faceSize; tu++) {
+        const value = Math.round(blendForIndex(arr[tv * faceSize + tu]) * 255)
+        const atlasX = col * faceSize + tu
+        const atlasY = row * faceSize + tv
+        const p = (atlasY * width + atlasX) * 4
         data[p] = value
         data[p + 1] = value
         data[p + 2] = value
       }
     }
   }
-  return { data, width: ATLAS_WIDTH, height: ATLAS_HEIGHT }
+  return { data, width, height }
 }

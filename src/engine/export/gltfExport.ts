@@ -1,6 +1,6 @@
 import * as THREE from 'three'
 import { GLTFExporter } from 'three/addons/exporters/GLTFExporter.js'
-import type { Axis, VoxelModel, CellKey } from '@/engine/grid/types'
+import type { Axis, VoxelModel, CellKey, GridExtent } from '@/engine/grid/types'
 import type { PaletteState } from '@/engine/palette/types'
 import type { TextureModel } from '@/engine/texture/types'
 import { bakeAOToAtlas, makeSpecularNoiseTexture } from '@/engine/ao/bakeAO'
@@ -129,6 +129,7 @@ function aoMapTexture(data: Uint8ClampedArray, width: number, height: number): T
 export async function exportModelToGlb(
   model: VoxelModel,
   palette: PaletteState,
+  gridExtent: GridExtent,
   texture?: TextureModel,
   options: GltfExportOptions = {},
   animSettings?: Map<SliceKey, SliceAnimSettings>,
@@ -170,8 +171,8 @@ export async function exportModelToGlb(
     // for glass we emit a solid-colour material (no baked map, no unused TEXCOORD_0).
     const groups: Array<{ geometry: THREE.BufferGeometry; colorKey: number; materialClass: MaterialClass; sliceKey?: string }> =
       hasAnimations && nodeAssignment
-        ? buildTexturedGeometryBySlice(model, palette, nodeAssignment)
-        : buildTexturedGeometryByColor(model, palette).map((g) => ({ ...g, sliceKey: undefined }))
+        ? buildTexturedGeometryBySlice(model, palette, nodeAssignment, gridExtent)
+        : buildTexturedGeometryByColor(model, palette, gridExtent).map((g) => ({ ...g, sliceKey: undefined }))
     for (const { geometry } of groups) geometries.push(geometry)
 
     let aoTex: THREE.DataTexture | null = null
@@ -198,7 +199,7 @@ export async function exportModelToGlb(
       }
     }
 
-    const blend = buildBlendAtlas(texture!)
+    const blend = buildBlendAtlas(texture!, gridExtent)
     for (const { colorKey, materialClass, geometry, sliceKey } of groups) {
       geometry.deleteAttribute('color')
       const params = materialParamsFor(materialClass)

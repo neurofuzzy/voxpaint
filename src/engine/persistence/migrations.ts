@@ -44,6 +44,11 @@ MIGRATIONS[3] = (doc) => ({ ...doc, schemaVersion: 4 })
  * masks (every animated slice keeps animating as a whole, matching their pre-mask behavior). */
 MIGRATIONS[4] = (doc) => ({ ...doc, schemaVersion: 5 })
 
+/** v5 → v6: `meta.gridExtent` becomes required. Every pre-v6 project was authored under the old
+ * fixed 16 extent (the only size that ever existed), so stamp that — matches their existing
+ * painted bounds and their texture's existing `faceSize` (16 × texelScale) exactly. */
+MIGRATIONS[5] = (doc) => ({ ...doc, schemaVersion: 6, meta: { ...doc.meta, gridExtent: doc.meta?.gridExtent ?? 16 } })
+
 export class UnsupportedSchemaVersionError extends Error {
   constructor(foundVersion: unknown) {
     super(`This file is from a newer version of VoxPaint (schemaVersion=${String(foundVersion)}). Please update the app.`)

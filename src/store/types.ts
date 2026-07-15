@@ -1,4 +1,4 @@
-import type { Axis, CellKey, ChamferCell, Coord, Orientation, VoxelModel } from '@/engine/grid/types'
+import type { Axis, CellKey, ChamferCell, Coord, GridExtent, Orientation, VoxelModel } from '@/engine/grid/types'
 import type { GltfExportAnchor } from '@/engine/export/gltfExport'
 import type { PaletteSlotRef, PaletteState } from '@/engine/palette/types'
 import type { ConstructionPlane } from '@/engine/plane/types'
@@ -46,7 +46,7 @@ export type ProjectSlice = {
   setModel: (model: VoxelModel) => void
   setPalette: (palette: PaletteState) => void
   setProjectName: (name: string) => void
-  newProject: () => void
+  newProject: (name: string, gridExtent: GridExtent) => void
 }
 
 export type HistorySlice = {

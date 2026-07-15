@@ -1,21 +1,24 @@
+import type { GridExtent } from '@/engine/grid/types'
 import type { BoxFace, TextureModel } from './types'
-import { BOX_FACES, EMPTY, FACE_SIZE } from './types'
+import { BOX_FACES, EMPTY, faceSizeFor } from './types'
 
-/** Flat index into a face's texel array for texel (u, v). No bounds checking. */
-export function texelIndex(u: number, v: number): number {
-  return v * FACE_SIZE + u
+/** Flat index into a face's texel array for texel (u, v). No bounds checking. `faceSize` is the
+ * project's own `faceSizeFor(gridExtent)`. */
+export function texelIndex(u: number, v: number, faceSize: number): number {
+  return v * faceSize + u
 }
 
-/** True when (u, v) is inside a face's `FACE_SIZE²` bounds. */
-export function withinFace(u: number, v: number): boolean {
-  return u >= 0 && u < FACE_SIZE && v >= 0 && v < FACE_SIZE
+/** True when (u, v) is inside a face's `faceSize²` bounds. */
+export function withinFace(u: number, v: number, faceSize: number): boolean {
+  return u >= 0 && u < faceSize && v >= 0 && v < faceSize
 }
 
-/** A fresh texture with all six faces unpainted (`EMPTY`). */
-export function emptyTextureModel(): TextureModel {
+/** A fresh texture with all six faces unpainted (`EMPTY`), sized for the project's `gridExtent`. */
+export function emptyTextureModel(gridExtent: GridExtent): TextureModel {
+  const faceSize = faceSizeFor(gridExtent)
   const faces = {} as Record<BoxFace, Uint8Array>
   for (const face of BOX_FACES) {
-    const arr = new Uint8Array(FACE_SIZE * FACE_SIZE)
+    const arr = new Uint8Array(faceSize * faceSize)
     arr.fill(EMPTY)
     faces[face] = arr
   }
@@ -23,9 +26,9 @@ export function emptyTextureModel(): TextureModel {
 }
 
 /** Reads a texel's grayscale index (or `EMPTY`). Out-of-bounds reads return `EMPTY`. */
-export function getTexel(texture: TextureModel, face: BoxFace, u: number, v: number): number {
-  if (!withinFace(u, v)) return EMPTY
-  return texture.faces[face][texelIndex(u, v)]
+export function getTexel(texture: TextureModel, face: BoxFace, u: number, v: number, faceSize: number): number {
+  if (!withinFace(u, v, faceSize)) return EMPTY
+  return texture.faces[face][texelIndex(u, v, faceSize)]
 }
 
 /** True when any texel on any face has been painted (used to skip empty textures on export). */
