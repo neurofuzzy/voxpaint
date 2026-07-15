@@ -184,12 +184,9 @@ export function AnimatedModelView() {
         const dir = settings.animationType === 'slide-horizontal' ? uDir : vDir
         const amplitude = settings.slideAmount
 
-        const phase = t * 4
-        let offset: number
-        if (phase < 1) offset = phase
-        else if (phase < 2) offset = 2 - phase
-        else if (phase < 3) offset = -(phase - 2)
-        else offset = phase - 4
+        // Sine wave, matching the CUBICSPLINE curve baked into the GLTF export (animationGLTF.ts)
+        // rather than a linear back-and-forth — so the preview matches the exported motion.
+        const offset = Math.sin(t * Math.PI * 2)
 
         g.group.position.copy(g.center).addScaledVector(dir, offset * amplitude)
         g.group.quaternion.identity()
