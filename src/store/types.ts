@@ -123,6 +123,10 @@ export type ViewSlice = {
   meshTriangles: { optimized: number; raw: number } | null
   /** 3D preview: AO strength multiplier applied during bake (1.0–5.0, default 1.0). */
   aoStrength: number
+  /** 3D preview: renderer tone-mapping exposure (0.1–4, default 1.0). Applied on top of
+   * NeutralToneMapping (Canvas.tsx), so it's the user-facing lever for brightness since the
+   * baked-in light intensities can't be tuned by eye from here. */
+  exposure: number
   /** Dynamic status message shown in the footer's center area. Components set this on hover to
    * show contextual info; cleared on pointer leave. Falls back to the active tool hint when null. */
   statusMessage: string | null
@@ -142,6 +146,7 @@ export type ViewSlice = {
   setSpecularNoiseLevel: (v: number) => void
   setGlassRoughnessLevel: (v: number) => void
   setMeshTriangles: (v: { optimized: number; raw: number } | null) => void
+  setExposure: (v: number) => void
   setAoStrength: (v: number) => void
   setStatusMessage: (msg: string | null) => void
   setOnionSkin: (v: boolean) => void

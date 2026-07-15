@@ -18,8 +18,8 @@ export function FileMenu() {
   }
 
   function handleExport() {
-    const { model, palette, meta, texture, ambientOcclusion, noiseLevel, specularNoiseLevel, aoStrength, glassRoughnessLevel, exportScaleFactor, exportAnchor, animSettings, sliceMasks } = useAppStore.getState()
-    downloadProjectFile(serializeProject(model, palette, meta, texture, { ambientOcclusion, noiseLevel, specularNoiseLevel, aoStrength, glassRoughnessLevel, exportScaleFactor, exportAnchor }, animSettings, sliceMasks))
+    const { model, palette, meta, texture, ambientOcclusion, noiseLevel, specularNoiseLevel, aoStrength, glassRoughnessLevel, exposure, exportScaleFactor, exportAnchor, animSettings, sliceMasks } = useAppStore.getState()
+    downloadProjectFile(serializeProject(model, palette, meta, texture, { ambientOcclusion, noiseLevel, specularNoiseLevel, aoStrength, glassRoughnessLevel, exposure, exportScaleFactor, exportAnchor }, animSettings, sliceMasks))
     showToast('Project exported.')
   }
 
@@ -37,6 +37,7 @@ export function FileMenu() {
         s.specularNoiseLevel = view.specularNoiseLevel ?? 0
         s.aoStrength = view.aoStrength ?? 1
         s.glassRoughnessLevel = view.glassRoughnessLevel ?? 0.3
+        s.exposure = view.exposure ?? 1
         s.exportScaleFactor = view.exportScaleFactor ?? 100
         s.exportAnchor = view.exportAnchor ?? 'center'
         s.animSettings = animSettings

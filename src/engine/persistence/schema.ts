@@ -12,6 +12,7 @@ export type ViewSettings = {
   specularNoiseLevel: number
   aoStrength: number
   glassRoughnessLevel: number
+  exposure: number
   exportScaleFactor: number
   exportAnchor: GltfExportAnchor
 }

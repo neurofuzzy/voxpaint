@@ -17,6 +17,7 @@ export const createViewSlice: Slice = (set) => ({
   glassRoughnessLevel: 0.3,
   meshTriangles: null,
   aoStrength: 1,
+  exposure: 1,
   statusMessage: null,
   onionSkin: true,
   exportScaleFactor: 100,
@@ -31,6 +32,7 @@ export const createViewSlice: Slice = (set) => ({
   setGlassRoughnessLevel: (v) => set((state) => { state.glassRoughnessLevel = v; state.dirty = true }),
   setMeshTriangles: (v) => set((state) => { state.meshTriangles = v }),
   setAoStrength: (v) => set((state) => { state.aoStrength = v; state.dirty = true }),
+  setExposure: (v) => set((state) => { state.exposure = v; state.dirty = true }),
   setHoverCell: (coord, chamferValid) =>
     set((state) => {
       state.hoverCell = coord

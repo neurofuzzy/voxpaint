@@ -20,6 +20,7 @@ export function restoreAutosave(): void {
       state.specularNoiseLevel = view.specularNoiseLevel ?? 0
       state.aoStrength = view.aoStrength ?? 1
       state.glassRoughnessLevel = view.glassRoughnessLevel ?? 0.3
+      state.exposure = view.exposure ?? 1
       state.exportScaleFactor = view.exportScaleFactor ?? 100
       state.exportAnchor = view.exportAnchor ?? 'center'
       state.animSettings = animSettings
@@ -38,7 +39,7 @@ const flush = debounce(() => {
       state.palette,
       state.meta,
       state.texture,
-      { ambientOcclusion: state.ambientOcclusion, noiseLevel: state.noiseLevel, specularNoiseLevel: state.specularNoiseLevel, aoStrength: state.aoStrength, glassRoughnessLevel: state.glassRoughnessLevel, exportScaleFactor: state.exportScaleFactor, exportAnchor: state.exportAnchor },
+      { ambientOcclusion: state.ambientOcclusion, noiseLevel: state.noiseLevel, specularNoiseLevel: state.specularNoiseLevel, aoStrength: state.aoStrength, glassRoughnessLevel: state.glassRoughnessLevel, exposure: state.exposure, exportScaleFactor: state.exportScaleFactor, exportAnchor: state.exportAnchor },
       state.animSettings,
       state.sliceMasks,
     )

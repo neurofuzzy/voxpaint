@@ -27,6 +27,24 @@ import { VoxelInstancedMeshes } from './VoxelInstancedMeshes'
 const CLICK_DRAG_THRESHOLD_PX = 4
 
 /**
+ * Khronos "PBR Neutral" tone mapping (`NeutralToneMapping`) — the same curve the glTF Sample
+ * Viewer defaults to — so this preview's highlight rolloff/contrast matches how the exported
+ * model actually looks in a reference PBR viewer instead of the flat, unrolled-off output of
+ * `NoToneMapping`. Applied imperatively (not via `Canvas`'s `gl` prop) so `exposure` stays
+ * reactive to the store without needing to recreate the renderer.
+ */
+function ToneMappingController({ exposure }: { exposure: number }) {
+  const gl = useThree((s) => s.gl)
+  useEffect(() => {
+    gl.toneMapping = THREE.NeutralToneMapping
+  }, [gl])
+  useEffect(() => {
+    gl.toneMappingExposure = exposure
+  }, [gl, exposure])
+  return null
+}
+
+/**
  * Owns hover tracking — both the whole-voxel hover blink (InstancingManager, via the shared
  * `hoverCell` store field) and the live per-face hover preview (`hoveredFace`, drives
  * VoxelFaceHighlight — updates as the pointer crosses between faces of the same voxel, not just
@@ -151,6 +169,7 @@ export function Viewport3D() {
   const mode = useAppStore((s) => s.mode)
   const animSettings = useAppStore((s) => s.animSettings)
   const setStatusMessage = useAppStore((s) => s.setStatusMessage)
+  const exposure = useAppStore((s) => s.exposure)
   const containerRef = useRef<HTMLDivElement>(null)
   usePlaneLayerScroll(containerRef)
 
@@ -165,9 +184,11 @@ export function Viewport3D() {
       onPointerEnter={() => setStatusMessage(ORBIT_HINT)}
       onPointerLeave={() => setStatusMessage(null)}
     >
-      <Canvas flat camera={{ position: [18, 16, 20], fov: 45 }} gl={{ antialias: true }}>
+      <Canvas camera={{ position: [18, 16, 20], fov: 45 }} gl={{ antialias: true }}>
+        <ToneMappingController exposure={exposure} />
         <color attach="background" args={['#111114']} />
         <SceneLighting />
+        <SceneEnvironment />
         {textureMode ? (
           <>
             <TexturedModelView />
@@ -177,7 +198,6 @@ export function Viewport3D() {
           <>
             <ConstructionPlaneVisual />
             {!hasAnimations && <VoxelInstancedMeshes ref={managerRef} />}
-            <SceneEnvironment />
             {!hasAnimations && <OptimizedMeshView />}
             {hasAnimations && <AnimatedModelView />}
             <VoxelFaceHighlight />
