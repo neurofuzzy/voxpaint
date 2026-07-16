@@ -20,7 +20,7 @@ export function SettingsPalette() {
 
   if (minimized) {
     return (
-      <div className="absolute bottom-4 right-3 z-40" onPointerDown={(e) => e.stopPropagation()}>
+      <div data-tour="settings" className="absolute bottom-4 right-3 z-40" onPointerDown={(e) => e.stopPropagation()}>
         <button
           onClick={() => setMinimized(false)}
           title="View settings"
@@ -35,6 +35,7 @@ export function SettingsPalette() {
 
   return (
     <div
+      data-tour="settings"
       className="absolute bottom-4 right-3 z-40 flex flex-col gap-3 rounded-xl border border-neutral-800
         bg-neutral-900/80 p-3 shadow-2xl backdrop-blur-lg"
       onPointerDown={(e) => e.stopPropagation()}

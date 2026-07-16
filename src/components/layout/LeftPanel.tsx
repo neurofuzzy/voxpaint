@@ -6,7 +6,7 @@ export function LeftPanel() {
   const mode = useAppStore((s) => s.mode)
 
   return (
-    <div className="flex w-14 flex-col border-r border-neutral-800 bg-neutral-900">
+    <div data-tour="tools" className="flex w-14 flex-col border-r border-neutral-800 bg-neutral-900">
       <ToolPalette />
       {mode !== 'animate' && (
         <>

@@ -18,7 +18,7 @@ export function ModeTabs() {
   const setStatusMessage = useAppStore((s) => s.setStatusMessage)
 
   return (
-    <div role="tablist" aria-label="Authoring mode" className="flex items-center gap-0.5 rounded-lg border border-neutral-800 bg-neutral-950 p-0.5">
+    <div data-tour="modes" role="tablist" aria-label="Authoring mode" className="flex items-center gap-0.5 rounded-lg border border-neutral-800 bg-neutral-950 p-0.5">
       {MODES.map(({ id, label }) => {
         const active = mode === id
         return (

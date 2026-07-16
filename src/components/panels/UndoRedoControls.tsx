@@ -23,7 +23,7 @@ export function UndoRedoControls() {
   const redo = useAppStore((s) => (isTexture ? s.textureRedo : isAnimate ? s.animRedo : s.redo))
 
   return (
-    <div className="flex gap-1">
+    <div data-tour="undo" className="flex gap-1">
       <button
         disabled={past.length === 0 && !floatContent}
         onClick={undo}

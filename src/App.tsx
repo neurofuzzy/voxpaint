@@ -1,5 +1,8 @@
 import { useEffect } from 'react'
 import { MainLayout } from '@/components/layout/MainLayout'
+import { HelpDialog } from '@/components/onboarding/HelpDialog'
+import { InterfaceTour } from '@/components/onboarding/InterfaceTour'
+import { SplashDialog } from '@/components/onboarding/SplashDialog'
 import { ToastRegion } from '@/components/ui/ToastRegion'
 import { showToast } from '@/components/ui/toastBus'
 import { useAppStore } from '@/store/useAppStore'
@@ -24,6 +27,9 @@ function App() {
     <div className="h-screen w-screen overflow-hidden">
       <MainLayout />
       <ToastRegion />
+      <SplashDialog />
+      <HelpDialog />
+      <InterfaceTour />
     </div>
   )
 }

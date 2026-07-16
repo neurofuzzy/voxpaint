@@ -13,7 +13,7 @@ export function Editor2D() {
   usePlaneLayerScroll(containerRef)
 
   return (
-    <div ref={containerRef} className="flex h-full min-w-0 flex-col bg-neutral-950">
+    <div ref={containerRef} data-tour="editor2d" className="flex h-full min-w-0 flex-col bg-neutral-950">
       <div className="relative min-h-0 flex-1 overflow-hidden">
         {mode === 'texture' ? (
           <>

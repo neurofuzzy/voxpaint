@@ -347,6 +347,27 @@ export type AnimationSlice = {
   animRedo: () => void
 }
 
+/** Onboarding / chrome UI state (splash, keyboard-help dialog, spotlight interface tour). Kept in
+ * the store so any surface can open them and the splash's first-run visibility is decided once. */
+export type UiSlice = {
+  splashOpen: boolean
+  helpOpen: boolean
+  /** True while the spotlight interface tour is running. */
+  tourActive: boolean
+  /** Zero-based index into the tour step list (see components/onboarding/tourSteps.ts). */
+  tourStep: number
+  openSplash: () => void
+  /** Closes the splash, persisting the "don't show again" choice when `dontShowAgain` is true. */
+  closeSplash: (dontShowAgain: boolean) => void
+  openHelp: () => void
+  closeHelp: () => void
+  /** Starts the interface tour from step 0, closing splash/help first. */
+  startTour: () => void
+  endTour: () => void
+  tourNext: () => void
+  tourPrev: () => void
+}
+
 /** One Animate-mode undo/redo snapshot: animation settings, mask paint state, and pivots travel together. */
 export type AnimSnapshot = {
   animSettings: Map<SliceKey, SliceAnimSettings>
@@ -366,4 +387,5 @@ export type AppState = ProjectSlice &
   MoveActionsSlice &
   ModeSlice &
   TextureSlice &
-  AnimationSlice
+  AnimationSlice &
+  UiSlice

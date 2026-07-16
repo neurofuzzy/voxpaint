@@ -14,6 +14,7 @@ import { createTextureSlice } from './textureSlice'
 import { createToolActionsSlice } from './toolActionsSlice'
 import { createToolSlice } from './toolSlice'
 import type { AppState } from './types'
+import { createUiSlice } from './uiSlice'
 import { createViewSlice } from './viewSlice'
 
 enableMapSet()
@@ -33,5 +34,6 @@ export const useAppStore = create<AppState>()(
     ...createModeSlice(...a),
     ...createTextureSlice(...a),
     ...createAnimationSlice(...a),
+    ...createUiSlice(...a),
   })),
 )

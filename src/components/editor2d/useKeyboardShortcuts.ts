@@ -33,6 +33,14 @@ export function useKeyboardShortcuts(hoverCellRef?: React.RefObject<[number, num
       const isMeta = e.ctrlKey || e.metaKey
       const key = e.key.toLowerCase()
 
+      // '?' opens the keyboard-shortcuts help from anywhere (mode-independent). Mirrored in the
+      // Help dialog's shortcut list (components/onboarding/shortcuts.ts).
+      if (e.key === '?') {
+        store.openHelp()
+        e.preventDefault()
+        return
+      }
+
       // Mode-specific bindings for a shared set of concepts, resolved up front so the rest of the
       // handler reads the same regardless of mode.
       const isTexture = store.mode === 'texture'

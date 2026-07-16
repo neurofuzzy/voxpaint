@@ -4,6 +4,7 @@ import { FileMenu } from '@/components/panels/FileMenu'
 import { FullscreenToggle } from '@/components/panels/FullscreenToggle'
 import { ModeTabs } from '@/components/panels/ModeTabs'
 import { ModelStats } from '@/components/panels/ModelStats'
+import { HelpButton } from '@/components/onboarding/HelpButton'
 import { useAppStore } from '@/store/useAppStore'
 
 function ProjectName() {
@@ -71,6 +72,7 @@ export function TopToolbar() {
       <div className="flex-1" />
       <ModelStats />
       <div className="h-5 w-px bg-neutral-800" />
+      <HelpButton />
       <FullscreenToggle />
     </div>
   )

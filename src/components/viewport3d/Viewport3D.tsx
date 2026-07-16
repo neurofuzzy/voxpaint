@@ -183,6 +183,7 @@ export function Viewport3D() {
   return (
     <div
       ref={containerRef}
+      data-tour="viewport3d"
       className="relative h-full min-w-0 bg-neutral-900"
       onPointerEnter={() => setStatusMessage(ORBIT_HINT)}
       onPointerLeave={() => setStatusMessage(null)}
