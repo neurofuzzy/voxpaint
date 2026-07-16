@@ -11,7 +11,7 @@ import { useAppStore } from '@/store/useAppStore'
 import { usePlaneLayerScroll } from '@/components/usePlaneLayerScroll'
 import { AnimatedModelView } from './AnimatedModelView'
 import { BoundingBoxFaceSelector } from './BoundingBoxFaceSelector'
-import { Compass } from './Compass'
+import { CompassIcon, CompassTracker } from './Compass'
 import { ConstructionPlaneGizmo } from './ConstructionPlaneGizmo'
 import { ConstructionPlaneVisual } from './ConstructionPlaneVisual'
 import { ExposureSlider } from './ExposureSlider'
@@ -219,6 +219,7 @@ export function Viewport3D() {
   const containerRef = useRef<HTMLDivElement>(null)
   usePlaneLayerScroll(containerRef)
   const [showExposure, setShowExposure] = useState(false)
+  const compassNeedleRef = useRef<HTMLDivElement>(null)
 
   const textureMode = mode === 'texture'
   const animateMode = mode === 'animate'
@@ -257,7 +258,7 @@ export function Viewport3D() {
           </>
         )}
           <OrbitControls ref={orbitControlsRef} makeDefault enableDamping dampingFactor={0.12} minDistance={2} maxDistance={150} />
-          <Compass />
+          <CompassTracker iconRef={compassNeedleRef} />
       </Canvas>
       <ViewOptionsOverlay
         onResetCamera={() => orbitControlsRef.current?.reset()}
@@ -266,6 +267,7 @@ export function Viewport3D() {
       />
       <SettingsPalette />
       {showExposure && <ExposureSlider />}
+      <CompassIcon iconRef={compassNeedleRef} />
     </div>
   )
 }
