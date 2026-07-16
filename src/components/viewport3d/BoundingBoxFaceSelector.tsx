@@ -1,6 +1,7 @@
 import { useMemo, useRef, useState } from 'react'
 import * as THREE from 'three'
 import type { ThreeEvent } from '@react-three/fiber'
+import { effectiveExtent } from '@/engine/grid/GridStore'
 import type { BoxFace } from '@/engine/texture/types'
 import { useAppStore } from '@/store/useAppStore'
 
@@ -30,12 +31,13 @@ export function BoundingBoxFaceSelector() {
   const activeBoxFace = useAppStore((s) => s.activeBoxFace)
   const setActiveBoxFace = useAppStore((s) => s.setActiveBoxFace)
   const gridExtent = useAppStore((s) => s.meta.gridExtent)
-  const size = gridExtent
+  // Wrap the even effective grid (odd rounds up), centered on the origin like every even project.
+  const size = effectiveExtent(gridExtent)
   const [hovered, setHovered] = useState<BoxFace | null>(null)
   const downRef = useRef<{ x: number; y: number } | null>(null)
 
   const edges = useMemo(() => new THREE.EdgesGeometry(new THREE.BoxGeometry(size, size, size)), [size])
-  const faces = useMemo(() => facesFor(gridExtent / 2), [gridExtent])
+  const faces = useMemo(() => facesFor(size / 2), [size])
 
   return (
     <group>

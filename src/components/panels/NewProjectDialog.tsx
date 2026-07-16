@@ -10,24 +10,45 @@ const SIZE_OPTIONS: Array<{ extent: GridExtent; label: string }> = [
   { extent: 24, label: 'Large' },
 ]
 
+/** Inclusive range for a custom cube size. Odd values are allowed — internally they use the next
+ * even grid, framed so the center column reads centered (see engine/grid/GridStore `effectiveExtent`
+ * / `viewOriginShift`). Upper bound kept well under the technical `MAX_GRID_EXTENT` for performance. */
+const CUSTOM_MIN = 2
+const CUSTOM_MAX = 32
+
+function parseCustom(text: string): number | null {
+  if (!/^\d+$/.test(text.trim())) return null
+  const n = Number(text)
+  return n >= CUSTOM_MIN && n <= CUSTOM_MAX ? n : null
+}
+
 /**
- * New Project modal: optional name + a locked-in-forever size (Small/Medium/Large). Replaces the
- * old bare `confirm()` + immediate reset — size can't be changed after creation (engine/grid/types.ts
- * `GridExtent`), so this is the one chance to pick it.
+ * New Project modal: optional name + a locked-in-forever size. Offers the Small/Medium/Large presets
+ * plus a Custom field for any edge length in [CUSTOM_MIN, CUSTOM_MAX], including odd sizes (which
+ * give a centered pillar). Size can't be changed after creation (engine/grid/types.ts `GridExtent`),
+ * so this is the one chance to pick it.
  */
 export function NewProjectDialog({ open, onOpenChange }: { open: boolean; onOpenChange: (v: boolean) => void }) {
   const [name, setName] = useState('')
-  const [gridExtent, setGridExtent] = useState<GridExtent>(16)
+  const [selected, setSelected] = useState<GridExtent | 'custom'>(16)
+  const [customText, setCustomText] = useState('')
 
   useEffect(() => {
     if (open) {
       setName('')
-      setGridExtent(16)
+      setSelected(16)
+      setCustomText('')
     }
   }, [open])
 
+  const customExtent = parseCustom(customText)
+  const isCustom = selected === 'custom'
+  const effectiveExtent: GridExtent | null = isCustom ? customExtent : selected
+  const canCreate = effectiveExtent !== null
+
   function create() {
-    useAppStore.getState().newProject(name.trim() || 'Untitled Project', gridExtent)
+    if (effectiveExtent === null) return
+    useAppStore.getState().newProject(name.trim() || 'Untitled Project', effectiveExtent)
     onOpenChange(false)
   }
 
@@ -65,27 +86,63 @@ export function NewProjectDialog({ open, onOpenChange }: { open: boolean; onOpen
               />
             </div>
 
-            <div className="flex items-center gap-2">
-              <span className="w-14 text-xs font-medium text-neutral-400 select-none">Size</span>
-              <div className="flex flex-1 gap-1.5">
-                {SIZE_OPTIONS.map(({ extent, label }) => {
-                  const active = gridExtent === extent
-                  return (
-                    <button
-                      key={extent}
-                      onClick={() => setGridExtent(extent)}
-                      className={
-                        'flex-1 rounded-md px-2 py-1.5 text-center transition ' +
-                        (active
-                          ? 'bg-violet-500/20 text-violet-300'
-                          : 'bg-neutral-800 text-neutral-400 hover:bg-neutral-700 hover:text-neutral-200')
-                      }
-                    >
-                      <div className="text-xs font-medium">{label}</div>
-                      <div className="font-mono text-[10px] tabular-nums opacity-70">{extent}³</div>
-                    </button>
-                  )
-                })}
+            <div className="flex items-start gap-2">
+              <span className="mt-1.5 w-14 text-xs font-medium text-neutral-400 select-none">Size</span>
+              <div className="flex flex-1 flex-col gap-1.5">
+                <div className="flex gap-1.5">
+                  {SIZE_OPTIONS.map(({ extent, label }) => {
+                    const active = !isCustom && selected === extent
+                    return (
+                      <button
+                        key={extent}
+                        onClick={() => setSelected(extent)}
+                        className={
+                          'flex-1 rounded-md px-2 py-1.5 text-center transition ' +
+                          (active
+                            ? 'bg-violet-500/20 text-violet-300'
+                            : 'bg-neutral-800 text-neutral-400 hover:bg-neutral-700 hover:text-neutral-200')
+                        }
+                      >
+                        <div className="text-xs font-medium">{label}</div>
+                        <div className="font-mono text-[10px] tabular-nums opacity-70">{extent}³</div>
+                      </button>
+                    )
+                  })}
+                  <button
+                    onClick={() => setSelected('custom')}
+                    className={
+                      'flex-1 rounded-md px-2 py-1.5 text-center transition ' +
+                      (isCustom
+                        ? 'bg-violet-500/20 text-violet-300'
+                        : 'bg-neutral-800 text-neutral-400 hover:bg-neutral-700 hover:text-neutral-200')
+                    }
+                  >
+                    <div className="text-xs font-medium">Custom</div>
+                    <div className="font-mono text-[10px] tabular-nums opacity-70">
+                      {customExtent !== null ? `${customExtent}³` : '—'}
+                    </div>
+                  </button>
+                </div>
+
+                {isCustom && (
+                  <div className="flex items-center gap-2">
+                    <input
+                      type="number"
+                      min={CUSTOM_MIN}
+                      max={CUSTOM_MAX}
+                      value={customText}
+                      onChange={(e) => setCustomText(e.target.value)}
+                      onKeyDown={(e) => { if (e.key === 'Enter') create() }}
+                      placeholder="e.g. 9"
+                      autoFocus
+                      className="w-20 rounded-md border border-neutral-700 bg-neutral-800 px-2 py-1
+                        text-xs text-neutral-200 focus:outline-none focus:ring-1 focus:ring-violet-500"
+                    />
+                    <span className="text-[11px] text-neutral-500">
+                      edge length, {CUSTOM_MIN}–{CUSTOM_MAX} (odd sizes get a centered pillar)
+                    </span>
+                  </div>
+                )}
               </div>
             </div>
           </div>
@@ -96,7 +153,8 @@ export function NewProjectDialog({ open, onOpenChange }: { open: boolean; onOpen
             </Dialog.Close>
             <button
               onClick={create}
-              className="rounded-md bg-violet-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-violet-500"
+              disabled={!canCreate}
+              className="rounded-md bg-violet-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-violet-500 disabled:opacity-50"
             >
               Create
             </button>

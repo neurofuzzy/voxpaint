@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { decodeKey, encodeKey } from '@/engine/grid/GridStore'
+import { decodeKey, effectiveExtent, encodeKey, viewOriginShift } from '@/engine/grid/GridStore'
 import { gridCoordFromPixel, pixelFromGridCoord } from '@/engine/plane/constructionPlane'
 import { toDisplayU, toDisplayV } from '@/engine/plane/planeDisplay'
 import { resolveSlotColor, shadeColor } from '@/engine/palette/palette'
@@ -122,7 +122,10 @@ export function PixelCanvas() {
     ctx.fillRect(0, 0, size.width, size.height)
 
     const cellPx = BASE_CELL_PX * zoom
-    const half = gridExtent / 2
+    // Draw over the even effective grid (odd sizes round up by one — see effectiveExtent). `origin`
+    // is the half-cell the view centers on: 0 for even, 0.5 for odd (marks the center pillar).
+    const half = effectiveExtent(gridExtent) / 2
+    const origin = viewOriginShift(gridExtent)
 
     // checkerboard for empty cells, over the logical -half..half working span
     ctx.fillStyle = '#141416'
@@ -166,14 +169,14 @@ export function PixelCanvas() {
     const fineLines: number[] = []
     const subdivLines: number[] = []
     for (let i = -half; i <= half; i++) {
-      if (i === 0) continue // origin drawn separately, below
+      if (i === origin) continue // origin crosshair drawn separately, below (only skips when integer)
       if (i % 8 === 0) subdivLines.push(i)
       else fineLines.push(i)
     }
     // Colors match the 3D construction plane's gridHelper tiers exactly (ConstructionPlaneVisual.tsx).
     strokeGridLines(fineLines, '#22303a')
     strokeGridLines(subdivLines, '#3d6d8a')
-    strokeGridLines([0], '#7ac8ff')
+    strokeGridLines([origin], '#7ac8ff')
 
     // Architectural-drawing-style reference: the layer immediately behind the active plane (one
     // step further from the viewer along the plane's own normal — offset - orientation), shown as

@@ -6,8 +6,11 @@ export type Rotation = 0 | 1 | 2 | 3
 export type ChamferShapeKind = 'ramp' | 'convex' | 'concave' | 'wedge'
 
 /** Locked-in project size (edge length of the working cube), chosen once at project creation and
- * never changed after. Small/Medium/Large — all well under `MAX_GRID_EXTENT`. */
-export type GridExtent = 8 | 16 | 24
+ * never changed after. An integer in `[2, MAX_GRID_EXTENT]` — presets (8/16/24) or a Custom value.
+ * Odd sizes are allowed for a centered "pillar": internally the engine always works on an even grid
+ * (`effectiveExtent` rounds odd up by one), and the 2D/3D views nudge their framing by half a cell
+ * (`viewOriginShift`) so the center column reads dead-centre. See GridStore.ts. */
+export type GridExtent = number
 
 /** Grid coordinate, always integer. Mutable tuple (not readonly) so Immer drafts accept it directly. */
 export type Coord = [x: number, y: number, z: number]

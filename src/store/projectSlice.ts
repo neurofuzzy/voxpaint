@@ -1,6 +1,6 @@
 import type { StateCreator } from 'zustand'
 import { generateNoiseSeed } from '@/engine/ao/bakeAO'
-import { emptyModel, DEFAULT_GRID_EXTENT } from '@/engine/grid/GridStore'
+import { emptyModel, DEFAULT_GRID_EXTENT, MAX_GRID_EXTENT } from '@/engine/grid/GridStore'
 import { DEFAULT_PALETTE } from '@/engine/palette/defaultPalette'
 import { emptyTextureModel } from '@/engine/texture/TextureStore'
 import type { AppState, ProjectSlice } from './types'
@@ -59,19 +59,22 @@ export const createProjectSlice: Slice = (set) => ({
 
   newProject: (name, gridExtent) =>
     set((state) => {
+      // Defensively normalize any custom size to a whole edge length within the technical range
+      // (odd is allowed — the engine rounds it up to an even working grid via `effectiveExtent`).
+      const extent = Math.max(2, Math.min(MAX_GRID_EXTENT, Math.round(gridExtent)))
       state.model = emptyModel()
       state.palette = DEFAULT_PALETTE
       state.meta = {
         name: name || 'Untitled Project',
         createdAt: new Date().toISOString(),
         modifiedAt: new Date().toISOString(),
-        gridExtent,
+        gridExtent: extent,
         noiseSeed: generateNoiseSeed(),
       }
       state.past = []
       state.future = []
       // Reset the parallel texture stack too, so a new project starts fully blank.
-      state.texture = emptyTextureModel(gridExtent)
+      state.texture = emptyTextureModel(extent)
       state.texturePast = []
       state.textureFuture = []
       state.textureSelection = null

@@ -1,120 +1,121 @@
-# Handoff — AO rework (next session)
+# HANDOFF — Custom (incl. odd) project sizes
 
-> Replaces an older handoff about a since-resolved instance-color bug (see git history if needed).
+_Last session: 2026-07-16. Author: Claude (Opus 4.8). Branch: `enhancements`._
 
-## Where we are
-The Palette-Based PBR pipeline, ≤4 material-class meshes, material-aware shell culling, export
-options modal, and the analytical voxel AO are all landed and documented (see `docs/ARCHITECTURE.md`
-and the 2026-07-12 entry in `docs/SESSION_NOTES.md`). Everything compiles: `tsc -b` + `oxlint` clean,
-132 tests pass, `vite build` succeeds. Work is uncommitted on `develop`.
+## Goal
+Add a **Custom** size option to the New Project modal (integer edge length **2–32**, presets
+8/16/24 stay). Motivation: **odd** sizes like 9³ so the model has a single **center pillar** (a
+voxel column at the exact middle).
 
-**The one open problem: ambient occlusion still looks wrong.** It's currently **off by default** in
-both the viewport toggle (`ViewOptionsOverlay`) and the GLTF export modal (`ExportGltfDialog`), so it's
-safely parked. The next session's job is to replace the AO implementation.
+## Current approach (implemented, but NOT visually right yet)
+"Odd → even internally, half-cell shift in the views only."
+- The engine's coordinate system (the corner-anchored `-v-1` mirror in
+  `engine/plane/constructionPlane.ts`, plus instancing/chamfer/texture) is only self-consistent for
+  **even** extents (ranges symmetric about −0.5). So an odd size is rounded up to the next even grid
+  and the engine works on that — no odd number reaches the coordinate math.
+- Helpers in `engine/grid/GridStore.ts`:
+  - `effectiveExtent(e)` → `e` if even, else `e+1` (the grid the engine actually uses).
+  - `viewOriginShift(e)` → `0` even, `0.5` odd (a **view-only** half-cell nudge).
+- `withinWorkingBounds`, `faceSizeFor`, `halfWorldFor` all use `effectiveExtent` (so even sizes are
+  byte-for-byte unchanged; odd paints/textures its full even grid).
 
-## Why the current AO is wrong
-Current approach (`src/engine/ao/bakeAO.ts` → `bakeAOAtlas`) bakes AO into a **2D box-map atlas** at
-`TEXEL_SCALE` resolution and applies it as a `MeshPhysicalMaterial.map` multiply. The box atlas has an
-inherent **depth ambiguity**: stacked/overhang surfaces sharing a face-column collapse to one
-"frontmost" AO value, so hidden/overlapping surfaces get the wrong shadow. Same limitation the paint
-atlas has, and it's the root of the "very wrong" shadows.
+### Why this was chosen
+The alternative — a true centered odd grid — requires making the `-v-1` mirror **extent-aware** and
+threading `gridExtent` through ~15 call sites incl. the sensitive 3D `instancing/basis.ts` and
+`chamfer/chamferResolver.ts`. We deliberately avoided that. See "Decision point" below — the visual
+problems may push us to reconsider.
 
-## The fix: 3D occupancy field sampled per-fragment in the shader
-Reference code (from the `zanpo` project, `/Users/geoff/dev/zanpo`, the `getOcclusionFactor` shader)
-samples a **3D occupancy texture in world space per fragment** and averages occupancy over the
-hemisphere facing the surface normal. That is depth-correct (each fragment reads its true 3D position),
-needs no UVs, and is immune to mesh merging — it directly fixes our problem. It's the "3D occlusion
-field sampled in-shader" alternative already noted in `docs/ARCHITECTURE.md`'s AO limitations.
+## What works
+- Build, lint (only the pre-existing `AnimatedModelView` warning), and **160/160 tests** pass.
+- Custom even sizes (10, 12, 20, …) work correctly and look right — they're just normal even grids.
+- Odd sizes are **functional**: no paint off-by-one, bottom row paints, no crash. The earlier
+  odd-bounds bug ("draw 1 above, can't draw bottom") is gone because the grid is genuinely even.
 
-### Reference behavior (zanpo `getOcclusionFactor`)
-- Samples `occupancyTexture` (a 48³ = 16-grid × 3 `Data3DTexture`) at `worldPos / gridSize`.
-- Offsets into the hemisphere along the world normal, samples a 3×3 tangent grid, distance-weighted.
-- Clamps the offset on the normal axis to the face edge; keeps the tangent gradient smooth.
+## KNOWN BUGS (from user testing a 9³ project — screenshots reviewed)
+1. **Both views show 10×10(×10), not 9×9(×9).** By design the padding column is visible. The user
+   wants it to *look* 9³. This is the core unresolved UX question (see Decision point).
+2. **2D canvas shows two near-center axis lines** (`components/editor2d/PixelCanvas.tsx`).
+   Root cause: the bright origin crosshair is drawn at `origin = viewOriginShift = 0.5`
+   (`strokeGridLines([origin], '#7ac8ff')`), but the **subdivision** line at world **0**
+   (`i % 8 === 0` → `subdivLines` includes 0, color `#3d6d8a`) is still drawn because the skip guard
+   `if (i === origin) continue` only skips 0.5, not 0. → two bluish lines side by side.
+   Even sizes are fine (origin=0, so the i=0 line is the crosshair and nothing doubles).
+3. **3D construction-plane grid is 10×10 and off-center** (`components/viewport3d/ConstructionPlaneVisual.tsx`).
+   Root cause: the `gridHelper` is drawn at world **0** (I intentionally did NOT shift it, to keep its
+   lines on integer cell boundaries), size = `effectiveExtent` = 10. But the **camera target** and the
+   **central axis gizmo** (`ConstructionPlaneGizmo.tsx`) were shifted to **0.5**. So the grid looks
+   off-center relative to everything else, and it reads as 10×10.
 
-### TAKE
-- The **3D occupancy `Data3DTexture`** + **shader-sampled hemisphere occlusion** (binary occupancy,
-  distance-weighted neighbor average — simpler and more robust than our analytical falloff).
+## Decision point for next session (pick one, then finish)
+The even-internal approach inherently *shows* the padding column. Making a 9³ actually **look** 9³
+centered has two clean routes:
 
-### DROP from the reference
-- All `worldOffset` / instance-rotation math (`gridPos`, `aoLocalOffset`, "account for instance
-  rotation"). That's for their *instanced, rotatable* voxels. Our optimized mesh is a **static merged
-  mesh**, so just use a `vWorldPosition` varying directly — much simpler.
-- Their 3× texture resolution is a choice; we can use grid res or `TEXEL_SCALE` (4×). Start simple.
+- **Route A — crop the views to the odd region (keep even engine).** Draw only the 9 centered cells
+  and spotlight/frame them; keep the engine on the even grid. Caveat: the `-v-1` mirror means the
+  displayed 9-cell window and the paintable world region are offset per-axis, so this needs care to
+  keep "what's drawn" == "what's paintable" (gate the draw loop on `withinWorkingBounds` of the
+  mapped coord, and center via `viewOriginShift`). Lower risk, but fiddly to get pixel-perfect.
+- **Route B — extent-aware mirror (true centered odd, no padding).** Generalize `-v-1` to
+  `(cellLo+cellHiExcl-1) - v` (i.e. `-v-1` for even, `-v` for odd) and thread the extent through
+  `gridCoordFromPixel`/`pixelFromGridCoord`/`toDisplayU`/`toDisplayV` and their ~15 callers (incl.
+  `instancing/basis.ts`, `chamfer/chamferResolver.ts`). Delivers a genuinely 9-wide centered grid
+  everywhere with no padding column. Higher effort/risk; add odd-extent tests for basis + chamfer.
 
-## Migration plan (≈ half a day)
-1. **Replace `bakeAOAtlas`** with `bakeOccupancyField(model): THREE.Data3DTexture` in
-   `src/engine/ao/bakeAO.ts` — one byte per cell, `1` = occupied (from `model.color` via `encodeKey`).
-   Fast and trivial. (`computeVoxelAO`/`voxelAO.ts` may become unused since the shader does the
-   occlusion math — decide whether to retire it then.)
-2. **Plumb it into the optimized-mesh materials** in `OptimizedMeshView.tsx`: set the occupancy texture
-   + grid-size uniforms, and add a `vWorldPosition` varying via `onBeforeCompile`. (We already patch
-   these materials for the emissive glow, so the `onBeforeCompile` pattern is established there.)
-3. **Fragment patch**: sample the hemisphere around `vWorldPosition` + geometric normal, compute the
-   occlusion factor, multiply it into `diffuseColor` (or fold into ambient). Replaces the current
-   `material.map`-based AO application.
-4. **Keep** the `ambientOcclusion` view-slice toggle and the export-modal option — just swap the
-   implementation behind them. Note the two AO tracks below are **separate**: the 3D-field shader fixes
-   the *preview*; a real UV unwrap is what makes *export* correct.
+**Recommendation:** if the padding column is acceptable, finish Route A + fix bugs 2 & 3 (cheap). If
+the user insists a 9³ must truly be 9 wide with a dead-center pillar and no visible padding, do
+Route B — it's the only approach that looks fully correct, and budget for the instancing/chamfer
+re-verification.
 
-## Two separate AO tracks — don't conflate them
-- **Preview** → 3D occupancy field sampled in-shader (above). No UVs, depth-correct, disposable per
-  frame. This is the quick win. **NOT glTF-compatible** — glTF is declarative PBR with no per-fragment
-  3D-volume sampling, and GLTFExporter ignores `onBeforeCompile`, so this produces nothing in the `.glb`.
-- **Export** → must produce a real **AO texture on `TEXCOORD_1`** (glTF `occlusionTexture` / three's
-  `aoMap`). The current box-map atlas is overlapping/depth-ambiguous, so **the model needs a proper
-  non-overlapping UV unwrap** first.
+### If we keep the current (even+shift) approach, the immediate fixes are:
+- Bug 2: for odd, either draw the origin crosshair at world 0 (drop the +0.5 crosshair) OR remove 0
+  from `subdivLines` when `origin !== 0`. Decide whether the "axis" should sit at 0 or 0.5.
+- Bug 3: shift the construction-plane `gridHelper` group by `viewOriginShift` in-plane to match the
+  gizmo/camera — BUT that puts its lines on half-integers (misaligned with voxels). So instead,
+  reconsider: probably the gizmo + camera should target **0** (not 0.5), matching the aligned grid,
+  and accept the model is centered on the even grid's true center. i.e. the "+0.5 everywhere" may be
+  wrong — align on 0 and let cell 0 be one-off-center, OR go Route B.
 
-### Decision — DECIDED: bake AO (and grime) into the export
-We **do** want a baked map in the exported glTF, so the UV-unwrap + baked texture (below) is the
-committed path. It is not preview-only. The 3D-field shader is still worth doing for live preview, but
-it must reuse the **same occupancy sampling** as the bake so preview == export.
+## Changeset (all uncommitted on `enhancements`)
+```
+ M src/engine/grid/types.ts              GridExtent = number
+ M src/engine/grid/GridStore.ts          + effectiveExtent, viewOriginShift; withinWorkingBounds uses effective
+ M src/engine/texture/types.ts           faceSizeFor/halfWorldFor use effectiveExtent
+ M src/store/projectSlice.ts             newProject clamps/rounds to [2, MAX_GRID_EXTENT]
+ M src/components/panels/NewProjectDialog.tsx   Presets + Custom numeric field (2–32)
+ M src/components/editor2d/PixelCanvas.tsx      half via effectiveExtent; origin crosshair at viewOriginShift  ← bug 2 here
+ M src/components/editor2d/usePixelCanvasTools.ts  half/zoom via effectiveExtent; pan = -viewOriginShift
+ M src/components/viewport3d/ConstructionPlaneVisual.tsx  grid uses effectiveExtent; integer coarse divisions  ← bug 3 here
+ M src/components/viewport3d/ConstructionPlaneGizmo.tsx    group shifted to viewOriginShift
+ M src/components/viewport3d/BoundingBoxFaceSelector.tsx   box uses effectiveExtent
+ M src/components/viewport3d/Viewport3D.tsx     cameraPosForExtent uses effectiveExtent + shift; target = shift
+ M CODEMAP.md
+?? src/engine/grid/GridStore.test.ts     tests for effectiveExtent/viewOriginShift/withinWorkingBounds
+```
 
-The baked atlas is an **AO + grime** map, not just AO:
-- **AO** = the occupancy-hemisphere occlusion (darker in crevices / under overhangs).
-- **Grime** = procedural weathering derived from the same geometry: more dirt in cavities (AO-driven),
-  plus orientation terms (dust on up-faces, streaks/drips on down-faces) and optionally world height.
-  Same unwrap, same per-texel loop — just add the grime term when writing each texel.
-- **Channel caveat:** glTF `occlusionTexture` only attenuates *indirect/ambient* light. If AO should
-  read that way, put AO in the occlusion (R) channel. Grime that must **dirty the albedo under all
-  lighting** belongs multiplied into the **baseColorTexture** instead — so consider baking a combined
-  baseColor map (baseColor × grime) on TEXCOORD_0 and pure AO on the occlusion map (TEXCOORD_1), rather
-  than forcing both into one channel. Decide based on how strong/lighting-independent grime should look.
+## Stashes (recoverable)
+- `git stash list` → `stash@{0}`: **"custom-size: odd-bounds approach (WIP, superseded…)"** — the
+  FIRST attempt (a floor-based `cellLo`/`cellHiExcl`/`volumeCenter` true-odd bounds approach). It hit
+  the same mirror off-by-one. Contains a useful `boxMapping` odd round-trip test and the flip-aware
+  texel-offset analysis (the flipped `-Y` axis needs `ceil`, not `floor`) if Route B is chosen.
+  `git stash show -p stash@{0}` to inspect; don't blind-pop (it conflicts with current changes).
 
-## Export baking plan (UV unwrap → AO texture → TEXCOORD_1)
-This is what the gltf-materials spec's §2.2 actually wants (`TEXCOORD_1` = a strict, non-overlapping
-0–1 unwrap dedicated to baked AO).
-1. **Unwrap the optimized mesh** into a non-overlapping atlas. The geometry is axis-aligned voxel
-   quads (merged coplanar rectangles), so this is a rectangle-packing / lightmap-style unwrap:
-   pack each surviving optimized quad into the atlas at a chosen texel density, no overlaps. (Roll our
-   own rect-packer over the quads, or evaluate a lib like `xatlas`/`potpack` — the quads are simple
-   rectangles so a hand-rolled packer is very feasible.)
-2. **Write those UVs as the second UV set** (`geometry.setAttribute('uv1', …)`; three's `aoMap` reads
-   `uv1`). Keep the existing box-map `uv` (TEXCOORD_0) for the paint/overlay map.
-3. **Bake AO into the atlas**: for each atlas texel, map back to its world-space surface point + normal
-   (from the unwrap) and evaluate occlusion — reuse the **same 3D occupancy sampling** as the preview
-   (or `computeVoxelAO`) so preview == export. Write grayscale AO into the atlas (R channel; G/B free
-   for a packed ORM map later, per the spec).
-4. **Assign on export** (`gltfExport.ts`): `material.aoMap = <baked atlas>`, `aoMap` uses `uv1` →
-   GLTFExporter emits `TEXCOORD_1` + `occlusionTexture`. Gate on the export-modal `ambientOcclusion`
-   option.
+## Prior commits this session (already landed, unrelated to the bug)
+- `f1fab68` Add onboarding UI: help, tour, splash.
+- `f94752f` Frame 2D/3D views by project extent (per-size default zoom + camera framing). The custom-
+  size work builds on top of this.
 
-Interim fallback if the unwrap is too much for one session: bake **per-vertex AO into `COLOR_0`**
-(coarse, but exports and needs no unwrap) and keep the real TEXCOORD_1 unwrap as the follow-up.
+## Key facts / constraints
+- Coordinate convention: cells are **corner-anchored** (cell n spans world [n, n+1)); origin (0,0,0)
+  is a cell **corner**. The `-v-1` mirror (`constructionPlane.ts`) is the crux of the odd problem.
+- `MAX_GRID_EXTENT = 64` (technical cap); Custom UI caps at 32 for perf.
+- Persistence needs no schema/migration change — `gridExtent` is already a free numeric field.
+- Project rules: **no dev server, no browser testing by the agent** — verify via `npm run build`,
+  `npm run lint`, `npm test`, and hand off to the human. Run `npm run map` after adding exports.
 
-## Gotchas
-- **World position isn't available by default** in `MeshPhysicalMaterial`. Add a `vWorldPosition`
-  varying yourself (vertex patch: `vWorldPosition = (modelMatrix * vec4(position,1.0)).xyz;`). This is
-  the only real plumbing wrinkle.
-- **`varying vec4 vColor`** — three declares vertex colours as vec4 even for RGB; use `.rgb` in any
-  patch. (This already bit us: a bare `vColor` is a `vec3 += vec4` error that silently drops the whole
-  mesh — see the emissive patch in `OptimizedMeshView.tsx`.)
-- `Data3DTexture` needs `NearestFilter` (or linear for smoothing), `unpackAlignment = 1` for a
-  single-channel R8 texture, and `needsUpdate = true`.
-
-## Files in play
-- `src/engine/ao/bakeAO.ts` — replace atlas bake with occupancy field.
-- `src/engine/ao/voxelAO.ts` / `aoConstants.ts` — analytical solver + tunables (may retire).
-- `src/components/viewport3d/OptimizedMeshView.tsx` — material plumbing + shader patch.
-- `src/components/viewport3d/ViewOptionsOverlay.tsx` — AO toggle (keep).
-- `src/components/panels/ExportGltfDialog.tsx` + `src/engine/export/gltfExport.ts` — export AO option.
-- Reference: `/Users/geoff/dev/zanpo` (the `getOcclusionFactor` shader).
+## Verify commands
+```
+npm run build   # tsc -b && vite build
+npm run lint    # oxlint (pre-existing AnimatedModelView warning is expected)
+npm test        # vitest run — 160 tests currently green
+npm run map     # regenerate CODEMAP.md
+```

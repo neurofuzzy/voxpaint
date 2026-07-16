@@ -1,4 +1,5 @@
 import type { Axis, GridExtent, Orientation } from '@/engine/grid/types'
+import { effectiveExtent } from '@/engine/grid/GridStore'
 
 /**
  * The 6 box-map directions. A box face **is** a construction plane facing outward, so it reuses the
@@ -30,18 +31,19 @@ export function boxFaceOf(axis: Axis, orientation: Orientation): BoxFace {
  * 0.25 voxel). */
 export const TEXEL_SCALE = 4
 
-/** Texels along one edge of a single box face for a given project = its `gridExtent` × texel scale
- * (e.g. 64 at the 16³ "Medium" size). Each face is `faceSizeFor(gridExtent)²` texels. Scales with
- * the project's own locked-in size — every texture-engine function takes `gridExtent` explicitly
- * rather than assuming a fixed size. */
+/** Texels along one edge of a single box face for a given project = its (even) effective grid ×
+ * texel scale (e.g. 64 at the 16³ "Medium" size). Each face is `faceSizeFor(gridExtent)²` texels.
+ * Uses `effectiveExtent` so an odd project textures its full even grid — keeping face size even and
+ * the atlas aligned, exactly as it always has for even sizes. */
 export function faceSizeFor(gridExtent: GridExtent): number {
-  return gridExtent * TEXEL_SCALE
+  return effectiveExtent(gridExtent) * TEXEL_SCALE
 }
 
-/** Half the working volume in world units — the in-plane world coordinate range a face covers is
- * `[-halfWorldFor(gridExtent), halfWorldFor(gridExtent))`. */
+/** Half the (even) working volume in world units — the in-plane world coordinate range a face
+ * covers is `[-halfWorldFor(gridExtent), halfWorldFor(gridExtent))`. Uses `effectiveExtent`, so it
+ * stays an integer even for odd project sizes. */
 export function halfWorldFor(gridExtent: GridExtent): number {
-  return gridExtent / 2
+  return effectiveExtent(gridExtent) / 2
 }
 
 /**

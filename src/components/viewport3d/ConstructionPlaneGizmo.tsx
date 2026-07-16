@@ -1,4 +1,5 @@
 import { useAppStore } from '@/store/useAppStore'
+import { viewOriginShift } from '@/engine/grid/GridStore'
 import type { Axis, Orientation } from '@/engine/grid/types'
 
 const ARMS: Array<{ axis: Axis; orientation: Orientation; position: [number, number, number]; color: string }> = [
@@ -14,9 +15,12 @@ const ARMS: Array<{ axis: Axis; orientation: Orientation; position: [number, num
 export function ConstructionPlaneGizmo() {
   const setPlaneAxisOrientation = useAppStore((s) => s.setPlaneAxisOrientation)
   const plane = useAppStore((s) => s.plane)
+  // Sit the central widget on the working origin — shifted half a cell for odd sizes so it marks the
+  // center column rather than the even grid's corner.
+  const shift = useAppStore((s) => viewOriginShift(s.meta.gridExtent))
 
   return (
-    <group>
+    <group position={[shift, shift, shift]}>
       {ARMS.map((arm) => {
         const active = plane.axis === arm.axis && plane.orientation === arm.orientation
         return (

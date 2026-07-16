@@ -3,7 +3,7 @@ import { OrbitControls } from '@react-three/drei'
 import { useEffect, useRef, useState } from 'react'
 import * as THREE from 'three'
 import type { OrbitControls as OrbitControlsImpl } from 'three-stdlib'
-import { decodeKey } from '@/engine/grid/GridStore'
+import { decodeKey, effectiveExtent, viewOriginShift } from '@/engine/grid/GridStore'
 import { hasActiveAnimations } from '@/engine/animation/animationLayers'
 import type { InstancingManager } from '@/engine/instancing/InstancingManager'
 import { planeFromFaceHit } from '@/engine/plane/constructionPlane'
@@ -33,12 +33,13 @@ const CLICK_DRAG_THRESHOLD_PX = 4
 const BASE_CAMERA_POS: [number, number, number] = [18, 16, 20]
 const CAMERA_REFERENCE_EXTENT = 16
 
-/** Default camera position for a project of the given extent: the base framing scaled by the extent
- * ratio, so the camera pulls back for large models and pushes in for small ones — keeping the
- * model's on-screen size roughly constant across sizes. */
+/** Default camera position for a project of the given extent: the base framing scaled by the (even)
+ * effective-extent ratio (so the camera pulls back for large models and pushes in for small ones),
+ * then offset by the view origin shift so an odd project frames its center column dead-centre. */
 function cameraPosForExtent(gridExtent: number): [number, number, number] {
-  const s = gridExtent / CAMERA_REFERENCE_EXTENT
-  return [BASE_CAMERA_POS[0] * s, BASE_CAMERA_POS[1] * s, BASE_CAMERA_POS[2] * s]
+  const s = effectiveExtent(gridExtent) / CAMERA_REFERENCE_EXTENT
+  const shift = viewOriginShift(gridExtent)
+  return [BASE_CAMERA_POS[0] * s + shift, BASE_CAMERA_POS[1] * s + shift, BASE_CAMERA_POS[2] * s + shift]
 }
 
 /**
@@ -53,13 +54,15 @@ function CameraRig({ controlsRef }: { controlsRef: React.RefObject<OrbitControls
   useEffect(() => {
     const [x, y, z] = cameraPosForExtent(gridExtent)
     camera.position.set(x, y, z)
+    // Aim at the working origin — shifted half a cell for odd sizes so the center column is centred.
+    const t = viewOriginShift(gridExtent)
     const controls = controlsRef.current
     if (controls) {
-      controls.target.set(0, 0, 0)
+      controls.target.set(t, t, t)
       controls.update()
       controls.saveState() // so controls.reset() (the Reset-camera button) returns to this framing
     } else {
-      camera.lookAt(0, 0, 0)
+      camera.lookAt(t, t, t)
     }
   }, [gridExtent, camera, controlsRef])
   return null

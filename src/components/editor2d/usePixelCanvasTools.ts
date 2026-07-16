@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
+import { effectiveExtent, viewOriginShift } from '@/engine/grid/GridStore'
 import { gridCoordFromPixel } from '@/engine/plane/constructionPlane'
 import { toDisplayU, toDisplayV } from '@/engine/plane/planeDisplay'
 import { toNormalizedPointerEvent } from '@/engine/input/PointerInputController'
@@ -61,15 +62,18 @@ export function usePixelCanvasTools(canvasRef: React.RefObject<HTMLCanvasElement
   const zoomRef = useRef(zoom)
   zoomRef.current = zoom
   const gridExtent = useAppStore((s) => s.meta.gridExtent)
-  const gridHalfRef = useRef(gridExtent / 2)
-  gridHalfRef.current = gridExtent / 2
+  // Clamp against the even effective grid (what's actually drawn/paintable).
+  const gridHalfRef = useRef(effectiveExtent(gridExtent) / 2)
+  gridHalfRef.current = effectiveExtent(gridExtent) / 2
 
   // Re-frame when the project's extent changes (a new/loaded project of a different size): reset to
-  // the size-appropriate default zoom and recenter. Extent is locked per project, so this only
+  // the size-appropriate default zoom and center the view on the working origin (shifted half a cell
+  // for odd sizes, so the center column reads centered). Extent is locked per project, so this only
   // fires on a project switch — never mid-edit, so it won't fight the user's own pan/zoom.
   useEffect(() => {
-    setZoom(defaultZoomForExtent(gridExtent))
-    setPan({ x: 0, y: 0 })
+    setZoom(defaultZoomForExtent(effectiveExtent(gridExtent)))
+    const shift = viewOriginShift(gridExtent)
+    setPan({ x: -shift, y: -shift })
   }, [gridExtent])
 
   const [linePreview, setLinePreview] = useState<{ anchor: [number, number]; end: [number, number] } | null>(null)
@@ -223,7 +227,7 @@ export function usePixelCanvasTools(canvasRef: React.RefObject<HTMLCanvasElement
         panDrag.lastY = e.clientY
         if (Math.hypot(e.clientX - panDrag.startX, e.clientY - panDrag.startY) > PAN_DRAG_THRESHOLD_PX) panDrag.hasMoved = true
         const cellPx = BASE_CELL_PX * zoom
-        setPan((p) => clampPan({ x: p.x + dx / cellPx, y: p.y + dy / cellPx }, size, zoom, gridExtent / 2))
+        setPan((p) => clampPan({ x: p.x + dx / cellPx, y: p.y + dy / cellPx }, size, zoom, effectiveExtent(gridExtent) / 2))
         return
       }
 
