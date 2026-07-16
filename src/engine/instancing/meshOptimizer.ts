@@ -5,7 +5,7 @@ import type { MaterialClass } from '@/engine/palette/palette'
 
 const COPLANAR_THRESHOLD = 1e-5
 const NORMAL_THRESHOLD = 0.9999
-const VERTEX_PRECISION = 1e6
+const VERTEX_PRECISION = 0.01;
 
 interface Tri {
   normal: THREE.Vector3
