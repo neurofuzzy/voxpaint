@@ -9,6 +9,7 @@ const SWATCH = 'h-6 w-6 shrink-0'
 function Swatch({ kind, index, hex }: { kind: PaletteSlotKind; index: number; hex: string }) {
   const activeSlot = useAppStore((s) => s.activePaletteSlot)
   const setActivePaletteSlot = useAppStore((s) => s.setActivePaletteSlot)
+  const setActiveTool = useAppStore((s) => s.setActiveTool)
   const active = activeSlot.kind === kind && activeSlot.index === index
 
   let swatchStyle: React.CSSProperties
@@ -28,7 +29,10 @@ function Swatch({ kind, index, hex }: { kind: PaletteSlotKind; index: number; he
     <button
       aria-label={`${kind} ${index}`}
       title={`${kind} ${index + 1}`}
-      onClick={() => setActivePaletteSlot({ kind, index })}
+      onClick={() => {
+        setActivePaletteSlot({ kind, index })
+        setActiveTool('paint')
+      }}
       // A `border` clips separately from the rounded gradient background, and the two curves'
       // anti-aliasing don't quite line up — leaves a stray sliver of the gradient's edge color
       // peeking out at the top/bottom of the ring. A `ring` (box-shadow) paints flush against the
@@ -56,6 +60,7 @@ function Swatch({ kind, index, hex }: { kind: PaletteSlotKind; index: number; he
 function GrayscalePalette() {
   const activeGrayIndex = useAppStore((s) => s.activeGrayIndex)
   const setActiveGrayIndex = useAppStore((s) => s.setActiveGrayIndex)
+  const setActiveTool = useAppStore((s) => s.setActiveTool)
   return (
     <div className="flex items-center gap-1.5">
       {GRAYSCALE.map((hex, index) => {
@@ -66,7 +71,10 @@ function GrayscalePalette() {
             {index === GRAYSCALE.length / 2 && <div className="mx-0.5 h-6 w-px bg-neutral-700" />}
             <button
               aria-label={`gray ${index}`}
-              onClick={() => setActiveGrayIndex(index)}
+              onClick={() => {
+                setActiveGrayIndex(index)
+                setActiveTool('paint')
+              }}
               className={
                 `${SWATCH} rounded-full ring-2 transition-transform hover:scale-110 ` +
                 (active ? 'scale-125 ring-white shadow-lg' : 'ring-white/20')
