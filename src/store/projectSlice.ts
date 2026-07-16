@@ -92,5 +92,6 @@ export const createProjectSlice: Slice = (set) => ({
       state.animPast = []
       state.animFuture = []
       state.currentFilePath = null
+      state.dirty = true
     }),
 })
