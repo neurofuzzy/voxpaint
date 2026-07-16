@@ -1,8 +1,32 @@
 {
   "name": "voxpaint",
-  "private": true,
-  "version": "0.0.0",
+  "version": "0.1.0",
   "type": "module",
+  "description": "A browser-based voxel painting and modeling editor with baked chamfer autotiling, themed palettes, and GLTF/GLB export.",
+  "author": "Geoff Gaudreault",
+  "license": "MIT",
+  "homepage": "https://github.com/neurofuzzy/voxpaint#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/neurofuzzy/voxpaint.git"
+  },
+  "bugs": {
+    "url": "https://github.com/neurofuzzy/voxpaint/issues"
+  },
+  "keywords": [
+    "voxel",
+    "voxel-editor",
+    "pixel-art",
+    "3d",
+    "webgl",
+    "three.js",
+    "react",
+    "gltf",
+    "modeling"
+  ],
+  "engines": {
+    "node": ">=20"
+  },
   "scripts": {
     "dev": "vite",
     "build": "tsc -b && vite build",
