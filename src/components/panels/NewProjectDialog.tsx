@@ -57,20 +57,20 @@ export function NewProjectDialog({ open, onOpenChange }: { open: boolean; onOpen
       <Dialog.Portal>
         <Dialog.Overlay className="fixed inset-0 z-50 bg-black/60 backdrop-blur-sm" />
         <Dialog.Content
-          className="fixed left-1/2 top-1/2 z-50 w-[min(92vw,22rem)] -translate-x-1/2 -translate-y-1/2 rounded-xl
-            border border-neutral-800 bg-neutral-900 p-5 text-neutral-200 shadow-2xl focus:outline-none"
+          className="fixed left-1/2 top-1/2 z-50 w-[min(92vw,30rem)] -translate-x-1/2 -translate-y-1/2 rounded-xl
+            border border-neutral-800 bg-neutral-900 p-7 text-neutral-200 shadow-2xl focus:outline-none"
         >
-          <Dialog.Title className="flex items-center gap-2 text-base font-semibold">
-            <FilePlus size={18} /> New Project
+          <Dialog.Title className="flex items-center gap-2 text-lg font-semibold">
+            <FilePlus size={22} /> New Project
           </Dialog.Title>
-          <Dialog.Description className="mt-1 text-sm text-neutral-400">
+          <Dialog.Description className="mt-2 text-sm text-neutral-400">
             Unsaved changes in the current project will be lost from the autosave slot. Size can't
             be changed later.
           </Dialog.Description>
 
-          <div className="mt-4 flex flex-col gap-3">
-            <div className="flex items-center gap-2">
-              <label htmlFor="project-name" className="w-14 text-xs font-medium text-neutral-400 select-none">
+          <div className="mt-5 flex flex-col gap-4">
+            <div className="flex items-center gap-2.5">
+              <label htmlFor="project-name" className="w-18 text-sm font-medium text-neutral-400 select-none">
                 Name
               </label>
               <input
@@ -81,15 +81,15 @@ export function NewProjectDialog({ open, onOpenChange }: { open: boolean; onOpen
                 onKeyDown={(e) => { if (e.key === 'Enter') create() }}
                 placeholder="Untitled Project"
                 autoFocus
-                className="flex-1 rounded-md border border-neutral-700 bg-neutral-800 px-2 py-1
-                  text-xs text-neutral-200 focus:outline-none focus:ring-1 focus:ring-violet-500"
+                className="flex-1 rounded-md border border-neutral-700 bg-neutral-800 px-3 py-1.5
+                  text-sm text-neutral-200 focus:outline-none focus:ring-1 focus:ring-violet-500"
               />
             </div>
 
-            <div className="flex items-start gap-2">
-              <span className="mt-1.5 w-14 text-xs font-medium text-neutral-400 select-none">Size</span>
-              <div className="flex flex-1 flex-col gap-1.5">
-                <div className="flex gap-1.5">
+            <div className="flex items-start gap-2.5">
+              <span className="mt-2 w-18 text-sm font-medium text-neutral-400 select-none">Size</span>
+              <div className="flex flex-1 flex-col gap-2">
+                <div className="flex gap-2">
                   {SIZE_OPTIONS.map(({ extent, label }) => {
                     const active = !isCustom && selected === extent
                     return (
@@ -97,35 +97,35 @@ export function NewProjectDialog({ open, onOpenChange }: { open: boolean; onOpen
                         key={extent}
                         onClick={() => setSelected(extent)}
                         className={
-                          'flex-1 rounded-md px-2 py-1.5 text-center transition ' +
+                          'flex-1 rounded-md px-3 py-2 text-center transition ' +
                           (active
                             ? 'bg-violet-500/20 text-violet-300'
                             : 'bg-neutral-800 text-neutral-400 hover:bg-neutral-700 hover:text-neutral-200')
                         }
                       >
-                        <div className="text-xs font-medium">{label}</div>
-                        <div className="font-mono text-[10px] tabular-nums opacity-70">{extent}³</div>
+                        <div className="text-sm font-medium">{label}</div>
+                        <div className="font-mono text-xs tabular-nums opacity-70">{extent}³</div>
                       </button>
                     )
                   })}
-                  <button
-                    onClick={() => setSelected('custom')}
-                    className={
-                      'flex-1 rounded-md px-2 py-1.5 text-center transition ' +
-                      (isCustom
+                    <button
+                      onClick={() => setSelected('custom')}
+                      className={
+                        'flex-1 rounded-md px-3 py-2 text-center transition ' +
+                        (isCustom
                         ? 'bg-violet-500/20 text-violet-300'
                         : 'bg-neutral-800 text-neutral-400 hover:bg-neutral-700 hover:text-neutral-200')
                     }
                   >
-                    <div className="text-xs font-medium">Custom</div>
-                    <div className="font-mono text-[10px] tabular-nums opacity-70">
+                    <div className="text-sm font-medium">Custom</div>
+                    <div className="font-mono text-xs tabular-nums opacity-70">
                       {customExtent !== null ? `${customExtent}³` : '—'}
                     </div>
                   </button>
                 </div>
 
                 {isCustom && (
-                  <div className="flex items-center gap-2">
+                  <div className="flex items-center gap-2.5">
                     <input
                       type="number"
                       min={CUSTOM_MIN}
@@ -135,10 +135,10 @@ export function NewProjectDialog({ open, onOpenChange }: { open: boolean; onOpen
                       onKeyDown={(e) => { if (e.key === 'Enter') create() }}
                       placeholder="e.g. 9"
                       autoFocus
-                      className="w-20 rounded-md border border-neutral-700 bg-neutral-800 px-2 py-1
-                        text-xs text-neutral-200 focus:outline-none focus:ring-1 focus:ring-violet-500"
+                      className="w-24 rounded-md border border-neutral-700 bg-neutral-800 px-3 py-1.5
+                        text-sm text-neutral-200 focus:outline-none focus:ring-1 focus:ring-violet-500"
                     />
-                    <span className="text-[11px] text-neutral-500">
+                    <span className="text-xs text-neutral-500">
                       edge length, {CUSTOM_MIN}–{CUSTOM_MAX} (odd sizes get a centered pillar)
                     </span>
                   </div>
@@ -147,14 +147,14 @@ export function NewProjectDialog({ open, onOpenChange }: { open: boolean; onOpen
             </div>
           </div>
 
-          <div className="mt-5 flex justify-end gap-2">
+          <div className="mt-6 flex justify-end gap-2">
             <Dialog.Close asChild>
-              <button className="rounded-md px-3 py-1.5 text-sm text-neutral-300 hover:bg-neutral-800">Cancel</button>
+              <button className="rounded-md px-4 py-2 text-sm text-neutral-300 hover:bg-neutral-800">Cancel</button>
             </Dialog.Close>
             <button
               onClick={create}
               disabled={!canCreate}
-              className="rounded-md bg-violet-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-violet-500 disabled:opacity-50"
+              className="rounded-md bg-violet-600 px-5 py-2 text-sm font-medium text-white hover:bg-violet-500 disabled:opacity-50"
             >
               Create
             </button>

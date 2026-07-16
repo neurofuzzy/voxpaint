@@ -83,20 +83,20 @@ export function ExportGltfDialog({ open, onOpenChange }: { open: boolean; onOpen
       <Dialog.Portal>
         <Dialog.Overlay className="fixed inset-0 z-50 bg-black/60 backdrop-blur-sm" />
         <Dialog.Content
-          className="fixed left-1/2 top-1/2 z-50 w-[min(92vw,22rem)] -translate-x-1/2 -translate-y-1/2 rounded-xl
-            border border-neutral-800 bg-neutral-900 p-5 text-neutral-200 shadow-2xl focus:outline-none"
+          className="fixed left-1/2 top-1/2 z-50 w-[min(92vw,30rem)] -translate-x-1/2 -translate-y-1/2 rounded-xl
+            border border-neutral-800 bg-neutral-900 p-7 text-neutral-200 shadow-2xl focus:outline-none"
         >
-          <Dialog.Title className="flex items-center gap-2 text-base font-semibold">
-            <Package size={18} /> Export GLTF
+          <Dialog.Title className="flex items-center gap-2 text-lg font-semibold">
+            <Package size={22} /> Export GLTF
           </Dialog.Title>
-          <Dialog.Description className="mt-1 text-sm text-neutral-400">
+          <Dialog.Description className="mt-2 text-sm text-neutral-400">
             Exports optimized meshes — one per material class (matte, emissive, metal, glass) — with
             baked ambient occlusion.
           </Dialog.Description>
 
-          <div className="mt-4 flex flex-col gap-3">
-            <div className="flex items-center gap-2">
-              <label htmlFor="gltf-scale" className="w-16 text-xs font-medium text-neutral-400 select-none">
+          <div className="mt-5 flex flex-col gap-4">
+            <div className="flex items-center gap-2.5">
+              <label htmlFor="gltf-scale" className="w-18 text-sm font-medium text-neutral-400 select-none">
                 Scale
               </label>
               <input
@@ -105,19 +105,19 @@ export function ExportGltfDialog({ open, onOpenChange }: { open: boolean; onOpen
                 inputMode="numeric"
                 value={scaleInput}
                 onChange={(e) => clampScale(e.target.value)}
-                className="w-20 rounded-md border border-neutral-700 bg-neutral-800 px-2 py-1
-                  font-mono text-xs tabular-nums text-neutral-200 focus:outline-none focus:ring-1
+                className="w-24 rounded-md border border-neutral-700 bg-neutral-800 px-3 py-1.5
+                  font-mono text-sm tabular-nums text-neutral-200 focus:outline-none focus:ring-1
                   focus:ring-violet-500"
               />
-              <span className="text-xs font-medium text-neutral-400">%</span>
+              <span className="text-sm font-medium text-neutral-400">%</span>
             </div>
 
-            <div className="flex items-center gap-2">
-              <span className="w-16 text-xs font-medium text-neutral-400 select-none">Anchor</span>
+            <div className="flex items-center gap-2.5">
+              <span className="w-18 text-sm font-medium text-neutral-400 select-none">Anchor</span>
               <select
                 value={exportAnchor}
                 onChange={(e) => setExportAnchor(e.target.value as GltfExportAnchor)}
-                className="rounded-md border border-neutral-700 bg-neutral-800 px-2 py-1 text-xs text-neutral-200
+                className="rounded-md border border-neutral-700 bg-neutral-800 px-3 py-1.5 text-sm text-neutral-200
                   focus:outline-none focus:ring-1 focus:ring-violet-500 cursor-pointer"
               >
                 {(Object.keys(ANCHOR_LABELS) as GltfExportAnchor[]).map((a) => (
@@ -126,40 +126,40 @@ export function ExportGltfDialog({ open, onOpenChange }: { open: boolean; onOpen
               </select>
             </div>
 
-            <label className="flex items-center gap-2 pl-16 cursor-pointer select-none">
+            <label className="flex items-center gap-2.5 ml-[4.5rem] cursor-pointer select-none">
               <input
                 type="checkbox"
                 checked={exportAlignToObjectBounds}
                 onChange={(e) => setExportAlignToObjectBounds(e.target.checked)}
-                className="h-3.5 w-3.5 cursor-pointer accent-violet-500"
+                className="h-4 w-4 cursor-pointer accent-violet-500"
               />
-              <span className="text-xs text-neutral-400">Align to object bounds</span>
+              <span className="text-sm text-neutral-400">Align to object bounds</span>
             </label>
 
-            <label className="flex items-start gap-2 pl-16 cursor-pointer select-none">
+            <label className="flex items-start gap-2.5 ml-[4.5rem] cursor-pointer select-none">
               <input
                 type="checkbox"
                 checked={exportDisableMeshOptimization}
                 onChange={(e) => setExportDisableMeshOptimization(e.target.checked)}
-                className="mt-0.5 h-3.5 w-3.5 cursor-pointer accent-violet-500"
+                className="mt-0.5 h-4 w-4 cursor-pointer accent-violet-500"
               />
-              <span className="text-xs text-neutral-400">
+              <span className="text-sm text-neutral-400">
                 Disable mesh optimization
-                <span className="block text-[0.6875rem] text-neutral-500">
+                <span className="block text-xs text-neutral-500">
                   Keep per-voxel topology for deforming in other apps
                 </span>
               </span>
             </label>
           </div>
 
-          <div className="mt-5 flex justify-end gap-2">
+          <div className="mt-6 flex justify-end gap-2">
             <Dialog.Close asChild>
-              <button className="rounded-md px-3 py-1.5 text-sm text-neutral-300 hover:bg-neutral-800">Cancel</button>
+              <button className="rounded-md px-4 py-2 text-sm text-neutral-300 hover:bg-neutral-800">Cancel</button>
             </Dialog.Close>
             <button
               onClick={() => void run()}
               disabled={busy}
-              className="rounded-md bg-violet-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-violet-500 disabled:opacity-50"
+              className="rounded-md bg-violet-600 px-5 py-2 text-sm font-medium text-white hover:bg-violet-500 disabled:opacity-50"
             >
               {busy ? 'Exporting…' : 'Export'}
             </button>
