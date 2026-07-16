@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { effectiveExtent, viewOriginShift } from '@/engine/grid/GridStore'
+import { effectiveExtent } from '@/engine/grid/GridStore'
 import { gridCoordFromPixel } from '@/engine/plane/constructionPlane'
-import { toDisplayU, toDisplayV } from '@/engine/plane/planeDisplay'
+import { displayViewCenter, toDisplayU, toDisplayV } from '@/engine/plane/planeDisplay'
 import { toNormalizedPointerEvent } from '@/engine/input/PointerInputController'
 import { animateToolMap, toolMap } from '@/engine/tools'
 import type { ToolContext, ToolDragState } from '@/engine/tools/types'
@@ -67,13 +67,15 @@ export function usePixelCanvasTools(canvasRef: React.RefObject<HTMLCanvasElement
   gridHalfRef.current = effectiveExtent(gridExtent) / 2
 
   // Re-frame when the project's extent changes (a new/loaded project of a different size): reset to
-  // the size-appropriate default zoom and center the view on the working origin (shifted half a cell
-  // for odd sizes, so the center column reads centered). Extent is locked per project, so this only
-  // fires on a project switch — never mid-edit, so it won't fight the user's own pan/zoom.
+  // the size-appropriate default zoom and center the view on the project centre. For odd sizes that
+  // centre is the pillar's display cell for the active plane (`displayViewCenter`), so the centre
+  // column reads dead-centre; for even sizes it's the world origin (0, 0). Extent is locked per
+  // project, so this only fires on a project switch — never mid-edit, so it won't fight the user's
+  // own pan/zoom. Reads the active plane once (not a dep) so a later plane switch keeps the user's pan.
   useEffect(() => {
     setZoom(defaultZoomForExtent(effectiveExtent(gridExtent)))
-    const shift = viewOriginShift(gridExtent)
-    setPan({ x: -shift, y: -shift })
+    const centre = displayViewCenter(useAppStore.getState().plane, gridExtent)
+    setPan({ x: -centre.u, y: -centre.v })
   }, [gridExtent])
 
   const [linePreview, setLinePreview] = useState<{ anchor: [number, number]; end: [number, number] } | null>(null)

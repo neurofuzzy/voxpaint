@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { decodeKey, effectiveExtent, encodeKey, viewOriginShift } from '@/engine/grid/GridStore'
+import { decodeKey, encodeKey } from '@/engine/grid/GridStore'
 import { gridCoordFromPixel, pixelFromGridCoord } from '@/engine/plane/constructionPlane'
-import { toDisplayU, toDisplayV } from '@/engine/plane/planeDisplay'
+import { displayViewCenter, toDisplayU, toDisplayV } from '@/engine/plane/planeDisplay'
 import { resolveSlotColor, shadeColor } from '@/engine/palette/palette'
 import { forEachSelectedCell, traceSelectionOutline } from '@/engine/tools/selectionMask'
 import { encodeSliceKey } from '@/engine/animation/animationLayers'
@@ -122,33 +122,42 @@ export function PixelCanvas() {
     ctx.fillRect(0, 0, size.width, size.height)
 
     const cellPx = BASE_CELL_PX * zoom
-    // Draw over the even effective grid (odd sizes round up by one — see effectiveExtent). `origin`
-    // is the half-cell the view centers on: 0 for even, 0.5 for odd (marks the center pillar).
-    const half = effectiveExtent(gridExtent) / 2
-    const origin = viewOriginShift(gridExtent)
+    // The 2D canvas is drawn in DISPLAY space (post-`toDisplay` mirror), so cropping an odd project
+    // to its centred `n`-wide window is robust on every plane/orientation: we frame the window on the
+    // centre pillar's *display* cell (`displayViewCenter`) rather than nudging a fixed pan, since the
+    // pillar's display cell — and thus the half-cell offset that centres it — flips with orientation.
+    // For even sizes the centre is the world-origin gridline and the window is symmetric (unchanged
+    // behaviour). The model stays the even `effectiveExtent` grid; this is a pure view crop.
+    const n = gridExtent
+    const centre = displayViewCenter(plane, gridExtent)
+    const dLoU = Math.floor(centre.u - n / 2)
+    const dHiU = dLoU + n // exclusive cell bound; inclusive last gridline
+    const dLoV = Math.floor(centre.v - n / 2)
+    const dHiV = dLoV + n
 
-    // checkerboard for empty cells, over the logical -half..half working span
+    // checkerboard for empty cells, over the visible display window
     ctx.fillStyle = '#141416'
-    for (let u = -half; u < half; u++) {
-      for (let v = -half; v < half; v++) {
-        if ((u + v) % 2 === 0) continue
-        const [sx, sy] = worldToScreen(u, v, size, pan, zoom)
+    for (let du = dLoU; du < dHiU; du++) {
+      for (let dv = dLoV; dv < dHiV; dv++) {
+        if ((du + dv) % 2 === 0) continue
+        const [sx, sy] = worldToScreen(du, dv, size, pan, zoom)
         ctx.fillRect(sx, sy, cellPx, cellPx)
       }
     }
 
     // Grid lines — fine per-cell, bolder every 8 cells, and a lighter (toned-down, not stark)
-    // origin crosshair, clipped to the grid's own screen-space bounds (not the full viewport, so
+    // centre accent, clipped to the grid's own screen-space bounds (not the full viewport, so
     // panned-out empty space beyond the working area stays plain). Mirrors trixelart's grid
     // visual hierarchy, adapted from its triangular lattice to a plain rectangular one. Drawn
     // before any content so painted cells, behind-layer outlines, and overlays all sit on top of
-    // it instead of the grid cutting through them.
-    const [gridLeft] = worldToScreen(-half, 0, size, pan, zoom)
-    const [gridRight] = worldToScreen(half, 0, size, pan, zoom)
-    const [, gridTop] = worldToScreen(0, -half, size, pan, zoom)
-    const [, gridBottom] = worldToScreen(0, half, size, pan, zoom)
+    // it instead of the grid cutting through them. Vertical (u) and horizontal (v) lines are drawn
+    // separately since an odd window is not symmetric in the two axes.
+    const [gridLeft] = worldToScreen(dLoU, 0, size, pan, zoom)
+    const [gridRight] = worldToScreen(dHiU, 0, size, pan, zoom)
+    const [, gridTop] = worldToScreen(0, dLoV, size, pan, zoom)
+    const [, gridBottom] = worldToScreen(0, dHiV, size, pan, zoom)
 
-    const strokeGridLines = (positions: number[], color: string) => {
+    const strokeVLines = (positions: number[], color: string) => {
       if (positions.length === 0) return
       ctx.strokeStyle = color
       ctx.lineWidth = 1
@@ -158,6 +167,15 @@ export function PixelCanvas() {
         const snappedX = snapPx(sx)
         ctx.moveTo(snappedX, gridTop)
         ctx.lineTo(snappedX, gridBottom)
+      }
+      ctx.stroke()
+    }
+    const strokeHLines = (positions: number[], color: string) => {
+      if (positions.length === 0) return
+      ctx.strokeStyle = color
+      ctx.lineWidth = 1
+      ctx.beginPath()
+      for (const i of positions) {
         const [, sy] = worldToScreen(0, i, size, pan, zoom)
         const snappedY = snapPx(sy)
         ctx.moveTo(gridLeft, snappedY)
@@ -166,17 +184,30 @@ export function PixelCanvas() {
       ctx.stroke()
     }
 
-    const fineLines: number[] = []
-    const subdivLines: number[] = []
-    for (let i = -half; i <= half; i++) {
-      if (i === origin) continue // origin crosshair drawn separately, below (only skips when integer)
-      if (i % 8 === 0) subdivLines.push(i)
-      else fineLines.push(i)
+    // Centre accent. For an even project the centre is a single gridline at display 0; for an odd
+    // project the centre is a whole cell (the centre pillar), so bracket it with the two lines that
+    // bound it rather than drawing a blurry off-integer line through it.
+    const centreU = n % 2 === 0 ? [0] : [centre.u - 0.5, centre.u + 0.5]
+    const centreV = n % 2 === 0 ? [0] : [centre.v - 0.5, centre.v + 0.5]
+    const tiers = (from: number, to: number, exclude: number[]) => {
+      const fine: number[] = []
+      const subdiv: number[] = []
+      for (let i = from; i <= to; i++) {
+        if (exclude.includes(i)) continue // centre accent drawn separately, below
+        if (i % 8 === 0) subdiv.push(i)
+        else fine.push(i)
+      }
+      return { fine, subdiv }
     }
+    const uTiers = tiers(dLoU, dHiU, centreU)
+    const vTiers = tiers(dLoV, dHiV, centreV)
     // Colors match the 3D construction plane's gridHelper tiers exactly (ConstructionPlaneVisual.tsx).
-    strokeGridLines(fineLines, '#22303a')
-    strokeGridLines(subdivLines, '#3d6d8a')
-    strokeGridLines([origin], '#7ac8ff')
+    strokeVLines(uTiers.fine, '#22303a')
+    strokeHLines(vTiers.fine, '#22303a')
+    strokeVLines(uTiers.subdiv, '#3d6d8a')
+    strokeHLines(vTiers.subdiv, '#3d6d8a')
+    strokeVLines(centreU, '#7ac8ff')
+    strokeHLines(centreV, '#7ac8ff')
 
     // Architectural-drawing-style reference: the layer immediately behind the active plane (one
     // step further from the viewer along the plane's own normal — offset - orientation), shown as
@@ -186,11 +217,13 @@ export function PixelCanvas() {
     // active layer's opaque fill).
     const behindPlane = { ...plane, offset: plane.offset - plane.orientation }
     ctx.lineWidth = 2
-    for (let u = -half; u < half; u++) {
-      for (let v = -half; v < half; v++) {
+    for (let du = dLoU; du < dHiU; du++) {
+      for (let dv = dLoV; dv < dHiV; dv++) {
+        const u = toDisplayU(plane, du)
+        const v = toDisplayV(plane, dv)
         const behindCell = model.color.get(encodeKey(...gridCoordFromPixel(behindPlane, u, v)))
         if (!behindCell) continue
-        const [sx, sy] = worldToScreen(toDisplayU(plane, u), toDisplayV(plane, v), size, pan, zoom)
+        const [sx, sy] = worldToScreen(du, dv, size, pan, zoom)
         const color = resolveSlotColor(palette, behindCell.paletteSlot)
         fillDither(ctx, sx, sy, cellPx, color)
         ctx.strokeStyle = color
@@ -198,13 +231,15 @@ export function PixelCanvas() {
       }
     }
 
-    for (let u = -half; u < half; u++) {
-      for (let v = -half; v < half; v++) {
+    for (let du = dLoU; du < dHiU; du++) {
+      for (let dv = dLoV; dv < dHiV; dv++) {
+        const u = toDisplayU(plane, du)
+        const v = toDisplayV(plane, dv)
         const coord = gridCoordFromPixel(plane, u, v)
         const key = encodeKey(...coord)
         const colorCell = model.color.get(key)
         if (!colorCell) continue
-        const [sx, sy] = worldToScreen(toDisplayU(plane, u), toDisplayV(plane, v), size, pan, zoom)
+        const [sx, sy] = worldToScreen(du, dv, size, pan, zoom)
         const color = resolveSlotColor(palette, colorCell.paletteSlot)
         // Glass reads as 50% transparent here too, echoing the 3D view's transmissive material —
         // otherwise a glass cell looks identical to a solid one on the flat 2D canvas.
@@ -227,12 +262,14 @@ export function PixelCanvas() {
     if (mode === 'animate') {
       const currentMask = sliceMasks.get(encodeSliceKey(plane.axis, plane.offset))
       if (currentMask && currentMask.size > 0) {
-        for (let u = -half; u < half; u++) {
-          for (let v = -half; v < half; v++) {
+        for (let du = dLoU; du < dHiU; du++) {
+          for (let dv = dLoV; dv < dHiV; dv++) {
+            const u = toDisplayU(plane, du)
+            const v = toDisplayV(plane, dv)
             const coord = gridCoordFromPixel(plane, u, v)
             const key = encodeKey(...coord)
             if (!currentMask.has(key)) continue
-            const [sx, sy] = worldToScreen(toDisplayU(plane, u), toDisplayV(plane, v), size, pan, zoom)
+            const [sx, sy] = worldToScreen(du, dv, size, pan, zoom)
             ctx.fillStyle = 'rgba(167, 139, 250, 0.35)'
             ctx.fillRect(sx, sy, cellPx, cellPx)
             ctx.strokeStyle = 'rgba(167, 139, 250, 0.9)'

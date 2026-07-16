@@ -1,4 +1,7 @@
 import type { ConstructionPlane } from './types'
+import type { Coord } from '@/engine/grid/types'
+import { pixelFromGridCoord } from './constructionPlane'
+import { axisIndex } from './planeGeometry'
 
 /**
  * Display-only (2D canvas) transforms — orientation-dependent screen mirroring layered on top of
@@ -36,4 +39,22 @@ export function toDisplayU(plane: ConstructionPlane, u: number): number {
 export function toDisplayV(plane: ConstructionPlane, v: number): number {
   if (plane.axis !== 'y') return v
   return plane.orientation === 1 ? -v - 1 : v
+}
+
+/**
+ * The continuous display-space (u, v) coordinate the 2D canvas should frame at its centre for
+ * `plane`, so a project reads centred on every plane/orientation. For an EVEN project this is the
+ * world-origin gridline (0, 0) — the true grid centre. For an ODD project the model is still the
+ * even `effectiveExtent` grid, but we want its centre *pillar* (the model in-plane origin cell)
+ * dead-centre; because the 2D canvas draws in display space (post-`toDisplay` mirror), the pillar's
+ * display cell — and hence the half-cell nudge that centres it — flips with orientation, so we
+ * compute it here rather than applying a fixed pan. Returns the pillar cell's centre (its display
+ * index + 0.5). See PixelCanvas.tsx / usePixelCanvasTools.ts.
+ */
+export function displayViewCenter(plane: ConstructionPlane, gridExtent: number): { u: number; v: number } {
+  if (gridExtent % 2 === 0) return { u: 0, v: 0 }
+  const pillar: Coord = [0, 0, 0]
+  pillar[axisIndex(plane.axis)] = plane.offset // in-plane pixel is offset-independent; kept for clarity
+  const { u, v } = pixelFromGridCoord(plane, pillar)
+  return { u: toDisplayU(plane, u) + 0.5, v: toDisplayV(plane, v) + 0.5 }
 }

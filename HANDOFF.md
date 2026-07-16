@@ -44,7 +44,7 @@ problems may push us to reconsider.
    Root cause: the `gridHelper` is drawn at world **0** (I intentionally did NOT shift it, to keep its
    lines on integer cell boundaries), size = `effectiveExtent` = 10. But the **camera target** and the
    **central axis gizmo** (`ConstructionPlaneGizmo.tsx`) were shifted to **0.5**. So the grid looks
-   off-center relative to everything else, and it reads as 10×10.
+   off-center relative to everything else, and it reads as 10×10. USER NOTE: gridHelper should be the odd size with center at 0.5 0.5 in the UV. In W direction, it already goes through the center of voxels in even projects, so probably we'll need to offset that as well to be consistent
 
 ## Decision point for next session (pick one, then finish)
 The even-internal approach inherently *shows* the padding column. Making a 9³ actually **look** 9³
@@ -91,18 +91,6 @@ re-verification.
  M CODEMAP.md
 ?? src/engine/grid/GridStore.test.ts     tests for effectiveExtent/viewOriginShift/withinWorkingBounds
 ```
-
-## Stashes (recoverable)
-- `git stash list` → `stash@{0}`: **"custom-size: odd-bounds approach (WIP, superseded…)"** — the
-  FIRST attempt (a floor-based `cellLo`/`cellHiExcl`/`volumeCenter` true-odd bounds approach). It hit
-  the same mirror off-by-one. Contains a useful `boxMapping` odd round-trip test and the flip-aware
-  texel-offset analysis (the flipped `-Y` axis needs `ceil`, not `floor`) if Route B is chosen.
-  `git stash show -p stash@{0}` to inspect; don't blind-pop (it conflicts with current changes).
-
-## Prior commits this session (already landed, unrelated to the bug)
-- `f1fab68` Add onboarding UI: help, tour, splash.
-- `f94752f` Frame 2D/3D views by project extent (per-size default zoom + camera framing). The custom-
-  size work builds on top of this.
 
 ## Key facts / constraints
 - Coordinate convention: cells are **corner-anchored** (cell n spans world [n, n+1)); origin (0,0,0)
