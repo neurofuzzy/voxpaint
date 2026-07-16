@@ -1,6 +1,6 @@
 import type { StateCreator } from 'zustand'
 import { decodeKey, encodeKey, expandBounds, withinWorkingBounds } from '@/engine/grid/GridStore'
-import type { ChamferClassification, Coord } from '@/engine/grid/types'
+import type { Coord, Rotation } from '@/engine/grid/types'
 import { classify, sampleNeighbors } from '@/engine/chamfer/chamferResolver'
 import { gridCoordFromPixel, pixelFromGridCoord } from '@/engine/plane/constructionPlane'
 import { axisIndex } from '@/engine/plane/planeGeometry'
@@ -10,32 +10,29 @@ import type { AppState, PaintActionsSlice } from './types'
 type Slice = StateCreator<AppState, [['zustand/immer', never]], [], PaintActionsSlice>
 
 let freshChamferKeys: Set<string> | null = null
+// Wedge cells painted this stroke that haven't yet matched a real 2-neighbor corner — still at
+// their rotation-0 fallback and eligible for retry as more of the stroke gets painted. A key
+// leaves this set (frozen) as soon as it finds a true match, even mid-stroke.
+let pendingWedgeKeys: Set<string> | null = null
 
 export function beginFreshChamferTracking() {
   freshChamferKeys = new Set()
+  pendingWedgeKeys = new Set()
 }
 
 export function endFreshChamferTracking() {
   freshChamferKeys = null
+  pendingWedgeKeys = null
 }
 
 export const createPaintActionsSlice: Slice = (set, get) => ({
   paintCell: (u: number, v: number) => {
     get().bakeFloatIfAny()
-    const { plane, activeVoxelKind, activePaletteSlot, selection, meta, model } = get()
+    const { plane, activeVoxelKind, activePaletteSlot, selection, meta } = get()
     const coord = gridCoordFromPixel(plane, u, v)
     if (!withinWorkingBounds(coord, meta.gridExtent)) return false
     // An active selection clips editing to its mask (bakeFloatIfAny above already resolved any float).
     if (selection && !isCellSelected(selection, u, v)) return false
-
-    // Wedge is a shortcut shape: it only ever paints when exactly 2 adjacent orthogonal neighbors
-    // are already filled (the same precondition classify() already enforces for 'convex') — resolve
-    // this BEFORE mutating anything, so an unresolvable spot is a true no-op (no color, no chamfer).
-    let wedgeResolved: ChamferClassification | null = null
-    if (activeVoxelKind === 'wedge') {
-      wedgeResolved = classify(sampleNeighbors(model, plane, u, v))
-      if (!wedgeResolved || wedgeResolved.shapeKind !== 'convex') return false
-    }
 
     set((state) => {
       const key = encodeKey(...coord)
@@ -60,11 +57,41 @@ export const createPaintActionsSlice: Slice = (set, get) => ({
           }
         }
       } else if (activeVoxelKind === 'wedge') {
-        state.model.chamfer.set(key, {
-          planeAxis: plane.axis,
-          planeOrientation: plane.orientation,
-          resolvedTo: { shapeKind: 'wedge', rotation: wedgeResolved!.rotation },
-        })
+        const existing = state.model.chamfer.get(key)
+        const alreadyFinalized = existing?.resolvedTo?.shapeKind === 'wedge' && !pendingWedgeKeys?.has(key)
+
+        if (alreadyFinalized) {
+          // Re-clicking a wedge that's already locked in (this stroke or a prior one) manually
+          // rotates it 90° — the escape hatch for configs that never auto-resolve.
+          const rotation = ((existing!.resolvedTo!.rotation + 1) % 4) as Rotation
+          existing!.resolvedTo = { shapeKind: 'wedge', rotation }
+        } else {
+          const resolved = classify(sampleNeighbors(state.model, plane, u, v))
+          const rotation = resolved?.shapeKind === 'convex' ? resolved.rotation : 0
+          state.model.chamfer.set(key, { planeAxis: plane.axis, planeOrientation: plane.orientation, resolvedTo: { shapeKind: 'wedge', rotation } })
+
+          if (pendingWedgeKeys) {
+            if (resolved?.shapeKind === 'convex') pendingWedgeKeys.delete(key)
+            else pendingWedgeKeys.add(key)
+
+            const pi = axisIndex(plane.axis)
+            for (const pendingKey of pendingWedgeKeys) {
+              const cell = state.model.chamfer.get(pendingKey)
+              if (!cell) {
+                pendingWedgeKeys.delete(pendingKey)
+                continue
+              }
+              const pc = decodeKey(pendingKey)
+              if (pc[pi] !== plane.offset) continue
+              const { u: pu, v: pv } = pixelFromGridCoord(plane, pc)
+              const rt = classify(sampleNeighbors(state.model, plane, pu, pv))
+              if (rt?.shapeKind === 'convex') {
+                cell.resolvedTo = { shapeKind: 'wedge', rotation: rt.rotation }
+                pendingWedgeKeys.delete(pendingKey)
+              }
+            }
+          }
+        }
       } else {
         state.model.chamfer.delete(key)
       }
