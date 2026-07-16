@@ -203,6 +203,9 @@ export function PixelCanvas() {
         if (!colorCell) continue
         const [sx, sy] = worldToScreen(toDisplayU(plane, u), toDisplayV(plane, v), size, pan, zoom)
         const color = resolveSlotColor(palette, colorCell.paletteSlot)
+        // Glass reads as 50% transparent here too, echoing the 3D view's transmissive material —
+        // otherwise a glass cell looks identical to a solid one on the flat 2D canvas.
+        ctx.globalAlpha = colorCell.paletteSlot.kind === 'glass' ? 0.5 : 1
         // Any chamfer cell shows the diagonal-stripe marker (whether or not its shape has resolved
         // yet), so it's always distinguishable from a plain cube; plain cubes get a flat fill.
         if (model.chamfer.has(key)) {
@@ -213,6 +216,7 @@ export function PixelCanvas() {
         }
       }
     }
+    ctx.globalAlpha = 1
 
     // Animate-mode mask overlay — violet tint over cells painted into the current slice's
     // animation mask (matches AnimationPalette's accent color). No overlay at all when the slice
@@ -279,8 +283,8 @@ export function PixelCanvas() {
       ctx.stroke()
     }
 
-    // floating content — real, uncommitted cells rendered fully opaque on top of the (already-
-    // hole-punched) base grid.
+    // floating content — real, uncommitted cells rendered on top of the (already-hole-punched)
+    // base grid (glass cells still get the 50% transparency treatment, same as committed cells).
     if (floatContent && floatOrigin) {
       for (const cell of floatContent.cells) {
         const u = floatOrigin.originU + cell.du
@@ -288,6 +292,7 @@ export function PixelCanvas() {
         const [sx, sy] = worldToScreen(toDisplayU(plane, u), toDisplayV(plane, v), size, pan, zoom)
         if (cell.color) {
           const color = resolveSlotColor(palette, cell.color.paletteSlot)
+          ctx.globalAlpha = cell.color.paletteSlot.kind === 'glass' ? 0.5 : 1
           if (cell.chamfer) {
             fillDiagonalStripes(ctx, sx, sy, cellPx, color)
           } else {
@@ -296,6 +301,7 @@ export function PixelCanvas() {
           }
         }
       }
+      ctx.globalAlpha = 1
     }
 
     // selection overlay — cyan tint + animated marching-ants outline (live drag preview takes
