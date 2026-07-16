@@ -6,6 +6,8 @@ A browser-based voxel painting and modeling editor. Build low-poly models by pai
 voxels on a construction plane, let chamfers autotile into smooth ramps and corners, and
 export clean, optimized meshes to GLTF/GLB.
 
+**Try the [Live Demo](https://neurofuzzy.github.io/voxpaint/).**
+
 ## Features
 
 - **Voxel painting** in a 2D construction-plane view and a live 3D preview, up to a 64×64×64 grid.
