@@ -1,8 +1,8 @@
 ```
 # Auto-generated project map
-# Last updated: 2026-07-16 07:04:34
-# Files: 154
-# Lines of code: ~15283
+# Last updated: 2026-07-16 18:09:01
+# Files: 155
+# Lines of code: ~15511
 ```
 - **/assets**
 - **/components**
@@ -389,9 +389,11 @@
       - Function: `pixelFromGridCoord`
       - Function: `planeLogicalBasis` - Derives the world-space direction of a plane's ...
       - Function: `planeFromFaceHit` - Derives a construction plane from a 3D face-cli...
+    - [planeDisplay.test.ts](../src/engine/plane/planeDisplay.test.ts)
     - [planeDisplay.ts](../src/engine/plane/planeDisplay.ts)
       - Function: `toDisplayU` - Orientation never changes which grid cell a pix...
       - Function: `toDisplayV` - The y-axis counterpart to `toDisplayU` — see th...
+      - Function: `displayViewCenter` - The continuous display-space (u, v) coordinate ...
     - [planeGeometry.ts](../src/engine/plane/planeGeometry.ts)
       - Variable: `ALL_AXES` - All three axes, in the fixed x/y/z order every ...
       - Variable: `AXIS_UNIT` - The one canonical copy of each axis's unit vect...
