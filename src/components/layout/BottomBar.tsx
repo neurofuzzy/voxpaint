@@ -7,7 +7,7 @@ const TOOL_HINTS: Record<ToolId, string> = {
   erase: 'click or drag to erase · shift+drag: straight line',
   eyedropper: 'click to pick a color',
   select: 'drag to select · alt+drag: lasso · drag inside a selection to move it',
-  fill: 'click to flood-fill connected cells',
+  fill: 'click to flood-fill connected cells in 2d, ALT-click to flood fill in 3d',
   clone: 'alt+click to set a clone source, then drag to stamp',
   move: 'drag to shift every pixel on this slice · r/h/v: rotate/mirror',
   pivot: 'click to pin the rotation/pendulum pivot for this slice · right-click: clear',

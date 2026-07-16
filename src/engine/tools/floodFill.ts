@@ -1,4 +1,4 @@
-import type { GridExtent, VoxelModel } from '@/engine/grid/types'
+import type { CellKey, Coord, GridExtent, VoxelModel } from '@/engine/grid/types'
 import type { PaletteSlotRef } from '@/engine/palette/types'
 import type { ConstructionPlane } from '@/engine/plane/types'
 import { encodeKey, withinWorkingBounds } from '@/engine/grid/GridStore'
@@ -44,6 +44,51 @@ export function floodFillRegion(
 
     result.push([u, v])
     stack.push([u + 1, v], [u - 1, v], [u, v + 1], [u, v - 1])
+  }
+
+  return result
+}
+
+/**
+ * True when a flood-fill result touches all 4 edges of the plane's displayed span — the usual
+ * sign that the region wasn't actually enclosed (a gap let it spill across the whole plane)
+ * rather than a deliberate edge-to-edge fill. Callers use this to reject the fill outright.
+ */
+export function fillLeaksToEdges(cells: Array<[number, number]>, gridExtent: GridExtent): boolean {
+  const half = gridExtent / 2
+  let touchesMinU = false, touchesMaxU = false, touchesMinV = false, touchesMaxV = false
+  for (const [u, v] of cells) {
+    if (u === -half) touchesMinU = true
+    if (u === half - 1) touchesMaxU = true
+    if (v === -half) touchesMinV = true
+    if (v === half - 1) touchesMaxV = true
+  }
+  return touchesMinU && touchesMaxU && touchesMinV && touchesMaxV
+}
+
+/**
+ * 6-connected flood fill through the full 3D VoxelModel (not just one plane), color layer only —
+ * same chamfer-preserving rule as `floodFillRegion`. Only ever called from an already-occupied
+ * starting cell (the fill tool's alt-click requires clicking an existing voxel), so `target` is
+ * always a real palette slot, never "empty".
+ */
+export function floodFillRegion3D(model: VoxelModel, start: Coord, gridExtent: GridExtent): CellKey[] {
+  const target = model.color.get(encodeKey(...start))?.paletteSlot
+  const visited = new Set<CellKey>()
+  const stack: Coord[] = [start]
+  const result: CellKey[] = []
+
+  while (stack.length > 0) {
+    const coord = stack.pop()!
+    const key = encodeKey(...coord)
+    if (visited.has(key)) continue
+    visited.add(key)
+    if (!withinWorkingBounds(coord, gridExtent)) continue
+    if (!slotsEqual(model.color.get(key)?.paletteSlot, target)) continue
+
+    result.push(key)
+    const [x, y, z] = coord
+    stack.push([x + 1, y, z], [x - 1, y, z], [x, y + 1, z], [x, y - 1, z], [x, y, z + 1], [x, y, z - 1])
   }
 
   return result

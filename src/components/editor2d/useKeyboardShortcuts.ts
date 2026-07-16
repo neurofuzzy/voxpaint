@@ -124,10 +124,10 @@ export function useKeyboardShortcuts(hoverCellRef?: React.RefObject<[number, num
         }
       }
 
-      if (isAnimate) return // no tool switching in animate mode
-
       const tool = TOOL_KEYS[key]
-      if (tool) {
+      // Animate mode's toolbar only has paint/erase (mask) and pivot (no letter shortcut) — other
+      // tool letters stay inert there rather than switching to a tool with no animate-mode handler.
+      if (tool && (!isAnimate || tool === 'paint' || tool === 'erase')) {
         store.setActiveTool(tool)
         e.preventDefault()
       }

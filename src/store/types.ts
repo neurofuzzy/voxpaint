@@ -189,8 +189,12 @@ export type PaintActionsSlice = {
 export type SelectionTransformKind = 'rotate' | 'mirror-h' | 'mirror-v'
 
 export type ToolActionsSlice = {
-  /** Flood fill (color layer only, spec §2) starting at plane-space (u,v). One undo stroke. */
+  /** Flood fill (color layer only, spec §2) starting at plane-space (u,v). One undo stroke.
+   * No-op if the region leaks across all 4 edges of the plane's span (see `fillLeaksToEdges`). */
   floodFill: (u: number, v: number) => void
+  /** 6-connected flood fill through the full 3D model (not just the current plane), color layer
+   * only. No-op unless (u,v) lands on an already-occupied voxel. One undo stroke. */
+  floodFill3D: (u: number, v: number) => void
   /** Clones whatever is at (srcU,srcV) onto (destU,destV), both layers, re-validating chamfer. */
   cloneStampCell: (srcU: number, srcV: number, destU: number, destV: number) => void
   copySelection: () => void

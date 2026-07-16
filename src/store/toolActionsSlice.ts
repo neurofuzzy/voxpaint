@@ -1,7 +1,7 @@
 import type { StateCreator } from 'zustand'
 import { encodeKey, expandBounds, withinWorkingBounds } from '@/engine/grid/GridStore'
 import { gridCoordFromPixel } from '@/engine/plane/constructionPlane'
-import { floodFillRegion } from '@/engine/tools/floodFill'
+import { fillLeaksToEdges, floodFillRegion, floodFillRegion3D } from '@/engine/tools/floodFill'
 import { applyClipboardAt, clearRegion, copyRegionToClipboard } from '@/engine/tools/clipboard'
 import { mirrorClipboard, rotateClipboard90 } from '@/engine/tools/transform'
 import { isCellSelected, mirrorRegion, rotateRegion90 } from '@/engine/tools/selectionMask'
@@ -18,6 +18,9 @@ export const createToolActionsSlice: Slice = (set, get) => ({
     get().bakeFloatIfAny()
     const { model, plane, activePaletteSlot, selection, meta } = get()
     let cells = floodFillRegion(model, plane, u, v, meta.gridExtent)
+    // A region that reaches all 4 edges of the plane almost certainly leaked through a gap rather
+    // than being deliberately enclosed — reject it outright rather than repaint the whole plane.
+    if (fillLeaksToEdges(cells, meta.gridExtent)) return
     // An active selection clips the fill to its mask.
     if (selection) cells = cells.filter(([cu, cv]) => isCellSelected(selection, cu, cv))
     if (cells.length === 0) return
@@ -27,6 +30,24 @@ export const createToolActionsSlice: Slice = (set, get) => ({
         const coord = gridCoordFromPixel(state.plane, cu, cv)
         state.model.color.set(encodeKey(...coord), { paletteSlot: activePaletteSlot })
         state.model.bounds = expandBounds(state.model.bounds, coord)
+      }
+      state.meta.modifiedAt = new Date().toISOString()
+      state.dirty = true
+    })
+    get().commitStroke()
+  },
+
+  floodFill3D: (u, v) => {
+    get().bakeFloatIfAny()
+    const { model, plane, activePaletteSlot, meta } = get()
+    const startCoord = gridCoordFromPixel(plane, u, v)
+    if (!model.color.has(encodeKey(...startCoord))) return // only fills from an existing voxel
+    const keys = floodFillRegion3D(model, startCoord, meta.gridExtent)
+    if (keys.length === 0) return
+    get().beginStroke()
+    set((state) => {
+      for (const key of keys) {
+        state.model.color.set(key, { paletteSlot: activePaletteSlot })
       }
       state.meta.modifiedAt = new Date().toISOString()
       state.dirty = true
