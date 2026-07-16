@@ -55,6 +55,7 @@ export class InstancingManager {
   private wireframeMaterial: THREE.MeshBasicMaterial
   private wireframeMeshes: Record<PoolId, THREE.InstancedMesh>
   private wireframeVisible = false
+  private renderVisible = true
 
   // Picking runs against full-cell AABBs (unit cubes), NOT the visible chamfer meshes: clicking a
   // sloped chamfer face must still resolve to that cell and a clean axis-aligned face normal, so the
@@ -285,10 +286,12 @@ export class InstancingManager {
     this.hoverTarget = next
   }
 
-  /** Toggle the white wireframe overlay (separate from the solid mesh, always unlit/emissive). */
+  /** Toggle the white wireframe overlay (separate from the solid mesh, always unlit/emissive).
+   * Uses AND logic with `setRenderVisible`: only visible when both the render pools are shown
+   * AND the wireframe toggle is on. */
   setWireframe(v: boolean) {
     this.wireframeVisible = v
-    for (const id of POOL_IDS) this.wireframeMeshes[id].visible = v
+    for (const id of POOL_IDS) this.wireframeMeshes[id].visible = v && this.renderVisible
   }
 
   /** Show/hide the visible render pools without touching the invisible pick mesh — so
@@ -296,6 +299,7 @@ export class InstancingManager {
    * Wireframe overlays use AND logic: only visible when both the render pools are shown
    * AND the wireframe toggle is on. */
   setRenderVisible(v: boolean) {
+    this.renderVisible = v
     for (const id of POOL_IDS) {
       this.meshes[id].visible = v
       this.wireframeMeshes[id].visible = v && this.wireframeVisible
