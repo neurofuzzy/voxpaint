@@ -92,6 +92,15 @@ export const createPaintActionsSlice: Slice = (set, get) => ({
             }
           }
         }
+      } else if (activeVoxelKind === 'thin') {
+        // A thin slab is a normal color cell plus a fixed chamfer entry recording only the
+        // outward/thin axis. No neighbor sampling and no rotation — it's symmetric and never
+        // auto-resolves (frozen at paint time, like every other shape once resolved).
+        state.model.chamfer.set(key, {
+          planeAxis: plane.axis,
+          planeOrientation: plane.orientation,
+          resolvedTo: { shapeKind: 'thin', rotation: 0 },
+        })
       } else {
         state.model.chamfer.delete(key)
       }
