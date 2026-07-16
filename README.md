@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="assets/logo_8x.png" alt="VoxPaint" width="360" />
+  <img src="assets/logo.svg" alt="VoxPaint" width="360" />
 </p>
 
 A browser-based voxel painting and modeling editor. Build low-poly models by painting
