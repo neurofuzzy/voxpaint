@@ -196,36 +196,6 @@ function trianglesShareEdge(t1: Tri, t2: Tri): boolean {
   return false
 }
 
-function orderBoundaryVertices(vertices: THREE.Vector3[], edges: Map<string, number>): THREE.Vector3[] {
-  if (vertices.length <= 3) return vertices
-
-  const adjacency = new Map<string, string[]>()
-  for (const [key, count] of edges.entries()) {
-    if (count !== 1) continue
-    const [a, b] = key.split('|')
-    if (!adjacency.has(a)) adjacency.set(a, [])
-    if (!adjacency.has(b)) adjacency.set(b, [])
-    adjacency.get(a)!.push(b)
-    adjacency.get(b)!.push(a)
-  }
-
-  const byKey = new Map<string, THREE.Vector3>()
-  for (const v of vertices) byKey.set(vertexKey(v), v)
-
-  const ordered: THREE.Vector3[] = []
-  const visited = new Set<string>()
-  let currentKey: string | null = vertexKey(vertices[0])
-
-  while (currentKey && ordered.length < vertices.length) {
-    visited.add(currentKey)
-    ordered.push(byKey.get(currentKey)!)
-    const next: string | undefined = (adjacency.get(currentKey) ?? []).find((n) => !visited.has(n))
-    currentKey = next ?? null
-  }
-
-  return ordered.length >= 3 ? ordered : vertices
-}
-
 function simplifyCollinearVertices(vertices: THREE.Vector3[]): THREE.Vector3[] {
   if (vertices.length <= 3) return vertices
   const simplified: THREE.Vector3[] = []
@@ -331,76 +301,117 @@ function ensureWinding(
   }
 }
 
-function mergeCoplanarTriangles(triangles: Tri[]): Tri[] {
-  if (triangles.length <= 1) return triangles
-
-  const vertexMap = new Map<string, THREE.Vector3>()
-  const edges = new Map<string, number>()
-
+/**
+ * Extract oriented boundary loops from a set of coplanar, edge-connected triangles using directed
+ * half-edges. Each triangle's directed edges follow its winding; an edge whose reverse is absent is
+ * a boundary edge (interior edges appear once in each direction and cancel). Walking directed
+ * boundary edges keeps the solid region on one consistent side, so the outer boundary and each hole
+ * come out as separate loops.
+ *
+ * Crucially this handles **pinch vertices** — where an outer boundary and a hole boundary meet at a
+ * single point because two solid cells touch only diagonally (e.g. a donut face whose ring closes
+ * through one corner). Such a vertex has multiple outgoing boundary edges; we pick the next edge by
+ * turning as far clockwise as possible from the reverse of the incoming edge (standard planar
+ * face-traversal), which keeps the outer loop and the hole loop distinct instead of fusing them
+ * into one — the latter would drop the hole and make earcut fill it.
+ */
+function extractBoundaryLoops(
+  triangles: Tri[],
+  proj: (v: THREE.Vector3) => [number, number],
+): THREE.Vector3[][] {
+  const vByKey = new Map<string, THREE.Vector3>()
+  const dirSet = new Set<string>()
   for (const tri of triangles) {
-    for (const v of tri.vertices) {
-      const key = vertexKey(v)
-      if (!vertexMap.has(key)) vertexMap.set(key, v)
-    }
     for (let i = 0; i < 3; i++) {
-      const key = edgeKey(tri.vertices[i], tri.vertices[(i + 1) % 3])
-      edges.set(key, (edges.get(key) ?? 0) + 1)
+      const a = tri.vertices[i]
+      const b = tri.vertices[(i + 1) % 3]
+      const ak = vertexKey(a)
+      const bk = vertexKey(b)
+      vByKey.set(ak, a)
+      vByKey.set(bk, b)
+      dirSet.add(`${ak}>${bk}`)
     }
   }
 
-  const boundaryEdges = new Map<string, [THREE.Vector3, THREE.Vector3]>()
-  for (const [key, count] of edges.entries()) {
-    if (count !== 1) continue
-    const [k1, k2] = key.split('|')
-    boundaryEdges.set(key, [vertexMap.get(k1)!, vertexMap.get(k2)!])
+  // Boundary directed edges (no reverse), grouped by their source vertex.
+  const outgoing = new Map<string, string[]>()
+  for (const d of dirSet) {
+    const sep = d.indexOf('>')
+    const ak = d.slice(0, sep)
+    const bk = d.slice(sep + 1)
+    if (dirSet.has(`${bk}>${ak}`)) continue // interior edge, skip
+    if (!outgoing.has(ak)) outgoing.set(ak, [])
+    outgoing.get(ak)!.push(bk)
   }
 
-  const boundaryLoops: THREE.Vector3[][] = []
-  const usedEdges = new Set<string>()
-
-  for (const [startKey] of boundaryEdges.entries()) {
-    if (usedEdges.has(startKey)) continue
-
-    const loopEdges = new Map<string, [THREE.Vector3, THREE.Vector3]>()
-    const toProcess = [startKey]
-    while (toProcess.length > 0) {
-      const current = toProcess.pop()!
-      if (usedEdges.has(current)) continue
-      usedEdges.add(current)
-      const edge = boundaryEdges.get(current)!
-      loopEdges.set(current, edge)
-
-      const [v1, v2] = edge
-      for (const [otherKey, [ov1, ov2]] of boundaryEdges.entries()) {
-        if (usedEdges.has(otherKey)) continue
-        if (
-          vertexKey(v1) === vertexKey(ov1) || vertexKey(v1) === vertexKey(ov2) ||
-          vertexKey(v2) === vertexKey(ov1) || vertexKey(v2) === vertexKey(ov2)
-        ) {
-          toProcess.push(otherKey)
-        }
+  // At vertex `vk` arriving from `uk`, choose the outgoing edge that turns most clockwise from the
+  // reverse of the incoming direction — the first boundary edge hit rotating clockwise.
+  const pickNext = (uk: string, vk: string, cands: string[]): string => {
+    if (cands.length === 1) return cands[0]
+    const [ux, uy] = proj(vByKey.get(uk)!)
+    const [vx, vy] = proj(vByKey.get(vk)!)
+    const rx = ux - vx // reverse of incoming: from v back toward u
+    const ry = uy - vy
+    let best = cands[0]
+    let bestCw = Infinity
+    for (const wk of cands) {
+      const [wx, wy] = proj(vByKey.get(wk)!)
+      const ox = wx - vx
+      const oy = wy - vy
+      const cross = rx * oy - ry * ox
+      const dot = rx * ox + ry * oy
+      let cw = -Math.atan2(cross, dot) // clockwise angle from r to out
+      if (cw < 1e-9) cw += Math.PI * 2 // skip the reverse direction itself (~0)
+      if (cw < bestCw) {
+        bestCw = cw
+        best = wk
       }
     }
-
-    const loopVertexKeys = new Set<string>()
-    for (const [a, b] of loopEdges.values()) {
-      loopVertexKeys.add(vertexKey(a))
-      loopVertexKeys.add(vertexKey(b))
-    }
-    const loopVertices = Array.from(loopVertexKeys).map((k) => vertexMap.get(k)!)
-    const ordered = orderBoundaryVertices(loopVertices, edges)
-    if (ordered.length >= 3) boundaryLoops.push(ordered)
+    return best
   }
 
-  if (boundaryLoops.length === 0) return triangles
+  const used = new Set<string>()
+  const loops: THREE.Vector3[][] = []
+  for (const startEdge of dirSet) {
+    if (used.has(startEdge)) continue
+    const sep = startEdge.indexOf('>')
+    let fromK = startEdge.slice(0, sep)
+    let toK = startEdge.slice(sep + 1)
+    if (dirSet.has(`${toK}>${fromK}`)) continue // interior edge, not a loop start
+
+    const loop: THREE.Vector3[] = []
+    while (true) {
+      const edge = `${fromK}>${toK}`
+      if (used.has(edge)) break
+      used.add(edge)
+      loop.push(vByKey.get(fromK)!)
+      const cands = (outgoing.get(toK) ?? []).filter((w) => !used.has(`${toK}>${w}`))
+      if (cands.length === 0) break
+      const nextK = pickNext(fromK, toK, cands)
+      fromK = toK
+      toK = nextK
+    }
+    if (loop.length >= 3) loops.push(loop)
+  }
+
+  return loops
+}
+
+function mergeCoplanarTriangles(triangles: Tri[]): Tri[] {
+  if (triangles.length <= 1) return triangles
 
   const reference = triangles[0]
   const normal = reference.normal
 
+  // 2D projection basis on the shared plane, right-handed w.r.t. the normal.
   const tangent = new THREE.Vector3(1, 0, 0)
   if (Math.abs(normal.dot(tangent)) > 0.9) tangent.set(0, 1, 0)
   tangent.sub(normal.clone().multiplyScalar(normal.dot(tangent))).normalize()
   const bitangent = new THREE.Vector3().crossVectors(normal, tangent).normalize()
+  const proj = (v: THREE.Vector3): [number, number] => [v.dot(tangent), v.dot(bitangent)]
+
+  const boundaryLoops = extractBoundaryLoops(triangles, proj)
+  if (boundaryLoops.length === 0) return triangles
 
   // Compute 2D bounding-box extent for each loop so we can sort outer first
   // (discovery order is arbitrary; the outer loop has the largest extent).

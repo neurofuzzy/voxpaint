@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest'
+import * as THREE from 'three'
 import { emptyModel, encodeKey, recomputeBounds } from '@/engine/grid/GridStore'
 import type { VoxelModel } from '@/engine/grid/types'
 import { DEFAULT_PALETTE } from '@/engine/palette/defaultPalette'
@@ -34,6 +35,52 @@ describe('CSG per-color-group optimizer', () => {
     expect(built.groups).toHaveLength(2)
     expect(built.rawTriangles).toBe(24)
     expect(built.optimizedTriangles).toBe(24)
+  })
+})
+
+describe('coplanar merge with a pinch vertex (donut face whose ring closes through a corner)', () => {
+  // A ring of cells around an empty center (0,-1) in the z=0 layer, plus one cell (-1,0,-1)
+  // hanging below the ring's top-left. That removes the -z face of (-1,0,0), so the -z face at
+  // z=0 is a ring-with-hole that pinches to a point at grid vertex (0,0): cells (0,0) and (-1,-1)
+  // touch only diagonally there. The old shared-vertex loop extraction fused the outer boundary
+  // and the hole into one loop, so earcut filled the hole. The directed half-edge walk keeps them
+  // separate. Guards that the hole cell (0,-1) stays open and the ring cells stay covered.
+  const ringCells: [number, number, number][] = [
+    [1, 0, 0], [0, 0, 0], [-1, 0, 0],
+    [-1, -1, 0], [-1, -2, 0], [-1, 0, -1],
+    [0, -2, 0], [1, -2, 0], [1, -1, 0],
+  ]
+
+  function coversAtZ0NegZ(geom: THREE.BufferGeometry, px: number, py: number): boolean {
+    const pos = geom.getAttribute('position')
+    const nrm = geom.getAttribute('normal')
+    const v0 = new THREE.Vector3(), v1 = new THREE.Vector3(), v2 = new THREE.Vector3(), n = new THREE.Vector3()
+    for (let t = 0; t < pos.count / 3; t++) {
+      const i = t * 3
+      v0.fromBufferAttribute(pos, i); v1.fromBufferAttribute(pos, i + 1); v2.fromBufferAttribute(pos, i + 2)
+      n.fromBufferAttribute(nrm, i).normalize()
+      if (!(n.z < -0.9 && Math.abs(v0.z) < 1e-4 && Math.abs(v1.z) < 1e-4 && Math.abs(v2.z) < 1e-4)) continue
+      const d = (v1.y - v2.y) * (v0.x - v2.x) + (v2.x - v1.x) * (v0.y - v2.y)
+      const a = ((v1.y - v2.y) * (px - v2.x) + (v2.x - v1.x) * (py - v2.y)) / d
+      const b = ((v2.y - v0.y) * (px - v2.x) + (v0.x - v2.x) * (py - v2.y)) / d
+      if (a >= -1e-6 && b >= -1e-6 && 1 - a - b >= -1e-6) return true
+    }
+    return false
+  }
+
+  it('leaves the enclosed hole open and keeps the surrounding ring covered', () => {
+    const model = emptyModel()
+    for (const [x, y, z] of ringCells) model.color.set(encodeKey(x, y, z), { paletteSlot: base0 })
+    const built = buildOptimizedVoxelGroups({ ...model, bounds: recomputeBounds(model) }, DEFAULT_PALETTE)
+    const geom = built.groups[0].geometry
+
+    // The enclosed hole (0,-1) and the notch under the protrusion (-1,0) must NOT be filled.
+    expect(coversAtZ0NegZ(geom, 0.5, -0.5)).toBe(false)
+    expect(coversAtZ0NegZ(geom, -0.5, 0.5)).toBe(false)
+    // Every ring cell exposed to -z at z=0 must be covered.
+    for (const [x, y] of [[1, 0], [0, 0], [-1, -1], [-1, -2], [0, -2], [1, -2], [1, -1]]) {
+      expect(coversAtZ0NegZ(geom, x + 0.5, y + 0.5)).toBe(true)
+    }
   })
 })
 
