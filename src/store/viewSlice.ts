@@ -23,6 +23,7 @@ export const createViewSlice: Slice = (set) => ({
   exportScaleFactor: 100,
   exportAnchor: 'center',
   exportAlignToObjectBounds: false,
+  exportDisableMeshOptimization: false,
 
   setFullscreen: (v) => set((state) => { state.fullscreen = v }),
   setWireframe: (v) => set((state) => { state.wireframe = v }),
@@ -45,4 +46,5 @@ export const createViewSlice: Slice = (set) => ({
   setExportScaleFactor: (v) => set((state) => { state.exportScaleFactor = v; state.dirty = true }),
   setExportAnchor: (v) => set((state) => { state.exportAnchor = v; state.dirty = true }),
   setExportAlignToObjectBounds: (v) => set((state) => { state.exportAlignToObjectBounds = v; state.dirty = true }),
+  setExportDisableMeshOptimization: (v) => set((state) => { state.exportDisableMeshOptimization = v; state.dirty = true }),
 })

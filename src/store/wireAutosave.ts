@@ -24,6 +24,7 @@ export function restoreAutosave(): void {
       state.exportScaleFactor = view.exportScaleFactor ?? 100
       state.exportAnchor = view.exportAnchor ?? 'center'
       state.exportAlignToObjectBounds = view.exportAlignToObjectBounds ?? false
+      state.exportDisableMeshOptimization = view.exportDisableMeshOptimization ?? false
       state.animSettings = animSettings
       state.sliceMasks = sliceMasks
       state.slicePivots = slicePivots
@@ -41,7 +42,7 @@ const flush = debounce(() => {
       state.palette,
       state.meta,
       state.texture,
-      { ambientOcclusion: state.ambientOcclusion, noiseLevel: state.noiseLevel, specularNoiseLevel: state.specularNoiseLevel, aoStrength: state.aoStrength, glassRoughnessLevel: state.glassRoughnessLevel, exposure: state.exposure, exportScaleFactor: state.exportScaleFactor, exportAnchor: state.exportAnchor, exportAlignToObjectBounds: state.exportAlignToObjectBounds },
+      { ambientOcclusion: state.ambientOcclusion, noiseLevel: state.noiseLevel, specularNoiseLevel: state.specularNoiseLevel, aoStrength: state.aoStrength, glassRoughnessLevel: state.glassRoughnessLevel, exposure: state.exposure, exportScaleFactor: state.exportScaleFactor, exportAnchor: state.exportAnchor, exportAlignToObjectBounds: state.exportAlignToObjectBounds, exportDisableMeshOptimization: state.exportDisableMeshOptimization },
       state.animSettings,
       state.sliceMasks,
       state.slicePivots,

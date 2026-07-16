@@ -147,6 +147,9 @@ export type ViewSlice = {
   exportAnchor: GltfExportAnchor
   /** GLTF export: anchor relative to the voxels' own AABB instead of the canvas origin. */
   exportAlignToObjectBounds: boolean
+  /** GLTF export: skip coplanar-face merging so the exported mesh keeps its per-voxel topology
+   * (default false = meshes are optimized). */
+  exportDisableMeshOptimization: boolean
   setFullscreen: (v: boolean) => void
   setHoverCell: (coord: Coord | null, chamferValid: boolean | null) => void
   setHoveredFace: (face: HoveredFace | null) => void
@@ -164,6 +167,7 @@ export type ViewSlice = {
   setExportScaleFactor: (v: number) => void
   setExportAnchor: (v: GltfExportAnchor) => void
   setExportAlignToObjectBounds: (v: boolean) => void
+  setExportDisableMeshOptimization: (v: boolean) => void
 }
 
 export type PersistenceSlice = {

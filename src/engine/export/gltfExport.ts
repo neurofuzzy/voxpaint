@@ -67,6 +67,11 @@ export type GltfExportOptions = {
    * from every other project's at the same voxel coordinates (default 0 = unseeded). Pass
    * `meta.noiseSeed`. */
   noiseSeed?: number
+  /** Merge coplanar faces on the PBR (untextured) path (default true). Set false to keep the raw
+   * per-voxel surface triangulation — the CSG union still welds cells and drops hidden interior
+   * faces, but the exposed surface stays subdivided per voxel so downstream tools can deform the
+   * mesh along its original voxel topology. No effect on the textured path (already per-voxel). */
+  optimizeMesh?: boolean
 }
 
 const hex6 = (colorKey: number) => colorKey.toString(16).padStart(6, '0')
@@ -279,11 +284,12 @@ export async function exportModelToGlb(
     // When animations exist, groups are further split by slice for per-node assignment.
     let groups: Array<{ geometry: THREE.BufferGeometry; colorKey: number; materialClass: MaterialClass; sliceKey?: string }>
 
+    const mergeCoplanar = options.optimizeMesh ?? true
     if (hasAnimations && nodeAssignment) {
-      const sliceResult = buildOptimizedVoxelGroupsBySlice(model, palette, nodeAssignment)
+      const sliceResult = buildOptimizedVoxelGroupsBySlice(model, palette, nodeAssignment, mergeCoplanar)
       groups = sliceResult.groups
     } else {
-      groups = buildOptimizedVoxelGeometryByMaterial(model, palette).map((g) => ({ ...g, sliceKey: undefined }))
+      groups = buildOptimizedVoxelGeometryByMaterial(model, palette, mergeCoplanar).map((g) => ({ ...g, sliceKey: undefined }))
     }
     for (const { geometry } of groups) geometries.push(geometry)
 

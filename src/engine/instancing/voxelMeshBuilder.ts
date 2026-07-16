@@ -332,8 +332,8 @@ export function buildOptimizedVoxelGroups(model: VoxelModel, palette: PaletteSta
 }
 
 /** Per-(materialClass, colorKey) optimized geometries for GLTF export — one solid-colour mesh per group. */
-export function buildOptimizedVoxelGeometryByMaterial(model: VoxelModel, palette: PaletteState): ColorGroupGeometry[] {
-  return buildOptimizedVoxelGroups(model, palette).groups
+export function buildOptimizedVoxelGeometryByMaterial(model: VoxelModel, palette: PaletteState, mergeCoplanar?: boolean): ColorGroupGeometry[] {
+  return buildOptimizedVoxelGroups(model, palette, mergeCoplanar).groups
 }
 
 export interface SliceGroupGeometry extends ColorGroupGeometry {

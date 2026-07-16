@@ -17,6 +17,8 @@ export type ViewSettings = {
   exportAnchor: GltfExportAnchor
   /** GLTF export: anchor relative to the voxels' own AABB instead of the canvas origin. */
   exportAlignToObjectBounds: boolean
+  /** GLTF export: skip coplanar-face merging to keep the mesh's per-voxel topology. */
+  exportDisableMeshOptimization?: boolean
 }
 
 export type ProjectMeta = {

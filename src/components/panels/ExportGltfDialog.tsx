@@ -19,9 +19,11 @@ export function ExportGltfDialog({ open, onOpenChange }: { open: boolean; onOpen
   const exportScaleFactor = useAppStore((s) => s.exportScaleFactor)
   const exportAnchor = useAppStore((s) => s.exportAnchor)
   const exportAlignToObjectBounds = useAppStore((s) => s.exportAlignToObjectBounds)
+  const exportDisableMeshOptimization = useAppStore((s) => s.exportDisableMeshOptimization)
   const setExportScaleFactor = useAppStore((s) => s.setExportScaleFactor)
   const setExportAnchor = useAppStore((s) => s.setExportAnchor)
   const setExportAlignToObjectBounds = useAppStore((s) => s.setExportAlignToObjectBounds)
+  const setExportDisableMeshOptimization = useAppStore((s) => s.setExportDisableMeshOptimization)
 
   useEffect(() => {
     if (open) setScaleInput(String(exportScaleFactor))
@@ -64,6 +66,7 @@ export function ExportGltfDialog({ open, onOpenChange }: { open: boolean; onOpen
         anchor,
         alignToObjectBounds,
         noiseSeed: meta.noiseSeed,
+        optimizeMesh: !state.exportDisableMeshOptimization,
       }, animSettings, sliceMasks, slicePivots)
       downloadGlb(glb, normalizeProjectFilename(meta.name || 'voxpaint-model'))
       showToast('GLTF exported.')
@@ -131,6 +134,21 @@ export function ExportGltfDialog({ open, onOpenChange }: { open: boolean; onOpen
                 className="h-3.5 w-3.5 cursor-pointer accent-violet-500"
               />
               <span className="text-xs text-neutral-400">Align to object bounds</span>
+            </label>
+
+            <label className="flex items-start gap-2 pl-16 cursor-pointer select-none">
+              <input
+                type="checkbox"
+                checked={exportDisableMeshOptimization}
+                onChange={(e) => setExportDisableMeshOptimization(e.target.checked)}
+                className="mt-0.5 h-3.5 w-3.5 cursor-pointer accent-violet-500"
+              />
+              <span className="text-xs text-neutral-400">
+                Disable mesh optimization
+                <span className="block text-[0.6875rem] text-neutral-500">
+                  Keep per-voxel topology for deforming in other apps
+                </span>
+              </span>
             </label>
           </div>
 
