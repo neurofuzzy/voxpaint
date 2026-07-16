@@ -24,7 +24,19 @@ function App() {
   )
 
   return (
-    <div className="h-screen w-screen overflow-hidden">
+    // Safe-area padding (relevant in the iOS "Add to Home Screen" standalone app, where our own
+    // content — not Safari's chrome — sits under the notch/status bar/home-indicator) insets real
+    // UI from those regions; the padding itself shows the near-identical body background
+    // (src/index.css), so it still reads as edge-to-edge rather than a letterboxed app.
+    <div
+      className="h-screen w-screen overflow-hidden"
+      style={{
+        paddingTop: 'env(safe-area-inset-top)',
+        paddingRight: 'env(safe-area-inset-right)',
+        paddingBottom: 'env(safe-area-inset-bottom)',
+        paddingLeft: 'env(safe-area-inset-left)',
+      }}
+    >
       <MainLayout />
       <ToastRegion />
       <SplashDialog />
