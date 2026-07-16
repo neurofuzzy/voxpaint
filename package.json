@@ -9,6 +9,7 @@
     "lint": "oxlint",
     "preview": "vite preview",
     "map": "npx tsx scripts/generate-map.ts",
+    "palette:themes": "npx tsx scripts/generate-palette-themes.ts",
     "test": "vitest run"
   },
   "dependencies": {

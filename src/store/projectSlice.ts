@@ -26,6 +26,17 @@ export const createProjectSlice: Slice = (set) => ({
 
   setPalette: (palette) => set((state) => { state.palette = palette }),
 
+  applyPaletteTheme: (palette) =>
+    set((state) => {
+      state.palette.base = [...palette.base]
+      state.palette.emissive = [...palette.emissive]
+      state.palette.metal = [...palette.metal]
+      state.palette.glass = [...palette.glass]
+      // emissiveAnim intentionally untouched — a theme swaps colors, not the user's blink/pulse config.
+      state.meta.modifiedAt = new Date().toISOString()
+      state.dirty = true
+    }),
+
   setEmissiveAnimMode: (index, mode) =>
     set((state) => {
       state.palette.emissiveAnim[index] = mode

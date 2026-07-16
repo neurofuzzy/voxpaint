@@ -45,6 +45,10 @@ export type ProjectSlice = {
   meta: ProjectMeta
   setModel: (model: VoxelModel) => void
   setPalette: (palette: PaletteState) => void
+  /** Applies a theme's colors (base/emissive/metal/glass) on top of the current palette, preserving
+   * this project's own `emissiveAnim` settings — unlike `setPalette`, which replaces the whole
+   * palette wholesale (used for project import/new-project). */
+  applyPaletteTheme: (palette: PaletteState) => void
   /** Sets the blink/pulse animation mode for one emissive palette slot (0–3). */
   setEmissiveAnimMode: (index: number, mode: EmissiveAnimMode) => void
   setProjectName: (name: string) => void

@@ -20,8 +20,8 @@ export const DEFAULT_PALETTE: PaletteState = {
     '#b0555a', // dusty brick red
     '#c8b493', // sand
   ],
-  emissive: ['#ff6b4a', '#4ad9ff', '#b04aff', '#7aff6b'],
-  metal: ['#f0f0f0', '#ffe17d', '#c69269', '#f1967a'], // silver, gold, bronze, copper
-  glass: ['#9aa0a6', '#5a86c9', '#d9a441', '#5aa06e'], // gray, blue, amber, green
+  emissive: ['#ff6b4a', '#4ad9ff', '#b04aff', '#d6ff6b'],
+  metal: ['#f0f0f0', '#ffd16d', '#b68259', '#e7967a'], // silver, gold, bronze, copper
+  glass: ['#8a80a6', '#1a56e9', '#d98421', '#8aa06e'], // gray, blue, amber, green
   emissiveAnim: ['none', 'none', 'none', 'none'],
 }
