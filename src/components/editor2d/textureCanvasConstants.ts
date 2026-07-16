@@ -1,5 +1,7 @@
+import type { GridExtent } from '@/engine/grid/types'
+import { faceSizeFor } from '@/engine/texture/types'
 import type { CanvasPan, CanvasSize } from './cameraTransform'
-import { PAN_PADDING_PX } from './canvasConstants'
+import { PAN_PADDING_PX, REFERENCE_GRID_EXTENT } from './canvasConstants'
 
 /**
  * Camera math for the Texture-mode 2D canvas. The "world" here is a single box face's texel grid
@@ -14,6 +16,13 @@ export const TEX_ZOOM_MAX = 16
 
 export function texClampZoom(zoom: number): number {
   return Math.min(Math.max(zoom, TEX_ZOOM_MIN), TEX_ZOOM_MAX)
+}
+
+/** Default texture-canvas zoom for a project of the given extent, so the active face's texel box
+ * occupies roughly the same screen area at any locked-in size — the texel twin of the voxel canvas's
+ * `defaultZoomForExtent`, sharing the same `REFERENCE_GRID_EXTENT` baseline. */
+export function defaultTexZoomForExtent(gridExtent: GridExtent): number {
+  return texClampZoom(faceSizeFor(REFERENCE_GRID_EXTENT) / faceSizeFor(gridExtent))
 }
 
 export function texWorldToScreen(tu: number, tv: number, size: CanvasSize, pan: CanvasPan, zoom: number, texHalf: number): [number, number] {

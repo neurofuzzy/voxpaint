@@ -12,6 +12,17 @@ export function clampZoom(zoom: number): number {
   return Math.min(Math.max(zoom, ZOOM_MIN), ZOOM_MAX)
 }
 
+/** The grid extent that frames at zoom 1.0 — the baseline the current visuals were tuned around.
+ * Also the 3D camera's reference extent (see Viewport3D.tsx's `cameraPosForExtent`). */
+export const REFERENCE_GRID_EXTENT = 16
+
+/** Default 2D zoom for a project of the given extent, chosen so the working volume occupies roughly
+ * the same screen area at any locked-in size: a small grid opens zoomed in, a large one zoomed out.
+ * Derived purely from the extent ratio (independent of canvas size) and clamped to the zoom range. */
+export function defaultZoomForExtent(gridExtent: number): number {
+  return clampZoom(REFERENCE_GRID_EXTENT / gridExtent)
+}
+
 /** Minimum on-screen px of the grid's bounding box kept visible when panned to an extreme,
  * on every edge (uniform — including clearance from the floating palette pill at the bottom). */
 export const PAN_PADDING_PX = 100

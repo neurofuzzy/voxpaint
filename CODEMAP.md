@@ -1,8 +1,8 @@
 ```
 # Auto-generated project map
-# Last updated: 2026-07-16 05:35:18
+# Last updated: 2026-07-16 05:45:47
 # Files: 153
-# Lines of code: ~15051
+# Lines of code: ~15133
 ```
 - **/assets**
 - **/components**
@@ -20,6 +20,8 @@
       - Variable: `WHEEL_ZOOM_SENSITIVITY` - Larger = gentler zoom per wheel tick (divisor o...
       - Variable: `PINCH_ZOOM_SENSITIVITY` - Trackpad pinch (ctrl/meta+wheel) reports much s...
       - Function: `clampZoom`
+      - Variable: `REFERENCE_GRID_EXTENT` - The grid extent that frames at zoom 1.0 — the b...
+      - Function: `defaultZoomForExtent` - Default 2D zoom for a project of the given exte...
       - Variable: `PAN_PADDING_PX` - Minimum on-screen px of the grid's bounding box...
     - [Editor2D.tsx](../src/components/editor2d/Editor2D.tsx)
       - Function: `Editor2D`
@@ -34,6 +36,7 @@
       - Variable: `TEX_ZOOM_MIN`
       - Variable: `TEX_ZOOM_MAX`
       - Function: `texClampZoom`
+      - Function: `defaultTexZoomForExtent` - Default texture-canvas zoom for a project of th...
       - Function: `texWorldToScreen`
       - Function: `texScreenToWorld`
       - Function: `texClampPan` - Keep the face's texel box from being dragged fu...

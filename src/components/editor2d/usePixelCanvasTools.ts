@@ -9,7 +9,7 @@ import { useAppStore } from '@/store/useAppStore'
 import type { SelectionRegion } from '@/store/types'
 import type { CanvasPan, CanvasSize } from './cameraTransform'
 import { clampPan, screenToWorld } from './cameraTransform'
-import { BASE_CELL_PX, clampZoom, PINCH_ZOOM_SENSITIVITY, WHEEL_ZOOM_SENSITIVITY } from './canvasConstants'
+import { BASE_CELL_PX, clampZoom, defaultZoomForExtent, PINCH_ZOOM_SENSITIVITY, WHEEL_ZOOM_SENSITIVITY } from './canvasConstants'
 
 const PAN_DRAG_THRESHOLD_PX = 3
 
@@ -53,7 +53,9 @@ export function usePixelCanvasTools(canvasRef: React.RefObject<HTMLCanvasElement
 
   const [size, setSize] = useState<CanvasSize>({ width: 0, height: 0 })
   const [pan, setPan] = useState<CanvasPan>({ x: 0, y: 0 })
-  const [zoom, setZoom] = useState(1)
+  // Seed from the current project's extent so a small/large grid opens framed the same as a medium
+  // one, with no first-frame flash at zoom 1 (the initializer reads the live store value).
+  const [zoom, setZoom] = useState(() => defaultZoomForExtent(useAppStore.getState().meta.gridExtent))
   const sizeRef = useRef(size)
   sizeRef.current = size
   const zoomRef = useRef(zoom)
@@ -61,6 +63,14 @@ export function usePixelCanvasTools(canvasRef: React.RefObject<HTMLCanvasElement
   const gridExtent = useAppStore((s) => s.meta.gridExtent)
   const gridHalfRef = useRef(gridExtent / 2)
   gridHalfRef.current = gridExtent / 2
+
+  // Re-frame when the project's extent changes (a new/loaded project of a different size): reset to
+  // the size-appropriate default zoom and recenter. Extent is locked per project, so this only
+  // fires on a project switch — never mid-edit, so it won't fight the user's own pan/zoom.
+  useEffect(() => {
+    setZoom(defaultZoomForExtent(gridExtent))
+    setPan({ x: 0, y: 0 })
+  }, [gridExtent])
 
   const [linePreview, setLinePreview] = useState<{ anchor: [number, number]; end: [number, number] } | null>(null)
   const [selectPreview, setSelectPreview] = useState<SelectionRegion | null>(null)

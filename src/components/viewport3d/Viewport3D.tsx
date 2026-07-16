@@ -28,6 +28,43 @@ import { VoxelInstancedMeshes } from './VoxelInstancedMeshes'
 
 const CLICK_DRAG_THRESHOLD_PX = 4
 
+/** Camera framing tuned for a 16³ project — matches the 2D editor's reference extent
+ * (canvasConstants.ts `REFERENCE_GRID_EXTENT`) so both views frame a given size consistently. */
+const BASE_CAMERA_POS: [number, number, number] = [18, 16, 20]
+const CAMERA_REFERENCE_EXTENT = 16
+
+/** Default camera position for a project of the given extent: the base framing scaled by the extent
+ * ratio, so the camera pulls back for large models and pushes in for small ones — keeping the
+ * model's on-screen size roughly constant across sizes. */
+function cameraPosForExtent(gridExtent: number): [number, number, number] {
+  const s = gridExtent / CAMERA_REFERENCE_EXTENT
+  return [BASE_CAMERA_POS[0] * s, BASE_CAMERA_POS[1] * s, BASE_CAMERA_POS[2] * s]
+}
+
+/**
+ * Keeps the camera framed to the project's size. On extent change (a new/loaded project of a
+ * different locked-in size) it repositions the camera to the size-appropriate default, recenters
+ * the orbit target, and re-captures that as the OrbitControls "home" state so the Reset-camera
+ * button returns here. Extent is locked per project, so this never fires mid-edit.
+ */
+function CameraRig({ controlsRef }: { controlsRef: React.RefObject<OrbitControlsImpl | null> }) {
+  const camera = useThree((s) => s.camera)
+  const gridExtent = useAppStore((s) => s.meta.gridExtent)
+  useEffect(() => {
+    const [x, y, z] = cameraPosForExtent(gridExtent)
+    camera.position.set(x, y, z)
+    const controls = controlsRef.current
+    if (controls) {
+      controls.target.set(0, 0, 0)
+      controls.update()
+      controls.saveState() // so controls.reset() (the Reset-camera button) returns to this framing
+    } else {
+      camera.lookAt(0, 0, 0)
+    }
+  }, [gridExtent, camera, controlsRef])
+  return null
+}
+
 /**
  * Khronos "PBR Neutral" tone mapping (`NeutralToneMapping`) — the same curve the glTF Sample
  * Viewer defaults to — so this preview's highlight rolloff/contrast matches how the exported
@@ -172,6 +209,10 @@ export function Viewport3D() {
   const animSettings = useAppStore((s) => s.animSettings)
   const setStatusMessage = useAppStore((s) => s.setStatusMessage)
   const exposure = useAppStore((s) => s.exposure)
+  // Initial framing for the current project's extent. The <Canvas> reads this once at mount;
+  // CameraRig keeps it in sync on any later extent change. (Select the number, not a fresh array,
+  // so this doesn't re-render on unrelated store updates.)
+  const gridExtent = useAppStore((s) => s.meta.gridExtent)
   const containerRef = useRef<HTMLDivElement>(null)
   usePlaneLayerScroll(containerRef)
   const [showExposure, setShowExposure] = useState(false)
@@ -188,8 +229,9 @@ export function Viewport3D() {
       onPointerEnter={() => setStatusMessage(ORBIT_HINT)}
       onPointerLeave={() => setStatusMessage(null)}
     >
-      <Canvas camera={{ position: [18, 16, 20], fov: 45 }} gl={{ antialias: true }}>
+      <Canvas camera={{ position: cameraPosForExtent(gridExtent), fov: 45 }} gl={{ antialias: true }}>
         <ToneMappingController exposure={exposure} />
+        <CameraRig controlsRef={orbitControlsRef} />
         <color attach="background" args={['#111114']} />
         <SceneLighting />
         <SceneEnvironment />

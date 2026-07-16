@@ -6,7 +6,7 @@ import { faceSizeFor } from '@/engine/texture/types'
 import { useAppStore } from '@/store/useAppStore'
 import type { SelectionRegion } from '@/store/types'
 import type { CanvasPan, CanvasSize } from './cameraTransform'
-import { TEXEL_BASE_PX, texClampPan, texClampZoom, texScreenToWorld } from './textureCanvasConstants'
+import { defaultTexZoomForExtent, TEXEL_BASE_PX, texClampPan, texClampZoom, texScreenToWorld } from './textureCanvasConstants'
 
 const PAN_DRAG_THRESHOLD_PX = 3
 
@@ -39,7 +39,9 @@ export function useTextureCanvasTools(canvasRef: React.RefObject<HTMLCanvasEleme
 
   const [size, setSize] = useState<CanvasSize>({ width: 0, height: 0 })
   const [pan, setPan] = useState<CanvasPan>({ x: 0, y: 0 })
-  const [zoom, setZoom] = useState(1)
+  // Seed from the current project's extent so a face opens framed the same at any size (mirrors the
+  // voxel canvas). The initializer reads the live store value to avoid a first-frame flash at zoom 1.
+  const [zoom, setZoom] = useState(() => defaultTexZoomForExtent(useAppStore.getState().meta.gridExtent))
   const sizeRef = useRef(size)
   sizeRef.current = size
   const zoomRef = useRef(zoom)
@@ -49,6 +51,13 @@ export function useTextureCanvasTools(canvasRef: React.RefObject<HTMLCanvasEleme
   const texHalf = faceSize / 2
   const texHalfRef = useRef(texHalf)
   texHalfRef.current = texHalf
+
+  // Re-frame on a project switch to a different size: reset to the size-appropriate default zoom and
+  // recenter. Extent is locked per project, so this only fires on switch, never mid-edit.
+  useEffect(() => {
+    setZoom(defaultTexZoomForExtent(gridExtent))
+    setPan({ x: 0, y: 0 })
+  }, [gridExtent])
 
   const [linePreview, setLinePreview] = useState<{ anchor: [number, number]; end: [number, number] } | null>(null)
   const [selectPreview, setSelectPreview] = useState<SelectionRegion | null>(null)
