@@ -34,7 +34,10 @@
     "preview": "vite preview",
     "map": "npx tsx scripts/generate-map.ts",
     "palette:themes": "npx tsx scripts/generate-palette-themes.ts",
-    "test": "vitest run"
+    "test": "vitest run",
+    "tauri": "tauri",
+    "tauri:dev": "tauri dev",
+    "tauri:build": "tauri build"
   },
   "dependencies": {
     "@radix-ui/react-dialog": "^1.1.19",
@@ -46,6 +49,8 @@
     "@radix-ui/react-tooltip": "^1.2.12",
     "@react-three/drei": "^10.7.7",
     "@react-three/fiber": "^9.6.1",
+    "@tauri-apps/api": "^2.11.1",
+    "@tauri-apps/plugin-dialog": "^2.7.1",
     "earcut": "^3.2.3",
     "immer": "^11.1.11",
     "lucide-react": "^1.24.0",
@@ -56,6 +61,7 @@
   },
   "devDependencies": {
     "@tailwindcss/vite": "^4.3.2",
+    "@tauri-apps/cli": "^2.11.4",
     "@types/earcut": "^3.0.0",
     "@types/node": "^24.13.2",
     "@types/react": "^19.2.17",

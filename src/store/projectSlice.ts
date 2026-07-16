@@ -91,5 +91,6 @@ export const createProjectSlice: Slice = (set) => ({
       state.slicePivots = new Map()
       state.animPast = []
       state.animFuture = []
+      state.currentFilePath = null
     }),
 })

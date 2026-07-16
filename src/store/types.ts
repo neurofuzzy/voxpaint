@@ -174,9 +174,13 @@ export type PersistenceSlice = {
   dirty: boolean
   lastSavedAt: string | null
   lastError: string | null
+  /** Desktop (Tauri) only: the on-disk path this session is backed by, or null for a new/unsaved
+   * project, an autosave restore, or anything on the web build (which has no real filesystem path). */
+  currentFilePath: string | null
   markDirty: () => void
   markSaved: (at: string) => void
   setError: (message: string | null) => void
+  setCurrentFilePath: (path: string | null) => void
 }
 
 export type PaintActionsSlice = {
@@ -360,6 +364,11 @@ export type UiSlice = {
   tourActive: boolean
   /** Zero-based index into the tour step list (see components/onboarding/tourSteps.ts). */
   tourStep: number
+  /** Lifted out of `FileMenu`'s local state so the desktop native menu (File > New Project…) can
+   * open it too, alongside the in-app dropdown. */
+  newProjectDialogOpen: boolean
+  openNewProjectDialog: () => void
+  closeNewProjectDialog: () => void
   openSplash: () => void
   /** Closes the splash, persisting the "don't show again" choice when `dontShowAgain` is true. */
   closeSplash: (dontShowAgain: boolean) => void

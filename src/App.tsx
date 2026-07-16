@@ -5,14 +5,22 @@ import { InterfaceTour } from '@/components/onboarding/InterfaceTour'
 import { SplashDialog } from '@/components/onboarding/SplashDialog'
 import { ToastRegion } from '@/components/ui/ToastRegion'
 import { showToast } from '@/components/ui/toastBus'
+import { installNativeMenu } from '@/store/nativeMenu'
 import { useAppStore } from '@/store/useAppStore'
 import { restoreAutosave, wireAutosave } from '@/store/wireAutosave'
+import { wireDesktopFileOpen } from '@/store/wireDesktopOpen'
 
 function App() {
   useEffect(() => {
     restoreAutosave()
-    const unsubscribe = wireAutosave()
-    return unsubscribe
+    const unsubscribeAutosave = wireAutosave()
+    let unsubscribeDesktopOpen: (() => void) | undefined
+    void wireDesktopFileOpen().then((unlisten) => { unsubscribeDesktopOpen = unlisten })
+    void installNativeMenu()
+    return () => {
+      unsubscribeAutosave()
+      unsubscribeDesktopOpen?.()
+    }
   }, [])
 
   useEffect(

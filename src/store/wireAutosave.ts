@@ -1,5 +1,6 @@
 import { debounce, loadAutosave, saveAutosave } from '@/engine/persistence/autosave'
-import { deserializeProject, serializeProject } from '@/engine/persistence/serialize'
+import { serializeProject } from '@/engine/persistence/serialize'
+import { loadProject } from './loadProject'
 import { useAppStore } from './useAppStore'
 
 const AUTOSAVE_DEBOUNCE_MS = 800
@@ -9,26 +10,7 @@ export function restoreAutosave(): void {
   try {
     const file = loadAutosave()
     if (!file) return
-    const { model, palette, meta, texture, view, animSettings, sliceMasks, slicePivots } = deserializeProject(file)
-    useAppStore.getState().setModel(model)
-    useAppStore.getState().setPalette(palette)
-    useAppStore.getState().setTexture(texture)
-    useAppStore.setState((state) => {
-      state.meta = meta
-      state.ambientOcclusion = view.ambientOcclusion ?? false
-      state.noiseLevel = view.noiseLevel ?? 0
-      state.specularNoiseLevel = view.specularNoiseLevel ?? 0
-      state.aoStrength = view.aoStrength ?? 1
-      state.glassRoughnessLevel = view.glassRoughnessLevel ?? 0.3
-      state.exposure = view.exposure ?? 1
-      state.exportScaleFactor = view.exportScaleFactor ?? 100
-      state.exportAnchor = view.exportAnchor ?? 'center'
-      state.exportAlignToObjectBounds = view.exportAlignToObjectBounds ?? false
-      state.exportDisableMeshOptimization = view.exportDisableMeshOptimization ?? false
-      state.animSettings = animSettings
-      state.sliceMasks = sliceMasks
-      state.slicePivots = slicePivots
-    })
+    loadProject(file)
   } catch (err) {
     console.error('Failed to restore autosave', err)
   }

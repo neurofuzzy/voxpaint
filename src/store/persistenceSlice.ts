@@ -7,6 +7,7 @@ export const createPersistenceSlice: Slice = (set) => ({
   dirty: false,
   lastSavedAt: null,
   lastError: null,
+  currentFilePath: null,
 
   markDirty: () => set((state) => { state.dirty = true }),
   markSaved: (at) =>
@@ -16,4 +17,5 @@ export const createPersistenceSlice: Slice = (set) => ({
       state.lastError = null
     }),
   setError: (message) => set((state) => { state.lastError = message }),
+  setCurrentFilePath: (path) => set((state) => { state.currentFilePath = path }),
 })

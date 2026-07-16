@@ -1,56 +1,19 @@
 import * as DropdownMenu from '@radix-ui/react-dropdown-menu'
-import { ChevronDown, FileDown, FilePlus, FileUp, Package, Printer } from 'lucide-react'
-import { useRef, useState } from 'react'
-import { readProjectFile, downloadProjectFile } from '@/engine/persistence/projectFile'
-import { deserializeProject, serializeProject } from '@/engine/persistence/serialize'
+import { ChevronDown, FilePlus, FolderOpen, Package, Printer, Save } from 'lucide-react'
+import { useState } from 'react'
+import { openProject, saveProject, saveProjectAs } from '@/store/projectFileActions'
 import { useAppStore } from '@/store/useAppStore'
-import { showToast } from '@/components/ui/toastBus'
 import { ExportGltfDialog } from './ExportGltfDialog'
 import { ExportStlDialog } from './ExportStlDialog'
 import { NewProjectDialog } from './NewProjectDialog'
 
 export function FileMenu() {
-  const fileInputRef = useRef<HTMLInputElement>(null)
   const [gltfDialogOpen, setGltfDialogOpen] = useState(false)
   const [stlDialogOpen, setStlDialogOpen] = useState(false)
-  const [newProjectDialogOpen, setNewProjectDialogOpen] = useState(false)
   const setStatusMessage = useAppStore((s) => s.setStatusMessage)
-
-  function handleExport() {
-    const { model, palette, meta, texture, ambientOcclusion, noiseLevel, specularNoiseLevel, aoStrength, glassRoughnessLevel, exposure, exportScaleFactor, exportAnchor, exportAlignToObjectBounds, animSettings, sliceMasks, slicePivots } = useAppStore.getState()
-    downloadProjectFile(serializeProject(model, palette, meta, texture, { ambientOcclusion, noiseLevel, specularNoiseLevel, aoStrength, glassRoughnessLevel, exposure, exportScaleFactor, exportAnchor, exportAlignToObjectBounds }, animSettings, sliceMasks, slicePivots))
-    showToast('Project exported.')
-  }
-
-  async function handleImportFile(file: File) {
-    try {
-      const parsed = await readProjectFile(file)
-      const { model, palette, meta, texture, view, animSettings, sliceMasks, slicePivots } = deserializeProject(parsed)
-      useAppStore.getState().setModel(model)
-      useAppStore.getState().setPalette(palette)
-      useAppStore.getState().setTexture(texture)
-      useAppStore.setState((s) => {
-        s.meta = meta
-        s.ambientOcclusion = view.ambientOcclusion ?? false
-        s.noiseLevel = view.noiseLevel ?? 0
-        s.specularNoiseLevel = view.specularNoiseLevel ?? 0
-        s.aoStrength = view.aoStrength ?? 1
-        s.glassRoughnessLevel = view.glassRoughnessLevel ?? 0.3
-        s.exposure = view.exposure ?? 1
-        s.exportScaleFactor = view.exportScaleFactor ?? 100
-        s.exportAnchor = view.exportAnchor ?? 'center'
-        s.exportAlignToObjectBounds = view.exportAlignToObjectBounds ?? false
-        s.animSettings = animSettings
-        s.sliceMasks = sliceMasks
-        s.slicePivots = slicePivots
-        s.animPast = []
-        s.animFuture = []
-      })
-      showToast('Project imported.')
-    } catch (err) {
-      showToast(err instanceof Error ? err.message : 'Import failed.')
-    }
-  }
+  const newProjectDialogOpen = useAppStore((s) => s.newProjectDialogOpen)
+  const openNewProjectDialog = useAppStore((s) => s.openNewProjectDialog)
+  const closeNewProjectDialog = useAppStore((s) => s.closeNewProjectDialog)
 
   return (
     <>
@@ -72,22 +35,28 @@ export function FileMenu() {
           className="z-50 min-w-48 rounded-md border border-neutral-800 bg-neutral-900 p-1 text-sm text-neutral-200 shadow-xl"
         >
           <DropdownMenu.Item
-            onSelect={() => setNewProjectDialogOpen(true)}
+            onSelect={openNewProjectDialog}
             className="flex cursor-pointer items-center gap-2 rounded px-2 py-1.5 outline-none hover:bg-neutral-800"
           >
             <FilePlus size={14} /> New Project…
           </DropdownMenu.Item>
           <DropdownMenu.Item
-            onSelect={handleExport}
+            onSelect={() => void saveProject()}
             className="flex cursor-pointer items-center gap-2 rounded px-2 py-1.5 outline-none hover:bg-neutral-800"
           >
-            <FileDown size={14} /> Export Project (JSON)
+            <Save size={14} /> Save Project
           </DropdownMenu.Item>
           <DropdownMenu.Item
-            onSelect={() => fileInputRef.current?.click()}
+            onSelect={() => void saveProjectAs()}
             className="flex cursor-pointer items-center gap-2 rounded px-2 py-1.5 outline-none hover:bg-neutral-800"
           >
-            <FileUp size={14} /> Import Project (JSON)
+            <Save size={14} /> Save Project As…
+          </DropdownMenu.Item>
+          <DropdownMenu.Item
+            onSelect={() => void openProject()}
+            className="flex cursor-pointer items-center gap-2 rounded px-2 py-1.5 outline-none hover:bg-neutral-800"
+          >
+            <FolderOpen size={14} /> Open Project…
           </DropdownMenu.Item>
           <DropdownMenu.Separator className="my-1 h-px bg-neutral-800" />
           <DropdownMenu.Item
@@ -104,21 +73,13 @@ export function FileMenu() {
           </DropdownMenu.Item>
         </DropdownMenu.Content>
       </DropdownMenu.Portal>
-      <input
-        ref={fileInputRef}
-        type="file"
-        accept="application/json"
-        className="hidden"
-        onChange={(e) => {
-          const file = e.target.files?.[0]
-          if (file) void handleImportFile(file)
-          e.target.value = ''
-        }}
-      />
     </DropdownMenu.Root>
     <ExportGltfDialog open={gltfDialogOpen} onOpenChange={setGltfDialogOpen} />
     <ExportStlDialog open={stlDialogOpen} onOpenChange={setStlDialogOpen} />
-    <NewProjectDialog open={newProjectDialogOpen} onOpenChange={setNewProjectDialogOpen} />
+    <NewProjectDialog
+      open={newProjectDialogOpen}
+      onOpenChange={(v) => (v ? openNewProjectDialog() : closeNewProjectDialog())}
+    />
     </>
   )
 }

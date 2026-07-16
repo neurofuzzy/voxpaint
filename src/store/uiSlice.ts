@@ -16,6 +16,10 @@ export const createUiSlice: Slice = (set) => ({
   helpOpen: false,
   tourActive: false,
   tourStep: 0,
+  newProjectDialogOpen: false,
+
+  openNewProjectDialog: () => set((s) => { s.newProjectDialogOpen = true }),
+  closeNewProjectDialog: () => set((s) => { s.newProjectDialogOpen = false }),
 
   openSplash: () => set((s) => { s.splashOpen = true }),
   /** Closes the splash, persisting the "don't show again" choice when the user opted in. */
