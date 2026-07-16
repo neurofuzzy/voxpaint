@@ -15,12 +15,10 @@ function Swatch({ kind, index, hex }: { kind: PaletteSlotKind; index: number; he
   if (kind === 'metal') {
     swatchStyle = {
       background: `linear-gradient(180deg, rgba(255,255,255,0.35) 15%, transparent 50%, rgba(0,0,0,0.2) 85%), ${hex}`,
-      backgroundClip: 'padding-box',
     }
   } else if (kind === 'glass') {
     swatchStyle = {
       background: `linear-gradient(${hex}9a, ${hex}9a), repeating-conic-gradient(#fff 0% 25%, #d4d4d4 0% 50%) 0 0 / 6px 6px`,
-      backgroundClip: 'padding-box',
     }
   } else {
     swatchStyle = { backgroundColor: hex }
@@ -31,9 +29,13 @@ function Swatch({ kind, index, hex }: { kind: PaletteSlotKind; index: number; he
       aria-label={`${kind} ${index}`}
       title={`${kind} ${index + 1}`}
       onClick={() => setActivePaletteSlot({ kind, index })}
+      // A `border` clips separately from the rounded gradient background, and the two curves'
+      // anti-aliasing don't quite line up — leaves a stray sliver of the gradient's edge color
+      // peeking out at the top/bottom of the ring. A `ring` (box-shadow) paints flush against the
+      // already-rendered background instead of carving its own box, so it can't seam like that.
       className={
-        `${SWATCH} rounded-full border-2 transition-transform hover:scale-110 ` +
-        (active ? 'scale-125 border-white shadow-lg' : 'border-white/10')
+        `${SWATCH} rounded-full ring-2 transition-transform hover:scale-110 ` +
+        (active ? 'scale-125 ring-white shadow-lg' : 'ring-white/10')
       }
       style={swatchStyle}
     />
@@ -66,8 +68,8 @@ function GrayscalePalette() {
               aria-label={`gray ${index}`}
               onClick={() => setActiveGrayIndex(index)}
               className={
-                `${SWATCH} rounded-full border-2 transition-transform hover:scale-110 ` +
-                (active ? 'scale-125 border-white shadow-lg' : 'border-white/20')
+                `${SWATCH} rounded-full ring-2 transition-transform hover:scale-110 ` +
+                (active ? 'scale-125 ring-white shadow-lg' : 'ring-white/20')
               }
               style={{ backgroundColor: hex }}
             />
