@@ -184,23 +184,30 @@ export function PixelCanvas() {
       ctx.stroke()
     }
 
-    // Centre accent. For an even project the centre is a single gridline at display 0; for an odd
-    // project the centre is a whole cell (the centre pillar), so bracket it with the two lines that
-    // bound it rather than drawing a blurry off-integer line through it.
-    const centreU = n % 2 === 0 ? [0] : [centre.u - 0.5, centre.u + 0.5]
-    const centreV = n % 2 === 0 ? [0] : [centre.v - 0.5, centre.v + 0.5]
-    const tiers = (from: number, to: number, exclude: number[]) => {
+    // Centre accent — a single axis line each way. For an even project it sits on the world-origin
+    // gridline (display 0); for an odd project it runs through the *middle* of the centre pillar cell
+    // (display `centre.u`/`centre.v`, a half-integer), so there's one axis crossing at the pillar's
+    // centre rather than two lines bounding it. `snapPx` keeps the mid-cell line crisp.
+    const centreU = n % 2 === 0 ? [0] : [centre.u]
+    const centreV = n % 2 === 0 ? [0] : [centre.v]
+    // The two integer cell edges bounding an odd centre pillar must render as plain fine lines, never
+    // the brighter every-8 subdivision — otherwise the edge beside the mid-cell accent (e.g. display
+    // 0, a multiple of 8) reads as a spurious second axis. Even sizes have nothing to demote: their
+    // accent already sits on the grid at 0.
+    const demoteU = n % 2 === 0 ? [] : [centre.u - 0.5, centre.u + 0.5]
+    const demoteV = n % 2 === 0 ? [] : [centre.v - 0.5, centre.v + 0.5]
+    const tiers = (from: number, to: number, accent: number[], demote: number[]) => {
       const fine: number[] = []
       const subdiv: number[] = []
       for (let i = from; i <= to; i++) {
-        if (exclude.includes(i)) continue // centre accent drawn separately, below
-        if (i % 8 === 0) subdiv.push(i)
+        if (accent.includes(i)) continue // centre accent drawn separately, below
+        if (i % 8 === 0 && !demote.includes(i)) subdiv.push(i)
         else fine.push(i)
       }
       return { fine, subdiv }
     }
-    const uTiers = tiers(dLoU, dHiU, centreU)
-    const vTiers = tiers(dLoV, dHiV, centreV)
+    const uTiers = tiers(dLoU, dHiU, centreU, demoteU)
+    const vTiers = tiers(dLoV, dHiV, centreV, demoteV)
     // Colors match the 3D construction plane's gridHelper tiers exactly (ConstructionPlaneVisual.tsx).
     strokeVLines(uTiers.fine, '#22303a')
     strokeHLines(vTiers.fine, '#22303a')
