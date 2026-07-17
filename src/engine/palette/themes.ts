@@ -22,6 +22,17 @@ export const PALETTE_THEMES: PaletteTheme[] = [
     },
   },
   {
+    id: "toy-town",
+    name: "Toy Town",
+    palette: {
+      base: ['#3A9A52', '#6EBA76', '#1B54A0', '#4A8ED0', '#E8C400', '#F5D440', '#C91A1A', '#E84D4D', '#A87840', '#D4A868', '#8A3A28', '#B86848', '#6E3A82', '#B088C8', '#4A4A4C', '#9C9C9C'],
+      emissive: ['#ffdd55', '#ff5555', '#55aaff', '#55ff88'],
+      metal: ['#a8b0b6', '#d4a830', '#7a4030', '#9a6a40'],
+      glass: ['#b3e8ff', '#6bff5a', '#ff6655', '#ffee55'],
+      emissiveAnim: ['none', 'none', 'none', 'none'],
+    },
+  },
+  {
     id: "roguelike",
     name: "Roguelike",
     palette: {
@@ -33,24 +44,13 @@ export const PALETTE_THEMES: PaletteTheme[] = [
     },
   },
   {
-    id: "iron-age",
-    name: "Iron Age",
+    id: "urban-graffiti",
+    name: "Urban Graffiti",
     palette: {
-      base: ['#4d6957', '#7ba488', '#3d5370', '#6e8bab', '#5c3e30', '#9d6e58', '#7d3d2a', '#c66e52', '#54615c', '#8d9c95', '#2a2218', '#1e2432', '#281e2d', '#1e2a2c', '#28282a', '#2d251e'],
-      emissive: ['#ff9c78', '#b4ffc8', '#a8c8ff', '#f89c7c'],
-      metal: ['#3d3d3f', '#9c6b34', '#5a8a72', '#8a97a3'],
-      glass: ['#c48a3f', '#3f6b4a', '#3f5a8a', '#7a3040'],
-      emissiveAnim: ['none', 'none', 'none', 'none'],
-    },
-  },
-  {
-    id: "deep_colonizer",
-    name: "Deep Colonizer",
-    palette: {
-      base: ['#2E4E35', '#7AA884', '#1A4D53', '#56B4BF', '#153A57', '#478ABF', '#353258', '#8C87C7', '#57462B', '#BF9B6A', '#081229', '#122440', '#0C1515', '#182828', '#1B2D1F', '#0E2A2E'],
-      emissive: ['#ff88d4', '#e884ff', '#8cffe0', '#ffb878'],
-      metal: ['#c8d4d8', '#2e3a42', '#4a8f7a', '#a67a4a'],
-      glass: ['#3fd9c4', '#6b3fbf', '#d98a3f', '#ff6b9c'],
+      base: ['#AA0038', '#FF55A0', '#1144BB', '#44A0FF', '#339900', '#88EE33', '#CC3300', '#FFAA44', '#CC9900', '#FFEE55', '#7722BB', '#BB55FF', '#006699', '#44CCFF', '#111114', '#88888C'],
+      emissive: ['#ff33cc', '#33ff88', '#ffaa00', '#3388ff'],
+      metal: ['#8a8e92', '#c4a030', '#6a3a2a', '#4a4a4e'],
+      glass: ['#ff66cc', '#66ff66', '#ffcc33', '#33ccff'],
       emissiveAnim: ['none', 'none', 'none', 'none'],
     },
   },
