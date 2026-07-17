@@ -8,7 +8,7 @@ import type { TexelClip } from '@/engine/texture/texelOps'
 import type { AnimationSpeed, AnimationType, SliceAnimSettings, SliceKey } from '@/engine/animation/types'
 
 export type ToolId = 'paint' | 'erase' | 'eyedropper' | 'select' | 'fill' | 'clone' | 'move' | 'pivot'
-export type VoxelKind = 'cube' | 'ramp' | 'wedge'
+export type VoxelKind = 'cube' | 'ramp' | 'wedge' | 'thin'
 
 export type SelectionRegion = {
   originU: number

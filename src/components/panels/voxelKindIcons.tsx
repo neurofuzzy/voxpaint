@@ -40,3 +40,16 @@ export function WedgeIcon({ size = 18 }: IconProps) {
     </svg>
   )
 }
+
+export function ThinIcon({ size = 18 }: IconProps) {
+  // thin.svg's two nested translates (matrix … -711, then … +192) are flattened here to -519 on Y.
+  return (
+    <svg width={size} height={size} viewBox="0 0 83 113" xmlns="http://www.w3.org/2000/svg" style={{ display: 'block' }}>
+      <g transform="matrix(1,0,0,1,-291.128,-519)">
+        <path d="M318.554,519L373.979,551L346.554,568L291.128,536L318.554,519Z" fill="rgb(235,235,235)" />
+        <path d="M373.979,551L373.979,615L346.554,632L346.554,568L373.979,551Z" fill="rgb(142,141,141)" />
+        <path d="M346.554,568L346.554,632L291.128,600L291.128,536L346.554,568Z" fill="rgb(201,201,201)" />
+      </g>
+    </svg>
+  )
+}

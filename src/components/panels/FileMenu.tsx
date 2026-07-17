@@ -1,16 +1,18 @@
 import * as DropdownMenu from '@radix-ui/react-dropdown-menu'
-import { ChevronDown, FileDown, FilePlus, FileUp, Package } from 'lucide-react'
+import { ChevronDown, FileDown, FilePlus, FileUp, Package, Printer } from 'lucide-react'
 import { useRef, useState } from 'react'
 import { readProjectFile, downloadProjectFile } from '@/engine/persistence/projectFile'
 import { deserializeProject, serializeProject } from '@/engine/persistence/serialize'
 import { useAppStore } from '@/store/useAppStore'
 import { showToast } from '@/components/ui/toastBus'
 import { ExportGltfDialog } from './ExportGltfDialog'
+import { ExportStlDialog } from './ExportStlDialog'
 import { NewProjectDialog } from './NewProjectDialog'
 
 export function FileMenu() {
   const fileInputRef = useRef<HTMLInputElement>(null)
   const [gltfDialogOpen, setGltfDialogOpen] = useState(false)
+  const [stlDialogOpen, setStlDialogOpen] = useState(false)
   const [newProjectDialogOpen, setNewProjectDialogOpen] = useState(false)
   const setStatusMessage = useAppStore((s) => s.setStatusMessage)
 
@@ -94,6 +96,12 @@ export function FileMenu() {
           >
             <Package size={14} /> Export GLTF…
           </DropdownMenu.Item>
+          <DropdownMenu.Item
+            onSelect={() => setStlDialogOpen(true)}
+            className="flex cursor-pointer items-center gap-2 rounded px-2 py-1.5 outline-none hover:bg-neutral-800"
+          >
+            <Printer size={14} /> Export STL…
+          </DropdownMenu.Item>
         </DropdownMenu.Content>
       </DropdownMenu.Portal>
       <input
@@ -109,6 +117,7 @@ export function FileMenu() {
       />
     </DropdownMenu.Root>
     <ExportGltfDialog open={gltfDialogOpen} onOpenChange={setGltfDialogOpen} />
+    <ExportStlDialog open={stlDialogOpen} onOpenChange={setStlDialogOpen} />
     <NewProjectDialog open={newProjectDialogOpen} onOpenChange={setNewProjectDialogOpen} />
     </>
   )

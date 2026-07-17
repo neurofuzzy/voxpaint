@@ -58,6 +58,18 @@ export function unitCubeGeometry(): THREE.BufferGeometry {
 }
 
 /**
+ * Model F — thin slab: a full-footprint box that is half-thickness (0.5) along the outward (z / W)
+ * axis, centered on the origin (`z ∈ [-0.25, 0.25]`). In prefab space z is the plane's outward
+ * normal, so the full 1×1 square u×v face points at the viewer while the slab sits centered in the
+ * cell — a fin / inset-panel / glass block. Symmetric about z, so unlike the chamfer prefabs it
+ * takes no `rotation`. Returned **non-indexed** (CCW-outward) so it drops straight into
+ * `voxelMeshBuilder`'s `emitChamfer` triangle-soup loop.
+ */
+export function thinGeometry(): THREE.BufferGeometry {
+  return new THREE.BoxGeometry(1, 1, 0.5).toNonIndexed()
+}
+
+/**
  * Mirror a chamfer geometry across the v axis (negate local y) with winding reversed so faces stay
  * outward-wound. Paired with the proper-rotation matrix chamferInstanceMatrix produces for reflected
  * planes, this renders the identical shape in the identical place but with det=+1 (so lighting is

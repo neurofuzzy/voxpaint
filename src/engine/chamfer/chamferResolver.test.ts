@@ -80,7 +80,9 @@ const EXPECTED_ROTATION_GRID = [
   '--2111--',
 ]
 
-const SHAPE_LETTER: Record<ChamferShapeKind, string> = { ramp: 'B', convex: 'C', concave: 'D', wedge: 'E' }
+// `thin` is never produced by the resolver (it's painted directly, not classified from neighbors);
+// its entry only satisfies the total Record type.
+const SHAPE_LETTER: Record<ChamferShapeKind, string> = { ramp: 'B', convex: 'C', concave: 'D', wedge: 'E', thin: 'F' }
 
 function buildSteadyStateModel(): VoxelModel {
   const model = emptyModel()

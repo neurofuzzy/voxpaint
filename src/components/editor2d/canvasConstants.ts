@@ -8,6 +8,12 @@ export const WHEEL_ZOOM_SENSITIVITY = 100
  * click, so it needs a much smaller divisor to feel comparably responsive. */
 export const PINCH_ZOOM_SENSITIVITY = 15
 
+/** How long a solo touch waits before it commits to the active tool (paint/select/etc.) — long
+ * enough that a genuine two-finger pinch's second contact (which almost never lands in the exact
+ * same event as the first) arrives in time to cancel it, short enough that a real one-finger tap
+ * or stroke doesn't read as laggy. Mouse/pen input is never delayed, only `pointerType: 'touch'`. */
+export const TOUCH_GESTURE_DELAY_MS = 60
+
 export function clampZoom(zoom: number): number {
   return Math.min(Math.max(zoom, ZOOM_MIN), ZOOM_MAX)
 }

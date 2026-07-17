@@ -145,3 +145,7 @@ vite.config.ts.timestamp-*
 
 # Local scratch exports from the app
 etc/exports/
+
+# Tauri
+src-tauri/target/
+src-tauri/gen/schemas

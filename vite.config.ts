@@ -17,4 +17,10 @@ export default defineConfig({
   worker: {
     format: 'es',
   },
+  // Bind to all interfaces (not just localhost) so the dev server is reachable from other devices
+  // on the LAN, e.g. a phone at http://geoff.local:5173 — needed to test touch input for real.
+  server: {
+    host: true,
+    allowedHosts: ['geoff.local']
+  },
 })

@@ -173,6 +173,7 @@ export function TextureCanvas() {
         onPointerDown={onPointerDown}
         onPointerMove={onPointerMove}
         onPointerUp={onPointerUp}
+        onPointerCancel={onPointerUp}
         onPointerLeave={() => setStatusMessage(null)}
         onContextMenu={(e) => e.preventDefault()}
       />

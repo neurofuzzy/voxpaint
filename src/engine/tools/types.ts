@@ -1,4 +1,4 @@
-import type { VoxelModel } from '@/engine/grid/types'
+import type { GridExtent, VoxelModel } from '@/engine/grid/types'
 import type { ConstructionPlane } from '@/engine/plane/types'
 import type { PaletteSlotRef } from '@/engine/palette/types'
 import type { NormalizedPointerEvent } from '@/engine/input/PointerInputController'
@@ -15,6 +15,7 @@ import type { ClipboardData, FloatOrigin, SelectionRegion, SelectionTransformKin
 export interface ToolContext {
   model: VoxelModel
   plane: ConstructionPlane
+  gridExtent: GridExtent
   activeVoxelKind: VoxelKind
   activePaletteSlot: PaletteSlotRef
   selection: SelectionRegion | null

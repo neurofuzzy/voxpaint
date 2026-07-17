@@ -3,9 +3,24 @@
   <head>
     <meta charset="UTF-8" />
     <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+    <!-- viewport-fit=cover lets the canvas draw under the notch/status bar/home-indicator area in
+         standalone mode; safe-area padding (src/index.css) keeps real UI clear of those insets. -->
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" />
     <meta name="color-scheme" content="dark" />
+    <meta name="theme-color" content="#0a0a0c" />
     <meta name="description" content="A browser-based voxel painting and modeling editor with chamfer autotiling, themed palettes, and GLTF/GLB export." />
+
+    <!-- "Add to Home Screen" support (iOS reads these directly; it only partially honors the web
+         manifest below, so both are needed for a real fullscreen/standalone launch on iPad/iPhone). -->
+    <link rel="manifest" href="/manifest.webmanifest" />
+    <link rel="apple-touch-icon" href="/icons/apple-touch-icon.png" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-title" content="VoxPaint" />
+    <!-- black-translucent draws the (hidden, since we're already fullscreen) status bar area in the
+         page's own dark background rather than iOS's default opaque light bar. -->
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+    <meta name="mobile-web-app-capable" content="yes" />
+
     <title>VoxPaint</title>
   </head>
   <body>

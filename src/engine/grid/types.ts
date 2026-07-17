@@ -3,7 +3,7 @@ import type { PaletteSlotRef } from '@/engine/palette/types'
 export type Axis = 'x' | 'y' | 'z'
 export type Orientation = 1 | -1
 export type Rotation = 0 | 1 | 2 | 3
-export type ChamferShapeKind = 'ramp' | 'convex' | 'concave' | 'wedge'
+export type ChamferShapeKind = 'ramp' | 'convex' | 'concave' | 'wedge' | 'thin'
 
 /** Locked-in project size (edge length of the working cube), chosen once at project creation and
  * never changed after. An integer in `[2, MAX_GRID_EXTENT]` — presets (8/16/24) or a Custom value.

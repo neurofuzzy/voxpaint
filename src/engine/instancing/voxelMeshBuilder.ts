@@ -1,7 +1,7 @@
 import * as THREE from 'three'
 import { decodeKey, encodeKey } from '@/engine/grid/GridStore'
 import type { CellKey, ChamferCell, Coord, VoxelModel } from '@/engine/grid/types'
-import { concaveCornerGeometry, convexCornerGeometry, mirrorVGeometry, rampGeometry, wedgeGeometry } from '@/engine/chamfer/chamferGeometry'
+import { concaveCornerGeometry, convexCornerGeometry, mirrorVGeometry, rampGeometry, thinGeometry, wedgeGeometry } from '@/engine/chamfer/chamferGeometry'
 import { materialClassFor, resolveSlotColor, type MaterialClass } from '@/engine/palette/palette'
 import type { PaletteState } from '@/engine/palette/types'
 import type { SliceKey } from '@/engine/animation/types'
@@ -64,15 +64,18 @@ const CHAMFER_BASE: Record<string, THREE.BufferGeometry> = (() => {
   const convex = convexCornerGeometry(0)
   const concave = concaveCornerGeometry(0)
   const wedge = wedgeGeometry(0)
+  const thin = thinGeometry()
   return {
     ramp,
     convex,
     concave,
     wedge,
+    thin,
     rampM: mirrorVGeometry(ramp),
     convexM: mirrorVGeometry(convex),
     concaveM: mirrorVGeometry(concave),
     wedgeM: mirrorVGeometry(wedge),
+    thinM: mirrorVGeometry(thin),
   }
 })()
 

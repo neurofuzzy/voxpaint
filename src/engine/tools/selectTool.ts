@@ -1,10 +1,12 @@
+import { withinWorkingBounds } from '@/engine/grid/GridStore'
+import { gridCoordFromPixel } from '@/engine/plane/constructionPlane'
 import { bresenhamLine } from '@/engine/tools/lineUtils'
 import { isCellSelected, lassoRegion, rectRegion } from '@/engine/tools/selectionMask'
 import type { ToolHandler } from './types'
 
 export const selectTool: ToolHandler = {
   onDown(ctx, e) {
-    const { selection, floatContent, floatOrigin } = ctx
+    const { selection, floatContent, floatOrigin, plane, gridExtent } = ctx
 
     if (floatContent && selection && isCellSelected(selection, e.u, e.v)) {
       // Continuing to drag the same pending float.
@@ -24,6 +26,15 @@ export const selectTool: ToolHandler = {
         startV: e.v,
         originAtStart: { originU: selection.originU, originV: selection.originV },
       }
+      return
+    }
+
+    // Click/tap outside the paintable grid (the margin around the model in the 2D view) — treat
+    // like clicking blank canvas in any raster editor: clear the selection instead of starting a
+    // new one, rather than anchoring a 1x1 selectRect on a cell that can never hold paint.
+    if (!withinWorkingBounds(gridCoordFromPixel(plane, e.u, e.v), gridExtent)) {
+      ctx.setSelection(null)
+      ctx.drag.current = { kind: 'idle' }
       return
     }
 

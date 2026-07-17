@@ -10,6 +10,23 @@ export interface CanvasPan {
   y: number
 }
 
+/** Canvas-local (post-`getBoundingClientRect` subtraction) position of one active touch contact. */
+export interface TouchPoint {
+  x: number
+  y: number
+}
+
+/** Midpoint of a two-finger touch, in the same canvas-local space `screenToWorld` expects — the
+ * pinch/pan anchor point for both the voxel and texture canvases. */
+export function touchMidpoint(a: TouchPoint, b: TouchPoint): TouchPoint {
+  return { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 }
+}
+
+/** Distance between two touch contacts, in canvas-local px — the pinch gesture's scale reference. */
+export function touchDistance(a: TouchPoint, b: TouchPoint): number {
+  return Math.hypot(a.x - b.x, a.y - b.y)
+}
+
 /** World (grid-cell) coordinates to screen (CSS px, canvas-local) coordinates. */
 export function worldToScreen(u: number, v: number, size: CanvasSize, pan: CanvasPan, zoom: number): [number, number] {
   const cellPx = BASE_CELL_PX * zoom

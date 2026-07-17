@@ -397,6 +397,7 @@ export function PixelCanvas() {
       onPointerDown={onPointerDown}
       onPointerMove={onPointerMove}
       onPointerUp={onPointerUp}
+      onPointerCancel={onPointerUp}
       onPointerLeave={onPointerLeave}
       onContextMenu={(e) => e.preventDefault()}
     />
