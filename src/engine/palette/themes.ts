@@ -22,6 +22,17 @@ export const PALETTE_THEMES: PaletteTheme[] = [
     },
   },
   {
+    id: "toy-town",
+    name: "Toy Town",
+    palette: {
+      base: ['#3A9A52', '#6EBA76', '#1B54A0', '#4A8ED0', '#E8C400', '#F5D440', '#C91A1A', '#E84D4D', '#A87840', '#D4A868', '#8A3A28', '#B86848', '#6E3A82', '#B088C8', '#4A4A4C', '#9C9C9C'],
+      emissive: ['#ffdd55', '#ff5555', '#55aaff', '#55ff88'],
+      metal: ['#a8b0b6', '#d4a830', '#7a4030', '#9a6a40'],
+      glass: ['#b3e8ff', '#6bff5a', '#ff6655', '#ffee55'],
+      emissiveAnim: ['none', 'none', 'none', 'none'],
+    },
+  },
+  {
     id: "roguelike",
     name: "Roguelike",
     palette: {
@@ -29,17 +40,6 @@ export const PALETTE_THEMES: PaletteTheme[] = [
       emissive: ['#ff9c18', '#f8f0d8', '#88d4ff', '#d8c098'],
       metal: ['#8a8f94', '#a67c3d', '#4a4e57', '#6b5433'],
       glass: ['#3fae5c', '#3f7fbf', '#d99a3f', '#b23f4a'],
-      emissiveAnim: ['none', 'none', 'none', 'none'],
-    },
-  },
-  {
-    id: "iron-age",
-    name: "Iron Age",
-    palette: {
-      base: ['#4d6957', '#7ba488', '#3d5370', '#6e8bab', '#5c3e30', '#9d6e58', '#7d3d2a', '#c66e52', '#54615c', '#8d9c95', '#2a2218', '#1e2432', '#281e2d', '#1e2a2c', '#28282a', '#2d251e'],
-      emissive: ['#ff9c78', '#b4ffc8', '#a8c8ff', '#f89c7c'],
-      metal: ['#3d3d3f', '#9c6b34', '#5a8a72', '#8a97a3'],
-      glass: ['#c48a3f', '#3f6b4a', '#3f5a8a', '#7a3040'],
       emissiveAnim: ['none', 'none', 'none', 'none'],
     },
   },
