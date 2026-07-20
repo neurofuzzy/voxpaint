@@ -2,7 +2,7 @@ import type { StateCreator } from 'zustand'
 import { encodeKey, expandBounds, withinWorkingBounds } from '@/engine/grid/GridStore'
 import { gridCoordFromPixel } from '@/engine/plane/constructionPlane'
 import { fillLeaksToEdges, floodFillRegion, floodFillRegion3D } from '@/engine/tools/floodFill'
-import { applyClipboardAt, clearRegion, copyRegionToClipboard } from '@/engine/tools/clipboard'
+import { applyClipboardAt, clearRegion, copyRegionToClipboard, transformClipboardToPlane } from '@/engine/tools/clipboard'
 import { mirrorClipboard, rotateClipboard90 } from '@/engine/tools/transform'
 import { isCellSelected, mirrorRegion, rotateRegion90 } from '@/engine/tools/selectionMask'
 import type { AppState, ToolActionsSlice } from './types'
@@ -124,20 +124,30 @@ export const createToolActionsSlice: Slice = (set, get) => ({
     get().commitStroke()
   },
 
+  pasteClipboardInPlace: () => {
+    const { clipboard, plane } = get()
+    if (!clipboard) return
+    // Paste-in-place is "same spot on screen", not "same (u,v)" — when the plane has changed since
+    // the copy, the origin has to be rebased through the same transform the content gets.
+    const { originU, originV } = transformClipboardToPlane(clipboard, plane)
+    get().pasteClipboardAt(originU ?? 0, originV ?? 0)
+  },
+
   pasteClipboardAt: (u, v) => {
     get().bakeFloatIfAny()
-    const { clipboard } = get()
+    const { clipboard, plane } = get()
     if (!clipboard) return
+    const transformedClipboard = transformClipboardToPlane(clipboard, plane)
     get().beginStroke()
     set((state) => {
-      state.floatContent = clipboard
+      state.floatContent = transformedClipboard
       state.floatOrigin = { originU: u, originV: v }
       state.selection = {
         originU: u,
         originV: v,
-        width: clipboard.width,
-        height: clipboard.height,
-        mask: new Uint8Array(clipboard.width * clipboard.height).fill(1),
+        width: transformedClipboard.width,
+        height: transformedClipboard.height,
+        mask: new Uint8Array(transformedClipboard.width * transformedClipboard.height).fill(1),
       }
     })
   },

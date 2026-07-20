@@ -51,7 +51,6 @@ export function useKeyboardShortcuts(hoverCellRef?: React.RefObject<[number, num
       const clipboard = isTexture ? store.textureClipboard : isAnimate ? null : store.clipboard
       const copy = isTexture ? store.textureCopy : store.copySelection
       const cut = isTexture ? store.textureCut : store.cutSelection
-      const pasteAt = isTexture ? store.texturePasteAt : store.pasteClipboardAt
       const bakeFloat = isTexture ? store.textureBakeFloatIfAny : store.bakeFloatIfAny
       const clearSelection = isTexture ? () => store.setTextureSelection(null) : () => store.setSelection(null)
       const deleteSelection = isTexture ? store.textureDelete : store.deleteSelection
@@ -69,8 +68,11 @@ export function useKeyboardShortcuts(hoverCellRef?: React.RefObject<[number, num
           cut()
           e.preventDefault()
         } else if (key === 'v' && clipboard) {
-          // Paste-in-place: always land at the same top-left the selection was copied from.
-          pasteAt(clipboard.originU ?? 0, clipboard.originV ?? 0)
+          // Paste-in-place. In voxel mode "in place" means the same spot *on screen*, so the store
+          // rebases the origin for the active plane; texture mode has no planes and pastes at the
+          // literal copied origin.
+          if (isTexture) store.texturePasteAt(clipboard.originU ?? 0, clipboard.originV ?? 0)
+          else store.pasteClipboardInPlace()
           e.preventDefault()
         }
         return

@@ -37,6 +37,13 @@ export type ClipboardData = {
    * tracks position via `floatOrigin` instead. */
   originU?: number
   originV?: number
+  /** The construction plane this content was copied off. `du`/`dv` and every chamfer's baked
+   * rotation are expressed in *this* plane's logical frame, so a paste onto a different plane can
+   * re-express them there and keep the on-screen result identical — see
+   * `engine/tools/clipboard.ts`'s `transformClipboardToPlane`. Omitted on transformed float
+   * content that was never copied off a plane. */
+  copyPlaneAxis?: Axis
+  copyPlaneOrientation?: Orientation
 }
 
 export type ProjectSlice = {
@@ -204,8 +211,13 @@ export type ToolActionsSlice = {
   copySelection: () => void
   cutSelection: () => void
   deleteSelection: () => void
-  /** Pastes the clipboard as a new floating selection at (u,v) — does not commit to the model. */
+  /** Pastes the clipboard as a new floating selection at (u,v) — does not commit to the model.
+   * Content copied off a different construction plane is re-expressed for the active one first
+   * (see `transformClipboardToPlane`), so it pastes with the destination plane's orientation. */
   pasteClipboardAt: (u: number, v: number) => void
+  /** Paste-in-place: pastes at the same *on-screen* spot the selection was copied from, which is a
+   * different (u,v) whenever the construction plane has changed since the copy. */
+  pasteClipboardInPlace: () => void
   /** Lifts the current selection into a floating buffer: copies it out, clears the source cells,
    * and opens an undo stroke that stays uncommitted until `bakeFloatIfAny()`. No-op if nothing is
    * selected or a float is already pending. */
