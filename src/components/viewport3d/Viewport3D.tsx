@@ -14,6 +14,7 @@ import { BoundingBoxFaceSelector } from './BoundingBoxFaceSelector'
 import { CompassIcon, CompassTracker } from './Compass'
 import { ConstructionPlaneGizmo } from './ConstructionPlaneGizmo'
 import { ConstructionPlaneVisual } from './ConstructionPlaneVisual'
+import { FloatGhostPreview } from './FloatGhostPreview'
 import { ExposureSlider } from './ExposureSlider'
 import { OptimizedMeshView } from './OptimizedMeshView'
 import { PivotGizmo } from './PivotGizmo'
@@ -252,6 +253,7 @@ export function Viewport3D() {
             {hasAnimations && <AnimatedModelView />}
             <VoxelFaceHighlight />
             <VoxelGhostPreview />
+            <FloatGhostPreview />
             <ConstructionPlaneGizmo />
             <PivotGizmo />
             <VoxelInteractionHandler managerRef={managerRef} />
