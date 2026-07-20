@@ -79,6 +79,28 @@ describe('rotateClipboard90 / mirrorClipboard', () => {
     mirrorClipboard(source, 'vertical')
     expect(source.cells[0].chamfer?.resolvedTo).toEqual(ramp(0))
   })
+
+  it('rotates counter-clockwise as the exact inverse of clockwise', () => {
+    const wide = clip(plane('z', 1), [
+      { du: 0, dv: 0, chamfer: { planeAxis: 'z', planeOrientation: 1, resolvedTo: ramp(0) } },
+      { du: 2, dv: 1, chamfer: { planeAxis: 'z', planeOrientation: 1, resolvedTo: convex(3) } },
+      { du: 1, dv: 0 },
+    ])
+    const roundTrip = rotateClipboard90(rotateClipboard90(wide, 'cw'), 'ccw')
+    expect(roundTrip.width).toBe(wide.width)
+    expect(roundTrip.height).toBe(wide.height)
+    expect(roundTrip.cells).toEqual(wide.cells)
+  })
+
+  it('lands four counter-clockwise turns back on the original', () => {
+    let out = source
+    for (let i = 0; i < 4; i++) out = rotateClipboard90(out, 'ccw')
+    expect(out.cells).toEqual(source.cells)
+  })
+
+  it('turns chamfer shapes the opposite way from clockwise', () => {
+    expect(rotateClipboard90(source, 'ccw').cells[0].chamfer?.resolvedTo).toEqual(ramp(3))
+  })
 })
 
 describe('transformClipboardToPlane', () => {

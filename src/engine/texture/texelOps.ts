@@ -79,14 +79,15 @@ export function applyClipAt(arr: Uint8Array, clip: TexelClip, originU: number, o
   }
 }
 
-/** Rotate a clip 90° clockwise (extents swap) — mirrors `rotateRegion90`'s index mapping. */
-export function rotateClip90(clip: TexelClip): TexelClip {
+/** Rotate a clip 90° (extents swap) — mirrors `rotateRegion90`'s index mapping. */
+export function rotateClip90(clip: TexelClip, direction: 'cw' | 'ccw' = 'cw'): TexelClip {
   const { width, height, cells } = clip
   const out = new Uint8Array(width * height).fill(EMPTY)
   for (let dv = 0; dv < height; dv++) {
     for (let du = 0; du < width; du++) {
-      const ndu = height - 1 - dv
-      const ndv = du
+      // New extents are (height, width), so the row stride below is `height` either way.
+      const ndu = direction === 'cw' ? height - 1 - dv : dv
+      const ndv = direction === 'cw' ? du : width - 1 - du
       out[ndv * height + ndu] = cells[dv * width + du]
     }
   }

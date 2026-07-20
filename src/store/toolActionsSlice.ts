@@ -179,9 +179,10 @@ export const createToolActionsSlice: Slice = (set, get) => ({
     get().liftSelectionToFloat() // no-op if already floating
     const { floatContent, selection } = get()
     if (!floatContent || !selection) return
-    const transformedContent =
-      kind === 'rotate' ? rotateClipboard90(floatContent) : mirrorClipboard(floatContent, kind === 'mirror-h' ? 'horizontal' : 'vertical')
-    const transformedRegion = kind === 'rotate' ? rotateRegion90(selection) : mirrorRegion(selection, kind === 'mirror-h' ? 'horizontal' : 'vertical')
+    const spin = kind === 'rotate' ? 'cw' : kind === 'rotate-ccw' ? 'ccw' : null
+    const flip = kind === 'mirror-h' ? 'horizontal' : 'vertical'
+    const transformedContent = spin ? rotateClipboard90(floatContent, spin) : mirrorClipboard(floatContent, flip)
+    const transformedRegion = spin ? rotateRegion90(selection, spin) : mirrorRegion(selection, flip)
     set((state) => {
       state.floatContent = transformedContent
       state.floatOrigin = { originU: transformedRegion.originU, originV: transformedRegion.originV }

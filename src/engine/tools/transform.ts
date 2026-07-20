@@ -36,13 +36,13 @@ export function mirrorClassification(c: ChamferClassification, mirrorU: boolean,
 }
 
 /**
- * Renumbers a resolved shape for a 90° clockwise turn in the logical u/v frame — matching the
- * du/dv rotation `rotateClipboard90` applies. Both orderings are clockwise (N->E->S->W and
- * NE->SE->SW->NW), so every rotatable kind is a plain +1 step regardless of which table it uses.
+ * Renumbers a resolved shape for a 90° turn in the logical u/v frame — matching the du/dv rotation
+ * `rotateClipboard90` applies. Both orderings run clockwise (N->E->S->W and NE->SE->SW->NW), so
+ * every rotatable kind is a plain ±1 step regardless of which table it uses.
  */
-export function rotateClassification90(c: ChamferClassification): ChamferClassification {
+export function rotateClassification90(c: ChamferClassification, direction: 'cw' | 'ccw' = 'cw'): ChamferClassification {
   if (c.shapeKind === 'thin') return c
-  return { shapeKind: c.shapeKind, rotation: ((c.rotation + 1) % 4) as Rotation }
+  return { shapeKind: c.shapeKind, rotation: ((c.rotation + (direction === 'cw' ? 1 : 3)) % 4) as Rotation }
 }
 
 function mapChamfer(chamfer: ChamferCell, map: (c: ChamferClassification) => ChamferClassification): ChamferCell {
@@ -54,22 +54,23 @@ function mapChamfer(chamfer: ChamferCell, map: (c: ChamferClassification) => Cha
 }
 
 /**
- * Rotates clipboard content 90° clockwise around its own bounding box (width/height swap).
+ * Rotates clipboard content 90° around its own bounding box (width/height swap).
  * `originU`/`originV` are deliberately dropped — they describe a box whose extents just swapped,
  * so transformed content tracks its position via `floatOrigin` instead (see ClipboardData).
  */
-export function rotateClipboard90(clipboard: ClipboardData): ClipboardData {
-  const { height } = clipboard
+export function rotateClipboard90(clipboard: ClipboardData, direction: 'cw' | 'ccw' = 'cw'): ClipboardData {
+  const { width, height } = clipboard
+  const cw = direction === 'cw'
   return {
-    width: clipboard.height,
-    height: clipboard.width,
+    width: height,
+    height: width,
     copyPlaneAxis: clipboard.copyPlaneAxis,
     copyPlaneOrientation: clipboard.copyPlaneOrientation,
     cells: clipboard.cells.map((cell) => ({
       ...cell,
-      du: height - 1 - cell.dv,
-      dv: cell.du,
-      chamfer: cell.chamfer ? mapChamfer(cell.chamfer, rotateClassification90) : undefined,
+      du: cw ? height - 1 - cell.dv : cell.dv,
+      dv: cw ? cell.du : width - 1 - cell.du,
+      chamfer: cell.chamfer ? mapChamfer(cell.chamfer, (c) => rotateClassification90(c, direction)) : undefined,
     })),
   }
 }

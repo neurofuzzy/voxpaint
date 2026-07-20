@@ -197,7 +197,9 @@ export type PaintActionsSlice = {
   eraseCell: (coord: Coord) => void
 }
 
-export type SelectionTransformKind = 'rotate' | 'mirror-h' | 'mirror-v'
+/** `rotate` is the clockwise quarter-turn (the bare name predates `rotate-ccw` and is what the `r`
+ * shortcut binds to). */
+export type SelectionTransformKind = 'rotate' | 'rotate-ccw' | 'mirror-h' | 'mirror-v'
 
 export type ToolActionsSlice = {
   /** Flood fill (color layer only, spec §2) starting at plane-space (u,v). One undo stroke.
