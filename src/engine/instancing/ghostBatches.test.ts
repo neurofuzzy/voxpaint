@@ -4,9 +4,10 @@ import { emptyModel, encodeKey } from '@/engine/grid/GridStore'
 import type { Axis, Orientation } from '@/engine/grid/types'
 import type { ConstructionPlane } from '@/engine/plane/types'
 import { applyClipboardAt } from '@/engine/tools/clipboard'
+import { gridCoordFromPixel } from '@/engine/plane/constructionPlane'
 import { DEFAULT_PALETTE } from '@/engine/palette/defaultPalette'
-import type { ClipboardData } from '@/store/types'
-import { buildFloatGhostBatches } from './floatGhost'
+import type { ClipboardData, SelectionRegion } from '@/store/types'
+import { buildFloatGhostBatches, buildSelectionHighlightBatches } from './ghostBatches'
 import { cubeInstanceMatrix } from './basis'
 
 const EXTENT = 16
@@ -95,7 +96,8 @@ describe('buildFloatGhostBatches', () => {
     expect(byPool.cube).toBe(2)
     // +Z is a reflected-basis plane, so its chamfers use the v-mirrored pool (see pools.ts).
     expect(byPool.rampM).toBe(1)
-    for (const b of batches) expect(b.colors.length).toBe(b.matrices.length)
+    // Float ghosts always carry per-instance colors (unlike the flat-tinted selection cast).
+    for (const b of batches) expect(b.colors).toHaveLength(b.matrices.length)
   })
 
   it('places an unchamfered cell at the same matrix the live renderer would', () => {
@@ -106,5 +108,71 @@ describe('buildFloatGhostBatches', () => {
     const [key] = [...model.color.keys()]
     const coord = key.split(',').map(Number) as [number, number, number]
     expect(positionOf(batch.matrices[0])).toEqual(positionOf(cubeInstanceMatrix(coord)))
+  })
+})
+
+describe('buildSelectionHighlightBatches', () => {
+  const plane: ConstructionPlane = { axis: 'z', orientation: 1, offset: 0 }
+
+  /** Fills the model at every (u,v) listed, on `plane`. */
+  function modelWith(cells: Array<[number, number]>) {
+    const model = emptyModel()
+    for (const [u, v] of cells) {
+      model.color.set(encodeKey(...gridCoordFromPixel(plane, u, v)), { paletteSlot: slot })
+    }
+    return model
+  }
+
+  function rect(originU: number, originV: number, width: number, height: number): SelectionRegion {
+    return { originU, originV, width, height, mask: new Uint8Array(width * height).fill(1) }
+  }
+
+  const count = (batches: ReturnType<typeof buildSelectionHighlightBatches>) =>
+    batches.reduce((n, b) => n + b.matrices.length, 0)
+
+  it('returns nothing without a selection', () => {
+    expect(buildSelectionHighlightBatches(modelWith([[0, 0]]), plane, null, EXTENT)).toEqual([])
+  })
+
+  it('casts only over cells that actually hold a voxel', () => {
+    // 2x2 selection over a plane holding just one voxel — the other three are empty space and
+    // would read as a floating cyan slab if included.
+    const model = modelWith([[0, 0]])
+    expect(count(buildSelectionHighlightBatches(model, plane, rect(0, 0, 2, 2), EXTENT))).toBe(1)
+  })
+
+  it('respects the mask, not just the bounding box', () => {
+    const model = modelWith([
+      [0, 0],
+      [1, 0],
+    ])
+    const lasso = rect(0, 0, 2, 1)
+    lasso.mask[1] = 0 // deselect (du=1, dv=0)
+    expect(count(buildSelectionHighlightBatches(model, plane, lasso, EXTENT))).toBe(1)
+  })
+
+  it('carries no per-instance colors — the cast is one flat tint', () => {
+    const batches = buildSelectionHighlightBatches(modelWith([[0, 0]]), plane, rect(0, 0, 1, 1), EXTENT)
+    expect(batches[0].colors).toBeUndefined()
+  })
+
+  it('highlights a voxel at the same place the live renderer draws it', () => {
+    const coord = gridCoordFromPixel(plane, 2, 3)
+    const model = modelWith([[2, 3]])
+    const [batch] = buildSelectionHighlightBatches(model, plane, rect(2, 3, 1, 1), EXTENT)
+    expect(positionOf(batch.matrices[0])).toEqual(positionOf(cubeInstanceMatrix(coord)))
+  })
+
+  it('uses a chamfered voxel\'s own baked shape, not a cube', () => {
+    const model = modelWith([[0, 0]])
+    const key = encodeKey(...gridCoordFromPixel(plane, 0, 0))
+    model.chamfer.set(key, { planeAxis: 'z', planeOrientation: 1, resolvedTo: { shapeKind: 'ramp', rotation: 0 } })
+    const batches = buildSelectionHighlightBatches(model, plane, rect(0, 0, 1, 1), EXTENT)
+    // +Z is a reflected-basis plane, so its chamfers use the v-mirrored pool (see pools.ts).
+    expect(batches.map((b) => b.poolId)).toEqual(['rampM'])
+  })
+
+  it('ignores selection cells that fall outside the working grid', () => {
+    expect(buildSelectionHighlightBatches(modelWith([[0, 0]]), plane, rect(900, 900, 2, 2), EXTENT)).toEqual([])
   })
 })
