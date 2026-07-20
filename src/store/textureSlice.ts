@@ -211,8 +211,10 @@ export const createTextureSlice: Slice = (set, get) => {
       get().textureLiftToFloat() // no-op if already floating
       const { textureFloat, textureSelection } = get()
       if (!textureFloat || !textureSelection) return
-      const content = kind === 'rotate' ? rotateClip90(textureFloat) : mirrorClip(textureFloat, kind === 'mirror-h' ? 'horizontal' : 'vertical')
-      const region = kind === 'rotate' ? rotateRegion90(textureSelection) : mirrorRegion(textureSelection, kind === 'mirror-h' ? 'horizontal' : 'vertical')
+      const spin = kind === 'rotate' ? 'cw' : kind === 'rotate-ccw' ? 'ccw' : null
+      const flip = kind === 'mirror-h' ? 'horizontal' : 'vertical'
+      const content = spin ? rotateClip90(textureFloat, spin) : mirrorClip(textureFloat, flip)
+      const region = spin ? rotateRegion90(textureSelection, spin) : mirrorRegion(textureSelection, flip)
       set((state) => {
         state.textureFloat = content
         state.textureFloatOrigin = { originU: region.originU, originV: region.originV }

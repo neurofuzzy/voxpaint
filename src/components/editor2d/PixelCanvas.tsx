@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { decodeKey, encodeKey } from '@/engine/grid/GridStore'
 import { gridCoordFromPixel, pixelFromGridCoord } from '@/engine/plane/constructionPlane'
-import { displayViewCenter, toDisplayU, toDisplayV } from '@/engine/plane/planeDisplay'
+import { displayViewCenter, toDisplayGridlineU, toDisplayGridlineV, toDisplayU, toDisplayV } from '@/engine/plane/planeDisplay'
 import { resolveSlotColor, shadeColor } from '@/engine/palette/palette'
 import { forEachSelectedCell, traceSelectionOutline } from '@/engine/tools/selectionMask'
 import { encodeSliceKey } from '@/engine/animation/animationLayers'
@@ -366,8 +366,11 @@ export function PixelCanvas() {
       ctx.setLineDash([8, 6])
       ctx.lineDashOffset = -antPhase
       for (const [[au, av], [bu, bv]] of traceSelectionOutline(activeRegion)) {
-        const [ax, ay] = worldToScreen(toDisplayU(plane, au), toDisplayV(plane, av), size, pan, zoom)
-        const [bx, by] = worldToScreen(toDisplayU(plane, bu), toDisplayV(plane, bv), size, pan, zoom)
+        // Outline vertices are gridline positions, not cell indices, so they mirror as `-n` rather
+        // than the cells' corner-anchored `-n - 1` — using the cell transform here draws the whole
+        // outline one cell off from its own fill on mirrored planes. See planeDisplay.ts.
+        const [ax, ay] = worldToScreen(toDisplayGridlineU(plane, au), toDisplayGridlineV(plane, av), size, pan, zoom)
+        const [bx, by] = worldToScreen(toDisplayGridlineU(plane, bu), toDisplayGridlineV(plane, bv), size, pan, zoom)
         // Every outline edge is axis-aligned (traceSelectionOutline only emits unit cell edges),
         // so snap the shared coordinate for the same crisp-line reason as the grid.
         ctx.beginPath()

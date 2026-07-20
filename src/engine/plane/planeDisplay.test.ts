@@ -3,7 +3,7 @@ import type { Axis, Orientation } from '@/engine/grid/types'
 import type { ConstructionPlane } from './types'
 import { gridCoordFromPixel } from './constructionPlane'
 import { axisIndex } from './planeGeometry'
-import { displayViewCenter, toDisplayU, toDisplayV } from './planeDisplay'
+import { displayViewCenter, toDisplayGridlineU, toDisplayGridlineV, toDisplayU, toDisplayV } from './planeDisplay'
 
 const AXES: Axis[] = ['x', 'y', 'z']
 const ORIENTATIONS: Orientation[] = [1, -1]
@@ -58,5 +58,53 @@ describe('displayViewCenter', () => {
         expect([...vComps].sort((a, b) => a - b)).toEqual(expected)
       }
     }
+  })
+})
+
+describe('gridline vs cell display transforms', () => {
+  const ALL_PLANES: ConstructionPlane[] = AXES.flatMap((axis) =>
+    ORIENTATIONS.map((orientation) => ({ axis, orientation, offset: 0 })),
+  )
+
+  it('places a cell exactly between its own two bounding gridlines on every plane', () => {
+    // The invariant the selection overlay depends on: the fill (drawn per-cell) and the outline
+    // (drawn per-gridline) must describe the same square. A cell at display index n covers the
+    // display span [n, n+1].
+    for (const plane of ALL_PLANES) {
+      for (const n of [-3, -1, 0, 1, 5]) {
+        const cellU = toDisplayU(plane, n)
+        expect(Math.min(toDisplayGridlineU(plane, n), toDisplayGridlineU(plane, n + 1))).toBe(cellU)
+        expect(Math.max(toDisplayGridlineU(plane, n), toDisplayGridlineU(plane, n + 1))).toBe(cellU + 1)
+
+        const cellV = toDisplayV(plane, n)
+        expect(Math.min(toDisplayGridlineV(plane, n), toDisplayGridlineV(plane, n + 1))).toBe(cellV)
+        expect(Math.max(toDisplayGridlineV(plane, n), toDisplayGridlineV(plane, n + 1))).toBe(cellV + 1)
+      }
+    }
+  })
+
+  it('is involutory, like its cell counterparts', () => {
+    for (const plane of ALL_PLANES) {
+      for (const n of [-4, 0, 7]) {
+        expect(toDisplayGridlineU(plane, toDisplayGridlineU(plane, n))).toBe(n)
+        expect(toDisplayGridlineV(plane, toDisplayGridlineV(plane, n))).toBe(n)
+      }
+    }
+  })
+
+  it('mirrors a gridline as -n where the cell transform uses -n - 1', () => {
+    const mirroredU: ConstructionPlane = { axis: 'z', orientation: -1, offset: 0 }
+    expect(toDisplayU(mirroredU, 3)).toBe(-4)
+    expect(toDisplayGridlineU(mirroredU, 3)).toBe(-3)
+
+    const mirroredV: ConstructionPlane = { axis: 'y', orientation: 1, offset: 0 }
+    expect(toDisplayV(mirroredV, 3)).toBe(-4)
+    expect(toDisplayGridlineV(mirroredV, 3)).toBe(-3)
+  })
+
+  it('leaves unmirrored axes identical to the cell transform', () => {
+    const plane: ConstructionPlane = { axis: 'z', orientation: 1, offset: 0 }
+    expect(toDisplayGridlineU(plane, 3)).toBe(toDisplayU(plane, 3))
+    expect(toDisplayGridlineV(plane, 3)).toBe(toDisplayV(plane, 3))
   })
 })

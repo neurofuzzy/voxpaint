@@ -1,23 +1,13 @@
 import * as THREE from 'three'
 import { decodeKey } from '@/engine/grid/GridStore'
-import type { CellKey, ChamferCell, VoxelModel } from '@/engine/grid/types'
-import { concaveCornerGeometry, convexCornerGeometry, mirrorVGeometry, rampGeometry, thinGeometry, unitCubeGeometry, wedgeGeometry } from '@/engine/chamfer/chamferGeometry'
+import type { CellKey, VoxelModel } from '@/engine/grid/types'
+import { unitCubeGeometry } from '@/engine/chamfer/chamferGeometry'
 import { resolveSlotColor } from '@/engine/palette/palette'
 import type { PaletteState } from '@/engine/palette/types'
-import { chamferBasisIsReflected, chamferInstanceMatrix, cubeInstanceMatrix } from './basis'
+import { chamferInstanceMatrix, cubeInstanceMatrix } from './basis'
+import { buildPoolGeometries, POOL_IDS, poolIdFor, type PoolId } from './pools'
 
-// Chamfer shapes split into a plain and a v-mirrored (`…M`) pool: reflected-basis planes (+Z/+X/-Y)
-// use the mirrored geometry so every rendered instance stays a proper rotation and lights correctly.
-// See basis.ts's chamferBasisIsReflected and chamferGeometry.ts's mirrorVGeometry.
-export type PoolId = 'cube' | 'ramp' | 'convex' | 'concave' | 'wedge' | 'thin' | 'rampM' | 'convexM' | 'concaveM' | 'wedgeM' | 'thinM'
-const POOL_IDS: PoolId[] = ['cube', 'ramp', 'convex', 'concave', 'wedge', 'thin', 'rampM', 'convexM', 'concaveM', 'wedgeM', 'thinM']
-
-/** The pool a color cell belongs to, accounting for its baked shape and plane handedness. */
-function poolIdFor(chamfer: ChamferCell | undefined): PoolId {
-  if (!chamfer?.resolvedTo) return 'cube'
-  const kind = chamfer.resolvedTo.shapeKind
-  return chamferBasisIsReflected(chamfer.planeAxis, chamfer.planeOrientation) ? (`${kind}M` as PoolId) : kind
-}
+export type { PoolId }
 
 const emptyPools = <T>(): Record<PoolId, T[]> =>
   Object.fromEntries(POOL_IDS.map((id) => [id, [] as T[]])) as unknown as Record<PoolId, T[]>
@@ -81,26 +71,7 @@ export class InstancingManager {
 
     this.wireframeMaterial = new THREE.MeshBasicMaterial({ color: 0xffffff, wireframe: true })
 
-    const ramp = rampGeometry(0)
-    const convex = convexCornerGeometry(0)
-    const concave = concaveCornerGeometry(0)
-    const wedge = wedgeGeometry(0)
-    const thin = thinGeometry()
-    const geometries: Record<PoolId, THREE.BufferGeometry> = {
-      cube: unitCubeGeometry(),
-      ramp,
-      convex,
-      concave,
-      wedge,
-      thin,
-      rampM: mirrorVGeometry(ramp),
-      convexM: mirrorVGeometry(convex),
-      concaveM: mirrorVGeometry(concave),
-      wedgeM: mirrorVGeometry(wedge),
-      // Symmetric slab: mirrorV is the same shape, but keeps reflected-plane instances det=+1 and
-      // correctly lit on the same path as the chamfer pools.
-      thinM: mirrorVGeometry(thin),
-    }
+    const geometries = buildPoolGeometries()
 
     this.capacities = {
       cube: INITIAL_CAPACITY,

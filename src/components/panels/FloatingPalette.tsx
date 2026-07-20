@@ -3,6 +3,7 @@ import type { PaletteSlotKind } from '@/engine/palette/types'
 import { GRAYSCALE } from '@/engine/texture/types'
 import { AnimationPalette } from './AnimationPalette'
 import { PaletteThemeMenu } from './PaletteThemeMenu'
+import { SelectionPalette } from './SelectionPalette'
 
 const SWATCH = 'h-6 w-6 shrink-0'
 
@@ -91,6 +92,11 @@ function GrayscalePalette() {
 export function FloatingPalette() {
   const palette = useAppStore((s) => s.palette)
   const mode = useAppStore((s) => s.mode)
+  const activeTool = useAppStore((s) => s.activeTool)
+
+  // The Select tool takes over the pill with the selection's own subtools — there's nothing to
+  // pick a color for while selecting. Animate mode is exempt: it has no selection to act on.
+  const showSelectionTools = activeTool === 'select' && mode !== 'animate'
 
   return (
     <div
@@ -99,7 +105,9 @@ export function FloatingPalette() {
       onPointerDown={(e) => e.stopPropagation()}
       onPointerMove={(e) => e.stopPropagation()}
     >
-      {mode === 'texture' ? (
+      {showSelectionTools ? (
+        <SelectionPalette />
+      ) : mode === 'texture' ? (
         <GrayscalePalette />
       ) : mode === 'animate' ? (
         <AnimationPalette />
