@@ -42,6 +42,31 @@ export function toDisplayV(plane: ConstructionPlane, v: number): number {
 }
 
 /**
+ * The `toDisplayU`/`toDisplayV` counterparts for **gridline** (lattice) coordinates rather than
+ * cell indices — use these for anything drawing on cell *boundaries* (selection outlines, cell
+ * rectangles expressed as corner..corner), not for a cell's own index.
+ *
+ * The two differ by exactly the corner-anchoring correction the functions above document. Cell `n`
+ * spans [n, n+1), so mirroring it lands on cell `-n - 1`; but a gridline is a zero-width position,
+ * so mirroring it is a plain `-n`. Feeding a gridline through the cell version shifts it one whole
+ * cell in the mirrored direction — which is why the selection fill (per-cell) and its outline
+ * (per-gridline) must not share a transform.
+ *
+ * Computed *through* the cell versions rather than restating their per-axis rules, so the two can
+ * never drift apart: undoing the `-1` recovers the gridline mirror (`-n - 1 + 1 = -n`). Whether an
+ * axis mirrors at all is probed the same way — both are `n -> -n - 1` exactly when it does, so
+ * cell 0 maps to -1 precisely in that case.
+ */
+export function toDisplayGridlineU(plane: ConstructionPlane, u: number): number {
+  return toDisplayU(plane, 0) === 0 ? u : toDisplayU(plane, u) + 1
+}
+
+/** The v counterpart to `toDisplayGridlineU` — see its doc comment. */
+export function toDisplayGridlineV(plane: ConstructionPlane, v: number): number {
+  return toDisplayV(plane, 0) === 0 ? v : toDisplayV(plane, v) + 1
+}
+
+/**
  * The continuous display-space (u, v) coordinate the 2D canvas should frame at its centre for
  * `plane`, so a project reads centred on every plane/orientation. For an EVEN project this is the
  * world-origin gridline (0, 0) — the true grid centre. For an ODD project the model is still the
