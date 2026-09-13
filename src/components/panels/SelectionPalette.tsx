@@ -22,10 +22,10 @@ type SelectionActions = {
 }
 
 const ACTIONS: Action[] = [
-  { id: 'rotate-cw', label: 'Rotate CW', icon: RotateCw, hint: 'rotate the selection 90° clockwise · r', transform: 'rotate' },
+  { id: 'rotate-cw', label: 'Rotate CW', icon: RotateCw, hint: 'rotate the selection 90° clockwise', transform: 'rotate' },
   { id: 'rotate-ccw', label: 'Rotate CCW', icon: RotateCcw, hint: 'rotate the selection 90° counter-clockwise', transform: 'rotate-ccw' },
-  { id: 'mirror-h', label: 'Flip Horizontal', icon: FlipHorizontal, hint: 'mirror the selection left-to-right · h', transform: 'mirror-h' },
-  { id: 'mirror-v', label: 'Flip Vertical', icon: FlipVertical, hint: 'mirror the selection top-to-bottom · v', transform: 'mirror-v' },
+  { id: 'mirror-h', label: 'Flip Horizontal', icon: FlipHorizontal, hint: 'mirror the selection left-to-right', transform: 'mirror-h' },
+  { id: 'mirror-v', label: 'Flip Vertical', icon: FlipVertical, hint: 'mirror the selection top-to-bottom', transform: 'mirror-v' },
   {
     id: 'delete',
     label: 'Delete Contents',
@@ -46,7 +46,8 @@ const ACTIONS: Action[] = [
 
 /**
  * Replaces the color palette while the Select tool is active — the selection's own subtools
- * (rotate/flip/delete/clear), which otherwise only had keyboard bindings. Mode-aware in the same
+ * (rotate/flip/delete/clear). These deliberately have no keyboard shortcuts (a stray keypress
+ * must never mutate the model), so these buttons are the only path. Mode-aware in the same
  * way useKeyboardShortcuts.ts is: Texture mode drives the parallel texel-selection actions, which
  * have their own separate undo history.
  *

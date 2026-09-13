@@ -24,10 +24,11 @@ export function CompassTracker({ iconRef }: { iconRef: RefObject<HTMLDivElement 
   return null
 }
 
-/** Plain DOM overlay — render as a sibling of `<Canvas>`, not inside it (see `CompassTracker`). */
+/** Plain DOM overlay — render as a sibling of `<Canvas>`, not inside it (see `CompassTracker`).
+ * Positioning is owned by the parent (currently composed next to `ViewportModeToggle`). */
 export function CompassIcon({ iconRef }: { iconRef: RefObject<HTMLDivElement | null> }) {
   return (
-    <div className="pointer-events-none absolute left-5 top-5 z-40 select-none">
+    <div className="pointer-events-none select-none">
       <div className="flex h-8 w-8 items-center justify-center rounded-full bg-neutral-800/50 shadow ring-1 ring-white/10 backdrop-blur-sm text-neutral-300">
         <div ref={iconRef} style={{ willChange: 'transform' }}>
           <Navigation2 size={14} fill="currentColor" />

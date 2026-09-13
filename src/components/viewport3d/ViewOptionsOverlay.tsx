@@ -32,7 +32,8 @@ function ToggleButton({ on, onClick, label, children, onPointerEnter, onPointerL
 
 /**
  * Frosted overlay pinned to the top-right of the 3D preview. Two clusters, divider-separated:
- * construction-plane controls (cycle axis, flip orientation) and view toggles (Wireframe, Optimized mesh).
+ * construction-plane controls (cycle axis, flip orientation) and view toggles (Wireframe, Optimized
+ * mesh). Viewport Orbit/3D-Edit mode lives top-left next to the compass (`ViewportModeToggle`).
  * `stopPropagation` keeps clicks/drags off the OrbitControls underneath.
  */
 export function ViewOptionsOverlay({ onResetCamera, showExposure, onToggleExposure }: {

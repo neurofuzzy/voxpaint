@@ -142,7 +142,13 @@ export const createProjectSlice: Slice = (set, get) => ({
       state.dirty = true
     }),
 
-  newProject: (name, gridExtent) =>
+  newProject: (name, gridExtent) => {
+    // A pending float holds an open undo stroke against the OLD model — discard the float and
+    // abandon all three strokes rather than baking, so no stale baseline leaks into the fresh
+    // project's histories.
+    get().cancelStroke()
+    get().textureCancelStroke()
+    get().animCancelStroke()
     set((state) => {
       // Defensively normalize any custom size to a whole edge length within the technical range
       // (odd is allowed — the engine rounds it up to an even working grid via `effectiveExtent`).
@@ -183,5 +189,16 @@ export const createProjectSlice: Slice = (set, get) => ({
       // (Axis/orientation carry over; only the offset is range-bound.)
       state.plane.offset = clampPlaneOffset(state.plane.offset, extent)
       state.objectModeTarget = null
-    }),
+      // View/tool prefs (active tool, palette slot, plane axis) carry over deliberately — but a
+      // stale voxel selection would clip painting on the fresh canvas via an invisible mask, and
+      // hover state references dead cells, so both reset. (Clipboards are kept: pasting across
+      // projects is safe — paste clips to the new bounds.)
+      state.selection = null
+      state.floatContent = null
+      state.floatOrigin = null
+      state.hoverCell = null
+      state.chamferHoverValid = null
+      state.hoveredFace = null
+    })
+  },
 })

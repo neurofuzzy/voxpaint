@@ -7,7 +7,7 @@ import type { BoxFace, TextureModel } from '@/engine/texture/types'
 import type { TexelClip } from '@/engine/texture/texelOps'
 import type { AnimationSpeed, AnimationType, SliceAnimSettings, SliceKey } from '@/engine/animation/types'
 
-export type ToolId = 'paint' | 'erase' | 'eyedropper' | 'select' | 'fill' | 'clone' | 'move' | 'pivot'
+export type ToolId = 'paint' | 'erase' | 'eyedropper' | 'select' | 'fill' | 'clone' | 'move' | 'material' | 'pivot'
 export type VoxelKind = 'cube' | 'ramp' | 'wedge' | 'thin'
 
 export type SelectionRegion = {
@@ -92,6 +92,10 @@ export type HistorySlice = {
   future: VoxelModel[]
   beginStroke: () => void
   commitStroke: () => void
+  /** Abandons an open stroke without recording it — for project switches (new/import), where a
+   * pending float is discarded rather than baked and its baseline must not leak into the fresh
+   * project's undo history. */
+  cancelStroke: () => void
   undo: () => void
   redo: () => void
 }
@@ -142,6 +146,10 @@ export type HoveredFace = { cellKey: CellKey; axis: Axis; orientation: Orientati
 
 export type ViewSlice = {
   fullscreen: boolean
+  /** 3D Edit mode: clicks/drags in the viewport dispatch the active paint/erase/eyedropper tool
+   * directly on voxel faces instead of setting the construction plane (left-drag orbits only
+   * outside Edit mode). Pure view pref — never persisted, never dirties. */
+  edit3D: boolean
   hoverCell: Coord | null
   chamferHoverValid: boolean | null
   hoveredFace: HoveredFace | null
@@ -183,6 +191,7 @@ export type ViewSlice = {
    * (default true). Off = solid materials + bare geometry, no maps or TEXCOORDs. */
   exportIncludeTextureMaps: boolean
   setFullscreen: (v: boolean) => void
+  setEdit3D: (v: boolean) => void
   setHoverCell: (coord: Coord | null, chamferValid: boolean | null) => void
   setHoveredFace: (face: HoveredFace | null) => void
   setWireframe: (v: boolean) => void
@@ -221,6 +230,22 @@ export type PaintActionsSlice = {
   paintCell: (u: number, v: number) => boolean
   /** Erases both color and chamfer layers at a cell. */
   eraseCell: (coord: Coord) => void
+  /**
+   * Direct-3D paint at an explicit grid coordinate, using the clicked face's axis/orientation as
+   * the chamfer context (Edit mode). Same write path as `paintCell`, but with no 2D selection
+   * clip — the selection mask lives in the active plane's frame. Returns false if out of bounds.
+   */
+  paintCellAtCoord: (coord: Coord, faceAxis: Axis, faceOrientation: Orientation) => boolean
+  /** Direct-3D erase at an explicit grid coordinate (Edit mode). No selection clip. */
+  eraseCellAtCoord: (coord: Coord) => void
+  /**
+   * Recolors the voxel at plane-space (u,v) with the active palette slot — existing voxels only,
+   * never adds or deletes cells, never touches chamfer. No-op (false) on empty/out-of-bounds
+   * cells or when the slot already matches (so drags don't record junk undo steps).
+   */
+  paintMaterialCell: (u: number, v: number) => boolean
+  /** Direct-3D recolor at an explicit grid coordinate (Edit mode). No selection clip. */
+  paintMaterialAtCoord: (coord: Coord) => boolean
 }
 
 /** `rotate` is the clockwise quarter-turn (the bare name predates `rotate-ccw` and is what the `r`
@@ -311,6 +336,9 @@ export type TextureSlice = {
 
   textureBeginStroke: () => void
   textureCommitStroke: () => void
+  /** Abandons an open texture stroke without recording it — project-switch counterpart of
+   * `cancelStroke` (see HistorySlice). */
+  textureCancelStroke: () => void
   textureUndo: () => void
   textureRedo: () => void
 
@@ -389,6 +417,9 @@ export type AnimationSlice = {
 
   animBeginStroke: () => void
   animCommitStroke: () => void
+  /** Abandons an open animation stroke without recording it — project-switch counterpart of
+   * `cancelStroke` (see HistorySlice). */
+  animCancelStroke: () => void
   animUndo: () => void
   animRedo: () => void
 }

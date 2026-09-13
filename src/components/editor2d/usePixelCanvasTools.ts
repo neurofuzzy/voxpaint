@@ -197,6 +197,7 @@ export function usePixelCanvasTools(canvasRef: React.RefObject<HTMLCanvasElement
     model, plane, gridExtent, activeVoxelKind, activePaletteSlot, selection, floatContent, floatOrigin, clipboard,
     paintCell: store.paintCell,
     eraseCell: store.eraseCell,
+    paintMaterialCell: store.paintMaterialCell,
     floodFill: store.floodFill,
     floodFill3D: store.floodFill3D,
     paintMaskCell: store.paintMaskCell,

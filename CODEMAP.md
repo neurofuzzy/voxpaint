@@ -1,8 +1,8 @@
 ```
 # Auto-generated project map
-# Last updated: 2026-09-13 21:08:34
-# Files: 179
-# Lines of code: ~18798
+# Last updated: 2026-09-13 23:37:39
+# Files: 182
+# Lines of code: ~19446
 ```
 - **/assets**
 - **/components**
@@ -181,6 +181,8 @@
       - Function: `ViewOptionsOverlay` - Frosted overlay pinned to the top-right of the ...
     - [Viewport3D.tsx](../src/components/viewport3d/Viewport3D.tsx)
       - Function: `Viewport3D`
+    - [ViewportModeToggle.tsx](../src/components/viewport3d/ViewportModeToggle.tsx)
+      - Function: `ViewportModeToggle` - Viewport mode switch (top-left, next to the com...
     - [VoxelFaceHighlight.tsx](../src/components/viewport3d/VoxelFaceHighlight.tsx)
       - Function: `VoxelFaceHighlight` - Live hover preview of the voxel face under the ...
     - [VoxelGhostPreview.tsx](../src/components/viewport3d/VoxelGhostPreview.tsx)
@@ -543,6 +545,8 @@
     - [maskTools.ts](../src/engine/tools/maskTools.ts)
       - Variable: `maskPaintTool` - Animate-mode analog of `paintTool`/`eraseTool`:...
       - Variable: `maskEraseTool`
+    - [materialTool.ts](../src/engine/tools/materialTool.ts)
+      - Variable: `materialTool` - Material paint: recolors occupied voxels with t...
     - [moveTool.ts](../src/engine/tools/moveTool.ts)
       - Variable: `moveTool` - Move directly translates voxels — no selection,...
     - [paintTool.ts](../src/engine/tools/paintTool.ts)
@@ -592,6 +596,7 @@
   - [projectSettings.test.ts](../src/store/projectSettings.test.ts)
   - [projectSlice.ts](../src/store/projectSlice.ts)
     - Function: `createProjectSlice`
+  - [projectSwitch.test.ts](../src/store/projectSwitch.test.ts)
   - [selectionSlice.ts](../src/store/selectionSlice.ts)
     - Function: `createSelectionSlice`
   - [textureSlice.test.ts](../src/store/textureSlice.test.ts)

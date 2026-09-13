@@ -6,6 +6,7 @@ type Slice = StateCreator<AppState, [['zustand/immer', never]], [], ViewSlice>
 
 export const createViewSlice: Slice = (set) => ({
   fullscreen: false,
+  edit3D: false,
   hoverCell: null,
   chamferHoverValid: null,
   hoveredFace: null,
@@ -27,6 +28,7 @@ export const createViewSlice: Slice = (set) => ({
   exportIncludeTextureMaps: true,
 
   setFullscreen: (v) => set((state) => { state.fullscreen = v }),
+  setEdit3D: (v) => set((state) => { state.edit3D = v }),
   setWireframe: (v) => set((state) => { state.wireframe = v }),
   setOptimizedMesh: (v) => set((state) => { state.optimizedMesh = v }),
   setAmbientOcclusion: (v) => set((state) => { state.ambientOcclusion = v; state.dirty = true }),

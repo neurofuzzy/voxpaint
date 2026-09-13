@@ -87,6 +87,10 @@ export const createTextureSlice: Slice = (set, get) => {
       })
     },
 
+    textureCancelStroke: () => {
+      textureBaseline = null
+    },
+
     textureUndo: () => {
       get().textureBakeFloatIfAny()
       set((state) => {

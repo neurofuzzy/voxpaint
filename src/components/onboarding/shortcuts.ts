@@ -21,10 +21,11 @@ export function shortcutGroups(mod: string): ShortcutGroup[] {
         { keys: ['P'], label: 'Paint' },
         { keys: ['E'], label: 'Erase' },
         { keys: ['I'], label: 'Eyedropper' },
+        { keys: ['M'], label: 'Material' },
         { keys: ['S'], label: 'Select' },
-        { keys: ['F'], label: 'Fill' },
+        { keys: ['K'], label: 'Fill' },
         { keys: ['C'], label: 'Clone' },
-        { keys: ['M'], label: 'Move' },
+        { keys: ['V'], label: 'Move' },
       ],
     },
     {
@@ -41,9 +42,6 @@ export function shortcutGroups(mod: string): ShortcutGroup[] {
         { keys: [mod, 'X'], label: 'Cut selection' },
         { keys: [mod, 'V'], label: 'Paste in place' },
         { keys: ['Delete'], label: 'Delete selection contents' },
-        { keys: ['R'], label: 'Rotate selection 90°' },
-        { keys: ['H'], label: 'Mirror selection horizontally' },
-        { keys: ['V'], label: 'Mirror selection vertically' },
       ],
     },
     {

@@ -176,6 +176,10 @@ export const createAnimationSlice: Slice = (set, get) => ({
     })
   },
 
+  animCancelStroke: () => {
+    animStrokeBaseline = null
+  },
+
   animUndo: () => {
     set((state) => {
       const prev = state.animPast.pop()

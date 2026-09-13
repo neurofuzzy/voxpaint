@@ -6,17 +6,22 @@ const TOOL_KEYS: Record<string, ToolId> = {
   p: 'paint',
   e: 'erase',
   i: 'eyedropper',
+  m: 'material',
   s: 'select',
-  f: 'fill',
+  k: 'fill',
   c: 'clone',
-  m: 'move',
+  v: 'move',
 }
 
 /**
- * Global keyboard shortcuts — undo/redo, copy/cut/paste, delete-selection-contents, Escape-to-
- * deselect, rotate/mirror, and single-letter tool switching. One decoupled if-chain (matching
+ * Global keyboard shortcuts — undo/redo, copy/cut/paste, Escape-to-
+ * deselect, and single-letter tool switching. One decoupled if-chain (matching
  * trixelart's own use-keyboard-shortcuts.ts), separate from tool pointer-dispatch since this is
  * app/selection-domain, not per-tool pointer logic.
+ *
+ * Deliberately no bare single-key transform shortcuts: selection rotate/mirror live on the
+ * SelectionPalette buttons instead, so a stray keypress can never reshape the model — only
+ * explicit Cmd-chord clipboard/undo commands and selection-gated Delete may change it.
  *
  * Mode-aware: in Texture mode every selection/history action dispatches to the parallel texture
  * actions (its own separate undo/redo history and texel selection/clipboard). Tool switching is
@@ -54,7 +59,6 @@ export function useKeyboardShortcuts(hoverCellRef?: React.RefObject<[number, num
       const bakeFloat = isTexture ? store.textureBakeFloatIfAny : store.bakeFloatIfAny
       const clearSelection = isTexture ? () => store.setTextureSelection(null) : () => store.setSelection(null)
       const deleteSelection = isTexture ? store.textureDelete : store.deleteSelection
-      const transformFloat = isTexture ? store.textureTransformFloat : store.transformFloat
 
       if (isMeta) {
         if (key === 'z') {
@@ -115,23 +119,6 @@ export function useKeyboardShortcuts(hoverCellRef?: React.RefObject<[number, num
         deleteSelection()
         e.preventDefault()
         return
-      }
-
-      // Rotate/mirror apply to whatever is selected regardless of the active tool.
-      if (selection && !isAnimate) {
-        if (key === 'r') {
-          transformFloat('rotate')
-          e.preventDefault()
-          return
-        } else if (key === 'h') {
-          transformFloat('mirror-h')
-          e.preventDefault()
-          return
-        } else if (key === 'v') {
-          transformFloat('mirror-v')
-          e.preventDefault()
-          return
-        }
       }
 
       const tool = TOOL_KEYS[key]

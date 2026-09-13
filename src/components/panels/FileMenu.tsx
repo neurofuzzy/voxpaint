@@ -27,6 +27,11 @@ export function FileMenu() {
     try {
       const parsed = await readProjectFile(file)
       const { model, palette, meta, texture, view, animSettings, sliceMasks, slicePivots } = deserializeProject(parsed)
+      // Same project-switch hygiene as newProject: abandon open strokes (a pending float belongs
+      // to the old model) rather than baking them into the imported one.
+      useAppStore.getState().cancelStroke()
+      useAppStore.getState().textureCancelStroke()
+      useAppStore.getState().animCancelStroke()
       useAppStore.getState().setModel(model)
       useAppStore.getState().setPalette(palette)
       useAppStore.getState().setTexture(texture)
@@ -36,6 +41,21 @@ export function FileMenu() {
         // back into the new bounds rather than starting out of range.
         s.plane.offset = clampPlaneOffset(s.plane.offset, meta.gridExtent)
         s.objectModeTarget = null
+        // Stale selection/float/hover reference the old project's cells — reset (clipboards kept).
+        s.selection = null
+        s.floatContent = null
+        s.floatOrigin = null
+        s.hoverCell = null
+        s.chamferHoverValid = null
+        s.hoveredFace = null
+        s.textureSelection = null
+        s.textureFloat = null
+        s.textureFloatOrigin = null
+        // Undo histories belong to the old project — an undo right after import must not resurrect it.
+        s.past = []
+        s.future = []
+        s.texturePast = []
+        s.textureFuture = []
         s.ambientOcclusion = view.ambientOcclusion ?? false
         s.noiseLevel = view.noiseLevel ?? 0
         s.specularNoiseLevel = view.specularNoiseLevel ?? 0
