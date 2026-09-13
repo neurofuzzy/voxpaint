@@ -3,6 +3,7 @@ import { encodeKey, withinWorkingBounds } from '@/engine/grid/GridStore'
 import type { ChamferCell, Coord, GridExtent, VoxelModel } from '@/engine/grid/types'
 import type { ConstructionPlane } from '@/engine/plane/types'
 import { gridCoordFromPixel } from '@/engine/plane/constructionPlane'
+import { axisIndex } from '@/engine/plane/planeGeometry'
 import { resolveSlotColor } from '@/engine/palette/palette'
 import type { PaletteState } from '@/engine/palette/types'
 import { forEachSelectedCell } from '@/engine/tools/selectionMask'
@@ -55,11 +56,20 @@ export function buildFloatGhostBatches(
 ): GhostBatch[] {
   if (!floatContent || !floatOrigin) return []
   const byPool = new Map<PoolId, GhostBatch>()
+  const ai = axisIndex(plane.axis)
 
   for (const cell of floatContent.cells) {
     // A cell with no color paints nothing when baked, so it has nothing to ghost either.
+    // (It still clears on bake — replace semantics — but clearing renders as absence.)
     if (!cell.color) continue
     const coord = gridCoordFromPixel(plane, floatOrigin.originU + cell.du, floatOrigin.originV + cell.dv)
+    // Deep-lifted cells ride at their depth offset off the float slice, mirroring
+    // `applyClipboardAt` (same-plane drops re-anchor to the lift slice recorded in the content).
+    if (cell.dw !== 0) {
+      const samePlane =
+        floatContent.copyPlaneAxis === plane.axis && floatContent.copyPlaneOrientation === plane.orientation
+      coord[ai] = (samePlane ? (floatContent.copyPlaneOffset ?? plane.offset) : plane.offset) + cell.dw
+    }
     // Cells dragged off-grid are dropped by `applyClipboardAt` on bake — don't promise them here.
     if (!withinWorkingBounds(coord, gridExtent)) continue
     pushInto(byPool, coord, cell.chamfer, new THREE.Color(resolveSlotColor(palette, cell.color.paletteSlot)))

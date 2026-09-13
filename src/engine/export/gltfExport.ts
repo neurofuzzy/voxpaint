@@ -1,5 +1,6 @@
 import * as THREE from 'three'
 import { GLTFExporter } from 'three/addons/exporters/GLTFExporter.js'
+import { viewOriginShift } from '@/engine/grid/GridStore'
 import type { Axis, VoxelModel, CellKey, GridExtent } from '@/engine/grid/types'
 import type { PaletteState } from '@/engine/palette/types'
 import type { TextureModel } from '@/engine/texture/types'
@@ -35,6 +36,10 @@ import { registerEmissiveAnimationExtension, type EmissiveAnimExportTarget } fro
  * colour with a baked `baseColorTexture`, so `baseColor × map` reproduces the shade/multiply preview.
  * AO is likewise supported via `aoMap` on uv1.
  *
+ * With `options.includeTextureMaps: false` both paths emit solid-colour materials + bare geometry:
+ * no baked overlay, no `aoMap`, no specular-noise maps, and no `uv`/`uv1` attributes — the .glb
+ * contains no images, textures, samplers, or TEXCOORDs.
+ *
  * Runs on the main thread: the same geometry is built synchronously for the live optimized-mesh
  * preview, and the grid is capped at 64³, so a worker isn't warranted.
  */
@@ -57,11 +62,12 @@ export type GltfExportOptions = {
   /** Anchor point: center (default), bottom of extents, or back of extents. */
   anchor?: GltfExportAnchor
   /** Anchor relative to the voxels' own AABB rather than the construction-plane canvas origin
-   * (default off, for backward compatibility). Off, `anchor: 'center'` is a no-op — the model
-   * exports at its raw canvas-relative position, which is only actually centered if the voxels
-   * happen to be painted symmetrically around the canvas origin. On, all three anchors reposition
-   * relative to the model's own bounding box, so an off-center paint still exports centered/
-   * grounded/backed correctly. */
+    * (default off, for backward compatibility). Off, `anchor: 'center'` keeps the model at its raw
+    * canvas-relative position — which is only actually centered if the voxels happen to be painted
+    * symmetrically around the canvas origin — except for the half-cell re-base applied to
+    * odd-sized projects (see below), which recentres on the visual pillar the views frame.
+    * On, all three anchors reposition relative to the model's own bounding box, so an off-center
+    * paint still exports centered/grounded/backed correctly. */
   alignToObjectBounds?: boolean
   /** Seeds the baked noise/specular grain (`engine/ao/bakeAO.ts`) so this project's noise differs
    * from every other project's at the same voxel coordinates (default 0 = unseeded). Pass
@@ -72,6 +78,11 @@ export type GltfExportOptions = {
    * faces, but the exposed surface stays subdivided per voxel so downstream tools can deform the
    * mesh along its original voxel topology. No effect on the textured path (already per-voxel). */
   optimizeMesh?: boolean
+  /** Emit texture maps: the baked color overlay, ambient-occlusion, and metal specular-noise maps
+   * (default true). Set false to export materials + geometry only — no `map`/`aoMap`/metalness-map
+   * nodes reference any texture, and geometry carries no `uv`/`uv1` attributes, so the .glb
+   * contains no images, textures, samplers, or TEXCOORDs at all. */
+  includeTextureMaps?: boolean
 }
 
 const hex6 = (colorKey: number) => colorKey.toString(16).padStart(6, '0')
@@ -187,6 +198,16 @@ export async function exportModelToGlb(
   // rest of the (baked-once, rest-pose) model — see bakeAOToAtlas calls below.
   const animatedKeys = nodeAssignment ? new Set(nodeAssignment.keys()) : undefined
 
+  // Map-free export: solid materials + bare geometry, no uv attributes (the exporter turns any
+  // `uv`/`uv1` attribute into TEXCOORDs), so the .glb carries no images/textures/samplers.
+  const includeTextureMaps = options.includeTextureMaps ?? true
+  const stripUVs = (list: Array<{ geometry: THREE.BufferGeometry }>) => {
+    for (const { geometry } of list) {
+      geometry.deleteAttribute('uv')
+      geometry.deleteAttribute('uv1')
+    }
+  }
+
   if (textured) {
     // Textured overlay path — one baked-texture material per colour (and per animation slice, if any).
     // Glass + KHR_materials_volume + baseColorTexture breaks Mac Preview / Blender;
@@ -196,6 +217,7 @@ export async function exportModelToGlb(
         ? buildTexturedGeometryBySlice(model, palette, nodeAssignment, gridExtent)
         : buildTexturedGeometryByColor(model, palette, gridExtent).map((g) => ({ ...g, sliceKey: undefined }))
     for (const { geometry } of groups) geometries.push(geometry)
+    if (!includeTextureMaps) stripUVs(groups)
 
     let aoTex: THREE.DataTexture | null = null
     let metalTex: THREE.Texture | null = null
@@ -206,7 +228,7 @@ export async function exportModelToGlb(
     // everything else (bakeAOToAtlas samples the full `model`, not the atlas contents), so excluding
     // them here only means they never get an aoMap of their own.
     const aoGroups = groups.filter((g) => g.materialClass !== 'emissive')
-    if ((options.ambientOcclusion || (options.specularNoiseLevel ?? 0) > 0) && aoGroups.length > 0) {
+    if (includeTextureMaps && (options.ambientOcclusion || (options.specularNoiseLevel ?? 0) > 0) && aoGroups.length > 0) {
       const unwrapped = unwrapGeometries(aoGroups.map((g) => g.geometry))
       for (let i = 0; i < aoGroups.length; i++) {
         aoGroups[i].geometry.setAttribute('uv1', new THREE.Float32BufferAttribute(unwrapped.uv1Arrays[i], 2))
@@ -226,18 +248,20 @@ export async function exportModelToGlb(
       }
     }
 
-    const blend = buildBlendAtlas(texture!, gridExtent)
+    const blend = includeTextureMaps ? buildBlendAtlas(texture!, gridExtent) : null
     for (const { colorKey, materialClass, geometry, sliceKey } of groups) {
       geometry.deleteAttribute('color')
       const params = materialParamsFor(materialClass)
 
-      if (materialClass === 'glass') {
-        geometry.deleteAttribute('uv')
+      if (materialClass === 'glass' || !includeTextureMaps) {
+        // Glass never takes a baked map (it breaks Mac Preview / Blender); map-free export uses
+        // the same solid-colour material for every class.
+        if (materialClass === 'glass') geometry.deleteAttribute('uv')
         const material = new THREE.MeshPhysicalMaterial({
           color: colorKey,
           vertexColors: false,
           metalness: params.metalness,
-          roughness: options.glassRoughnessLevel ?? 0.3,
+          roughness: materialClass === 'glass' ? (options.glassRoughnessLevel ?? 0.3) : params.roughness,
           transmission: params.transmission,
         })
         if (params.transmission > 0) {
@@ -245,13 +269,24 @@ export async function exportModelToGlb(
           material.thickness = 0.5
         }
         if (aoTex) material.aoMap = aoTex
+        if (params.emissiveIntensity > 0) {
+          material.emissive = new THREE.Color(colorKey)
+          material.emissiveIntensity = params.emissiveIntensity
+          const animMode = emissiveAnimIndex.get(colorKey)
+          if (animMode) emissiveAnimTargets.push({ material, mode: animMode })
+        }
+        if (materialClass === 'metal') {
+          material.specularIntensity = 0
+          if (metalTex) material.metalnessMap = metalTex
+          if (roughTex) material.roughnessMap = roughTex
+        }
         material.name = `voxel_${hex6(colorKey)}_${materialClass}`
         const mesh = new THREE.Mesh(geometry, material)
         mesh.name = material.name
         attachToSliceOrRoot(mesh, sliceKey, animSettings, sliceNodeInfo, sliceNodes, animNodes, root, slicePivots)
         materials.push(material)
       } else {
-        const map = bakeOverlayTexture(blend.data, blend.width, blend.height, colorKey)
+        const map = bakeOverlayTexture(blend!.data, blend!.width, blend!.height, colorKey)
         textures.push(map)
         const material = new THREE.MeshPhysicalMaterial({
           color: 0xffffff,
@@ -292,6 +327,7 @@ export async function exportModelToGlb(
       groups = buildOptimizedVoxelGeometryByMaterial(model, palette, mergeCoplanar).map((g) => ({ ...g, sliceKey: undefined }))
     }
     for (const { geometry } of groups) geometries.push(geometry)
+    if (!includeTextureMaps) stripUVs(groups)
 
     let aoTex: THREE.DataTexture | null = null
     let metalTex: THREE.Texture | null = null
@@ -299,7 +335,7 @@ export async function exportModelToGlb(
     let colorTex: THREE.Texture | null = null
     // See the textured path above: emissive materials skip AO/noise entirely.
     const aoGroups = groups.filter((g) => g.materialClass !== 'emissive')
-    if ((options.ambientOcclusion || (options.specularNoiseLevel ?? 0) > 0) && aoGroups.length > 0) {
+    if (includeTextureMaps && (options.ambientOcclusion || (options.specularNoiseLevel ?? 0) > 0) && aoGroups.length > 0) {
       const unwrapped = unwrapGeometries(aoGroups.map((g) => g.geometry))
       for (let i = 0; i < aoGroups.length; i++) {
         const uv1 = new THREE.Float32BufferAttribute(unwrapped.uv1Arrays[i], 2)
@@ -370,21 +406,31 @@ export async function exportModelToGlb(
   const scale = (options.scaleFactor ?? 100) / 100
   const anchor = options.anchor ?? 'center'
   const alignToObjectBounds = options.alignToObjectBounds ?? false
-  if (scale !== 1 || anchor !== 'center' || alignToObjectBounds) {
+  // Odd project sizes work on an even effective grid whose volume is centred on the world origin,
+  // but the 2D/3D views frame the centre *pillar* (cell [0,0,0], centred at +0.5) dead-centre via
+  // `viewOriginShift`. Re-base the export on that same visual origin so a pillar-centred model
+  // exports centred on the GLTF origin instead of 0.5 voxels off. Zero for even sizes, so the
+  // formulas below reduce exactly to the previous behaviour there.
+  const shift = viewOriginShift(gridExtent)
+  if (scale !== 1 || anchor !== 'center' || alignToObjectBounds || shift !== 0) {
     const box = new THREE.Box3().setFromObject(root)
     root.scale.setScalar(scale)
     if (alignToObjectBounds) {
       // All three axes reposition relative to the voxels' own AABB: the anchor's axis goes flush
       // to its bound (Y=0 for bottom, Z=0 for back), the other two always center on the AABB —
       // so an off-center paint still exports centered/grounded/backed, not canvas-relative.
+      // AABB-relative, so the odd-size visual-origin shift below does not apply here: centring
+      // the measured bounds is already correct for even and odd sizes alike.
       const center = box.getCenter(new THREE.Vector3())
       root.position.x = -center.x * scale
       root.position.y = anchor === 'bottom' ? -box.min.y * scale : -center.y * scale
       root.position.z = anchor === 'back' ? -box.min.z * scale : -center.z * scale
     } else if (anchor === 'bottom') {
-      root.position.y = -box.min.y * scale
+      root.position.set(-shift * scale, -box.min.y * scale, -shift * scale)
     } else if (anchor === 'back') {
-      root.position.z = -box.min.z * scale
+      root.position.set(-shift * scale, -shift * scale, -box.min.z * scale)
+    } else {
+      root.position.set(-shift * scale, -shift * scale, -shift * scale)
     }
   }
 

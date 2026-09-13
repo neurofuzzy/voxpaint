@@ -1,4 +1,5 @@
 import type { StateCreator } from 'zustand'
+import { clampPlaneOffset } from '@/engine/grid/GridStore'
 import type { AppState, PlaneSlice } from './types'
 
 type Slice = StateCreator<AppState, [['zustand/immer', never]], [], PlaneSlice>
@@ -22,8 +23,11 @@ export const createPlaneSlice: Slice = (set, get) => ({
 
   setPlaneOffset: (offset) => {
     get().bakeFloatIfAny()
+    // The plane lives inside the project bounds — scrolling, stepping, or click-advancing past
+    // the top/bottom layer pins to it instead of drifting into empty space.
+    const clamped = clampPlaneOffset(offset, get().meta.gridExtent)
     set((state) => {
-      state.plane.offset = offset
+      state.plane.offset = clamped
       state.objectModeTarget = null
     })
   },

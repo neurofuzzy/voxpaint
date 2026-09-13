@@ -100,3 +100,52 @@ describe('floodFill3D (alt-click, 3D connected fill)', () => {
     expect(after.model.color.get(keyFor(1, 0))?.paletteSlot).toEqual(SLOT_B) // untouched
   })
 })
+
+describe('liftSelectionToFloat (deep alt-drag)', () => {
+  beforeEach(() => {
+    useAppStore.getState().newProject('Test', 16)
+  })
+
+  /** (u,v) = (0,0) on z/1/offset-0 is [0,-1,0]; depth +1 is [0,-1,1]. */
+  function paintColumn() {
+    useAppStore.setState((s) => {
+      s.model.color.set(encodeKey(0, -1, 0), { paletteSlot: SLOT_A })
+      s.model.color.set(encodeKey(0, -1, 1), { paletteSlot: SLOT_B })
+    })
+  }
+
+  it('alt lift grabs the full cuboid and bakes it back shifted with depths intact', () => {
+    paintColumn()
+    useAppStore.getState().setSelection({ originU: 0, originV: 0, width: 1, height: 1, mask: new Uint8Array([1]) })
+    useAppStore.getState().liftSelectionToFloat(true)
+
+    const lifted = useAppStore.getState()
+    expect(lifted.floatContent!.cells.length).toBe(16) // every depth of the 16-cube
+    expect(lifted.model.color.size).toBe(0) // whole cuboid cleared from the model
+
+    lifted.moveFloatTo(2, 0)
+    lifted.bakeFloatIfAny()
+
+    const after = useAppStore.getState()
+    expect(after.model.color.get(encodeKey(2, -1, 0))?.paletteSlot).toEqual(SLOT_A)
+    expect(after.model.color.get(encodeKey(2, -1, 1))?.paletteSlot).toEqual(SLOT_B)
+    expect(after.model.color.size).toBe(2)
+    expect(after.floatContent).toBeNull()
+  })
+
+  it('bake replaces: empty float cells clear the destination', () => {
+    paintColumn()
+    // 2-wide region: (0,0) occupied, (1,0) empty. Destination [3,-1,0] starts occupied.
+    useAppStore.setState((s) => {
+      s.model.color.set(encodeKey(3, -1, 0), { paletteSlot: SLOT_B })
+    })
+    useAppStore.getState().setSelection({ originU: 0, originV: 0, width: 2, height: 1, mask: new Uint8Array([1, 1]) })
+    useAppStore.getState().liftSelectionToFloat()
+    useAppStore.getState().moveFloatTo(2, 0)
+    useAppStore.getState().bakeFloatIfAny()
+
+    const after = useAppStore.getState()
+    expect(after.model.color.get(encodeKey(2, -1, 0))?.paletteSlot).toEqual(SLOT_A)
+    expect(after.model.color.has(encodeKey(3, -1, 0))).toBe(false) // cleared by the empty cell
+  })
+})

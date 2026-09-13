@@ -45,7 +45,9 @@ export interface ToolContext {
   setActivePaletteSlot: (slot: PaletteSlotRef) => void
   setActiveTool: (tool: ToolId) => void
   setSelection: (region: SelectionRegion | null) => void
-  liftSelectionToFloat: () => void
+  /** Alt-drag passes `deep` to lift the full cuboid under the selection window (see
+   * `liftSelectionToFloat` in store/types.ts). */
+  liftSelectionToFloat: (deep?: boolean) => void
   moveFloatTo: (originU: number, originV: number) => void
   transformFloat: (kind: SelectionTransformKind) => void
   bakeFloatIfAny: () => void

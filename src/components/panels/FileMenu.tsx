@@ -3,6 +3,7 @@ import { ChevronDown, FileDown, FilePlus, FileUp, Package, Printer } from 'lucid
 import { useRef, useState } from 'react'
 import { readProjectFile, downloadProjectFile } from '@/engine/persistence/projectFile'
 import { deserializeProject, serializeProject } from '@/engine/persistence/serialize'
+import { clampPlaneOffset } from '@/engine/grid/GridStore'
 import { useAppStore } from '@/store/useAppStore'
 import { showToast } from '@/components/ui/toastBus'
 import { ExportGltfDialog } from './ExportGltfDialog'
@@ -17,8 +18,8 @@ export function FileMenu() {
   const setStatusMessage = useAppStore((s) => s.setStatusMessage)
 
   function handleExport() {
-    const { model, palette, meta, texture, ambientOcclusion, noiseLevel, specularNoiseLevel, aoStrength, glassRoughnessLevel, exposure, exportScaleFactor, exportAnchor, exportAlignToObjectBounds, animSettings, sliceMasks, slicePivots } = useAppStore.getState()
-    downloadProjectFile(serializeProject(model, palette, meta, texture, { ambientOcclusion, noiseLevel, specularNoiseLevel, aoStrength, glassRoughnessLevel, exposure, exportScaleFactor, exportAnchor, exportAlignToObjectBounds }, animSettings, sliceMasks, slicePivots))
+    const { model, palette, meta, texture, ambientOcclusion, noiseLevel, specularNoiseLevel, aoStrength, glassRoughnessLevel, exposure, exportScaleFactor, exportAnchor, exportAlignToObjectBounds, exportIncludeTextureMaps, animSettings, sliceMasks, slicePivots } = useAppStore.getState()
+    downloadProjectFile(serializeProject(model, palette, meta, texture, { ambientOcclusion, noiseLevel, specularNoiseLevel, aoStrength, glassRoughnessLevel, exposure, exportScaleFactor, exportAnchor, exportAlignToObjectBounds, exportIncludeTextureMaps }, animSettings, sliceMasks, slicePivots))
     showToast('Project exported.')
   }
 
@@ -31,6 +32,10 @@ export function FileMenu() {
       useAppStore.getState().setTexture(texture)
       useAppStore.setState((s) => {
         s.meta = meta
+        // An imported project may be smaller than the current one — pull a stale plane offset
+        // back into the new bounds rather than starting out of range.
+        s.plane.offset = clampPlaneOffset(s.plane.offset, meta.gridExtent)
+        s.objectModeTarget = null
         s.ambientOcclusion = view.ambientOcclusion ?? false
         s.noiseLevel = view.noiseLevel ?? 0
         s.specularNoiseLevel = view.specularNoiseLevel ?? 0
@@ -40,6 +45,7 @@ export function FileMenu() {
         s.exportScaleFactor = view.exportScaleFactor ?? 100
         s.exportAnchor = view.exportAnchor ?? 'center'
         s.exportAlignToObjectBounds = view.exportAlignToObjectBounds ?? false
+        s.exportIncludeTextureMaps = view.exportIncludeTextureMaps ?? true
         s.animSettings = animSettings
         s.sliceMasks = sliceMasks
         s.slicePivots = slicePivots

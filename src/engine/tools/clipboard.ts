@@ -1,7 +1,8 @@
 import type { ChamferCell, GridExtent, VoxelModel } from '@/engine/grid/types'
 import type { ConstructionPlane } from '@/engine/plane/types'
-import { encodeKey, expandBounds, withinWorkingBounds } from '@/engine/grid/GridStore'
+import { effectiveExtent, encodeKey, expandBounds, withinWorkingBounds } from '@/engine/grid/GridStore'
 import { gridCoordFromPixel } from '@/engine/plane/constructionPlane'
+import { axisIndex } from '@/engine/plane/planeGeometry'
 import { toDisplayU, toDisplayV } from '@/engine/plane/planeDisplay'
 import { forEachSelectedCell } from './selectionMask'
 import { mirrorClassification } from './transform'
@@ -13,33 +14,72 @@ function cloneChamfer(c: ChamferCell): ChamferCell {
 }
 
 /**
- * Snapshots a selection off the active plane. The source plane is recorded alongside the cells so
- * a later paste onto a different plane can re-express the content there — see
- * `transformClipboardToPlane`.
+ * Snapshots a selection off the active plane. The source plane (axis, orientation, *and* offset)
+ * is recorded alongside the cells so a later paste can re-anchor correctly — see
+ * `transformClipboardToPlane` and `applyClipboardAt`.
+ *
+ * Every mask cell becomes a clipboard cell — including empty ones, which carry neither `color`
+ * nor `chamfer` and clear whatever they land on at drop time (replace, not merge). With
+ * `deep` (Alt-drag), the selection window is projected through the whole model along the plane
+ * normal: every depth gets its own cells with `dw` set relative to the lift slice, so dragging
+ * moves the full bounding cuboid instead of one slice. `gridExtent` sizes that depth range and
+ * is required when `deep` is true.
  */
-export function copyRegionToClipboard(model: VoxelModel, plane: ConstructionPlane, region: SelectionRegion): ClipboardData {
+export function copyRegionToClipboard(
+  model: VoxelModel,
+  plane: ConstructionPlane,
+  region: SelectionRegion,
+  deep = false,
+  gridExtent?: GridExtent,
+): ClipboardData {
   const cells: ClipboardCell[] = []
-  forEachSelectedCell(region, (u, v) => {
-    const key = encodeKey(...gridCoordFromPixel(plane, u, v))
+  const wantDeep = deep && gridExtent !== undefined
+  const half = wantDeep ? effectiveExtent(gridExtent!) / 2 : 0
+  const push = (u: number, v: number, w: number) => {
+    const key = encodeKey(...gridCoordFromPixel({ ...plane, offset: w }, u, v))
     const color = model.color.get(key)
     const chamfer = model.chamfer.get(key)
-    if (!color && !chamfer) return
     cells.push({
       du: u - region.originU,
       dv: v - region.originV,
+      dw: w - plane.offset,
       color: color ? { paletteSlot: color.paletteSlot } : undefined,
       chamfer: chamfer ? cloneChamfer(chamfer) : undefined,
     })
+  }
+  forEachSelectedCell(region, (u, v) => {
+    if (!wantDeep) {
+      push(u, v, plane.offset)
+      return
+    }
+    for (let w = -half; w < half; w++) push(u, v, w)
   })
-  return { width: region.width, height: region.height, originU: region.originU, originV: region.originV, cells, copyPlaneAxis: plane.axis, copyPlaneOrientation: plane.orientation }
+  return { width: region.width, height: region.height, originU: region.originU, originV: region.originV, cells, copyPlaneAxis: plane.axis, copyPlaneOrientation: plane.orientation, copyPlaneOffset: plane.offset }
 }
 
-/** Erases both layers under a selection mask (used by cut/move). Mutates the given (draft) model. */
-export function clearRegion(model: VoxelModel, plane: ConstructionPlane, region: SelectionRegion): void {
+/** Erases both layers under a selection mask (used by cut/move). With `deep` (Alt-drag lift) the
+ * mask is projected through the whole model along the plane normal so the full cuboid is cleared.
+ * Mutates the given (draft) model. */
+export function clearRegion(
+  model: VoxelModel,
+  plane: ConstructionPlane,
+  region: SelectionRegion,
+  deep = false,
+  gridExtent?: GridExtent,
+): void {
   forEachSelectedCell(region, (u, v) => {
-    const key = encodeKey(...gridCoordFromPixel(plane, u, v))
-    model.color.delete(key)
-    model.chamfer.delete(key)
+    if (!deep || gridExtent === undefined) {
+      const key = encodeKey(...gridCoordFromPixel(plane, u, v))
+      model.color.delete(key)
+      model.chamfer.delete(key)
+      return
+    }
+    const half = effectiveExtent(gridExtent) / 2
+    for (let w = -half; w < half; w++) {
+      const key = encodeKey(...gridCoordFromPixel({ ...plane, offset: w }, u, v))
+      model.color.delete(key)
+      model.chamfer.delete(key)
+    }
   })
 }
 
@@ -47,7 +87,11 @@ export function clearRegion(model: VoxelModel, plane: ConstructionPlane, region:
  * Stamps clipboard data at a destination origin. Chamfer cells are restored **verbatim** — their
  * copied plane basis and resolved shape are written back unchanged, with no reclassification against
  * the destination's neighbors, so the pasted result exactly matches the source. (A chamfer only ever
- * (re)resolves when the user edits that specific voxel.) Mutates the given (draft) model directly.
+ * (re)resolves when the user edits that specific voxel.) Cells with neither `color` nor `chamfer`
+ * are explicitly empty voxels: they delete whatever they land on, so every drop replaces its
+ * footprint instead of merging into it. Deep-lifted cells (`dw !== 0`) land at their depth offset
+ * off the destination slice — same-plane drops re-anchor to the lift slice, cross-plane pastes to
+ * the destination slice. Mutates the given (draft) model directly.
  */
 export function applyClipboardAt(
   model: VoxelModel,
@@ -57,8 +101,13 @@ export function applyClipboardAt(
   destOriginV: number,
   gridExtent: GridExtent,
 ): void {
+  const ai = axisIndex(plane.axis)
+  const samePlane = clipboard.copyPlaneAxis === plane.axis && clipboard.copyPlaneOrientation === plane.orientation
   for (const cell of clipboard.cells) {
     const coord = gridCoordFromPixel(plane, destOriginU + cell.du, destOriginV + cell.dv)
+    if (cell.dw !== 0) {
+      coord[ai] = (samePlane ? (clipboard.copyPlaneOffset ?? plane.offset) : plane.offset) + cell.dw
+    }
     if (!withinWorkingBounds(coord, gridExtent)) continue
 
     const key = encodeKey(...coord)
@@ -69,6 +118,8 @@ export function applyClipboardAt(
     if (cell.color) {
       model.color.set(key, { paletteSlot: cell.color.paletteSlot })
       model.bounds = expandBounds(model.bounds, coord)
+    } else {
+      model.color.delete(key)
     }
   }
 }

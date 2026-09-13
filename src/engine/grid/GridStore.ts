@@ -81,3 +81,27 @@ export function withinWorkingBounds(coord: Coord, extent: GridExtent): boolean {
   const half = effectiveExtent(extent) / 2
   return coord.every((c) => c >= -half && c < half)
 }
+
+/**
+ * Counts the model's cells (color layer; every chamfer cell has a matching color cell, so one
+ * layer suffices) that fall outside `extent`'s working bounds. Used by the Project Settings
+ * dialog to warn before a shrink deletes voxels, and by the resize itself to report what was
+ * clipped. */
+export function countCellsOutsideBounds(model: VoxelModel, extent: GridExtent): number {
+  let count = 0
+  for (const key of model.color.keys()) {
+    if (!withinWorkingBounds(decodeKey(key), extent)) count++
+  }
+  return count
+}
+
+/**
+ * Clamps a construction-plane offset into the project's working range: cell coordinates along any
+ * axis run `[-half, half)` over the even effective grid (`half - 1` is the topmost layer). Every
+ * plane move funnels through here (`planeSlice.setPlaneOffset`), so the plane can never leave the
+ * project bounds by scrolling, stepping, or click-advance — and setup paths (new project, import,
+ * resize) use it to pull a stale offset back into range. */
+export function clampPlaneOffset(offset: number, extent: GridExtent): number {
+  const half = effectiveExtent(extent) / 2
+  return Math.max(-half, Math.min(half - 1, offset))
+}
