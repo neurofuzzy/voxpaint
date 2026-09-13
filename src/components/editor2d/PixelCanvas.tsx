@@ -332,8 +332,11 @@ export function PixelCanvas() {
 
     // floating content — real, uncommitted cells rendered on top of the (already-hole-punched)
     // base grid (glass cells still get the 50% transparency treatment, same as committed cells).
+    // Only the current slice is drawn: deep-lifted (Alt-drag) cells at other depths belong to
+    // slices this canvas isn't showing (they still preview in the 3D ghost and bake in place).
     if (floatContent && floatOrigin) {
       for (const cell of floatContent.cells) {
+        if (cell.dw !== 0) continue
         const u = floatOrigin.originU + cell.du
         const v = floatOrigin.originV + cell.dv
         const [sx, sy] = worldToScreen(toDisplayU(plane, u), toDisplayV(plane, v), size, pan, zoom)

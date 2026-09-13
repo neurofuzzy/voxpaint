@@ -1,8 +1,8 @@
 ```
 # Auto-generated project map
-# Last updated: 2026-09-13 20:25:29
+# Last updated: 2026-09-13 20:36:12
 # Files: 174
-# Lines of code: ~18126
+# Lines of code: ~18315
 ```
 - **/assets**
 - **/components**

@@ -152,13 +152,13 @@ export const createToolActionsSlice: Slice = (set, get) => ({
     })
   },
 
-  liftSelectionToFloat: () => {
-    const { model, plane, selection, floatContent } = get()
+  liftSelectionToFloat: (deep = false) => {
+    const { model, plane, selection, floatContent, meta } = get()
     if (!selection || floatContent) return
-    const content = copyRegionToClipboard(model, plane, selection)
+    const content = copyRegionToClipboard(model, plane, selection, deep, meta.gridExtent)
     get().beginStroke()
     set((state) => {
-      clearRegion(state.model, state.plane, selection)
+      clearRegion(state.model, state.plane, selection, deep, meta.gridExtent)
       state.floatContent = content
       state.floatOrigin = { originU: selection.originU, originV: selection.originV }
       state.meta.modifiedAt = new Date().toISOString()

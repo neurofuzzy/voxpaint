@@ -21,6 +21,13 @@ export type SelectionRegion = {
 export type ClipboardCell = {
   du: number
   dv: number
+  /** Depth offset along the copy plane's axis, relative to `ClipboardData.copyPlaneOffset` — 0 for
+   * the lift slice itself. Set on every cell (including empty ones) by deep (Alt-drag) lifts, which
+   * project the selection window through the whole model; shallow lifts record 0. Bakes/peeks that
+   * don't understand depth treat 0 as "the destination slice" and place nonzero-`dw` cells at
+   * `offset + dw`. A cell with neither `color` nor `chamfer` is an explicitly empty voxel: dropping
+   * it clears whatever it lands on (replace, not merge). */
+  dw: number
   color?: { paletteSlot: PaletteSlotRef }
   /** The source cell's full chamfer data (plane basis + resolved shape), copied verbatim and
    * restored on paste with no reclassification — the pasted shape exactly matches the source. A
@@ -44,6 +51,11 @@ export type ClipboardData = {
    * content that was never copied off a plane. */
   copyPlaneAxis?: Axis
   copyPlaneOrientation?: Orientation
+  /** The copy plane's offset at lift time — the depth anchor every cell's `dw` is relative to.
+   * Same-plane bakes land `dw` cells at `copyPlaneOffset + dw` (which equals the live offset: the
+   * plane can't change while a float is pending); pastes onto a different plane re-anchor the
+   * depth profile to the destination slice instead. */
+  copyPlaneOffset?: number
 }
 
 export type ProjectSlice = {
@@ -231,9 +243,11 @@ export type ToolActionsSlice = {
    * different (u,v) whenever the construction plane has changed since the copy. */
   pasteClipboardInPlace: () => void
   /** Lifts the current selection into a floating buffer: copies it out, clears the source cells,
-   * and opens an undo stroke that stays uncommitted until `bakeFloatIfAny()`. No-op if nothing is
+   * and opens an undo stroke that stays uncommitted until `bakeFloatIfAny()`. With `deep`
+   * (Alt-drag) the selection window is projected through the whole model along the plane normal,
+   * so the float carries the full bounding cuboid instead of one slice. No-op if nothing is
    * selected or a float is already pending. */
-  liftSelectionToFloat: () => void
+  liftSelectionToFloat: (deep?: boolean) => void
   /** Repositions the pending float. Pure — no model writes, no undo-stroke activity. */
   moveFloatTo: (originU: number, originV: number) => void
   /** Rotates/mirrors the pending float in place (auto-lifting first if nothing is floating yet).

@@ -19,7 +19,9 @@ export const selectTool: ToolHandler = {
     } else if (selection && isCellSelected(selection, e.u, e.v)) {
       // Click inside an existing (non-floating) selection lifts + starts dragging it — no
       // separate "Move" tool needed for this; Select handles both selecting and repositioning.
-      ctx.liftSelectionToFloat()
+      // Alt-drag lifts the full-depth cuboid under the selection window (like the Move tool's
+      // Alt-drag moves the whole model); a plain drag lifts just the current slice.
+      ctx.liftSelectionToFloat(e.altKey)
       ctx.drag.current = {
         kind: 'moveFloat',
         startU: e.u,

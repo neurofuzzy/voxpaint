@@ -1,9 +1,10 @@
 import { describe, expect, it } from 'vitest'
-import type { Axis, ChamferClassification, Orientation, Rotation } from '@/engine/grid/types'
+import type { Axis, ChamferClassification, Orientation, Rotation, VoxelModel } from '@/engine/grid/types'
 import type { ConstructionPlane } from '@/engine/plane/types'
+import { emptyModel, encodeKey } from '@/engine/grid/GridStore'
 import { toDisplayU, toDisplayV } from '@/engine/plane/planeDisplay'
-import type { ClipboardData } from '@/store/types'
-import { transformClipboardToPlane } from './clipboard'
+import type { ClipboardData, SelectionRegion } from '@/store/types'
+import { applyClipboardAt, clearRegion, copyRegionToClipboard, transformClipboardToPlane } from './clipboard'
 import { mirrorClassification, mirrorClipboard, rotateClipboard90 } from './transform'
 
 const plane = (axis: Axis, orientation: Orientation): ConstructionPlane => ({ axis, orientation, offset: 0 })
@@ -62,7 +63,7 @@ describe('mirrorClassification', () => {
 })
 
 describe('rotateClipboard90 / mirrorClipboard', () => {
-  const source = clip(plane('z', 1), [{ du: 0, dv: 0, chamfer: { planeAxis: 'z', planeOrientation: 1, resolvedTo: ramp(0) } }])
+  const source = clip(plane('z', 1), [{ du: 0, dv: 0, dw: 0, chamfer: { planeAxis: 'z', planeOrientation: 1, resolvedTo: ramp(0) } }])
 
   it('carries the source plane through so a later paste can still rebase', () => {
     expect(rotateClipboard90(source).copyPlaneAxis).toBe('z')
@@ -82,9 +83,9 @@ describe('rotateClipboard90 / mirrorClipboard', () => {
 
   it('rotates counter-clockwise as the exact inverse of clockwise', () => {
     const wide = clip(plane('z', 1), [
-      { du: 0, dv: 0, chamfer: { planeAxis: 'z', planeOrientation: 1, resolvedTo: ramp(0) } },
-      { du: 2, dv: 1, chamfer: { planeAxis: 'z', planeOrientation: 1, resolvedTo: convex(3) } },
-      { du: 1, dv: 0 },
+      { du: 0, dv: 0, dw: 0, chamfer: { planeAxis: 'z', planeOrientation: 1, resolvedTo: ramp(0) } },
+      { du: 2, dv: 1, dw: 0, chamfer: { planeAxis: 'z', planeOrientation: 1, resolvedTo: convex(3) } },
+      { du: 1, dv: 0, dw: 0 },
     ])
     const roundTrip = rotateClipboard90(rotateClipboard90(wide, 'cw'), 'ccw')
     expect(roundTrip.width).toBe(wide.width)
@@ -105,24 +106,24 @@ describe('rotateClipboard90 / mirrorClipboard', () => {
 
 describe('transformClipboardToPlane', () => {
   it('returns content copied off the destination plane untouched', () => {
-    const c = clip(plane('z', 1), [{ du: 1, dv: 0 }])
+    const c = clip(plane('z', 1), [{ du: 1, dv: 0, dw: 0 }])
     expect(transformClipboardToPlane(c, plane('z', 1))).toBe(c)
   })
 
   it('returns float content with no recorded source plane untouched', () => {
-    const c: ClipboardData = { width: 1, height: 1, cells: [{ du: 0, dv: 0 }] }
+    const c: ClipboardData = { width: 1, height: 1, cells: [{ du: 0, dv: 0, dw: 0 }] }
     expect(transformClipboardToPlane(c, plane('x', 1))).toBe(c)
   })
 
   it('rebases chamfers onto the destination plane (the +Z -> +X case)', () => {
-    const c = clip(plane('z', 1), [{ du: 0, dv: 0, chamfer: { planeAxis: 'z', planeOrientation: 1, resolvedTo: ramp(0) } }])
+    const c = clip(plane('z', 1), [{ du: 0, dv: 0, dw: 0, chamfer: { planeAxis: 'z', planeOrientation: 1, resolvedTo: ramp(0) } }])
     const out = transformClipboardToPlane(c, plane('x', 1))
     expect(out.cells[0].chamfer).toEqual({ planeAxis: 'x', planeOrientation: 1, resolvedTo: ramp(0) })
   })
 
   it('mirrors shapes when the two planes disagree about which way u is drawn', () => {
     // +Z draws logical u unmirrored, -Z mirrors it, so the same picture needs the ramp flipped.
-    const c = clip(plane('z', 1), [{ du: 0, dv: 0, chamfer: { planeAxis: 'z', planeOrientation: 1, resolvedTo: ramp(0) } }])
+    const c = clip(plane('z', 1), [{ du: 0, dv: 0, dw: 0, chamfer: { planeAxis: 'z', planeOrientation: 1, resolvedTo: ramp(0) } }])
     const out = transformClipboardToPlane(c, plane('z', -1))
     expect(out.cells[0].chamfer).toEqual({ planeAxis: 'z', planeOrientation: -1, resolvedTo: ramp(2) })
     expect(out.cells[0].du).toBe(c.width - 1)
@@ -130,14 +131,14 @@ describe('transformClipboardToPlane', () => {
 
   it('leaves a chamfer baked on some other plane verbatim', () => {
     const foreign = { planeAxis: 'y' as Axis, planeOrientation: 1 as Orientation, resolvedTo: ramp(0) }
-    const c = clip(plane('z', 1), [{ du: 0, dv: 0, chamfer: foreign }])
+    const c = clip(plane('z', 1), [{ du: 0, dv: 0, dw: 0, chamfer: foreign }])
     expect(transformClipboardToPlane(c, plane('x', 1)).cells[0].chamfer).toEqual(foreign)
   })
 
   it('does not mutate the source clipboard', () => {
-    const c = clip(plane('z', 1), [{ du: 0, dv: 0, chamfer: { planeAxis: 'z', planeOrientation: 1, resolvedTo: ramp(0) } }])
+    const c = clip(plane('z', 1), [{ du: 0, dv: 0, dw: 0, chamfer: { planeAxis: 'z', planeOrientation: 1, resolvedTo: ramp(0) } }])
     transformClipboardToPlane(c, plane('y', 1))
-    expect(c.cells[0]).toEqual({ du: 0, dv: 0, chamfer: { planeAxis: 'z', planeOrientation: 1, resolvedTo: ramp(0) } })
+    expect(c.cells[0]).toEqual({ du: 0, dv: 0, dw: 0, chamfer: { planeAxis: 'z', planeOrientation: 1, resolvedTo: ramp(0) } })
     expect(c.copyPlaneAxis).toBe('z')
   })
 
@@ -145,9 +146,9 @@ describe('transformClipboardToPlane', () => {
     // The invariant the whole transform exists for: a cell's screen coordinate after pasting at the
     // rebased origin equals its screen coordinate at the point it was copied.
     const cells = [
-      { du: 0, dv: 0 },
-      { du: 2, dv: 1 },
-      { du: 1, dv: 0 },
+      { du: 0, dv: 0, dw: 0 },
+      { du: 2, dv: 1, dw: 0 },
+      { du: 1, dv: 0, dw: 0 },
     ]
     for (const from of ALL_PLANES) {
       for (const to of ALL_PLANES) {
@@ -168,10 +169,77 @@ describe('transformClipboardToPlane', () => {
   it('round-trips back to the original when transformed there and back', () => {
     for (const from of ALL_PLANES) {
       for (const to of ALL_PLANES) {
-        const c = clip(from, [{ du: 0, dv: 0, chamfer: { planeAxis: from.axis, planeOrientation: from.orientation, resolvedTo: convex(1) } }])
+        const c = clip(from, [{ du: 0, dv: 0, dw: 0, chamfer: { planeAxis: from.axis, planeOrientation: from.orientation, resolvedTo: convex(1) } }])
         expect(transformClipboardToPlane(transformClipboardToPlane(c, to), from)).toEqual(c)
       }
     }
+  })
+})
+
+/** Deep (Alt-drag) lifts project the 1-wide selection window through the whole 16-cube along z:
+ * (u,v) = (0,0) on z/1/offset-0 is the column [0,-1,w]. */
+describe('deep (cuboid) copy/clear/apply', () => {
+  const EXT = 16
+  const z0: ConstructionPlane = { axis: 'z', orientation: 1, offset: 0 }
+  const slotA = { kind: 'base', index: 0 } as const
+  const slotB = { kind: 'base', index: 1 } as const
+  const column: SelectionRegion = { originU: 0, originV: 0, width: 1, height: 1, mask: new Uint8Array([1]) }
+
+  function twoDeep(): VoxelModel {
+    const m = emptyModel()
+    m.color.set(encodeKey(0, -1, 0), { paletteSlot: slotA })
+    m.color.set(encodeKey(0, -1, 2), { paletteSlot: slotB })
+    return m
+  }
+
+  it('deep copy captures every depth with dw relative to the lift slice', () => {
+    const { cells } = copyRegionToClipboard(twoDeep(), z0, column, true, EXT)
+    expect(cells.length).toBe(16) // all depths, empties included
+    expect(cells.map((c) => c.dw).sort((a, b) => a - b)).toEqual(
+      Array.from({ length: 16 }, (_, i) => i - 8),
+    )
+    expect(cells.find((c) => c.dw === 0)?.color?.paletteSlot).toEqual(slotA)
+    expect(cells.find((c) => c.dw === 2)?.color?.paletteSlot).toEqual(slotB)
+  })
+
+  it('shallow copy captures one cell per mask cell, empties included', () => {
+    const wide: SelectionRegion = { originU: 0, originV: 0, width: 2, height: 1, mask: new Uint8Array([1, 1]) }
+    const { cells } = copyRegionToClipboard(twoDeep(), z0, wide)
+    // (0,0) -> [0,-1,0] occupied; (1,0) -> [1,-1,0] empty but still recorded.
+    expect(cells.length).toBe(2)
+    expect(cells[1]).toEqual({ du: 1, dv: 0, dw: 0 })
+  })
+
+  it('deep clear removes the whole cuboid; shallow clear removes one slice', () => {
+    const deepModel = twoDeep()
+    clearRegion(deepModel, z0, column, true, EXT)
+    expect(deepModel.color.size).toBe(0)
+
+    const shallowModel = twoDeep()
+    clearRegion(shallowModel, z0, column)
+    expect([...shallowModel.color.keys()]).toEqual([encodeKey(0, -1, 2)])
+  })
+
+  it('apply replaces: occupied cells write, empty cells clear the destination', () => {
+    const wide: SelectionRegion = { originU: 0, originV: 0, width: 2, height: 1, mask: new Uint8Array([1, 1]) }
+    const clipboard = copyRegionToClipboard(twoDeep(), z0, wide)
+    const dest = emptyModel()
+    dest.color.set(encodeKey(5, -1, 0), { paletteSlot: slotB }) // overwritten by slotA
+    dest.color.set(encodeKey(6, -1, 0), { paletteSlot: slotB }) // cleared by the empty cell
+    applyClipboardAt(dest, z0, clipboard, 5, 0, EXT)
+    expect(dest.color.get(encodeKey(5, -1, 0))?.paletteSlot).toEqual(slotA)
+    expect(dest.color.has(encodeKey(6, -1, 0))).toBe(false)
+  })
+
+  it('deep apply shifts the cuboid preserving depths and clearing its footprint', () => {
+    const clipboard = copyRegionToClipboard(twoDeep(), z0, column, true, EXT)
+    const dest = emptyModel()
+    dest.color.set(encodeKey(1, -1, 1), { paletteSlot: slotB }) // inside the footprint but empty at source
+    applyClipboardAt(dest, z0, clipboard, 1, 0, EXT)
+    expect(dest.color.get(encodeKey(1, -1, 0))?.paletteSlot).toEqual(slotA)
+    expect(dest.color.get(encodeKey(1, -1, 2))?.paletteSlot).toEqual(slotB)
+    expect(dest.color.has(encodeKey(1, -1, 1))).toBe(false)
+    expect(dest.color.size).toBe(2)
   })
 })
 

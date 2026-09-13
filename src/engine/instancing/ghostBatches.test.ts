@@ -40,8 +40,8 @@ describe('buildFloatGhostBatches', () => {
     // The property that makes the ghost trustworthy: it previews the bake rather than approximating
     // it. Compare against applyClipboardAt — the real thing — cell centre for cell centre.
     const cells = [
-      { du: 0, dv: 0, color: { paletteSlot: slot } },
-      { du: 2, dv: 1, color: { paletteSlot: slot } },
+      { du: 0, dv: 0, dw: 0, color: { paletteSlot: slot } },
+      { du: 2, dv: 1, dw: 0, color: { paletteSlot: slot } },
     ]
     for (const plane of ALL_PLANES) {
       const model = emptyModel()
@@ -56,15 +56,15 @@ describe('buildFloatGhostBatches', () => {
     }
   })
 
-  it('skips cells with no color, which bake to nothing', () => {
-    const batches = buildFloatGhostBatches(floatOf([{ du: 0, dv: 0 }]), origin, ALL_PLANES[0], palette, EXTENT)
+  it('skips cells with no color (they clear on bake but ghost nothing)', () => {
+    const batches = buildFloatGhostBatches(floatOf([{ du: 0, dv: 0, dw: 0 }]), origin, ALL_PLANES[0], palette, EXTENT)
     expect(batches).toEqual([])
   })
 
   it('drops off-grid cells rather than promising a bake that will not happen', () => {
     const plane = ALL_PLANES[0]
     const farOrigin = { originU: 900, originV: 900 }
-    const cells = [{ du: 0, dv: 0, color: { paletteSlot: slot } }]
+    const cells = [{ du: 0, dv: 0, dw: 0, color: { paletteSlot: slot } }]
 
     const model = emptyModel()
     applyClipboardAt(model, plane, floatOf(cells), farOrigin.originU, farOrigin.originV, EXTENT)
@@ -77,11 +77,12 @@ describe('buildFloatGhostBatches', () => {
     const plane: ConstructionPlane = { axis: 'z', orientation: 1, offset: 0 }
     const batches = buildFloatGhostBatches(
       floatOf([
-        { du: 0, dv: 0, color: { paletteSlot: slot } },
-        { du: 1, dv: 0, color: { paletteSlot: slot } },
+        { du: 0, dv: 0, dw: 0, color: { paletteSlot: slot } },
+        { du: 1, dv: 0, dw: 0, color: { paletteSlot: slot } },
         {
           du: 2,
           dv: 0,
+          dw: 0,
           color: { paletteSlot: slot },
           chamfer: { planeAxis: 'z', planeOrientation: 1, resolvedTo: { shapeKind: 'ramp', rotation: 0 } },
         },
@@ -102,9 +103,9 @@ describe('buildFloatGhostBatches', () => {
 
   it('places an unchamfered cell at the same matrix the live renderer would', () => {
     const plane: ConstructionPlane = { axis: 'z', orientation: 1, offset: 0 }
-    const [batch] = buildFloatGhostBatches(floatOf([{ du: 0, dv: 0, color: { paletteSlot: slot } }]), origin, plane, palette, EXTENT)
+    const [batch] = buildFloatGhostBatches(floatOf([{ du: 0, dv: 0, dw: 0, color: { paletteSlot: slot } }]), origin, plane, palette, EXTENT)
     const model = emptyModel()
-    applyClipboardAt(model, plane, floatOf([{ du: 0, dv: 0, color: { paletteSlot: slot } }]), origin.originU, origin.originV, EXTENT)
+    applyClipboardAt(model, plane, floatOf([{ du: 0, dv: 0, dw: 0, color: { paletteSlot: slot } }]), origin.originU, origin.originV, EXTENT)
     const [key] = [...model.color.keys()]
     const coord = key.split(',').map(Number) as [number, number, number]
     expect(positionOf(batch.matrices[0])).toEqual(positionOf(cubeInstanceMatrix(coord)))
