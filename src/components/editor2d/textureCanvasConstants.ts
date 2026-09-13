@@ -20,28 +20,30 @@ export function texClampZoom(zoom: number): number {
 
 /** Default texture-canvas zoom for a project of the given extent, so the active face's texel box
  * occupies roughly the same screen area at any locked-in size — the texel twin of the voxel canvas's
- * `defaultZoomForExtent`, sharing the same `REFERENCE_GRID_EXTENT` baseline. */
-export function defaultTexZoomForExtent(gridExtent: GridExtent): number {
-  return texClampZoom(faceSizeFor(REFERENCE_GRID_EXTENT) / faceSizeFor(gridExtent))
+ * `defaultZoomForExtent`, sharing the same `REFERENCE_GRID_EXTENT` baseline. `vScale` is the face's
+ * v-axis stretch (Y voxel scale on faces whose v runs along Y): tall faces zoom out to fit. */
+export function defaultTexZoomForExtent(gridExtent: GridExtent, vScale = 1): number {
+  return texClampZoom(faceSizeFor(REFERENCE_GRID_EXTENT) / (faceSizeFor(gridExtent) * Math.max(1, vScale)))
 }
 
-export function texWorldToScreen(tu: number, tv: number, size: CanvasSize, pan: CanvasPan, zoom: number, texHalf: number): [number, number] {
+export function texWorldToScreen(tu: number, tv: number, size: CanvasSize, pan: CanvasPan, zoom: number, texHalf: number, vScale = 1): [number, number] {
   const px = TEXEL_BASE_PX * zoom
-  return [size.width / 2 + px * (tu - texHalf + pan.x), size.height / 2 + px * (tv - texHalf + pan.y)]
+  return [size.width / 2 + px * (tu - texHalf + pan.x), size.height / 2 + px * vScale * (tv - texHalf + pan.y)]
 }
 
-export function texScreenToWorld(sx: number, sy: number, size: CanvasSize, pan: CanvasPan, zoom: number, texHalf: number): [number, number] {
+export function texScreenToWorld(sx: number, sy: number, size: CanvasSize, pan: CanvasPan, zoom: number, texHalf: number, vScale = 1): [number, number] {
   const px = TEXEL_BASE_PX * zoom
-  return [(sx - size.width / 2) / px - pan.x + texHalf, (sy - size.height / 2) / px - pan.y + texHalf]
+  return [(sx - size.width / 2) / px - pan.x + texHalf, (sy - size.height / 2) / (px * vScale) - pan.y + texHalf]
 }
 
-/** Keep the face's texel box from being dragged fully off-screen (mirrors `clampPan`). */
-export function texClampPan(pan: CanvasPan, size: CanvasSize, zoom: number, texHalf: number): CanvasPan {
+/** Keep the face's texel box from being dragged fully off-screen (mirrors `clampPan`).
+ * Pan stays in texel units; the v range is computed in stretched px. */
+export function texClampPan(pan: CanvasPan, size: CanvasSize, zoom: number, texHalf: number, vScale = 1): CanvasPan {
   const px = TEXEL_BASE_PX * zoom
   const minX = (PAN_PADDING_PX - size.width / 2) / px - texHalf
   const maxX = (size.width / 2 - PAN_PADDING_PX) / px + texHalf
-  const minY = (PAN_PADDING_PX - size.height / 2) / px - texHalf
-  const maxY = (size.height / 2 - PAN_PADDING_PX) / px + texHalf
+  const minY = (PAN_PADDING_PX - size.height / 2) / (px * vScale) - texHalf
+  const maxY = (size.height / 2 - PAN_PADDING_PX) / (px * vScale) + texHalf
   return {
     x: Math.min(Math.max(pan.x, minX), maxX),
     y: Math.min(Math.max(pan.y, minY), maxY),

@@ -70,6 +70,7 @@ export function ExportGltfDialog({ open, onOpenChange }: { open: boolean; onOpen
         noiseSeed: meta.noiseSeed,
         optimizeMesh: !state.exportDisableMeshOptimization,
         includeTextureMaps: state.exportIncludeTextureMaps,
+        voxelScaleY: meta.voxelScaleY,
       }, animSettings, sliceMasks, slicePivots)
       downloadGlb(glb, normalizeProjectFilename(meta.name || 'voxpaint-model'))
       showToast('GLTF exported.')

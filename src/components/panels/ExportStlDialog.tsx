@@ -43,7 +43,7 @@ export function ExportStlDialog({ open, onOpenChange }: { open: boolean; onOpenC
     setBusy(true)
     try {
       showToast('Exporting STL…')
-      const stl = exportModelToStl(model, palette, { scaleFactor, anchor, orientForPrinting, skipGlass })
+      const stl = exportModelToStl(model, palette, { scaleFactor, anchor, orientForPrinting, skipGlass, voxelScaleY: useAppStore.getState().meta.voxelScaleY })
       downloadStl(stl, normalizeProjectFilename(useAppStore.getState().meta.name || 'voxpaint-model'))
       showToast('STL exported.')
       onOpenChange(false)

@@ -1,4 +1,4 @@
-import type { Axis, CellKey, ChamferCell, Coord, GridExtent, Orientation, VoxelModel } from '@/engine/grid/types'
+import type { Axis, CellKey, ChamferCell, Coord, GridExtent, Orientation, VoxelModel, VoxelScaleY } from '@/engine/grid/types'
 import type { GltfExportAnchor } from '@/engine/export/gltfExport'
 import type { EmissiveAnimMode, PaletteSlotRef, PaletteState } from '@/engine/palette/types'
 import type { ConstructionPlane } from '@/engine/plane/types'
@@ -71,6 +71,10 @@ export type ProjectSlice = {
   /** Sets the blink/pulse animation mode for one emissive palette slot (0–3). */
   setEmissiveAnimMode: (index: number, mode: EmissiveAnimMode) => void
   setProjectName: (name: string) => void
+  /** Sets the project-level Y voxel scale (0.5x / 1x / 2x, Project Settings). Unlike a resize this
+   * touches no grid/texture data and clears no history — the grid stays integer and only
+   * presentation (3D scene, 2D X/Z-plane views, baked exports) stretches. */
+  setVoxelScaleY: (k: VoxelScaleY) => void
   /** Renames the project and/or resizes its working cube (Project Settings dialog). Growing keeps
    * everything; shrinking deletes voxels outside the new bounds (the caller warns first via
    * `countCellsOutsideBounds`) and center-crops/pads the texture faces. A resize also clears all
