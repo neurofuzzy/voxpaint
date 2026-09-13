@@ -6,17 +6,22 @@ const TOOL_KEYS: Record<string, ToolId> = {
   p: 'paint',
   e: 'erase',
   i: 'eyedropper',
+  m: 'material',
   s: 'select',
-  f: 'fill',
+  k: 'fill',
   c: 'clone',
-  m: 'move',
+  v: 'move',
 }
 
 /**
- * Global keyboard shortcuts — undo/redo, copy/cut/paste, delete-selection-contents, Escape-to-
- * deselect, rotate/mirror, and single-letter tool switching. One decoupled if-chain (matching
+ * Global keyboard shortcuts — undo/redo, copy/cut/paste, Escape-to-
+ * deselect, and single-letter tool switching. One decoupled if-chain (matching
  * trixelart's own use-keyboard-shortcuts.ts), separate from tool pointer-dispatch since this is
  * app/selection-domain, not per-tool pointer logic.
+ *
+ * Deliberately no bare single-key transform shortcuts: selection rotate/mirror live on the
+ * SelectionPalette buttons instead, so a stray keypress can never reshape the model — only
+ * explicit Cmd-chord clipboard/undo commands and selection-gated Delete may change it.
  *
  * Mode-aware: in Texture mode every selection/history action dispatches to the parallel texture
  * actions (its own separate undo/redo history and texel selection/clipboard). Tool switching is
@@ -33,20 +38,27 @@ export function useKeyboardShortcuts(hoverCellRef?: React.RefObject<[number, num
       const isMeta = e.ctrlKey || e.metaKey
       const key = e.key.toLowerCase()
 
+      // '?' opens the keyboard-shortcuts help from anywhere (mode-independent). Mirrored in the
+      // Help dialog's shortcut list (components/onboarding/shortcuts.ts).
+      if (e.key === '?') {
+        store.openHelp()
+        e.preventDefault()
+        return
+      }
+
       // Mode-specific bindings for a shared set of concepts, resolved up front so the rest of the
       // handler reads the same regardless of mode.
-      const texture = store.mode === 'texture'
-      const undo = texture ? store.textureUndo : store.undo
-      const redo = texture ? store.textureRedo : store.redo
-      const selection = texture ? store.textureSelection : store.selection
-      const clipboard = texture ? store.textureClipboard : store.clipboard
-      const copy = texture ? store.textureCopy : store.copySelection
-      const cut = texture ? store.textureCut : store.cutSelection
-      const pasteAt = texture ? store.texturePasteAt : store.pasteClipboardAt
-      const bakeFloat = texture ? store.textureBakeFloatIfAny : store.bakeFloatIfAny
-      const clearSelection = texture ? () => store.setTextureSelection(null) : () => store.setSelection(null)
-      const deleteSelection = texture ? store.textureDelete : store.deleteSelection
-      const transformFloat = texture ? store.textureTransformFloat : store.transformFloat
+      const isTexture = store.mode === 'texture'
+      const isAnimate = store.mode === 'animate'
+      const undo = isTexture ? store.textureUndo : isAnimate ? store.animUndo : store.undo
+      const redo = isTexture ? store.textureRedo : isAnimate ? store.animRedo : store.redo
+      const selection = isTexture ? store.textureSelection : isAnimate ? null : store.selection
+      const clipboard = isTexture ? store.textureClipboard : isAnimate ? null : store.clipboard
+      const copy = isTexture ? store.textureCopy : store.copySelection
+      const cut = isTexture ? store.textureCut : store.cutSelection
+      const bakeFloat = isTexture ? store.textureBakeFloatIfAny : store.bakeFloatIfAny
+      const clearSelection = isTexture ? () => store.setTextureSelection(null) : () => store.setSelection(null)
+      const deleteSelection = isTexture ? store.textureDelete : store.deleteSelection
 
       if (isMeta) {
         if (key === 'z') {
@@ -60,8 +72,11 @@ export function useKeyboardShortcuts(hoverCellRef?: React.RefObject<[number, num
           cut()
           e.preventDefault()
         } else if (key === 'v' && clipboard) {
-          // Paste-in-place: always land at the same top-left the selection was copied from.
-          pasteAt(clipboard.originU ?? 0, clipboard.originV ?? 0)
+          // Paste-in-place. In voxel mode "in place" means the same spot *on screen*, so the store
+          // rebases the origin for the active plane; texture mode has no planes and pastes at the
+          // literal copied origin.
+          if (isTexture) store.texturePasteAt(clipboard.originU ?? 0, clipboard.originV ?? 0)
+          else store.pasteClipboardInPlace()
           e.preventDefault()
         }
         return
@@ -74,31 +89,42 @@ export function useKeyboardShortcuts(hoverCellRef?: React.RefObject<[number, num
         return
       }
 
+      if (e.altKey) {
+        if (key === 'arrowup') {
+          store.setPlaneOffset(store.plane.offset + 1)
+          e.preventDefault()
+          return
+        }
+        if (key === 'arrowdown') {
+          store.setPlaneOffset(store.plane.offset - 1)
+          e.preventDefault()
+          return
+        }
+        if (key === 'arrowleft' || key === 'arrowright') {
+          const cycle: [typeof store.plane.axis, typeof store.plane.orientation][] = [
+            ['x', 1], ['x', -1],
+            ['y', 1], ['y', -1],
+            ['z', 1], ['z', -1],
+          ]
+          const idx = cycle.findIndex(([a, o]) => a === store.plane.axis && o === store.plane.orientation)
+          const off = key === 'arrowright' ? 1 : -1
+          const next = (idx + off + cycle.length) % cycle.length
+          store.setPlaneAxisOrientation(...cycle[next])
+          e.preventDefault()
+          return
+        }
+      }
+
       if ((key === 'delete' || key === 'backspace') && selection) {
         deleteSelection()
         e.preventDefault()
         return
       }
 
-      // Rotate/mirror apply to whatever is selected regardless of the active tool.
-      if (selection) {
-        if (key === 'r') {
-          transformFloat('rotate')
-          e.preventDefault()
-          return
-        } else if (key === 'h') {
-          transformFloat('mirror-h')
-          e.preventDefault()
-          return
-        } else if (key === 'v') {
-          transformFloat('mirror-v')
-          e.preventDefault()
-          return
-        }
-      }
-
       const tool = TOOL_KEYS[key]
-      if (tool) {
+      // Animate mode's toolbar only has paint/erase (mask) and pivot (no letter shortcut) — other
+      // tool letters stay inert there rather than switching to a tool with no animate-mode handler.
+      if (tool && (!isAnimate || tool === 'paint' || tool === 'erase')) {
         store.setActiveTool(tool)
         e.preventDefault()
       }

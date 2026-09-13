@@ -66,15 +66,16 @@ export function forEachSelectedCell(region: SelectionRegion, cb: (u: number, v: 
   }
 }
 
-/** Rotates a selection mask 90° clockwise in place (origin corner is preserved, extents swap). */
-export function rotateRegion90(region: SelectionRegion): SelectionRegion {
+/** Rotates a selection mask 90° in place (origin corner is preserved, extents swap). */
+export function rotateRegion90(region: SelectionRegion, direction: 'cw' | 'ccw' = 'cw'): SelectionRegion {
   const { width, height, mask, originU, originV } = region
   const newMask = new Uint8Array(width * height)
   for (let dv = 0; dv < height; dv++) {
     for (let du = 0; du < width; du++) {
       if (mask[dv * width + du] !== 1) continue
-      const ndu = height - 1 - dv
-      const ndv = du
+      // New extents are (height, width), so the row stride below is `height` either way.
+      const ndu = direction === 'cw' ? height - 1 - dv : dv
+      const ndv = direction === 'cw' ? du : width - 1 - du
       newMask[ndv * height + ndu] = 1
     }
   }

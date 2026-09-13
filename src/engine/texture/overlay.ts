@@ -1,13 +1,13 @@
+import * as THREE from 'three'
+
 /**
- * Photoshop-style "overlay" blend, shared by the live preview (GLSL) and the GLTF export bake (JS)
- * so what you paint matches what exports. Overlay darkens where blend < 0.5, lightens where > 0.5,
+ * Photoshop-style "overlay" blend, shared by the live preview bake and the GLTF export bake so
+ * what you paint matches what exports. Overlay darkens where blend < 0.5, lightens where > 0.5,
  * and is a no-op at exactly 0.5 — which is why the texture atlas stores the grayscale index as a
  * **blend value** (`index/4`, so the middle gray index 2 = 0.5 = neutral), not a color.
  *
- * Both are computed in sRGB (gamma) space with the pivot at 0.5, so the neutral point matches the
- * middle swatch perceptually. The GLSL path reconstructs the voxel's sRGB color from the (linear)
- * vertex color via `vpLin2Srgb`; the JS bake starts from the already-sRGB palette hex — so the two
- * produce the same final surface color.
+ * Computed in sRGB (gamma) space with the pivot at 0.5, so the neutral point matches the middle
+ * swatch perceptually, starting from the already-sRGB palette hex.
  */
 
 /** Overlay one sRGB channel (`base`) with a `blend` scalar, all in [0,1]. */
@@ -16,24 +16,43 @@ export function overlayChannel(base: number, blend: number): number {
 }
 
 /**
- * Replacement for three's `<map_fragment>`: overlay the (grayscale) blend texel onto the voxel's
- * base color, converting through sRGB so the pivot matches the export bake. All math is inlined (no
- * helper functions) so it needs no separate injection point. Reads the voxel color straight from
- * `vColor` (the vertex-color varying, `.rgb` works whether it's vec3 or vec4) rather than
- * `diffuseColor`, because three runs `<map_fragment>` *before* `<color_fragment>` — so the default
- * vertex-color multiply is also neutralized (see `OVERLAY_COLOR_FRAGMENT`) to avoid applying the
- * color twice. `vpBase` = linear→sRGB(vColor); `vpRes` = overlay(vpBase, blend); result = sRGB→linear.
+ * Bake `overlay(color, blend)` into an sRGB RGBA texture for one color group. `blendData` is the
+ * shared blend atlas (R = blend·255); `colorKey` is the group's packed sRGB color. The result is a
+ * standard `baseColorTexture` (with `baseColorFactor` = white), so the live preview and any glTF
+ * viewer reproduce the identical overlay with no custom shader.
  */
-export const OVERLAY_MAP_FRAGMENT = /* glsl */ `
-#ifdef USE_MAP
-  float vpBlend = texture2D( map, vMapUv ).r;
-  vec3 vpC = max( vColor.rgb, vec3( 0.0 ) );
-  vec3 vpBase = mix( 1.055 * pow( vpC, vec3( 1.0 / 2.4 ) ) - 0.055, vpC * 12.92, step( vpC, vec3( 0.0031308 ) ) );
-  vec3 vpRes = mix( 2.0 * vpBase * vpBlend, 1.0 - 2.0 * ( 1.0 - vpBase ) * ( 1.0 - vpBlend ), step( vec3( 0.5 ), vpBase ) );
-  diffuseColor.rgb = mix( pow( ( vpRes + 0.055 ) / 1.055, vec3( 2.4 ) ), vpRes / 12.92, step( vpRes, vec3( 0.04045 ) ) );
-#endif
-`
+export function bakeOverlayTexture(blendData: Uint8ClampedArray, width: number, height: number, colorKey: number): THREE.DataTexture {
+  const r = ((colorKey >> 16) & 255) / 255
+  const g = ((colorKey >> 8) & 255) / 255
+  const b = (colorKey & 255) / 255
+  const out = new Uint8ClampedArray(width * height * 4)
+  for (let i = 0; i < width * height; i++) {
+    const blend = blendData[i * 4] / 255
+    out[i * 4] = overlayChannel(r, blend) * 255
+    out[i * 4 + 1] = overlayChannel(g, blend) * 255
+    out[i * 4 + 2] = overlayChannel(b, blend) * 255
+    out[i * 4 + 3] = 255
+  }
+  const tex = new THREE.DataTexture(out, width, height, THREE.RGBAFormat)
+  tex.magFilter = THREE.NearestFilter
+  tex.minFilter = THREE.NearestFilter
+  tex.generateMipmaps = false
+  tex.flipY = false
+  tex.colorSpace = THREE.SRGBColorSpace
+  tex.needsUpdate = true
+  return tex
+}
 
-/** Replacement for three's `<color_fragment>`: a no-op, since `OVERLAY_MAP_FRAGMENT` already folded
- * the vertex (voxel) color into `diffuseColor` via the overlay. */
-export const OVERLAY_COLOR_FRAGMENT = ''
+/** Bakes one overlay texture per distinct `colorKey` in `colorKeys` (deduplicated), reused by
+ * every group sharing that color — the bake only depends on color + the shared blend atlas. */
+export function bakeOverlayTexturesByColor(
+  colorKeys: Iterable<number>,
+  blend: { data: Uint8ClampedArray; width: number; height: number },
+): Map<number, THREE.DataTexture> {
+  const cache = new Map<number, THREE.DataTexture>()
+  for (const colorKey of colorKeys) {
+    if (cache.has(colorKey)) continue
+    cache.set(colorKey, bakeOverlayTexture(blend.data, blend.width, blend.height, colorKey))
+  }
+  return cache
+}

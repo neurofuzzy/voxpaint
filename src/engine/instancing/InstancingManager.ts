@@ -1,30 +1,19 @@
 import * as THREE from 'three'
 import { decodeKey } from '@/engine/grid/GridStore'
-import type { CellKey, ChamferCell, VoxelModel } from '@/engine/grid/types'
-import { concaveCornerGeometry, convexCornerGeometry, mirrorVGeometry, rampGeometry, unitCubeGeometry } from '@/engine/chamfer/chamferGeometry'
-import { emissiveClassFor, resolveSlotColor } from '@/engine/palette/palette'
+import type { CellKey, VoxelModel } from '@/engine/grid/types'
+import { unitCubeGeometry } from '@/engine/chamfer/chamferGeometry'
+import { resolveSlotColor } from '@/engine/palette/palette'
 import type { PaletteState } from '@/engine/palette/types'
-import { chamferBasisIsReflected, chamferInstanceMatrix, cubeInstanceMatrix } from './basis'
+import { chamferInstanceMatrix, cubeInstanceMatrix } from './basis'
+import { buildPoolGeometries, POOL_IDS, poolIdFor, type PoolId } from './pools'
 
-// Chamfer shapes split into a plain and a v-mirrored (`…M`) pool: reflected-basis planes (+Z/+X/-Y)
-// use the mirrored geometry so every rendered instance stays a proper rotation and lights correctly.
-// See basis.ts's chamferBasisIsReflected and chamferGeometry.ts's mirrorVGeometry.
-export type PoolId = 'cube' | 'ramp' | 'convex' | 'concave' | 'rampM' | 'convexM' | 'concaveM'
-const POOL_IDS: PoolId[] = ['cube', 'ramp', 'convex', 'concave', 'rampM', 'convexM', 'concaveM']
-
-/** The pool a color cell belongs to, accounting for its baked shape and plane handedness. */
-function poolIdFor(chamfer: ChamferCell | undefined): PoolId {
-  if (!chamfer?.resolvedTo) return 'cube'
-  const kind = chamfer.resolvedTo.shapeKind
-  return chamferBasisIsReflected(chamfer.planeAxis, chamfer.planeOrientation) ? (`${kind}M` as PoolId) : kind
-}
+export type { PoolId }
 
 const emptyPools = <T>(): Record<PoolId, T[]> =>
   Object.fromEntries(POOL_IDS.map((id) => [id, [] as T[]])) as unknown as Record<PoolId, T[]>
 
 const INITIAL_CAPACITY = 4096
 
-type AnimatedInstance = { index: number; baseColor: THREE.Color; emissiveClass: 2 | 3 }
 type InstanceRef = { poolId: PoolId; index: number }
 type HoverTarget = InstanceRef & { cellKey: CellKey }
 
@@ -37,17 +26,15 @@ type HoverTarget = InstanceRef & { cellKey: CellKey }
  * colored via `mesh.setColorAt()` — no custom shaders. Base `material.color` MUST stay white
  * (0xffffff): three.js always multiplies `instanceColor` against `material.color` in the shader
  * (gated on `object.instanceColor` being set, NOT on `material.vertexColors`), so any non-white
- * base color tints/distorts every painted color. Blink/pulse animation (palette kinds
- * 'blink'/'pulse', emissiveClass 2/3) is driven from JS in `tick()`, recoloring just those
- * instances via `setColorAt` each frame — not a GPU shader. Only a small subset of cells typically
- * use these palette kinds, so the per-frame JS cost is negligible, and it's far easier to reason
- * about/debug than an `onBeforeCompile` shader patch.
+ * base color tints/distorts every painted color. This flat instanced view renders every slot as its
+ * resolved color; the PBR material classes (metal/glass/emissive) only take visual effect in the
+ * optimized-mesh preview and glTF export (see OptimizedMeshView / gltfExport). The only per-frame
+ * recolor here is the hover highlight (`tick()`).
  */
 export class InstancingManager {
   readonly group = new THREE.Group()
   private meshes: Record<PoolId, THREE.InstancedMesh>
   private capacities: Record<PoolId, number>
-  private animatedInstances: Record<PoolId, AnimatedInstance[]> = emptyPools<AnimatedInstance>()
   private baseColors: Record<PoolId, THREE.Color[]> = emptyPools<THREE.Color>()
   private cellKeyToInstance = new Map<CellKey, InstanceRef>()
   private hoverTarget: HoverTarget | null = null
@@ -58,6 +45,7 @@ export class InstancingManager {
   private wireframeMaterial: THREE.MeshBasicMaterial
   private wireframeMeshes: Record<PoolId, THREE.InstancedMesh>
   private wireframeVisible = false
+  private renderVisible = true
 
   // Picking runs against full-cell AABBs (unit cubes), NOT the visible chamfer meshes: clicking a
   // sloped chamfer face must still resolve to that cell and a clean axis-aligned face normal, so the
@@ -83,20 +71,21 @@ export class InstancingManager {
 
     this.wireframeMaterial = new THREE.MeshBasicMaterial({ color: 0xffffff, wireframe: true })
 
-    const ramp = rampGeometry(0)
-    const convex = convexCornerGeometry(0)
-    const concave = concaveCornerGeometry(0)
-    const geometries: Record<PoolId, THREE.BufferGeometry> = {
-      cube: unitCubeGeometry(),
-      ramp,
-      convex,
-      concave,
-      rampM: mirrorVGeometry(ramp),
-      convexM: mirrorVGeometry(convex),
-      concaveM: mirrorVGeometry(concave),
-    }
+    const geometries = buildPoolGeometries()
 
-    this.capacities = { cube: INITIAL_CAPACITY, ramp: 256, convex: 256, concave: 256, rampM: 256, convexM: 256, concaveM: 256 }
+    this.capacities = {
+      cube: INITIAL_CAPACITY,
+      ramp: 256,
+      convex: 256,
+      concave: 256,
+      wedge: 256,
+      thin: 256,
+      rampM: 256,
+      convexM: 256,
+      concaveM: 256,
+      wedgeM: 256,
+      thinM: 256,
+    }
     this.meshes = {} as Record<PoolId, THREE.InstancedMesh>
     this.wireframeMeshes = {} as Record<PoolId, THREE.InstancedMesh>
     for (const id of POOL_IDS) {
@@ -200,7 +189,6 @@ export class InstancingManager {
       const keys = byPool[id]
       this.ensureCapacity(id, keys.length)
       const mesh = this.meshes[id]
-      const animated: AnimatedInstance[] = []
       const baseColors: THREE.Color[] = []
 
       const matrix = new THREE.Matrix4()
@@ -221,14 +209,8 @@ export class InstancingManager {
         baseColors.push(color)
         mesh.setColorAt(i, color)
         this.cellKeyToInstance.set(key, { poolId: id, index: i })
-
-        const emissiveClass = emissiveClassFor(colorCell.paletteSlot.kind)
-        if (emissiveClass === 2 || emissiveClass === 3) {
-          animated.push({ index: i, baseColor: color, emissiveClass })
-        }
       })
 
-      this.animatedInstances[id] = animated
       this.baseColors[id] = baseColors
       mesh.count = keys.length
       mesh.instanceMatrix.needsUpdate = true
@@ -252,26 +234,6 @@ export class InstancingManager {
   }
 
   tick(elapsedSeconds: number) {
-    for (const id of POOL_IDS) {
-      const animated = this.animatedInstances[id]
-      if (animated.length === 0) continue
-      const mesh = this.meshes[id]
-      for (const { index, baseColor, emissiveClass } of animated) {
-        const factor =
-          emissiveClass === 2
-            ? Math.floor(elapsedSeconds * 1.5) % 2 === 0
-              ? 1
-              : 0.15 // blink: hard on/off square wave
-            : 0.4 + 0.6 * (0.5 + 0.5 * Math.sin(elapsedSeconds * 3)) // pulse: smooth sine
-        this.scratchColor.copy(baseColor).multiplyScalar(factor)
-        mesh.setColorAt(index, this.scratchColor)
-      }
-      if (mesh.instanceColor) mesh.instanceColor.needsUpdate = true
-    }
-
-    // Hover highlight: pulses the hovered instance between slightly darker and slightly lighter
-    // than its own painted color. Applied after (so it wins over) the emissive animation above if
-    // the hovered cell happens to also be a blink/pulse cell.
     if (this.hoverTarget) {
       const { poolId, index } = this.hoverTarget
       const base = this.baseColors[poolId][index]
@@ -285,19 +247,16 @@ export class InstancingManager {
     }
   }
 
-  /** Sets (or clears, on `null`) the cell that should render the hover blink. Restores the
-   * previously-hovered instance to its resting color first — for a non-animated cell this is the
-   * only thing that will ever restore it (tick() only touches animated + hovered instances). */
   setHoveredCell(key: CellKey | null) {
     const resolved = key ? this.cellKeyToInstance.get(key) : undefined
     const next: HoverTarget | null = resolved ? { cellKey: key!, ...resolved } : null
 
     if (this.hoverTarget && (!next || next.poolId !== this.hoverTarget.poolId || next.index !== this.hoverTarget.index)) {
       const { poolId, index } = this.hoverTarget
-      const base = this.baseColors[poolId][index]
-      if (base) {
+      const restore = this.baseColors[poolId][index]
+      if (restore) {
         const mesh = this.meshes[poolId]
-        mesh.setColorAt(index, base)
+        mesh.setColorAt(index, restore)
         if (mesh.instanceColor) mesh.instanceColor.needsUpdate = true
       }
     }
@@ -305,10 +264,12 @@ export class InstancingManager {
     this.hoverTarget = next
   }
 
-  /** Toggle the white wireframe overlay (separate from the solid mesh, always unlit/emissive). */
+  /** Toggle the white wireframe overlay (separate from the solid mesh, always unlit/emissive).
+   * Uses AND logic with `setRenderVisible`: only visible when both the render pools are shown
+   * AND the wireframe toggle is on. */
   setWireframe(v: boolean) {
     this.wireframeVisible = v
-    for (const id of POOL_IDS) this.wireframeMeshes[id].visible = v
+    for (const id of POOL_IDS) this.wireframeMeshes[id].visible = v && this.renderVisible
   }
 
   /** Show/hide the visible render pools without touching the invisible pick mesh — so
@@ -316,6 +277,7 @@ export class InstancingManager {
    * Wireframe overlays use AND logic: only visible when both the render pools are shown
    * AND the wireframe toggle is on. */
   setRenderVisible(v: boolean) {
+    this.renderVisible = v
     for (const id of POOL_IDS) {
       this.meshes[id].visible = v
       this.wireframeMeshes[id].visible = v && this.wireframeVisible

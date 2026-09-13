@@ -1,4 +1,4 @@
-import type { BBox, CellKey, ChamferCell, ColorCell, Coord, VoxelModel } from './types'
+import type { BBox, CellKey, ChamferCell, ColorCell, Coord, GridExtent, VoxelModel } from './types'
 
 export function encodeKey(x: number, y: number, z: number): CellKey {
   return `${x},${y},${z}`
@@ -45,18 +45,63 @@ export function recomputeBounds(model: VoxelModel): BBox | null {
   return bounds
 }
 
-/** Absolute technical ceiling per spec §1.1 — never exceeded regardless of project size. Reserved
- * for future per-project sizing via project options; not itself an enforced limit today. */
+/** Absolute technical ceiling per spec §1.1 — never exceeded regardless of project size. Every
+ * `GridExtent` preset stays comfortably under this. */
 export const MAX_GRID_EXTENT = 64
 
-/** Default working span for new projects — the actual enforced/displayed grid size until project
- * options add per-project sizing (up to MAX_GRID_EXTENT). */
-export const DEFAULT_GRID_EXTENT = 16
+/** Default working span used only before a project's own `meta.gridExtent` is known (initial store
+ * state, pre-load). Matches the "Medium" preset. Once a project is loaded/created, always use its
+ * own `meta.gridExtent` instead of this constant. */
+export const DEFAULT_GRID_EXTENT: GridExtent = 16
+
+/**
+ * The even grid the engine actually works on. The whole coordinate system (the corner-anchored
+ * `-v-1` mirror in constructionPlane.ts, instancing, chamfer, texture) is only self-consistent for
+ * EVEN extents (ranges symmetric about -0.5). So an odd project size is rounded up by one here and
+ * the engine treats it as that even grid — no odd number ever reaches the coordinate math. The one
+ * extra column is real (paintable); the views frame it out via `viewOriginShift`. Even sizes are
+ * returned unchanged. */
+export function effectiveExtent(extent: GridExtent): number {
+  return extent % 2 === 0 ? extent : extent + 1
+}
+
+/** Half-cell the 2D/3D views nudge their framing (pan, origin marker, camera target) so an odd
+ * project's center column sits dead-centre despite the even effective grid: 0.5 for odd, 0 for even.
+ * View-only — it never touches stored coordinates. */
+export function viewOriginShift(extent: GridExtent): number {
+  return extent % 2 === 0 ? 0 : 0.5
+}
 
 /** Absolute box centered on the origin (spec §1.1: "conceptually infinite, centered at the
  * origin") — not a sliding growth cap. A coord anywhere in the model must fall inside this box
- * regardless of where the model's other cells happen to be. */
-export function withinWorkingBounds(coord: Coord): boolean {
-  const half = DEFAULT_GRID_EXTENT / 2
+ * regardless of where the model's other cells happen to be. `extent` is the project's own
+ * `meta.gridExtent` — every caller must pass it explicitly rather than assuming a fixed size.
+ * Bounds run over the even `effectiveExtent`, so an odd project can paint its full (even) volume. */
+export function withinWorkingBounds(coord: Coord, extent: GridExtent): boolean {
+  const half = effectiveExtent(extent) / 2
   return coord.every((c) => c >= -half && c < half)
+}
+
+/**
+ * Counts the model's cells (color layer; every chamfer cell has a matching color cell, so one
+ * layer suffices) that fall outside `extent`'s working bounds. Used by the Project Settings
+ * dialog to warn before a shrink deletes voxels, and by the resize itself to report what was
+ * clipped. */
+export function countCellsOutsideBounds(model: VoxelModel, extent: GridExtent): number {
+  let count = 0
+  for (const key of model.color.keys()) {
+    if (!withinWorkingBounds(decodeKey(key), extent)) count++
+  }
+  return count
+}
+
+/**
+ * Clamps a construction-plane offset into the project's working range: cell coordinates along any
+ * axis run `[-half, half)` over the even effective grid (`half - 1` is the topmost layer). Every
+ * plane move funnels through here (`planeSlice.setPlaneOffset`), so the plane can never leave the
+ * project bounds by scrolling, stepping, or click-advance — and setup paths (new project, import,
+ * resize) use it to pull a stale offset back into range. */
+export function clampPlaneOffset(offset: number, extent: GridExtent): number {
+  const half = effectiveExtent(extent) / 2
+  return Math.max(-half, Math.min(half - 1, offset))
 }

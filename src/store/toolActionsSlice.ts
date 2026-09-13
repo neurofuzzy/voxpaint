@@ -1,8 +1,8 @@
 import type { StateCreator } from 'zustand'
 import { encodeKey, expandBounds, withinWorkingBounds } from '@/engine/grid/GridStore'
 import { gridCoordFromPixel } from '@/engine/plane/constructionPlane'
-import { floodFillRegion } from '@/engine/tools/floodFill'
-import { applyClipboardAt, clearRegion, copyRegionToClipboard } from '@/engine/tools/clipboard'
+import { fillLeaksToEdges, floodFillRegion, floodFillRegion3D } from '@/engine/tools/floodFill'
+import { applyClipboardAt, clearRegion, copyRegionToClipboard, transformClipboardToPlane } from '@/engine/tools/clipboard'
 import { mirrorClipboard, rotateClipboard90 } from '@/engine/tools/transform'
 import { isCellSelected, mirrorRegion, rotateRegion90 } from '@/engine/tools/selectionMask'
 import type { AppState, ToolActionsSlice } from './types'
@@ -16,8 +16,11 @@ type Slice = StateCreator<AppState, [['zustand/immer', never]], [], ToolActionsS
 export const createToolActionsSlice: Slice = (set, get) => ({
   floodFill: (u, v) => {
     get().bakeFloatIfAny()
-    const { model, plane, activePaletteSlot, selection } = get()
-    let cells = floodFillRegion(model, plane, u, v)
+    const { model, plane, activePaletteSlot, selection, meta } = get()
+    let cells = floodFillRegion(model, plane, u, v, meta.gridExtent)
+    // A region that reaches all 4 edges of the plane almost certainly leaked through a gap rather
+    // than being deliberately enclosed — reject it outright rather than repaint the whole plane.
+    if (fillLeaksToEdges(cells, meta.gridExtent)) return
     // An active selection clips the fill to its mask.
     if (selection) cells = cells.filter(([cu, cv]) => isCellSelected(selection, cu, cv))
     if (cells.length === 0) return
@@ -34,11 +37,29 @@ export const createToolActionsSlice: Slice = (set, get) => ({
     get().commitStroke()
   },
 
+  floodFill3D: (u, v) => {
+    get().bakeFloatIfAny()
+    const { model, plane, activePaletteSlot, meta } = get()
+    const startCoord = gridCoordFromPixel(plane, u, v)
+    if (!model.color.has(encodeKey(...startCoord))) return // only fills from an existing voxel
+    const keys = floodFillRegion3D(model, startCoord, meta.gridExtent)
+    if (keys.length === 0) return
+    get().beginStroke()
+    set((state) => {
+      for (const key of keys) {
+        state.model.color.set(key, { paletteSlot: activePaletteSlot })
+      }
+      state.meta.modifiedAt = new Date().toISOString()
+      state.dirty = true
+    })
+    get().commitStroke()
+  },
+
   cloneStampCell: (srcU, srcV, destU, destV) => {
     get().bakeFloatIfAny()
-    const { model, plane } = get()
+    const { model, plane, meta } = get()
     const destCoord = gridCoordFromPixel(plane, destU, destV)
-    if (!withinWorkingBounds(destCoord)) return
+    if (!withinWorkingBounds(destCoord, meta.gridExtent)) return
     const srcKey = encodeKey(...gridCoordFromPixel(plane, srcU, srcV))
     const srcColor = model.color.get(srcKey)
     const srcChamfer = model.chamfer.get(srcKey)
@@ -103,31 +124,41 @@ export const createToolActionsSlice: Slice = (set, get) => ({
     get().commitStroke()
   },
 
+  pasteClipboardInPlace: () => {
+    const { clipboard, plane } = get()
+    if (!clipboard) return
+    // Paste-in-place is "same spot on screen", not "same (u,v)" — when the plane has changed since
+    // the copy, the origin has to be rebased through the same transform the content gets.
+    const { originU, originV } = transformClipboardToPlane(clipboard, plane)
+    get().pasteClipboardAt(originU ?? 0, originV ?? 0)
+  },
+
   pasteClipboardAt: (u, v) => {
     get().bakeFloatIfAny()
-    const { clipboard } = get()
+    const { clipboard, plane } = get()
     if (!clipboard) return
+    const transformedClipboard = transformClipboardToPlane(clipboard, plane)
     get().beginStroke()
     set((state) => {
-      state.floatContent = clipboard
+      state.floatContent = transformedClipboard
       state.floatOrigin = { originU: u, originV: v }
       state.selection = {
         originU: u,
         originV: v,
-        width: clipboard.width,
-        height: clipboard.height,
-        mask: new Uint8Array(clipboard.width * clipboard.height).fill(1),
+        width: transformedClipboard.width,
+        height: transformedClipboard.height,
+        mask: new Uint8Array(transformedClipboard.width * transformedClipboard.height).fill(1),
       }
     })
   },
 
-  liftSelectionToFloat: () => {
-    const { model, plane, selection, floatContent } = get()
+  liftSelectionToFloat: (deep = false) => {
+    const { model, plane, selection, floatContent, meta } = get()
     if (!selection || floatContent) return
-    const content = copyRegionToClipboard(model, plane, selection)
+    const content = copyRegionToClipboard(model, plane, selection, deep, meta.gridExtent)
     get().beginStroke()
     set((state) => {
-      clearRegion(state.model, state.plane, selection)
+      clearRegion(state.model, state.plane, selection, deep, meta.gridExtent)
       state.floatContent = content
       state.floatOrigin = { originU: selection.originU, originV: selection.originV }
       state.meta.modifiedAt = new Date().toISOString()
@@ -148,9 +179,10 @@ export const createToolActionsSlice: Slice = (set, get) => ({
     get().liftSelectionToFloat() // no-op if already floating
     const { floatContent, selection } = get()
     if (!floatContent || !selection) return
-    const transformedContent =
-      kind === 'rotate' ? rotateClipboard90(floatContent) : mirrorClipboard(floatContent, kind === 'mirror-h' ? 'horizontal' : 'vertical')
-    const transformedRegion = kind === 'rotate' ? rotateRegion90(selection) : mirrorRegion(selection, kind === 'mirror-h' ? 'horizontal' : 'vertical')
+    const spin = kind === 'rotate' ? 'cw' : kind === 'rotate-ccw' ? 'ccw' : null
+    const flip = kind === 'mirror-h' ? 'horizontal' : 'vertical'
+    const transformedContent = spin ? rotateClipboard90(floatContent, spin) : mirrorClipboard(floatContent, flip)
+    const transformedRegion = spin ? rotateRegion90(selection, spin) : mirrorRegion(selection, flip)
     set((state) => {
       state.floatContent = transformedContent
       state.floatOrigin = { originU: transformedRegion.originU, originV: transformedRegion.originV }
@@ -159,10 +191,10 @@ export const createToolActionsSlice: Slice = (set, get) => ({
   },
 
   bakeFloatIfAny: () => {
-    const { floatContent, floatOrigin, plane } = get()
+    const { floatContent, floatOrigin, plane, meta } = get()
     if (!floatContent || !floatOrigin) return
     set((state) => {
-      applyClipboardAt(state.model, plane, floatContent, floatOrigin.originU, floatOrigin.originV)
+      applyClipboardAt(state.model, plane, floatContent, floatOrigin.originU, floatOrigin.originV, meta.gridExtent)
       state.meta.modifiedAt = new Date().toISOString()
       state.dirty = true
     })

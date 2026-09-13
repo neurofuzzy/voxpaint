@@ -1,3 +1,4 @@
+import { DEFAULT_PALETTE } from '@/engine/palette/defaultPalette'
 import { CURRENT_SCHEMA_VERSION, type VoxPaintProjectFile } from './schema'
 
 type Migration = (json: any) => any
@@ -9,6 +10,44 @@ type Migration = (json: any) => any
  */
 const MIGRATIONS: Migration[] = []
 MIGRATIONS[1] = (doc) => ({ ...doc, schemaVersion: 2 })
+
+/**
+ * v2 → v3: the palette's animation-oriented `blink`/`pulse` groups became the material groups
+ * `metal`/`glass`. Reshape the stored palette (keep base/emissive; drop blink/pulse hex; seed
+ * metal/glass from the current defaults) and remap any cell that referenced a `blink`/`pulse` slot
+ * to the nearest surviving "glow" concept, `emissive` (index clamped to that group's 0–3 range).
+ */
+MIGRATIONS[2] = (doc) => {
+  const oldPalette = doc.palette ?? {}
+  const palette = {
+    base: oldPalette.base ?? DEFAULT_PALETTE.base,
+    emissive: oldPalette.emissive ?? DEFAULT_PALETTE.emissive,
+    metal: DEFAULT_PALETTE.metal,
+    glass: DEFAULT_PALETTE.glass,
+  }
+  const emissiveCount = palette.emissive.length
+  const remapSlot = (slot: any) => {
+    if (slot && (slot.kind === 'blink' || slot.kind === 'pulse')) {
+      return { kind: 'emissive', index: Math.min(Math.max(0, slot.index ?? 0), emissiveCount - 1) }
+    }
+    return slot
+  }
+  const colorCells = (doc.model?.colorCells ?? []).map((c: any) => ({ ...c, paletteSlot: remapSlot(c.paletteSlot) }))
+  return { ...doc, schemaVersion: 3, palette, model: { ...doc.model, colorCells } }
+}
+
+/** v3 → v4: the `animations` field was added for per-slice animation settings. v3 projects simply
+ * get an empty animations array (no animations). */
+MIGRATIONS[3] = (doc) => ({ ...doc, schemaVersion: 4 })
+
+/** v4 → v5: the `masks` field was added for per-slice animation masks. v4 projects simply get no
+ * masks (every animated slice keeps animating as a whole, matching their pre-mask behavior). */
+MIGRATIONS[4] = (doc) => ({ ...doc, schemaVersion: 5 })
+
+/** v5 → v6: `meta.gridExtent` becomes required. Every pre-v6 project was authored under the old
+ * fixed 16 extent (the only size that ever existed), so stamp that — matches their existing
+ * painted bounds and their texture's existing `faceSize` (16 × texelScale) exactly. */
+MIGRATIONS[5] = (doc) => ({ ...doc, schemaVersion: 6, meta: { ...doc.meta, gridExtent: doc.meta?.gridExtent ?? 16 } })
 
 export class UnsupportedSchemaVersionError extends Error {
   constructor(foundVersion: unknown) {

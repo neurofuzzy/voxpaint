@@ -30,8 +30,9 @@ export function SceneLighting() {
       {/* Directional lights only — no point light. Directional intensity has always been a plain,
           distance-independent multiplier (no falloff, no photometric/candela unit change across
           three.js versions, unlike point/spot lights), so it behaves predictably regardless of
-          scene scale or camera distance. Canvas uses `flat` (NoToneMapping) so these numbers map
-          linearly to on-screen brightness instead of being rolled off by ACES tone mapping. */}
+          scene scale or camera distance. Canvas applies NeutralToneMapping (Viewport3D.tsx) with
+          a user-adjustable exposure (View Settings), so these intensities set the pre-exposure
+          balance between key/fill/ambient rather than the final on-screen brightness. */}
       <directionalLight color="#ffffff" position={[8, 12, 6]} intensity={2.5} />
       <directionalLight color="#5a5a65" position={[-8, 5, -8]} intensity={1} />
     </group>

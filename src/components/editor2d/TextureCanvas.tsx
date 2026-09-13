@@ -2,9 +2,10 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { forEachSelectedCell, traceSelectionOutline } from '@/engine/tools/selectionMask'
 import { projectModelToFace } from '@/engine/texture/projection'
 import { getTexel, texelIndex } from '@/engine/texture/TextureStore'
-import { EMPTY, FACE_SIZE, GRAYSCALE } from '@/engine/texture/types'
+import { BOX_FACE_AXIS, EMPTY, faceSizeFor, GRAYSCALE } from '@/engine/texture/types'
 import { useAppStore } from '@/store/useAppStore'
 import { TEXEL_BASE_PX, texWorldToScreen } from './textureCanvasConstants'
+import { vScaleForPlane } from './cameraTransform'
 import { useKeyboardShortcuts } from './useKeyboardShortcuts'
 import { useTextureCanvasTools } from './useTextureCanvasTools'
 
@@ -13,7 +14,7 @@ function snapPx(v: number): number {
 }
 
 /**
- * The Texture-mode 2D drawing surface: renders the active box face's `FACE_SIZE²` grayscale texel
+ * The Texture-mode 2D drawing surface: renders the active box face's `faceSize²` grayscale texel
  * grid and dispatches pointer input to the texture tools (`useTextureCanvasTools`). Structural twin
  * of `PixelCanvas`, but texel-native — no plane, no orientation mirroring, no chamfer marks. Until a
  * box face is selected (by clicking the model in the 3D view) it shows a prompt instead.
@@ -29,14 +30,23 @@ export function TextureCanvas() {
   const floatContent = useAppStore((s) => s.textureFloat)
   const floatOrigin = useAppStore((s) => s.textureFloatOrigin)
 
+  const setStatusMessage = useAppStore((s) => s.setStatusMessage)
+  const onionSkin = useAppStore((s) => s.onionSkin)
+  const gridExtent = useAppStore((s) => s.meta.gridExtent)
+  const voxelScaleY = useAppStore((s) => s.meta.voxelScaleY)
+  const faceSize = faceSizeFor(gridExtent)
+  const texHalf = faceSize / 2
+  // V-axis display stretch for the active face (Y voxel scale on faces whose v runs along Y,
+  // square on ±Y faces) — texels stay square in data, only their display stretches.
+  const vScale = activeBoxFace ? vScaleForPlane(BOX_FACE_AXIS[activeBoxFace].axis, voxelScaleY) : 1
   const { onPointerDown, onPointerMove, onPointerUp, linePreview, selectPreview, size, pan, zoom } = useTextureCanvasTools(canvasRef)
   useKeyboardShortcuts()
 
   // Model silhouette projected onto the active face — a paint-alignment guide behind the texels.
   // Recomputed only when the model/palette/face changes (not while painting), so strokes stay fast.
   const projection = useMemo(
-    () => (activeBoxFace ? projectModelToFace(model, palette, activeBoxFace) : null),
-    [model, palette, activeBoxFace],
+    () => (activeBoxFace ? projectModelToFace(model, palette, activeBoxFace, gridExtent) : null),
+    [model, palette, activeBoxFace, gridExtent],
   )
 
   const [antPhase, setAntPhase] = useState(0)
@@ -68,37 +78,43 @@ export function TextureCanvas() {
     ctx.fillRect(0, 0, size.width, size.height)
 
     const px = TEXEL_BASE_PX * zoom
+    const pxH = px * vScale
     const face = activeBoxFace
 
     // Face content — painted texels show their grayscale; unpainted texels reveal the model
-    // silhouette projected onto this face (or the dark background where the model doesn't cover).
-    for (let tv = 0; tv < FACE_SIZE; tv++) {
-      for (let tu = 0; tu < FACE_SIZE; tu++) {
-        const value = face ? getTexel(texture, face, tu, tv) : EMPTY
-        let fill: string | null
+    // silhouette projected onto this face, or a medium-gray checkerboard when onion skin is off.
+    for (let tv = 0; tv < faceSize; tv++) {
+      for (let tu = 0; tu < faceSize; tu++) {
+        const value = face ? getTexel(texture, face, tu, tv, faceSize) : EMPTY
+        let fill: string | null = null
         if (value === EMPTY) {
-          fill = projection ? projection[texelIndex(tu, tv)] : null
+          if (onionSkin && projection) {
+            fill = projection[texelIndex(tu, tv, faceSize)]
+          }
         } else {
           fill = GRAYSCALE[value] ?? '#ff00ff'
         }
-        if (!fill) continue // uncovered empty texel — leave the dark background showing
-        const [sx, sy] = texWorldToScreen(tu, tv, size, pan, zoom)
+        if (!fill) {
+          if (onionSkin) continue
+          fill = (tu + tv) % 2 === 0 ? '#2f3840' : '#3d4852'
+        }
+        const [sx, sy] = texWorldToScreen(tu, tv, size, pan, zoom, texHalf, vScale)
         ctx.fillStyle = fill
-        ctx.fillRect(sx, sy, px + 1, px + 1)
+        ctx.fillRect(sx, sy, px + 1, pxH + 1)
       }
     }
 
     // Faint border framing the paintable face extent (no interior grid — the projection is the guide).
-    const [left, top] = texWorldToScreen(0, 0, size, pan, zoom)
-    const [right, bottom] = texWorldToScreen(FACE_SIZE, FACE_SIZE, size, pan, zoom)
+    const [left, top] = texWorldToScreen(0, 0, size, pan, zoom, texHalf, vScale)
+    const [right, bottom] = texWorldToScreen(faceSize, faceSize, size, pan, zoom, texHalf, vScale)
     ctx.strokeStyle = '#2a3540'
     ctx.lineWidth = 1.5
     ctx.strokeRect(snapPx(left), snapPx(top), right - left, bottom - top)
 
     // paint-tool shift-line preview
     if (linePreview) {
-      const [ax, ay] = texWorldToScreen(linePreview.anchor[0] + 0.5, linePreview.anchor[1] + 0.5, size, pan, zoom)
-      const [ex, ey] = texWorldToScreen(linePreview.end[0] + 0.5, linePreview.end[1] + 0.5, size, pan, zoom)
+      const [ax, ay] = texWorldToScreen(linePreview.anchor[0] + 0.5, linePreview.anchor[1] + 0.5, size, pan, zoom, texHalf, vScale)
+      const [ex, ey] = texWorldToScreen(linePreview.end[0] + 0.5, linePreview.end[1] + 0.5, size, pan, zoom, texHalf, vScale)
       ctx.strokeStyle = '#ffffff'
       ctx.lineWidth = 2
       ctx.beginPath()
@@ -113,9 +129,9 @@ export function TextureCanvas() {
         for (let du = 0; du < floatContent.width; du++) {
           const value = floatContent.cells[dv * floatContent.width + du]
           if (value === EMPTY) continue
-          const [sx, sy] = texWorldToScreen(floatOrigin.originU + du, floatOrigin.originV + dv, size, pan, zoom)
+          const [sx, sy] = texWorldToScreen(floatOrigin.originU + du, floatOrigin.originV + dv, size, pan, zoom, texHalf, vScale)
           ctx.fillStyle = GRAYSCALE[value] ?? '#ff00ff'
-          ctx.fillRect(sx, sy, px + 1, px + 1)
+          ctx.fillRect(sx, sy, px + 1, pxH + 1)
         }
       }
     }
@@ -125,16 +141,16 @@ export function TextureCanvas() {
     if (activeRegion) {
       ctx.fillStyle = 'rgba(34, 211, 238, 0.25)'
       forEachSelectedCell(activeRegion, (u, v) => {
-        const [sx, sy] = texWorldToScreen(u, v, size, pan, zoom)
-        ctx.fillRect(sx, sy, px + 1, px + 1)
+        const [sx, sy] = texWorldToScreen(u, v, size, pan, zoom, texHalf, vScale)
+        ctx.fillRect(sx, sy, px + 1, pxH + 1)
       })
       ctx.strokeStyle = 'rgb(34, 211, 238)'
       ctx.lineWidth = 1.5
       ctx.setLineDash([8, 6])
       ctx.lineDashOffset = -antPhase
       for (const [[au, av], [bu, bv]] of traceSelectionOutline(activeRegion)) {
-        const [ax, ay] = texWorldToScreen(au, av, size, pan, zoom)
-        const [bx, by] = texWorldToScreen(bu, bv, size, pan, zoom)
+        const [ax, ay] = texWorldToScreen(au, av, size, pan, zoom, texHalf, vScale)
+        const [bx, by] = texWorldToScreen(bu, bv, size, pan, zoom, texHalf, vScale)
         ctx.beginPath()
         if (ax === bx) {
           const sx = snapPx(ax)
@@ -149,7 +165,7 @@ export function TextureCanvas() {
       }
       ctx.setLineDash([])
     }
-  }, [texture, activeBoxFace, projection, linePreview, selection, selectPreview, floatContent, floatOrigin, antPhase, size, pan, zoom])
+  }, [texture, activeBoxFace, projection, onionSkin, linePreview, selection, selectPreview, floatContent, floatOrigin, antPhase, size, pan, zoom, vScale, faceSize, texHalf])
 
   useEffect(() => {
     draw()
@@ -163,6 +179,8 @@ export function TextureCanvas() {
         onPointerDown={onPointerDown}
         onPointerMove={onPointerMove}
         onPointerUp={onPointerUp}
+        onPointerCancel={onPointerUp}
+        onPointerLeave={() => setStatusMessage(null)}
         onContextMenu={(e) => e.preventDefault()}
       />
       {!activeBoxFace && (

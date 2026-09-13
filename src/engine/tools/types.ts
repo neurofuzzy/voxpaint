@@ -1,4 +1,4 @@
-import type { VoxelModel } from '@/engine/grid/types'
+import type { GridExtent, VoxelModel } from '@/engine/grid/types'
 import type { ConstructionPlane } from '@/engine/plane/types'
 import type { PaletteSlotRef } from '@/engine/palette/types'
 import type { NormalizedPointerEvent } from '@/engine/input/PointerInputController'
@@ -15,6 +15,7 @@ import type { ClipboardData, FloatOrigin, SelectionRegion, SelectionTransformKin
 export interface ToolContext {
   model: VoxelModel
   plane: ConstructionPlane
+  gridExtent: GridExtent
   activeVoxelKind: VoxelKind
   activePaletteSlot: PaletteSlotRef
   selection: SelectionRegion | null
@@ -24,7 +25,20 @@ export interface ToolContext {
 
   paintCell: (u: number, v: number) => boolean
   eraseCell: (coord: [number, number, number]) => void
+  paintMaterialCell: (u: number, v: number) => boolean
   floodFill: (u: number, v: number) => void
+  /** 3D connected fill, alt-click's variant — only meaningful when (u,v) is an existing voxel. */
+  floodFill3D: (u: number, v: number) => void
+  /** Animate-mode mask paint/erase, plus its own (Animate-mode-scoped) undo stroke bracket —
+   * separate from the voxel model's beginStroke/commitStroke above. */
+  paintMaskCell: (u: number, v: number) => boolean
+  eraseMaskCell: (coord: [number, number, number]) => void
+  /** Animate-mode pivot tool: sets/clears the current slice's rotation/pendulum pivot. Both
+   * self-bracket their own (Animate-mode-scoped) undo stroke. */
+  setPivotForCurrentSlice: (u: number, v: number) => boolean
+  clearPivotForCurrentSlice: () => void
+  animBeginStroke: () => void
+  animCommitStroke: () => void
   beginMove: (wholeModel: boolean) => void
   updateMove: (du: number, dv: number) => void
   endMove: () => void
@@ -32,7 +46,9 @@ export interface ToolContext {
   setActivePaletteSlot: (slot: PaletteSlotRef) => void
   setActiveTool: (tool: ToolId) => void
   setSelection: (region: SelectionRegion | null) => void
-  liftSelectionToFloat: () => void
+  /** Alt-drag passes `deep` to lift the full cuboid under the selection window (see
+   * `liftSelectionToFloat` in store/types.ts). */
+  liftSelectionToFloat: (deep?: boolean) => void
   moveFloatTo: (originU: number, originV: number) => void
   transformFloat: (kind: SelectionTransformKind) => void
   bakeFloatIfAny: () => void

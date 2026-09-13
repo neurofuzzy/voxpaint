@@ -58,6 +58,18 @@ export function unitCubeGeometry(): THREE.BufferGeometry {
 }
 
 /**
+ * Model F — thin slab: a full-footprint box that is half-thickness (0.5) along the outward (z / W)
+ * axis, centered on the origin (`z ∈ [-0.25, 0.25]`). In prefab space z is the plane's outward
+ * normal, so the full 1×1 square u×v face points at the viewer while the slab sits centered in the
+ * cell — a fin / inset-panel / glass block. Symmetric about z, so unlike the chamfer prefabs it
+ * takes no `rotation`. Returned **non-indexed** (CCW-outward) so it drops straight into
+ * `voxelMeshBuilder`'s `emitChamfer` triangle-soup loop.
+ */
+export function thinGeometry(): THREE.BufferGeometry {
+  return new THREE.BoxGeometry(1, 1, 0.5).toNonIndexed()
+}
+
+/**
  * Mirror a chamfer geometry across the v axis (negate local y) with winding reversed so faces stay
  * outward-wound. Paired with the proper-rotation matrix chamferInstanceMatrix produces for reflected
  * planes, this renders the identical shape in the identical place but with det=+1 (so lighting is
@@ -128,6 +140,37 @@ export function convexCornerGeometry(rotation: 0 | 1 | 2 | 3 = 0): THREE.BufferG
       // hip roof: two sloped facets fanning from the SW top vertex over the NW/NE/SE base corners
       [t(2), b(3), b(0)], // G, D, A
       [t(2), b(0), b(1)], // G, A, B
+    ],
+    rotation,
+  )
+}
+
+/**
+ * Model E — corner wedge: a flat diagonal cut, constant through the full outward (z) depth (not a
+ * spec model — an editor-only shortcut shape, see the `wedge` voxel-kind's use of this). 5 sides,
+ * 8 triangles. Full height at both the west and south walls (they meet at a right-angle SW corner);
+ * the NE corner is sliced away entirely by a single flat diagonal face — unlike `convexCornerGeometry`
+ * (which keeps a base vertex at every corner and only omits the *top* vertex at the cut corner), this
+ * shape has **no vertex at all**, top or bottom, at the cut corner. Canonical (rotation-0) walls are
+ * W+S (meeting at SW); the resolver's `rotation` is the *open* (cut) corner index, NE=0 — same
+ * convention as `convexCornerGeometry`, since both shapes cut the same corner for a given rotation.
+ */
+export function wedgeGeometry(rotation: 0 | 1 | 2 | 3 = 0): THREE.BufferGeometry {
+  return buildGeometry(
+    [
+      // bottom (triangular footprint, z=-0.5) — SE, SW, NW only, no NE
+      [b(3), b(2), b(1)],
+      // top (triangular footprint, z=+0.5)
+      [t(1), t(2), t(3)],
+      // west wall (flush quad, full height) — matches a filled W neighbor
+      [b(3), t(3), t(2)],
+      [b(3), t(2), b(2)],
+      // south wall (flush quad, full height) — matches a filled S neighbor
+      [b(2), t(2), t(1)],
+      [b(2), t(1), b(1)],
+      // diagonal cut face (open, full height) — the exposed "/"-or-"\" edge, cut corner NE
+      [b(3), b(1), t(1)],
+      [b(3), t(1), t(3)],
     ],
     rotation,
   )

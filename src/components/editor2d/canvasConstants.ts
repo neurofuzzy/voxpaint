@@ -1,5 +1,3 @@
-import { DEFAULT_GRID_EXTENT } from '@/engine/grid/GridStore'
-
 /** Grid-cell size in CSS px at 100% zoom (1.0). Centralized here for easy tuning. */
 export const BASE_CELL_PX = 30;
 export const ZOOM_MIN = 0.25
@@ -10,13 +8,27 @@ export const WHEEL_ZOOM_SENSITIVITY = 100
  * click, so it needs a much smaller divisor to feel comparably responsive. */
 export const PINCH_ZOOM_SENSITIVITY = 15
 
-/** Logical drawable span (cells), centered on 0,0 — matches the default working extent; not the
- * MAX_GRID_EXTENT technical ceiling (spec §1.1), which is reserved for future project options. */
-export const GRID_SPAN = DEFAULT_GRID_EXTENT
-export const HALF = GRID_SPAN / 2
+/** How long a solo touch waits before it commits to the active tool (paint/select/etc.) — long
+ * enough that a genuine two-finger pinch's second contact (which almost never lands in the exact
+ * same event as the first) arrives in time to cancel it, short enough that a real one-finger tap
+ * or stroke doesn't read as laggy. Mouse/pen input is never delayed, only `pointerType: 'touch'`. */
+export const TOUCH_GESTURE_DELAY_MS = 60
 
 export function clampZoom(zoom: number): number {
   return Math.min(Math.max(zoom, ZOOM_MIN), ZOOM_MAX)
+}
+
+/** The grid extent that frames at zoom 1.0 — the baseline the current visuals were tuned around.
+ * Also the 3D camera's reference extent (see Viewport3D.tsx's `cameraPosForExtent`). */
+export const REFERENCE_GRID_EXTENT = 16
+
+/** Default 2D zoom for a project of the given extent, chosen so the working volume occupies roughly
+ * the same screen area at any locked-in size: a small grid opens zoomed in, a large one zoomed out.
+ * Derived purely from the extent ratio (independent of canvas size) and clamped to the zoom range.
+ * `vScale` is the plane's v-axis stretch (Y voxel scale on X/Z planes): a tall volume zooms out to
+ * fit its height, while a flat one keeps the width fit (the unstretched axis still dominates). */
+export function defaultZoomForExtent(gridExtent: number, vScale = 1): number {
+  return clampZoom(REFERENCE_GRID_EXTENT / (gridExtent * Math.max(1, vScale)))
 }
 
 /** Minimum on-screen px of the grid's bounding box kept visible when panned to an extreme,

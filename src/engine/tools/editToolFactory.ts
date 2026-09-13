@@ -7,7 +7,22 @@ import type { ToolContext, ToolHandler } from './types'
  * a no-move click applies once at the down position) — mirrors trixelart's `makeEditTool` factory,
  * parameterized by the per-cell operation instead of duplicating the drag-state machine per tool.
  */
-export function makeEditTool(apply: (ctx: ToolContext, u: number, v: number) => void): ToolHandler {
+export type EditToolHooks = {
+  beginStroke: (ctx: ToolContext) => void
+  commitStroke: (ctx: ToolContext) => void
+}
+
+const defaultHooks: EditToolHooks = {
+  beginStroke: (ctx) => ctx.beginStroke(),
+  commitStroke: (ctx) => ctx.commitStroke(),
+}
+
+/**
+ * `hooks` lets a caller redirect which undo stack a stroke lands on (e.g. the animation-mask tools
+ * use the Animate-mode history instead of the voxel-model one) without duplicating the drag-state
+ * machine — defaults to the voxel model's own beginStroke/commitStroke.
+ */
+export function makeEditTool(apply: (ctx: ToolContext, u: number, v: number) => void, hooks: EditToolHooks = defaultHooks): ToolHandler {
   return {
     onDown(ctx, e) {
       // Explicit bake BEFORE this tool's own beginStroke(): this wraps many cell writes across a
@@ -15,7 +30,7 @@ export function makeEditTool(apply: (ctx: ToolContext, u: number, v: number) => 
       // bake's own internal begin/commit cycle would clobber this stroke's baseline (see
       // toolActionsSlice comment) and silently drop the stroke from undo history.
       ctx.bakeFloatIfAny()
-      ctx.beginStroke()
+      hooks.beginStroke(ctx)
       ctx.drag.current = { kind: 'paint', anchor: [e.u, e.v], last: [e.u, e.v] }
 
       if (e.shiftKey) {
@@ -50,7 +65,7 @@ export function makeEditTool(apply: (ctx: ToolContext, u: number, v: number) => 
       }
       ctx.setLinePreview(null)
       ctx.drag.current = { kind: 'idle' }
-      ctx.commitStroke()
+      hooks.commitStroke(ctx)
     },
   }
 }

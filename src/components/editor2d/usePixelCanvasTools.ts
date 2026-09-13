@@ -1,15 +1,23 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
+import { effectiveExtent } from '@/engine/grid/GridStore'
 import { gridCoordFromPixel } from '@/engine/plane/constructionPlane'
-import { toDisplayU, toDisplayV } from '@/engine/plane/planeDisplay'
+import { displayViewCenter, toDisplayU, toDisplayV } from '@/engine/plane/planeDisplay'
 import { toNormalizedPointerEvent } from '@/engine/input/PointerInputController'
-import { toolMap } from '@/engine/tools'
+import { animateToolMap, toolMap } from '@/engine/tools'
 import type { ToolContext, ToolDragState } from '@/engine/tools/types'
 import type { ConstructionPlane } from '@/engine/plane/types'
 import { useAppStore } from '@/store/useAppStore'
 import type { SelectionRegion } from '@/store/types'
 import type { CanvasPan, CanvasSize } from './cameraTransform'
-import { clampPan, screenToWorld } from './cameraTransform'
-import { BASE_CELL_PX, clampZoom, PINCH_ZOOM_SENSITIVITY, WHEEL_ZOOM_SENSITIVITY } from './canvasConstants'
+import { clampPan, screenToWorld, touchDistance, touchMidpoint, vScaleForPlane } from './cameraTransform'
+import {
+  BASE_CELL_PX,
+  clampZoom,
+  defaultZoomForExtent,
+  PINCH_ZOOM_SENSITIVITY,
+  TOUCH_GESTURE_DELAY_MS,
+  WHEEL_ZOOM_SENSITIVITY,
+} from './canvasConstants'
 
 const PAN_DRAG_THRESHOLD_PX = 3
 
@@ -25,9 +33,10 @@ function pixelToCell(
   pan: CanvasPan,
   zoom: number,
   plane: ConstructionPlane,
+  vScale: number,
 ): [number, number] {
   const rect = canvas.getBoundingClientRect()
-  const [wu, wv] = screenToWorld(clientX - rect.left, clientY - rect.top, size, pan, zoom)
+  const [wu, wv] = screenToWorld(clientX - rect.left, clientY - rect.top, size, pan, zoom, vScale)
   return [toDisplayU(plane, Math.floor(wu)), toDisplayV(plane, Math.floor(wv))]
 }
 
@@ -51,13 +60,50 @@ export function usePixelCanvasTools(canvasRef: React.RefObject<HTMLCanvasElement
   const hoverCellRef = useRef<[number, number] | null>(null)
   const panDragRef = useRef<{ startX: number; startY: number; lastX: number; lastY: number; hasMoved: boolean } | null>(null)
 
+  // Multi-touch gesture tracking: every active touch contact's last known client position, a pinch
+  // gesture's start reference (once a second finger has landed), and a solo touch's pending
+  // hold-to-commit timer (see TOUCH_GESTURE_DELAY_MS's doc comment for why the delay exists).
+  const activeTouchesRef = useRef<Map<number, { clientX: number; clientY: number }>>(new Map())
+  const pinchRef = useRef<{ startDist: number; anchorU: number; anchorV: number; startZoom: number } | null>(null)
+  const touchHoldRef = useRef<{ pointerId: number; timer: ReturnType<typeof setTimeout> } | null>(null)
+
   const [size, setSize] = useState<CanvasSize>({ width: 0, height: 0 })
   const [pan, setPan] = useState<CanvasPan>({ x: 0, y: 0 })
-  const [zoom, setZoom] = useState(1)
+  // Seed from the current project's extent so a small/large grid opens framed the same as a medium
+  // one, with no first-frame flash at zoom 1 (the initializer reads the live store value).
+  const [zoom, setZoom] = useState(() => {
+    const s = useAppStore.getState()
+    return defaultZoomForExtent(s.meta.gridExtent, vScaleForPlane(s.plane.axis, s.meta.voxelScaleY))
+  })
   const sizeRef = useRef(size)
   sizeRef.current = size
+  const panRef = useRef(pan)
+  panRef.current = pan
   const zoomRef = useRef(zoom)
   zoomRef.current = zoom
+  const gridExtent = useAppStore((s) => s.meta.gridExtent)
+  const voxelScaleY = useAppStore((s) => s.meta.voxelScaleY)
+  // V-axis stretch for the active plane (Y voxel scale on X/Z planes, square on Y). Kept in a ref
+  // alongside the other camera refs so the stable pointer callbacks below always map through the
+  // current stretch without re-subscribing.
+  const vScaleRef = useRef(1)
+  // Clamp against the even effective grid (what's actually drawn/paintable).
+  const gridHalfRef = useRef(effectiveExtent(gridExtent) / 2)
+  gridHalfRef.current = effectiveExtent(gridExtent) / 2
+
+  // Re-frame when the project's extent changes (a new/loaded project of a different size): reset to
+  // the size-appropriate default zoom and center the view on the project centre. For odd sizes that
+  // centre is the pillar's display cell for the active plane (`displayViewCenter`), so the centre
+  // column reads dead-centre; for even sizes it's the world origin (0, 0). Extent is locked per
+  // project, so this only fires on a project switch — never mid-edit, so it won't fight the user's
+  // own pan/zoom. Reads the active plane once (not a dep) so a later plane switch keeps the user's pan.
+  // A voxel-height change re-frames the same way (explicit user action via Project Settings).
+  useEffect(() => {
+    const s = useAppStore.getState()
+    setZoom(defaultZoomForExtent(effectiveExtent(s.meta.gridExtent), vScaleForPlane(s.plane.axis, s.meta.voxelScaleY)))
+    const centre = displayViewCenter(s.plane, s.meta.gridExtent)
+    setPan({ x: -centre.u, y: -centre.v })
+  }, [gridExtent, voxelScaleY])
 
   const [linePreview, setLinePreview] = useState<{ anchor: [number, number]; end: [number, number] } | null>(null)
   const [selectPreview, setSelectPreview] = useState<SelectionRegion | null>(null)
@@ -102,24 +148,32 @@ export function usePixelCanvasTools(canvasRef: React.RefObject<HTMLCanvasElement
         const factor = Math.pow(1.1, -e.deltaY / PINCH_ZOOM_SENSITIVITY)
         const nextZoom = clampZoom(zoomRef.current * factor)
         setZoom(nextZoom)
-        setPan((p) => clampPan(p, sizeRef.current, nextZoom))
+        setPan((p) => clampPan(p, sizeRef.current, nextZoom, gridHalfRef.current, vScaleRef.current))
         return
       }
 
       if (e.deltaX !== 0) {
         const cellPx = BASE_CELL_PX * zoomRef.current
-        setPan((p) => clampPan({ x: p.x + e.deltaX / cellPx, y: p.y + e.deltaY / cellPx }, sizeRef.current, zoomRef.current))
+        const vScale = vScaleRef.current
+        setPan((p) => clampPan({ x: p.x + e.deltaX / cellPx, y: p.y + e.deltaY / (cellPx * vScale) }, sizeRef.current, zoomRef.current, gridHalfRef.current, vScale))
         return
       }
 
       const factor = Math.pow(1.1, -e.deltaY / WHEEL_ZOOM_SENSITIVITY)
       const nextZoom = clampZoom(zoomRef.current * factor)
       setZoom(nextZoom)
-      setPan((p) => clampPan(p, sizeRef.current, nextZoom))
+      setPan((p) => clampPan(p, sizeRef.current, nextZoom, gridHalfRef.current, vScaleRef.current))
     }
     canvas.addEventListener('wheel', handleWheel, { passive: false })
     return () => canvas.removeEventListener('wheel', handleWheel)
   }, [canvasRef])
+
+  // Avoid a delayed tool commit firing after unmount (e.g. switching modes mid-tap).
+  useEffect(() => {
+    return () => {
+      if (touchHoldRef.current) clearTimeout(touchHoldRef.current.timer)
+    }
+  }, [])
 
   const model = useAppStore((s) => s.model)
   const plane = useAppStore((s) => s.plane)
@@ -130,18 +184,28 @@ export function usePixelCanvasTools(canvasRef: React.RefObject<HTMLCanvasElement
   const floatOrigin = useAppStore((s) => s.floatOrigin)
   const clipboard = useAppStore((s) => s.clipboard)
   const activeTool = useAppStore((s) => s.activeTool)
+  vScaleRef.current = vScaleForPlane(plane.axis, voxelScaleY)
 
   const activeToolRef = useRef(activeTool)
   activeToolRef.current = activeTool
 
   const store = useAppStore.getState() // action references are stable for the store's lifetime
   const setHoverCell = store.setHoverCell // pulled out so it can be a genuine, listable useCallback dep
+  const setStatusMessage = store.setStatusMessage
 
   const ctx: ToolContext = {
-    model, plane, activeVoxelKind, activePaletteSlot, selection, floatContent, floatOrigin, clipboard,
+    model, plane, gridExtent, activeVoxelKind, activePaletteSlot, selection, floatContent, floatOrigin, clipboard,
     paintCell: store.paintCell,
     eraseCell: store.eraseCell,
+    paintMaterialCell: store.paintMaterialCell,
     floodFill: store.floodFill,
+    floodFill3D: store.floodFill3D,
+    paintMaskCell: store.paintMaskCell,
+    eraseMaskCell: store.eraseMaskCell,
+    setPivotForCurrentSlice: store.setPivotForCurrentSlice,
+    clearPivotForCurrentSlice: store.clearPivotForCurrentSlice,
+    animBeginStroke: store.animBeginStroke,
+    animCommitStroke: store.animCommitStroke,
     cloneStampCell: store.cloneStampCell,
     beginMove: store.beginMove,
     updateMove: store.updateMove,
@@ -166,6 +230,28 @@ export function usePixelCanvasTools(canvasRef: React.RefObject<HTMLCanvasElement
   const ctxRef = useRef(ctx)
   ctxRef.current = ctx
 
+  // Ends whichever single-finger tool gesture is active for `pointerId` (if any) via that tool's
+  // own onUp — as if the finger had simply been lifted — using its last known touch position. Every
+  // tool's onUp already no-ops when no matching drag is in progress (each checks `drag.current.kind`
+  // itself), so this is safe to call defensively whenever a second finger interrupts a solo touch.
+  const finishTouchDrag = useCallback(
+    (pointerId: number) => {
+      const canvas = canvasRef.current
+      const pos = activeTouchesRef.current.get(pointerId)
+      if (!canvas || !pos) return
+      const cell = pixelToCell(canvas, pos.clientX, pos.clientY, sizeRef.current, panRef.current, zoomRef.current, ctxRef.current.plane, vScaleRef.current)
+      const normalized = toNormalizedPointerEvent(
+        { button: 0, buttons: 0, shiftKey: false, altKey: false, ctrlKey: false, metaKey: false, pointerId },
+        cell,
+      )
+      const store = useAppStore.getState()
+      const map = store.mode === 'animate' ? animateToolMap : toolMap
+      map[activeToolRef.current]?.onUp?.(ctxRef.current, normalized)
+      canvas.releasePointerCapture(pointerId)
+    },
+    [canvasRef],
+  )
+
   const onPointerDown = useCallback(
     (e: React.PointerEvent<HTMLCanvasElement>) => {
       const canvas = canvasRef.current
@@ -178,13 +264,59 @@ export function usePixelCanvasTools(canvasRef: React.RefObject<HTMLCanvasElement
         return
       }
 
-      const cell = pixelToCell(canvas, e.clientX, e.clientY, size, pan, zoom, ctxRef.current.plane)
+      if (e.pointerType === 'touch') {
+        canvas.setPointerCapture(e.pointerId)
+        activeTouchesRef.current.set(e.pointerId, { clientX: e.clientX, clientY: e.clientY })
+
+        if (activeTouchesRef.current.size >= 2) {
+          // A second finger just landed — this is a pinch/pan gesture, not a tap or stroke. Cancel
+          // a still-pending solo tap outright, or cleanly end one that already committed (as if
+          // that finger had been lifted), so nothing is left half-painted/half-selected underneath
+          // the gesture.
+          const otherId = [...activeTouchesRef.current.keys()].find((id) => id !== e.pointerId)
+          if (touchHoldRef.current && otherId !== undefined && touchHoldRef.current.pointerId === otherId) {
+            clearTimeout(touchHoldRef.current.timer)
+            touchHoldRef.current = null
+          } else if (otherId !== undefined) {
+            finishTouchDrag(otherId)
+          }
+          const rect = canvas.getBoundingClientRect()
+          const pts = [...activeTouchesRef.current.values()].map((p) => ({ x: p.clientX - rect.left, y: p.clientY - rect.top }))
+          const mid = touchMidpoint(pts[0], pts[1])
+          const [anchorU, anchorV] = screenToWorld(mid.x, mid.y, size, pan, zoom, vScaleRef.current)
+          pinchRef.current = { startDist: touchDistance(pts[0], pts[1]), anchorU, anchorV, startZoom: zoom }
+          return
+        }
+
+        // Solo finger: hold off on committing to the active tool until TOUCH_GESTURE_DELAY_MS has
+        // passed with no second finger — a real pinch's second contact almost never lands in the
+        // same event as the first, so this window is what keeps a pinch from painting/selecting a
+        // stray cell under the first finger before the second one is detected.
+        const cell = pixelToCell(canvas, e.clientX, e.clientY, size, pan, zoom, ctxRef.current.plane, vScaleRef.current)
+        hoverCellRef.current = cell
+        setHoverCell(gridCoordFromPixel(ctxRef.current.plane, cell[0], cell[1]), null)
+        const normalized = toNormalizedPointerEvent(e, cell)
+        touchHoldRef.current = {
+          pointerId: e.pointerId,
+          timer: setTimeout(() => {
+            touchHoldRef.current = null
+            const store = useAppStore.getState()
+            const map = store.mode === 'animate' ? animateToolMap : toolMap
+            map[activeToolRef.current]?.onDown?.(ctxRef.current, normalized)
+          }, TOUCH_GESTURE_DELAY_MS),
+        }
+        return
+      }
+
+      const cell = pixelToCell(canvas, e.clientX, e.clientY, size, pan, zoom, ctxRef.current.plane, vScaleRef.current)
       hoverCellRef.current = cell
       setHoverCell(gridCoordFromPixel(ctxRef.current.plane, cell[0], cell[1]), null)
       canvas.setPointerCapture(e.pointerId)
-      toolMap[activeToolRef.current].onDown?.(ctxRef.current, toNormalizedPointerEvent(e, cell))
+      const store = useAppStore.getState()
+      const map = store.mode === 'animate' ? animateToolMap : toolMap
+      map[activeToolRef.current]?.onDown?.(ctxRef.current, toNormalizedPointerEvent(e, cell))
     },
-    [canvasRef, size, pan, zoom, setHoverCell],
+    [canvasRef, size, pan, zoom, setHoverCell, finishTouchDrag],
   )
 
   const onPointerMove = useCallback(
@@ -200,11 +332,41 @@ export function usePixelCanvasTools(canvasRef: React.RefObject<HTMLCanvasElement
         panDrag.lastY = e.clientY
         if (Math.hypot(e.clientX - panDrag.startX, e.clientY - panDrag.startY) > PAN_DRAG_THRESHOLD_PX) panDrag.hasMoved = true
         const cellPx = BASE_CELL_PX * zoom
-        setPan((p) => clampPan({ x: p.x + dx / cellPx, y: p.y + dy / cellPx }, size, zoom))
+        const vScale = vScaleRef.current
+        setPan((p) => clampPan({ x: p.x + dx / cellPx, y: p.y + dy / (cellPx * vScale) }, size, zoom, effectiveExtent(gridExtent) / 2, vScale))
         return
       }
 
-      const cell = pixelToCell(canvas, e.clientX, e.clientY, size, pan, zoom, ctxRef.current.plane)
+      if (e.pointerType === 'touch' && activeTouchesRef.current.has(e.pointerId)) {
+        activeTouchesRef.current.set(e.pointerId, { clientX: e.clientX, clientY: e.clientY })
+
+        if (pinchRef.current && activeTouchesRef.current.size >= 2) {
+          const rect = canvas.getBoundingClientRect()
+          const pts = [...activeTouchesRef.current.values()].map((p) => ({ x: p.clientX - rect.left, y: p.clientY - rect.top }))
+          const mid = touchMidpoint(pts[0], pts[1])
+          const dist = touchDistance(pts[0], pts[1])
+          const { startDist, anchorU, anchorV, startZoom } = pinchRef.current
+          const nextZoom = clampZoom(startZoom * (dist / startDist))
+          const cellPxNext = BASE_CELL_PX * nextZoom
+          const vScale = vScaleRef.current
+          const nextPan = clampPan(
+            { x: (mid.x - size.width / 2) / cellPxNext - anchorU, y: (mid.y - size.height / 2) / (cellPxNext * vScale) - anchorV },
+            size,
+            nextZoom,
+            gridHalfRef.current,
+            vScale,
+          )
+          setZoom(nextZoom)
+          setPan(nextPan)
+          return
+        }
+
+        // Still inside the solo-tap hold window — nothing to dispatch yet (and falling through
+        // would be a no-op anyway, since no drag has started).
+        if (touchHoldRef.current) return
+      }
+
+      const cell = pixelToCell(canvas, e.clientX, e.clientY, size, pan, zoom, ctxRef.current.plane, vScaleRef.current)
       const prevCell = hoverCellRef.current
       hoverCellRef.current = cell
       // Only push a store update when the hovered *cell* actually changes, not on every mousemove
@@ -212,15 +374,18 @@ export function usePixelCanvasTools(canvasRef: React.RefObject<HTMLCanvasElement
       if (!prevCell || prevCell[0] !== cell[0] || prevCell[1] !== cell[1]) {
         setHoverCell(gridCoordFromPixel(ctxRef.current.plane, cell[0], cell[1]), null)
       }
-      toolMap[activeToolRef.current].onMove?.(ctxRef.current, toNormalizedPointerEvent(e, cell))
+      const store = useAppStore.getState()
+      const map = store.mode === 'animate' ? animateToolMap : toolMap
+      map[activeToolRef.current]?.onMove?.(ctxRef.current, toNormalizedPointerEvent(e, cell))
     },
-    [canvasRef, size, pan, zoom, setHoverCell],
+    [canvasRef, size, pan, zoom, setHoverCell, gridExtent],
   )
 
   const onPointerLeave = useCallback(() => {
     hoverCellRef.current = null
     setHoverCell(null, null)
-  }, [setHoverCell])
+    setStatusMessage(null)
+  }, [setHoverCell, setStatusMessage])
 
   const onPointerUp = useCallback(
     (e: React.PointerEvent<HTMLCanvasElement>) => {
@@ -233,19 +398,60 @@ export function usePixelCanvasTools(canvasRef: React.RefObject<HTMLCanvasElement
         canvas.releasePointerCapture(e.pointerId)
         // A stationary right-click (no drag) erases the cell under the cursor — a quick-erase
         // shortcut on the paint/erase tools now that right-click-drag means "pan the camera."
-        if (!panDrag.hasMoved && (activeToolRef.current === 'paint' || activeToolRef.current === 'erase')) {
-          const cell = pixelToCell(canvas, e.clientX, e.clientY, size, pan, zoom, ctxRef.current.plane)
+        // The pivot tool (Animate mode only) reuses this same gesture to clear its slice's pivot.
+        const store = useAppStore.getState()
+        const isAnimatePivot = store.mode === 'animate' && activeToolRef.current === 'pivot'
+        if (!panDrag.hasMoved && isAnimatePivot) {
+          ctxRef.current.clearPivotForCurrentSlice() // self-brackets its own undo stroke
+        } else if (!panDrag.hasMoved && (activeToolRef.current === 'paint' || activeToolRef.current === 'erase')) {
+          const cell = pixelToCell(canvas, e.clientX, e.clientY, size, pan, zoom, ctxRef.current.plane, vScaleRef.current)
           const c = ctxRef.current
-          c.bakeFloatIfAny()
-          c.beginStroke()
-          c.eraseCell(gridCoordFromPixel(c.plane, cell[0], cell[1]))
-          c.commitStroke()
+          if (store.mode === 'animate') {
+            c.animBeginStroke()
+            c.eraseMaskCell(gridCoordFromPixel(c.plane, cell[0], cell[1]))
+            c.animCommitStroke()
+          } else {
+            c.bakeFloatIfAny()
+            c.beginStroke()
+            c.eraseCell(gridCoordFromPixel(c.plane, cell[0], cell[1]))
+            c.commitStroke()
+          }
         }
         return
       }
 
-      const cell = pixelToCell(canvas, e.clientX, e.clientY, size, pan, zoom, ctxRef.current.plane)
-      toolMap[activeToolRef.current].onUp?.(ctxRef.current, toNormalizedPointerEvent(e, cell))
+      if (e.pointerType === 'touch') {
+        activeTouchesRef.current.delete(e.pointerId)
+
+        if (touchHoldRef.current?.pointerId === e.pointerId) {
+          // Lifted before the hold window elapsed — a genuine quick tap. Still needs to register:
+          // replay a synchronous down+up so tap-to-select/tap-to-fill/etc. isn't swallowed just for
+          // being fast.
+          clearTimeout(touchHoldRef.current.timer)
+          touchHoldRef.current = null
+          canvas.releasePointerCapture(e.pointerId)
+          const cell = pixelToCell(canvas, e.clientX, e.clientY, size, pan, zoom, ctxRef.current.plane, vScaleRef.current)
+          const normalized = toNormalizedPointerEvent(e, cell)
+          const store = useAppStore.getState()
+          const map = store.mode === 'animate' ? animateToolMap : toolMap
+          map[activeToolRef.current]?.onDown?.(ctxRef.current, normalized)
+          map[activeToolRef.current]?.onUp?.(ctxRef.current, normalized)
+          return
+        }
+
+        if (pinchRef.current) {
+          canvas.releasePointerCapture(e.pointerId)
+          if (activeTouchesRef.current.size < 2) pinchRef.current = null
+          return
+        }
+        // Otherwise a solo touch's tool gesture is already active (its hold window elapsed) — fall
+        // through to the normal onUp dispatch below, same as mouse/pen.
+      }
+
+      const cell = pixelToCell(canvas, e.clientX, e.clientY, size, pan, zoom, ctxRef.current.plane, vScaleRef.current)
+      const store = useAppStore.getState()
+      const map = store.mode === 'animate' ? animateToolMap : toolMap
+      map[activeToolRef.current]?.onUp?.(ctxRef.current, toNormalizedPointerEvent(e, cell))
       canvas.releasePointerCapture(e.pointerId)
     },
     [canvasRef, size, pan, zoom],

@@ -5,6 +5,7 @@ import { useAppStore } from '@/store/useAppStore'
 import { PixelCanvas } from './PixelCanvas'
 import { PlaneControlsOverlay } from './PlaneControlsOverlay'
 import { TextureCanvas } from './TextureCanvas'
+import { TextureOverlay } from './TextureOverlay'
 
 export function Editor2D() {
   const containerRef = useRef<HTMLDivElement>(null)
@@ -12,10 +13,18 @@ export function Editor2D() {
   usePlaneLayerScroll(containerRef)
 
   return (
-    <div ref={containerRef} className="flex h-full min-w-0 flex-col bg-neutral-950">
+    <div ref={containerRef} data-tour="editor2d" className="flex h-full min-w-0 flex-col bg-neutral-950">
       <div className="relative min-h-0 flex-1 overflow-hidden">
         {mode === 'texture' ? (
-          <TextureCanvas />
+          <>
+            <TextureCanvas />
+            <TextureOverlay />
+          </>
+        ) : mode === 'animate' ? (
+          <>
+            <PixelCanvas />
+            <PlaneControlsOverlay />
+          </>
         ) : (
           <>
             <PixelCanvas />

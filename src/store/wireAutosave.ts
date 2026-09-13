@@ -9,12 +9,25 @@ export function restoreAutosave(): void {
   try {
     const file = loadAutosave()
     if (!file) return
-    const { model, palette, meta, texture } = deserializeProject(file)
+    const { model, palette, meta, texture, view, animSettings, sliceMasks, slicePivots } = deserializeProject(file)
     useAppStore.getState().setModel(model)
     useAppStore.getState().setPalette(palette)
     useAppStore.getState().setTexture(texture)
     useAppStore.setState((state) => {
       state.meta = meta
+      state.ambientOcclusion = view.ambientOcclusion ?? false
+      state.noiseLevel = view.noiseLevel ?? 0
+      state.specularNoiseLevel = view.specularNoiseLevel ?? 0
+      state.aoStrength = view.aoStrength ?? 1
+      state.glassRoughnessLevel = view.glassRoughnessLevel ?? 0.3
+      state.exposure = view.exposure ?? 1
+      state.exportScaleFactor = view.exportScaleFactor ?? 100
+      state.exportAnchor = view.exportAnchor ?? 'center'
+      state.exportAlignToObjectBounds = view.exportAlignToObjectBounds ?? false
+      state.exportDisableMeshOptimization = view.exportDisableMeshOptimization ?? false
+      state.animSettings = animSettings
+      state.sliceMasks = sliceMasks
+      state.slicePivots = slicePivots
     })
   } catch (err) {
     console.error('Failed to restore autosave', err)
@@ -24,7 +37,16 @@ export function restoreAutosave(): void {
 const flush = debounce(() => {
   const state = useAppStore.getState()
   try {
-    const file = serializeProject(state.model, state.palette, state.meta, state.texture)
+    const file = serializeProject(
+      state.model,
+      state.palette,
+      state.meta,
+      state.texture,
+      { ambientOcclusion: state.ambientOcclusion, noiseLevel: state.noiseLevel, specularNoiseLevel: state.specularNoiseLevel, aoStrength: state.aoStrength, glassRoughnessLevel: state.glassRoughnessLevel, exposure: state.exposure, exportScaleFactor: state.exportScaleFactor, exportAnchor: state.exportAnchor, exportAlignToObjectBounds: state.exportAlignToObjectBounds, exportDisableMeshOptimization: state.exportDisableMeshOptimization },
+      state.animSettings,
+      state.sliceMasks,
+      state.slicePivots,
+    )
     saveAutosave(file)
     state.markSaved(new Date().toISOString())
   } catch (err) {
@@ -38,5 +60,8 @@ export function wireAutosave(): () => void {
     if (state.dirty && state.dirty !== prevState.dirty) flush()
     else if (state.model !== prevState.model && state.dirty) flush()
     else if (state.texture !== prevState.texture && state.dirty) flush()
+    else if (state.animSettings !== prevState.animSettings && state.dirty) flush()
+    else if (state.sliceMasks !== prevState.sliceMasks && state.dirty) flush()
+    else if (state.slicePivots !== prevState.slicePivots && state.dirty) flush()
   })
 }

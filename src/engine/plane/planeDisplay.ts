@@ -1,4 +1,7 @@
 import type { ConstructionPlane } from './types'
+import type { Coord } from '@/engine/grid/types'
+import { pixelFromGridCoord } from './constructionPlane'
+import { axisIndex } from './planeGeometry'
 
 /**
  * Display-only (2D canvas) transforms — orientation-dependent screen mirroring layered on top of
@@ -36,4 +39,47 @@ export function toDisplayU(plane: ConstructionPlane, u: number): number {
 export function toDisplayV(plane: ConstructionPlane, v: number): number {
   if (plane.axis !== 'y') return v
   return plane.orientation === 1 ? -v - 1 : v
+}
+
+/**
+ * The `toDisplayU`/`toDisplayV` counterparts for **gridline** (lattice) coordinates rather than
+ * cell indices — use these for anything drawing on cell *boundaries* (selection outlines, cell
+ * rectangles expressed as corner..corner), not for a cell's own index.
+ *
+ * The two differ by exactly the corner-anchoring correction the functions above document. Cell `n`
+ * spans [n, n+1), so mirroring it lands on cell `-n - 1`; but a gridline is a zero-width position,
+ * so mirroring it is a plain `-n`. Feeding a gridline through the cell version shifts it one whole
+ * cell in the mirrored direction — which is why the selection fill (per-cell) and its outline
+ * (per-gridline) must not share a transform.
+ *
+ * Computed *through* the cell versions rather than restating their per-axis rules, so the two can
+ * never drift apart: undoing the `-1` recovers the gridline mirror (`-n - 1 + 1 = -n`). Whether an
+ * axis mirrors at all is probed the same way — both are `n -> -n - 1` exactly when it does, so
+ * cell 0 maps to -1 precisely in that case.
+ */
+export function toDisplayGridlineU(plane: ConstructionPlane, u: number): number {
+  return toDisplayU(plane, 0) === 0 ? u : toDisplayU(plane, u) + 1
+}
+
+/** The v counterpart to `toDisplayGridlineU` — see its doc comment. */
+export function toDisplayGridlineV(plane: ConstructionPlane, v: number): number {
+  return toDisplayV(plane, 0) === 0 ? v : toDisplayV(plane, v) + 1
+}
+
+/**
+ * The continuous display-space (u, v) coordinate the 2D canvas should frame at its centre for
+ * `plane`, so a project reads centred on every plane/orientation. For an EVEN project this is the
+ * world-origin gridline (0, 0) — the true grid centre. For an ODD project the model is still the
+ * even `effectiveExtent` grid, but we want its centre *pillar* (the model in-plane origin cell)
+ * dead-centre; because the 2D canvas draws in display space (post-`toDisplay` mirror), the pillar's
+ * display cell — and hence the half-cell nudge that centres it — flips with orientation, so we
+ * compute it here rather than applying a fixed pan. Returns the pillar cell's centre (its display
+ * index + 0.5). See PixelCanvas.tsx / usePixelCanvasTools.ts.
+ */
+export function displayViewCenter(plane: ConstructionPlane, gridExtent: number): { u: number; v: number } {
+  if (gridExtent % 2 === 0) return { u: 0, v: 0 }
+  const pillar: Coord = [0, 0, 0]
+  pillar[axisIndex(plane.axis)] = plane.offset // in-plane pixel is offset-independent; kept for clarity
+  const { u, v } = pixelFromGridCoord(plane, pillar)
+  return { u: toDisplayU(plane, u) + 0.5, v: toDisplayV(plane, v) + 0.5 }
 }

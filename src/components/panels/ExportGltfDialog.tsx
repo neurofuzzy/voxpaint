@@ -1,0 +1,180 @@
+import * as Dialog from '@radix-ui/react-dialog'
+import { Package } from 'lucide-react'
+import { useEffect, useState } from 'react'
+import type { GltfExportAnchor } from '@/engine/export/gltfExport'
+import { downloadGlb, exportModelToGlb } from '@/engine/export/gltfExport'
+import { normalizeProjectFilename } from '@/engine/persistence/projectFile'
+import { useAppStore } from '@/store/useAppStore'
+import { showToast } from '@/components/ui/toastBus'
+
+const ANCHOR_LABELS: Record<GltfExportAnchor, string> = {
+  center: 'Center',
+  bottom: 'Bottom',
+  back: 'Back',
+}
+
+export function ExportGltfDialog({ open, onOpenChange }: { open: boolean; onOpenChange: (v: boolean) => void }) {
+  const [busy, setBusy] = useState(false)
+  const [scaleInput, setScaleInput] = useState('100')
+  const exportScaleFactor = useAppStore((s) => s.exportScaleFactor)
+  const exportAnchor = useAppStore((s) => s.exportAnchor)
+  const exportAlignToObjectBounds = useAppStore((s) => s.exportAlignToObjectBounds)
+  const exportDisableMeshOptimization = useAppStore((s) => s.exportDisableMeshOptimization)
+  const exportIncludeTextureMaps = useAppStore((s) => s.exportIncludeTextureMaps)
+  const setExportScaleFactor = useAppStore((s) => s.setExportScaleFactor)
+  const setExportAnchor = useAppStore((s) => s.setExportAnchor)
+  const setExportAlignToObjectBounds = useAppStore((s) => s.setExportAlignToObjectBounds)
+  const setExportDisableMeshOptimization = useAppStore((s) => s.setExportDisableMeshOptimization)
+  const setExportIncludeTextureMaps = useAppStore((s) => s.setExportIncludeTextureMaps)
+
+  useEffect(() => {
+    if (open) setScaleInput(String(exportScaleFactor))
+  }, [open, exportScaleFactor])
+
+  function clampScale(next: string) {
+    if (next === '') {
+      setScaleInput('')
+      return
+    }
+    const n = parseInt(next)
+    if (isNaN(n)) return
+    const v = Math.max(1, Math.min(1000, n))
+    setScaleInput(String(v))
+    setExportScaleFactor(v)
+  }
+
+  async function run() {
+    const state = useAppStore.getState()
+    const { model, palette, meta, texture, noiseLevel, specularNoiseLevel, aoStrength, glassRoughnessLevel, animSettings, sliceMasks, slicePivots } = state
+    const { gridExtent } = meta
+    const sf = state.exportScaleFactor
+    const anchor = state.exportAnchor
+    const alignToObjectBounds = state.exportAlignToObjectBounds
+    if (model.color.size === 0) {
+      showToast('Nothing to export — the model is empty.')
+      onOpenChange(false)
+      return
+    }
+    setBusy(true)
+    try {
+      showToast('Exporting GLTF…')
+      const glb = await exportModelToGlb(model, palette, gridExtent, texture, {
+        ambientOcclusion: true,
+        noiseLevel,
+        specularNoiseLevel,
+        aoStrength,
+        glassRoughnessLevel,
+        scaleFactor: sf,
+        anchor,
+        alignToObjectBounds,
+        noiseSeed: meta.noiseSeed,
+        optimizeMesh: !state.exportDisableMeshOptimization,
+        includeTextureMaps: state.exportIncludeTextureMaps,
+        voxelScaleY: meta.voxelScaleY,
+      }, animSettings, sliceMasks, slicePivots)
+      downloadGlb(glb, normalizeProjectFilename(meta.name || 'voxpaint-model'))
+      showToast('GLTF exported.')
+      onOpenChange(false)
+    } catch (err) {
+      showToast(err instanceof Error ? err.message : 'GLTF export failed.')
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  return (
+    <Dialog.Root open={open} onOpenChange={onOpenChange}>
+      <Dialog.Portal>
+        <Dialog.Overlay className="fixed inset-0 z-50 bg-black/60 backdrop-blur-sm" />
+        <Dialog.Content
+          className="fixed left-1/2 top-1/2 z-50 w-[min(92vw,30rem)] -translate-x-1/2 -translate-y-1/2 rounded-xl
+            border border-neutral-800 bg-neutral-900 p-7 text-neutral-200 shadow-2xl focus:outline-none"
+        >
+          <Dialog.Title className="flex items-center gap-2 text-lg font-semibold">
+            <Package size={22} /> Export GLTF
+          </Dialog.Title>
+          <Dialog.Description className="mt-2 text-sm text-neutral-400">
+            Exports optimized meshes — one per material class (matte, emissive, metal, glass) — with
+            baked ambient occlusion and texture maps.
+          </Dialog.Description>
+
+          <div className="mt-5 flex flex-col gap-4">
+            <div className="flex items-center gap-2.5">
+              <label htmlFor="gltf-scale" className="w-18 text-sm font-medium text-neutral-400 select-none">
+                Scale
+              </label>
+              <input
+                id="gltf-scale"
+                type="text"
+                inputMode="numeric"
+                value={scaleInput}
+                onChange={(e) => clampScale(e.target.value)}
+                className="w-24 rounded-md border border-neutral-700 bg-neutral-800 px-3 py-1.5
+                  font-mono text-sm tabular-nums text-neutral-200 focus:outline-none focus:ring-1
+                  focus:ring-violet-500"
+              />
+              <span className="text-sm font-medium text-neutral-400">%</span>
+            </div>
+
+            <div className="flex items-center gap-2.5">
+              <span className="w-18 text-sm font-medium text-neutral-400 select-none">Anchor</span>
+              <select
+                value={exportAnchor}
+                onChange={(e) => setExportAnchor(e.target.value as GltfExportAnchor)}
+                className="rounded-md border border-neutral-700 bg-neutral-800 px-3 py-1.5 text-sm text-neutral-200
+                  focus:outline-none focus:ring-1 focus:ring-violet-500 cursor-pointer"
+              >
+                {(Object.keys(ANCHOR_LABELS) as GltfExportAnchor[]).map((a) => (
+                  <option key={a} value={a}>{ANCHOR_LABELS[a]}</option>
+                ))}
+              </select>
+            </div>
+
+            <label className="flex items-center gap-2.5 ml-[4.5rem] cursor-pointer select-none" title="Anchor relative to the voxels' own bounds instead of the canvas origin">
+              <input
+                type="checkbox"
+                checked={exportAlignToObjectBounds}
+                onChange={(e) => setExportAlignToObjectBounds(e.target.checked)}
+                className="h-4 w-4 shrink-0 cursor-pointer accent-violet-500"
+              />
+              <span className="text-sm text-neutral-400">Align to object bounds</span>
+            </label>
+
+            <label className="flex items-center gap-2.5 ml-[4.5rem] cursor-pointer select-none" title="Off exports solid materials and bare geometry with no mapping">
+              <input
+                type="checkbox"
+                checked={exportIncludeTextureMaps}
+                onChange={(e) => setExportIncludeTextureMaps(e.target.checked)}
+                className="h-4 w-4 shrink-0 cursor-pointer accent-violet-500"
+              />
+              <span className="text-sm text-neutral-400">Include texture maps</span>
+            </label>
+
+            <label className="flex items-center gap-2.5 ml-[4.5rem] cursor-pointer select-none" title="Keep per-voxel topology for deforming in other apps">
+              <input
+                type="checkbox"
+                checked={exportDisableMeshOptimization}
+                onChange={(e) => setExportDisableMeshOptimization(e.target.checked)}
+                className="h-4 w-4 shrink-0 cursor-pointer accent-violet-500"
+              />
+              <span className="text-sm text-neutral-400">Disable mesh optimization</span>
+            </label>
+          </div>
+
+          <div className="mt-6 flex justify-end gap-2">
+            <Dialog.Close asChild>
+              <button className="rounded-md px-4 py-2 text-sm text-neutral-300 hover:bg-neutral-800">Cancel</button>
+            </Dialog.Close>
+            <button
+              onClick={() => void run()}
+              disabled={busy}
+              className="rounded-md bg-violet-600 px-5 py-2 text-sm font-medium text-white hover:bg-violet-500 disabled:opacity-50"
+            >
+              {busy ? 'Exporting…' : 'Export'}
+            </button>
+          </div>
+        </Dialog.Content>
+      </Dialog.Portal>
+    </Dialog.Root>
+  )
+}
