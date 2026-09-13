@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
-import { effectiveExtent, viewOriginShift, withinWorkingBounds } from './GridStore'
+import { countCellsOutsideBounds, effectiveExtent, emptyModel, encodeKey, viewOriginShift, withinWorkingBounds } from './GridStore'
+import type { PaletteSlotRef } from '@/engine/palette/types'
 
 describe('effectiveExtent (odd rounds up to an even working grid)', () => {
   it('leaves even sizes unchanged', () => {
@@ -38,5 +39,22 @@ describe('withinWorkingBounds', () => {
     expect(withinWorkingBounds([4, 4, 4], 9)).toBe(true) // high corner
     expect(withinWorkingBounds([5, 0, 0], 9)).toBe(false) // one past the top
     expect(withinWorkingBounds([-6, 0, 0], 9)).toBe(false)
+  })
+})
+
+describe('countCellsOutsideBounds', () => {
+  const slot: PaletteSlotRef = { kind: 'base', index: 0 }
+
+  it('counts only cells outside the given extent', () => {
+    const model = emptyModel()
+    model.color.set(encodeKey(0, 0, 0), { paletteSlot: slot })
+    model.color.set(encodeKey(7, 7, 7), { paletteSlot: slot })
+    expect(countCellsOutsideBounds(model, 16)).toBe(0)
+    expect(countCellsOutsideBounds(model, 8)).toBe(1) // 8-cube is [-4,4)
+    expect(countCellsOutsideBounds(model, 2)).toBe(1) // 2-cube is [-1,1): origin survives
+  })
+
+  it('is zero for an empty model', () => {
+    expect(countCellsOutsideBounds(emptyModel(), 8)).toBe(0)
   })
 })

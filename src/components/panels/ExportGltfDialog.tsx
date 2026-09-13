@@ -20,10 +20,12 @@ export function ExportGltfDialog({ open, onOpenChange }: { open: boolean; onOpen
   const exportAnchor = useAppStore((s) => s.exportAnchor)
   const exportAlignToObjectBounds = useAppStore((s) => s.exportAlignToObjectBounds)
   const exportDisableMeshOptimization = useAppStore((s) => s.exportDisableMeshOptimization)
+  const exportIncludeTextureMaps = useAppStore((s) => s.exportIncludeTextureMaps)
   const setExportScaleFactor = useAppStore((s) => s.setExportScaleFactor)
   const setExportAnchor = useAppStore((s) => s.setExportAnchor)
   const setExportAlignToObjectBounds = useAppStore((s) => s.setExportAlignToObjectBounds)
   const setExportDisableMeshOptimization = useAppStore((s) => s.setExportDisableMeshOptimization)
+  const setExportIncludeTextureMaps = useAppStore((s) => s.setExportIncludeTextureMaps)
 
   useEffect(() => {
     if (open) setScaleInput(String(exportScaleFactor))
@@ -67,6 +69,7 @@ export function ExportGltfDialog({ open, onOpenChange }: { open: boolean; onOpen
         alignToObjectBounds,
         noiseSeed: meta.noiseSeed,
         optimizeMesh: !state.exportDisableMeshOptimization,
+        includeTextureMaps: state.exportIncludeTextureMaps,
       }, animSettings, sliceMasks, slicePivots)
       downloadGlb(glb, normalizeProjectFilename(meta.name || 'voxpaint-model'))
       showToast('GLTF exported.')
@@ -91,7 +94,7 @@ export function ExportGltfDialog({ open, onOpenChange }: { open: boolean; onOpen
           </Dialog.Title>
           <Dialog.Description className="mt-2 text-sm text-neutral-400">
             Exports optimized meshes — one per material class (matte, emissive, metal, glass) — with
-            baked ambient occlusion.
+            baked ambient occlusion and texture maps.
           </Dialog.Description>
 
           <div className="mt-5 flex flex-col gap-4">
@@ -126,29 +129,34 @@ export function ExportGltfDialog({ open, onOpenChange }: { open: boolean; onOpen
               </select>
             </div>
 
-            <label className="flex items-center gap-2.5 ml-[4.5rem] cursor-pointer select-none">
+            <label className="flex items-center gap-2.5 ml-[4.5rem] cursor-pointer select-none" title="Anchor relative to the voxels' own bounds instead of the canvas origin">
               <input
                 type="checkbox"
                 checked={exportAlignToObjectBounds}
                 onChange={(e) => setExportAlignToObjectBounds(e.target.checked)}
-                className="h-4 w-4 cursor-pointer accent-violet-500"
+                className="h-4 w-4 shrink-0 cursor-pointer accent-violet-500"
               />
               <span className="text-sm text-neutral-400">Align to object bounds</span>
             </label>
 
-            <label className="flex items-start gap-2.5 ml-[4.5rem] cursor-pointer select-none">
+            <label className="flex items-center gap-2.5 ml-[4.5rem] cursor-pointer select-none" title="Off exports solid materials and bare geometry with no mapping">
+              <input
+                type="checkbox"
+                checked={exportIncludeTextureMaps}
+                onChange={(e) => setExportIncludeTextureMaps(e.target.checked)}
+                className="h-4 w-4 shrink-0 cursor-pointer accent-violet-500"
+              />
+              <span className="text-sm text-neutral-400">Include texture maps</span>
+            </label>
+
+            <label className="flex items-center gap-2.5 ml-[4.5rem] cursor-pointer select-none" title="Keep per-voxel topology for deforming in other apps">
               <input
                 type="checkbox"
                 checked={exportDisableMeshOptimization}
                 onChange={(e) => setExportDisableMeshOptimization(e.target.checked)}
-                className="mt-0.5 h-4 w-4 cursor-pointer accent-violet-500"
+                className="h-4 w-4 shrink-0 cursor-pointer accent-violet-500"
               />
-              <span className="text-sm text-neutral-400">
-                Disable mesh optimization
-                <span className="block text-xs text-neutral-500">
-                  Keep per-voxel topology for deforming in other apps
-                </span>
-              </span>
+              <span className="text-sm text-neutral-400">Disable mesh optimization</span>
             </label>
           </div>
 

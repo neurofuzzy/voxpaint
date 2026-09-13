@@ -1,6 +1,7 @@
 import type { GridExtent } from '@/engine/grid/types'
+import { effectiveExtent } from '@/engine/grid/GridStore'
 import type { BoxFace, TextureModel } from './types'
-import { BOX_FACES, EMPTY, faceSizeFor } from './types'
+import { BOX_FACES, EMPTY, TEXEL_SCALE, faceSizeFor } from './types'
 
 /** Flat index into a face's texel array for texel (u, v). No bounds checking. `faceSize` is the
  * project's own `faceSizeFor(gridExtent)`. */
@@ -21,6 +22,36 @@ export function emptyTextureModel(gridExtent: GridExtent): TextureModel {
     const arr = new Uint8Array(faceSize * faceSize)
     arr.fill(EMPTY)
     faces[face] = arr
+  }
+  return { faces }
+}
+
+/**
+ * Re-houses a texture's six faces for a new project size, preserving paint by world position: a
+ * texel's world coordinate is `(t + 0.5) / TEXEL_SCALE - halfWorld`, and both half-worlds are
+ * integers (the effective grid is always even), so the remap is an exact integer texel shift — a
+ * centered crop when shrinking, centered padding (`EMPTY`) when growing. No resampling, no
+ * blur. Used by project resize; the voxel model itself is clipped separately. */
+export function resizeTextureModel(texture: TextureModel, oldExtent: GridExtent, newExtent: GridExtent): TextureModel {
+  const oldFaceSize = faceSizeFor(oldExtent)
+  const newFaceSize = faceSizeFor(newExtent)
+  if (oldFaceSize === newFaceSize) return cloneTextureModel(texture)
+  const shift = (effectiveExtent(newExtent) / 2 - effectiveExtent(oldExtent) / 2) * TEXEL_SCALE
+  const faces = {} as Record<BoxFace, Uint8Array>
+  for (const face of BOX_FACES) {
+    const src = texture.faces[face]
+    const dst = new Uint8Array(newFaceSize * newFaceSize)
+    dst.fill(EMPTY)
+    for (let tv = 0; tv < newFaceSize; tv++) {
+      const sv = tv - shift
+      if (sv < 0 || sv >= oldFaceSize) continue
+      for (let tu = 0; tu < newFaceSize; tu++) {
+        const su = tu - shift
+        if (su < 0 || su >= oldFaceSize) continue
+        dst[tv * newFaceSize + tu] = src[sv * oldFaceSize + su]
+      }
+    }
+    faces[face] = dst
   }
   return { faces }
 }

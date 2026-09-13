@@ -3,30 +3,14 @@ import { FilePlus } from 'lucide-react'
 import { useEffect, useState } from 'react'
 import type { GridExtent } from '@/engine/grid/types'
 import { useAppStore } from '@/store/useAppStore'
-
-const SIZE_OPTIONS: Array<{ extent: GridExtent; label: string }> = [
-  { extent: 8, label: 'Small' },
-  { extent: 16, label: 'Medium' },
-  { extent: 24, label: 'Large' },
-]
-
-/** Inclusive range for a custom cube size. Odd values are allowed — internally they use the next
- * even grid, framed so the center column reads centered (see engine/grid/GridStore `effectiveExtent`
- * / `viewOriginShift`). Upper bound kept well under the technical `MAX_GRID_EXTENT` for performance. */
-const CUSTOM_MIN = 2
-const CUSTOM_MAX = 32
-
-function parseCustom(text: string): number | null {
-  if (!/^\d+$/.test(text.trim())) return null
-  const n = Number(text)
-  return n >= CUSTOM_MIN && n <= CUSTOM_MAX ? n : null
-}
+import { ProjectSizePicker } from './ProjectSizePicker'
+import { parseCustomSize } from './projectSizeOptions'
 
 /**
- * New Project modal: optional name + a locked-in-forever size. Offers the Small/Medium/Large presets
- * plus a Custom field for any edge length in [CUSTOM_MIN, CUSTOM_MAX], including odd sizes (which
- * give a centered pillar). Size can't be changed after creation (engine/grid/types.ts `GridExtent`),
- * so this is the one chance to pick it.
+ * New Project modal: optional name + a locked-in-at-creation size. Offers the Small/Medium/Large
+ * presets plus a Custom field for any edge length in [CUSTOM_MIN, CUSTOM_MAX], including odd sizes
+ * (which give a centered pillar). The size can still be changed later in Project Settings
+ * (shrinking deletes out-of-bounds voxels), so this is just the starting point.
  */
 export function NewProjectDialog({ open, onOpenChange }: { open: boolean; onOpenChange: (v: boolean) => void }) {
   const [name, setName] = useState('')
@@ -41,7 +25,7 @@ export function NewProjectDialog({ open, onOpenChange }: { open: boolean; onOpen
     }
   }, [open])
 
-  const customExtent = parseCustom(customText)
+  const customExtent = parseCustomSize(customText)
   const isCustom = selected === 'custom'
   const effectiveExtent: GridExtent | null = isCustom ? customExtent : selected
   const canCreate = effectiveExtent !== null
@@ -64,8 +48,8 @@ export function NewProjectDialog({ open, onOpenChange }: { open: boolean; onOpen
             <FilePlus size={22} /> New Project
           </Dialog.Title>
           <Dialog.Description className="mt-2 text-sm text-neutral-400">
-            Unsaved changes in the current project will be lost from the autosave slot. Size can't
-            be changed later.
+            Unsaved changes in the current project will be lost from the autosave slot. Size can
+            be changed later in Project Settings.
           </Dialog.Description>
 
           <div className="mt-5 flex flex-col gap-4">
@@ -86,65 +70,13 @@ export function NewProjectDialog({ open, onOpenChange }: { open: boolean; onOpen
               />
             </div>
 
-            <div className="flex items-start gap-2.5">
-              <span className="mt-2 w-18 text-sm font-medium text-neutral-400 select-none">Size</span>
-              <div className="flex flex-1 flex-col gap-2">
-                <div className="flex gap-2">
-                  {SIZE_OPTIONS.map(({ extent, label }) => {
-                    const active = !isCustom && selected === extent
-                    return (
-                      <button
-                        key={extent}
-                        onClick={() => setSelected(extent)}
-                        className={
-                          'flex-1 rounded-md px-3 py-2 text-center transition ' +
-                          (active
-                            ? 'bg-violet-500/20 text-violet-300'
-                            : 'bg-neutral-800 text-neutral-400 hover:bg-neutral-700 hover:text-neutral-200')
-                        }
-                      >
-                        <div className="text-sm font-medium">{label}</div>
-                        <div className="font-mono text-xs tabular-nums opacity-70">{extent}³</div>
-                      </button>
-                    )
-                  })}
-                    <button
-                      onClick={() => setSelected('custom')}
-                      className={
-                        'flex-1 rounded-md px-3 py-2 text-center transition ' +
-                        (isCustom
-                        ? 'bg-violet-500/20 text-violet-300'
-                        : 'bg-neutral-800 text-neutral-400 hover:bg-neutral-700 hover:text-neutral-200')
-                    }
-                  >
-                    <div className="text-sm font-medium">Custom</div>
-                    <div className="font-mono text-xs tabular-nums opacity-70">
-                      {customExtent !== null ? `${customExtent}³` : '—'}
-                    </div>
-                  </button>
-                </div>
-
-                {isCustom && (
-                  <div className="flex items-center gap-2.5">
-                    <input
-                      type="number"
-                      min={CUSTOM_MIN}
-                      max={CUSTOM_MAX}
-                      value={customText}
-                      onChange={(e) => setCustomText(e.target.value)}
-                      onKeyDown={(e) => { if (e.key === 'Enter') create() }}
-                      placeholder="e.g. 9"
-                      autoFocus
-                      className="w-24 rounded-md border border-neutral-700 bg-neutral-800 px-3 py-1.5
-                        text-sm text-neutral-200 focus:outline-none focus:ring-1 focus:ring-violet-500"
-                    />
-                    <span className="text-xs text-neutral-500">
-                      edge length, {CUSTOM_MIN}–{CUSTOM_MAX} (odd sizes get a centered pillar)
-                    </span>
-                  </div>
-                )}
-              </div>
-            </div>
+            <ProjectSizePicker
+              selected={selected}
+              customText={customText}
+              onSelect={setSelected}
+              onCustomTextChange={setCustomText}
+              onCommit={create}
+            />
           </div>
 
           <div className="mt-6 flex justify-end gap-2">

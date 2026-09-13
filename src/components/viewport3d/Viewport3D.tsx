@@ -18,6 +18,7 @@ import { FloatGhostPreview } from './FloatGhostPreview'
 import { ExposureSlider } from './ExposureSlider'
 import { OptimizedMeshView } from './OptimizedMeshView'
 import { PivotGizmo } from './PivotGizmo'
+import { ProjectBoundsBox } from './ProjectBoundsBox'
 import { SelectionHighlight } from './SelectionHighlight'
 import { SceneEnvironment } from './SceneEnvironment'
 import { SceneLighting } from './SceneLighting'
@@ -249,6 +250,7 @@ export function Viewport3D() {
         ) : (
           <>
             <ConstructionPlaneVisual />
+            <ProjectBoundsBox />
             {!hasAnimations && <VoxelInstancedMeshes ref={managerRef} />}
             {!hasAnimations && <OptimizedMeshView />}
             {hasAnimations && <AnimatedModelView />}

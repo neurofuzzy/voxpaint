@@ -1,9 +1,11 @@
 import { useEffect, useRef, useState } from 'react'
+import { Settings } from 'lucide-react'
 import logoUrl from '@/assets/logo.svg'
 import { FileMenu } from '@/components/panels/FileMenu'
 import { FullscreenToggle } from '@/components/panels/FullscreenToggle'
 import { ModeTabs } from '@/components/panels/ModeTabs'
 import { ModelStats } from '@/components/panels/ModelStats'
+import { ProjectSettingsDialog } from '@/components/panels/ProjectSettingsDialog'
 import { HelpButton } from '@/components/onboarding/HelpButton'
 import { useAppStore } from '@/store/useAppStore'
 
@@ -63,12 +65,21 @@ function ProjectName() {
 }
 
 export function TopToolbar() {
+  const [settingsOpen, setSettingsOpen] = useState(false)
   return (
     <div className="flex h-11 items-center gap-3 border-b border-neutral-800 bg-neutral-900 px-2">
       <img src={logoUrl} alt="VoxPaint" className="h-5 w-auto" />
       <FileMenu />
       <ModeTabs />
       <ProjectName />
+      <button
+        onClick={() => setSettingsOpen(true)}
+        title="Project settings"
+        className="rounded p-1 text-neutral-400 hover:bg-neutral-800 hover:text-neutral-200"
+      >
+        <Settings size={15} />
+      </button>
+      <ProjectSettingsDialog open={settingsOpen} onOpenChange={setSettingsOpen} />
       <div className="flex-1" />
       <ModelStats />
       <div className="h-5 w-px bg-neutral-800" />

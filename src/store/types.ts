@@ -59,6 +59,12 @@ export type ProjectSlice = {
   /** Sets the blink/pulse animation mode for one emissive palette slot (0–3). */
   setEmissiveAnimMode: (index: number, mode: EmissiveAnimMode) => void
   setProjectName: (name: string) => void
+  /** Renames the project and/or resizes its working cube (Project Settings dialog). Growing keeps
+   * everything; shrinking deletes voxels outside the new bounds (the caller warns first via
+   * `countCellsOutsideBounds`) and center-crops/pads the texture faces. A resize also clears all
+   * undo/redo history, selections, and pending floats, drops animation slices outside the new
+   * bounds, and clamps the construction-plane offset into range. Rename-only calls just rename. */
+  updateProjectSettings: (name: string, gridExtent: GridExtent) => void
   /** Re-rolls `meta.noiseSeed`, changing the baked noise/specular grain's pattern without touching
    * the model — for when the current project's noise happened to land on an unflattering roll. */
   randomizeNoiseSeed: () => void
@@ -157,6 +163,9 @@ export type ViewSlice = {
   /** GLTF export: skip coplanar-face merging so the exported mesh keeps its per-voxel topology
    * (default false = meshes are optimized). */
   exportDisableMeshOptimization: boolean
+  /** GLTF export: emit texture maps — baked color overlay, ambient occlusion, metal maps
+   * (default true). Off = solid materials + bare geometry, no maps or TEXCOORDs. */
+  exportIncludeTextureMaps: boolean
   setFullscreen: (v: boolean) => void
   setHoverCell: (coord: Coord | null, chamferValid: boolean | null) => void
   setHoveredFace: (face: HoveredFace | null) => void
@@ -175,6 +184,7 @@ export type ViewSlice = {
   setExportAnchor: (v: GltfExportAnchor) => void
   setExportAlignToObjectBounds: (v: boolean) => void
   setExportDisableMeshOptimization: (v: boolean) => void
+  setExportIncludeTextureMaps: (v: boolean) => void
 }
 
 export type PersistenceSlice = {
