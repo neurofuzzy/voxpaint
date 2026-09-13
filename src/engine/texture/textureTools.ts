@@ -246,4 +246,6 @@ export const textureToolMap: Record<ToolId, TextureToolHandler> = {
   move: moveTool,
   // Pivot is Animate-mode-only (see ToolPalette.tsx's ANIMATE_TOOLS) — harmless no-op here.
   pivot: {},
+  // Material repaints voxel palette slots, meaningless on texel grids — harmless no-op here.
+  material: {},
 }

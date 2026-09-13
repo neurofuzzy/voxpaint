@@ -3,6 +3,7 @@ import type { ToolHandler } from './types'
 import { paintTool } from './paintTool'
 import { eraseTool } from './eraseTool'
 import { eyedropperTool } from './eyedropperTool'
+import { materialTool } from './materialTool'
 import { selectTool } from './selectTool'
 import { fillTool } from './fillTool'
 import { cloneTool } from './cloneTool'
@@ -16,6 +17,7 @@ export const toolMap: Record<ToolId, ToolHandler> = {
   paint: paintTool,
   erase: eraseTool,
   eyedropper: eyedropperTool,
+  material: materialTool,
   select: selectTool,
   fill: fillTool,
   clone: cloneTool,

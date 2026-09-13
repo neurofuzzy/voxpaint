@@ -9,6 +9,7 @@ const SWATCH = 'h-6 w-6 shrink-0'
 
 function Swatch({ kind, index, hex }: { kind: PaletteSlotKind; index: number; hex: string }) {
   const activeSlot = useAppStore((s) => s.activePaletteSlot)
+  const activeTool = useAppStore((s) => s.activeTool)
   const setActivePaletteSlot = useAppStore((s) => s.setActivePaletteSlot)
   const setActiveTool = useAppStore((s) => s.setActiveTool)
   const active = activeSlot.kind === kind && activeSlot.index === index
@@ -32,7 +33,9 @@ function Swatch({ kind, index, hex }: { kind: PaletteSlotKind; index: number; he
       title={`${kind} ${index + 1}`}
       onClick={() => {
         setActivePaletteSlot({ kind, index })
-        setActiveTool('paint')
+        // Picking a color drops into paint — except for the material tool, which consumes palette
+        // slots itself and must keep focus so sweeping the palette doesn't kick the user out.
+        if (activeTool !== 'material') setActiveTool('paint')
       }}
       // A `border` clips separately from the rounded gradient background, and the two curves'
       // anti-aliasing don't quite line up — leaves a stray sliver of the gradient's edge color

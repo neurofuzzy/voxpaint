@@ -1,6 +1,6 @@
 import * as ToggleGroup from '@radix-ui/react-toggle-group'
 import * as Tooltip from '@radix-ui/react-tooltip'
-import { Brush, Copy, Eraser, Move, Pin, Pipette, SquareDashedMousePointer, PaintBucket } from 'lucide-react'
+import { Brush, Copy, Droplet, Eraser, Move, Pin, Pipette, SquareDashedMousePointer, PaintBucket } from 'lucide-react'
 import { useAppStore } from '@/store/useAppStore'
 import type { ToolId } from '@/store/types'
 
@@ -8,10 +8,11 @@ const TOOLS: Array<{ id: ToolId; label: string; icon: typeof Brush; hint: string
   { id: 'paint', label: 'Paint', icon: Brush, hint: 'click or drag to paint · shift+drag: straight line' },
   { id: 'erase', label: 'Erase', icon: Eraser, hint: 'click or drag to erase · shift+drag: straight line' },
   { id: 'eyedropper', label: 'Eyedropper', icon: Pipette, hint: 'click to pick a color from the model' },
+  { id: 'material', label: 'Material', icon: Droplet, hint: 'click or drag to repaint occupied voxels · never adds or deletes' },
   { id: 'select', label: 'Select', icon: SquareDashedMousePointer, hint: 'drag to select · alt+drag: lasso' },
   { id: 'fill', label: 'Fill', icon: PaintBucket, hint: 'click to flood-fill connected cells · alt+click an existing voxel: fill in 3D' },
   { id: 'clone', label: 'Clone', icon: Copy, hint: 'alt+click to set a clone source, then drag to stamp' },
-  { id: 'move', label: 'Move / Transform', icon: Move, hint: 'drag to shift the current slice · r/h/v: rotate/mirror' },
+  { id: 'move', label: 'Move / Transform', icon: Move, hint: 'drag to shift the current slice' },
 ]
 
 /** Animate mode only supports masking which voxels of the current slice animate — paint/erase
