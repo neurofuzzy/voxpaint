@@ -1,8 +1,9 @@
 import * as THREE from 'three'
 import { STLExporter } from 'three/addons/exporters/STLExporter.js'
-import type { VoxelModel } from '@/engine/grid/types'
+import type { VoxelModel, VoxelScaleY } from '@/engine/grid/types'
 import type { PaletteState } from '@/engine/palette/types'
 import { buildOptimizedVoxelGeometryByMaterial } from '@/engine/instancing/voxelMeshBuilder'
+import { scaleGeometryY } from './scaleGeometry'
 
 /**
  * STL export — a print-oriented sibling of `gltfExport.ts`, reusing the same watertight,
@@ -35,6 +36,9 @@ export type StlExportOptions = {
    * transform on the already-built export mesh, not the paint-time chamfer bake), and doesn't
    * remove the voxel stair-stepping — it just changes it from axis-aligned to diagonal. */
   orientForPrinting?: boolean
+  /** Project-level Y voxel scale (0.5 = flat, 1 = cubic, 2 = tall; default 1). Baked into the
+   * vertices before centering/anchoring, so the print matches the scaled 3D view. */
+  voxelScaleY?: VoxelScaleY
 }
 
 const PRINT_ORIENT_Z = Math.PI / 4
@@ -52,6 +56,7 @@ export function exportModelToStl(model: VoxelModel, palette: PaletteState, optio
         geometry.dispose()
         continue
       }
+      scaleGeometryY(geometry, options.voxelScaleY ?? 1)
       geometries.push(geometry)
       content.add(new THREE.Mesh(geometry))
     }

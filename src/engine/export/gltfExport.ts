@@ -1,7 +1,7 @@
 import * as THREE from 'three'
 import { GLTFExporter } from 'three/addons/exporters/GLTFExporter.js'
 import { viewOriginShift } from '@/engine/grid/GridStore'
-import type { Axis, VoxelModel, CellKey, GridExtent } from '@/engine/grid/types'
+import type { Axis, VoxelModel, CellKey, GridExtent, VoxelScaleY } from '@/engine/grid/types'
 import type { PaletteState } from '@/engine/palette/types'
 import type { TextureModel } from '@/engine/texture/types'
 import { bakeAOToAtlas, makeSpecularNoiseTexture } from '@/engine/ao/bakeAO'
@@ -17,6 +17,7 @@ import type { SliceAnimSettings, SliceKey } from '@/engine/animation/types'
 import { assignVoxelsToNodes, hasActiveAnimations, resolveAnimCenter } from '@/engine/animation/animationLayers'
 import { buildAllAnimationClips, type AnimNodeInfo } from '@/engine/animation/animationGLTF'
 import { registerEmissiveAnimationExtension, type EmissiveAnimExportTarget } from './emissiveAnimationExport'
+import { scaleGeometryY } from './scaleGeometry'
 
 /**
  * GLTF export pipeline. Replaces the originally-specced `three-bvh-csg` union/weld path: the mesh
@@ -83,6 +84,10 @@ export type GltfExportOptions = {
    * nodes reference any texture, and geometry carries no `uv`/`uv1` attributes, so the .glb
    * contains no images, textures, samplers, or TEXCOORDs at all. */
   includeTextureMaps?: boolean
+  /** Project-level Y voxel scale (0.5 = flat, 1 = cubic, 2 = tall; default 1). Baked into the
+   * exported vertices after every other bake step (overlay/AO/specular all run in unit-cube voxel
+   * units), so the .glb matches the scaled 3D view — see `scaleGeometry.ts`. */
+  voxelScaleY?: VoxelScaleY
 }
 
 const hex6 = (colorKey: number) => colorKey.toString(16).padStart(6, '0')
@@ -91,7 +96,9 @@ const hex6 = (colorKey: number) => colorKey.toString(16).padStart(6, '0')
  * Attach `mesh` to its animation slice node (creating the node on first use, keyed by `sliceKey`)
  * or straight to `root` when unanimated. Geometry vertices carry absolute voxel-grid coordinates,
  * and the slice node sits at the (also absolute) slice pivot — so the mesh is recentered by
- * `-center` here, or the two offsets would stack.
+ * `-center` here, or the two offsets would stack. Both the node position and the clip-baking
+ * center are expressed in *scaled* world units (`center.y * voxelScaleY`) to agree with the
+ * scale-baked vertices — animation clips author absolute positions around that center.
  */
 function attachToSliceOrRoot(
   mesh: THREE.Mesh,
@@ -102,6 +109,7 @@ function attachToSliceOrRoot(
   animNodes: AnimNodeInfo[] | undefined,
   root: THREE.Group,
   slicePivots: Map<SliceKey, CellKey> | undefined,
+  voxelScaleY: number = 1,
 ) {
   if (sliceNodes && sliceKey) {
     let node = sliceNodes.get(sliceKey)
@@ -110,10 +118,11 @@ function attachToSliceOrRoot(
       const entry = nodeInfo!.get(sliceKey)!
       const settings = animSettings!.get(sliceKey)!
       const center = resolveAnimCenter(entry.cellKeys, entry.axis, entry.offset, settings.animationType, slicePivots)
-      if (center) node.position.copy(center)
+      const scaled = center ? new THREE.Vector3(center.x, center.y * voxelScaleY, center.z) : null
+      if (scaled) node.position.copy(scaled)
       node.name = `anim_${sliceKey}`
       sliceNodes.set(sliceKey, node)
-      animNodes!.push({ node, sliceKey, settings, axis: entry.axis, center: center ?? new THREE.Vector3() })
+      animNodes!.push({ node, sliceKey, settings, axis: entry.axis, center: scaled ?? new THREE.Vector3() })
     }
     mesh.position.copy(node.position).negate()
     node.add(mesh)
@@ -207,6 +216,12 @@ export async function exportModelToGlb(
       geometry.deleteAttribute('uv1')
     }
   }
+  // Project-level Y voxel scale, baked into vertices as the final geometry step (after every
+  // bake above, before anchors below) — see `scaleGeometry.ts`.
+  const voxelScaleY = options.voxelScaleY ?? 1
+  const bakeScaleY = (list: Array<{ geometry: THREE.BufferGeometry }>) => {
+    for (const { geometry } of list) scaleGeometryY(geometry, voxelScaleY)
+  }
 
   if (textured) {
     // Textured overlay path — one baked-texture material per colour (and per animation slice, if any).
@@ -249,6 +264,9 @@ export async function exportModelToGlb(
     }
 
     const blend = includeTextureMaps ? buildBlendAtlas(texture!, gridExtent) : null
+    // Y-scale bakes after the AO/unwrap work above (unit-cube voxel units) and before meshes —
+    // anchors below then operate on true scaled extents.
+    bakeScaleY(groups)
     for (const { colorKey, materialClass, geometry, sliceKey } of groups) {
       geometry.deleteAttribute('color')
       const params = materialParamsFor(materialClass)
@@ -283,7 +301,7 @@ export async function exportModelToGlb(
         material.name = `voxel_${hex6(colorKey)}_${materialClass}`
         const mesh = new THREE.Mesh(geometry, material)
         mesh.name = material.name
-        attachToSliceOrRoot(mesh, sliceKey, animSettings, sliceNodeInfo, sliceNodes, animNodes, root, slicePivots)
+        attachToSliceOrRoot(mesh, sliceKey, animSettings, sliceNodeInfo, sliceNodes, animNodes, root, slicePivots, voxelScaleY)
         materials.push(material)
       } else {
         const map = bakeOverlayTexture(blend!.data, blend!.width, blend!.height, colorKey)
@@ -310,7 +328,7 @@ export async function exportModelToGlb(
         material.name = `voxel_${hex6(colorKey)}_${materialClass}`
         const mesh = new THREE.Mesh(geometry, material)
         mesh.name = material.name
-        attachToSliceOrRoot(mesh, sliceKey, animSettings, sliceNodeInfo, sliceNodes, animNodes, root, slicePivots)
+        attachToSliceOrRoot(mesh, sliceKey, animSettings, sliceNodeInfo, sliceNodes, animNodes, root, slicePivots, voxelScaleY)
         materials.push(material)
       }
     }
@@ -357,6 +375,7 @@ export async function exportModelToGlb(
       }
     }
 
+    bakeScaleY(groups)
     for (const { materialClass, colorKey, geometry, sliceKey } of groups) {
       const params = materialParamsFor(materialClass)
       const isGlass = materialClass === 'glass'
@@ -389,7 +408,7 @@ export async function exportModelToGlb(
       material.name = `voxel_${hex6(colorKey)}_${materialClass}`
       const mesh = new THREE.Mesh(geometry, material)
       mesh.name = material.name
-      attachToSliceOrRoot(mesh, sliceKey, animSettings, sliceNodeInfo, sliceNodes, animNodes, root, slicePivots)
+      attachToSliceOrRoot(mesh, sliceKey, animSettings, sliceNodeInfo, sliceNodes, animNodes, root, slicePivots, voxelScaleY)
       materials.push(material)
     }
   }

@@ -13,6 +13,12 @@ export type ChamferShapeKind = 'ramp' | 'convex' | 'concave' | 'wedge' | 'thin'
  * framing by half a cell (`viewOriginShift`) so the center column reads dead-centre. See GridStore.ts. */
 export type GridExtent = number
 
+/** Project-level Y voxel scale: world height of one voxel as a multiple of its X/Z footprint.
+ * 1 renders and exports unit cubes; 0.5 flattens (ramps read ~26.6°), 2 stretches tall (trees).
+ * The grid itself stays integer — scale applies only at presentation boundaries (3D scene,
+ * 2D X/Z-plane views, baked export vertices), never to paint/clipboard/texture math. */
+export type VoxelScaleY = 0.5 | 1 | 2
+
 /** Grid coordinate, always integer. Mutable tuple (not readonly) so Immer drafts accept it directly. */
 export type Coord = [x: number, y: number, z: number]
 

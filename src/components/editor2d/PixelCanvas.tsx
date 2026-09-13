@@ -6,7 +6,7 @@ import { resolveSlotColor, shadeColor } from '@/engine/palette/palette'
 import { forEachSelectedCell, traceSelectionOutline } from '@/engine/tools/selectionMask'
 import { encodeSliceKey } from '@/engine/animation/animationLayers'
 import { useAppStore } from '@/store/useAppStore'
-import { worldToScreen } from './cameraTransform'
+import { worldToScreen, vScaleForPlane } from './cameraTransform'
 import { BASE_CELL_PX } from './canvasConstants'
 import { useKeyboardShortcuts } from './useKeyboardShortcuts'
 import { usePixelCanvasTools } from './usePixelCanvasTools'
@@ -29,10 +29,10 @@ function snapPx(v: number): number {
  * Dots align to an absolute canvas-pixel lattice (not cell-relative), so adjacent cells' patterns
  * connect seamlessly regardless of pan/zoom.
  */
-function fillDither(ctx: CanvasRenderingContext2D, sx: number, sy: number, size: number, color: string) {
+function fillDither(ctx: CanvasRenderingContext2D, sx: number, sy: number, size: number, color: string, sizeY = size) {
   ctx.fillStyle = color
   const endX = sx + size
-  const endY = sy + size
+  const endY = sy + sizeY
   let startX = Math.ceil(sx)
   if (startX % 2 !== 0) startX++
   for (let px = startX; px < endX; px += 2) {
@@ -54,16 +54,16 @@ const CHAMFER_SHADE_DELTA = 24
  * Only ever called for the active plane's own cells (see the draw loop below) — behind-layer
  * reference cells always use the flat dithered fill regardless of chamfer status.
  */
-function fillDiagonalStripes(ctx: CanvasRenderingContext2D, sx: number, sy: number, size: number, color: string) {
+function fillDiagonalStripes(ctx: CanvasRenderingContext2D, sx: number, sy: number, size: number, color: string, sizeY = size) {
   const colorA = color;
   const colorB = shadeColor(color, -CHAMFER_SHADE_DELTA)
   ctx.save()
   ctx.beginPath()
-  ctx.rect(sx, sy, size, size)
+  ctx.rect(sx, sy, size, sizeY)
   ctx.clip()
-  ctx.translate(sx + size / 2, sy + size / 2)
+  ctx.translate(sx + size / 2, sy + sizeY / 2)
   ctx.rotate(Math.PI / 4)
-  const span = size * Math.SQRT2
+  const span = Math.hypot(size, sizeY)
   const half = span / 2
   let i = 0
   for (let x = -half; x < half; x += CHAMFER_STRIPE_WIDTH) {
@@ -87,6 +87,9 @@ export function PixelCanvas() {
   const sliceMasks = useAppStore((s) => s.sliceMasks)
   const slicePivots = useAppStore((s) => s.slicePivots)
   const gridExtent = useAppStore((s) => s.meta.gridExtent)
+  const voxelScaleY = useAppStore((s) => s.meta.voxelScaleY)
+  // V-axis display stretch for the active plane (Y voxel scale on X/Z planes, square on Y).
+  const vScale = vScaleForPlane(plane.axis, voxelScaleY)
 
   const { onPointerDown, onPointerMove, onPointerUp, onPointerLeave, linePreview, selectPreview, hoverCellRef, size, pan, zoom } =
     usePixelCanvasTools(canvasRef)
@@ -122,6 +125,7 @@ export function PixelCanvas() {
     ctx.fillRect(0, 0, size.width, size.height)
 
     const cellPx = BASE_CELL_PX * zoom
+    const cellH = cellPx * vScale
     // The 2D canvas is drawn in DISPLAY space (post-`toDisplay` mirror), so cropping an odd project
     // to its centred `n`-wide window is robust on every plane/orientation: we frame the window on the
     // centre pillar's *display* cell (`displayViewCenter`) rather than nudging a fixed pan, since the
@@ -140,8 +144,8 @@ export function PixelCanvas() {
     for (let du = dLoU; du < dHiU; du++) {
       for (let dv = dLoV; dv < dHiV; dv++) {
         if ((du + dv) % 2 === 0) continue
-        const [sx, sy] = worldToScreen(du, dv, size, pan, zoom)
-        ctx.fillRect(sx, sy, cellPx, cellPx)
+        const [sx, sy] = worldToScreen(du, dv, size, pan, zoom, vScale)
+        ctx.fillRect(sx, sy, cellPx, cellH)
       }
     }
 
@@ -152,10 +156,10 @@ export function PixelCanvas() {
     // before any content so painted cells, behind-layer outlines, and overlays all sit on top of
     // it instead of the grid cutting through them. Vertical (u) and horizontal (v) lines are drawn
     // separately since an odd window is not symmetric in the two axes.
-    const [gridLeft] = worldToScreen(dLoU, 0, size, pan, zoom)
-    const [gridRight] = worldToScreen(dHiU, 0, size, pan, zoom)
-    const [, gridTop] = worldToScreen(0, dLoV, size, pan, zoom)
-    const [, gridBottom] = worldToScreen(0, dHiV, size, pan, zoom)
+    const [gridLeft] = worldToScreen(dLoU, 0, size, pan, zoom, vScale)
+    const [gridRight] = worldToScreen(dHiU, 0, size, pan, zoom, vScale)
+    const [, gridTop] = worldToScreen(0, dLoV, size, pan, zoom, vScale)
+    const [, gridBottom] = worldToScreen(0, dHiV, size, pan, zoom, vScale)
 
     const strokeVLines = (positions: number[], color: string) => {
       if (positions.length === 0) return
@@ -163,7 +167,7 @@ export function PixelCanvas() {
       ctx.lineWidth = 1
       ctx.beginPath()
       for (const i of positions) {
-        const [sx] = worldToScreen(i, 0, size, pan, zoom)
+        const [sx] = worldToScreen(i, 0, size, pan, zoom, vScale)
         const snappedX = snapPx(sx)
         ctx.moveTo(snappedX, gridTop)
         ctx.lineTo(snappedX, gridBottom)
@@ -176,7 +180,7 @@ export function PixelCanvas() {
       ctx.lineWidth = 1
       ctx.beginPath()
       for (const i of positions) {
-        const [, sy] = worldToScreen(0, i, size, pan, zoom)
+        const [, sy] = worldToScreen(0, i, size, pan, zoom, vScale)
         const snappedY = snapPx(sy)
         ctx.moveTo(gridLeft, snappedY)
         ctx.lineTo(gridRight, snappedY)
@@ -230,11 +234,11 @@ export function PixelCanvas() {
         const v = toDisplayV(plane, dv)
         const behindCell = model.color.get(encodeKey(...gridCoordFromPixel(behindPlane, u, v)))
         if (!behindCell) continue
-        const [sx, sy] = worldToScreen(du, dv, size, pan, zoom)
+        const [sx, sy] = worldToScreen(du, dv, size, pan, zoom, vScale)
         const color = resolveSlotColor(palette, behindCell.paletteSlot)
-        fillDither(ctx, sx, sy, cellPx, color)
+        fillDither(ctx, sx, sy, cellPx, color, cellH)
         ctx.strokeStyle = color
-        ctx.strokeRect(sx + 0.5, sy + 0.5, cellPx - 1, cellPx - 1)
+        ctx.strokeRect(sx + 0.5, sy + 0.5, cellPx - 1, cellH - 1)
       }
     }
 
@@ -246,7 +250,7 @@ export function PixelCanvas() {
         const key = encodeKey(...coord)
         const colorCell = model.color.get(key)
         if (!colorCell) continue
-        const [sx, sy] = worldToScreen(du, dv, size, pan, zoom)
+        const [sx, sy] = worldToScreen(du, dv, size, pan, zoom, vScale)
         const color = resolveSlotColor(palette, colorCell.paletteSlot)
         // Glass reads as 50% transparent here too, echoing the 3D view's transmissive material —
         // otherwise a glass cell looks identical to a solid one on the flat 2D canvas.
@@ -254,10 +258,10 @@ export function PixelCanvas() {
         // Any chamfer cell shows the diagonal-stripe marker (whether or not its shape has resolved
         // yet), so it's always distinguishable from a plain cube; plain cubes get a flat fill.
         if (model.chamfer.has(key)) {
-          fillDiagonalStripes(ctx, sx, sy, cellPx, color)
+          fillDiagonalStripes(ctx, sx, sy, cellPx, color, cellH)
         } else {
           ctx.fillStyle = color
-          ctx.fillRect(sx, sy, cellPx, cellPx)
+          ctx.fillRect(sx, sy, cellPx, cellH)
         }
       }
     }
@@ -276,12 +280,12 @@ export function PixelCanvas() {
             const coord = gridCoordFromPixel(plane, u, v)
             const key = encodeKey(...coord)
             if (!currentMask.has(key)) continue
-            const [sx, sy] = worldToScreen(du, dv, size, pan, zoom)
+            const [sx, sy] = worldToScreen(du, dv, size, pan, zoom, vScale)
             ctx.fillStyle = 'rgba(167, 139, 250, 0.35)'
-            ctx.fillRect(sx, sy, cellPx, cellPx)
+            ctx.fillRect(sx, sy, cellPx, cellH)
             ctx.strokeStyle = 'rgba(167, 139, 250, 0.9)'
             ctx.lineWidth = 1
-            ctx.strokeRect(sx + 0.5, sy + 0.5, cellPx - 1, cellPx - 1)
+            ctx.strokeRect(sx + 0.5, sy + 0.5, cellPx - 1, cellH - 1)
           }
         }
       }
@@ -294,7 +298,7 @@ export function PixelCanvas() {
       const pivotKey = slicePivots.get(encodeSliceKey(plane.axis, plane.offset))
       if (pivotKey) {
         const { u: pu, v: pv } = pixelFromGridCoord(plane, decodeKey(pivotKey))
-        const [px, py] = worldToScreen(toDisplayU(plane, pu) + 0.5, toDisplayV(plane, pv) + 0.5, size, pan, zoom)
+        const [px, py] = worldToScreen(toDisplayU(plane, pu) + 0.5, toDisplayV(plane, pv) + 0.5, size, pan, zoom, vScale)
         const radius = cellPx * 0.22
         ctx.beginPath()
         ctx.arc(px, py, radius, 0, Math.PI * 2)
@@ -314,6 +318,7 @@ export function PixelCanvas() {
         size,
         pan,
         zoom,
+        vScale,
       )
       const [ex, ey] = worldToScreen(
         toDisplayU(plane, linePreview.end[0]) + 0.5,
@@ -321,6 +326,7 @@ export function PixelCanvas() {
         size,
         pan,
         zoom,
+        vScale,
       )
       ctx.strokeStyle = '#ffffff'
       ctx.lineWidth = 2
@@ -339,15 +345,15 @@ export function PixelCanvas() {
         if (cell.dw !== 0) continue
         const u = floatOrigin.originU + cell.du
         const v = floatOrigin.originV + cell.dv
-        const [sx, sy] = worldToScreen(toDisplayU(plane, u), toDisplayV(plane, v), size, pan, zoom)
+        const [sx, sy] = worldToScreen(toDisplayU(plane, u), toDisplayV(plane, v), size, pan, zoom, vScale)
         if (cell.color) {
           const color = resolveSlotColor(palette, cell.color.paletteSlot)
           ctx.globalAlpha = cell.color.paletteSlot.kind === 'glass' ? 0.5 : 1
           if (cell.chamfer) {
-            fillDiagonalStripes(ctx, sx, sy, cellPx, color)
+            fillDiagonalStripes(ctx, sx, sy, cellPx, color, cellH)
           } else {
             ctx.fillStyle = color
-            ctx.fillRect(sx, sy, cellPx, cellPx)
+            ctx.fillRect(sx, sy, cellPx, cellH)
           }
         }
       }
@@ -360,8 +366,8 @@ export function PixelCanvas() {
     if (activeRegion) {
       ctx.fillStyle = 'rgba(34, 211, 238, 0.25)'
       forEachSelectedCell(activeRegion, (u, v) => {
-        const [sx, sy] = worldToScreen(toDisplayU(plane, u), toDisplayV(plane, v), size, pan, zoom)
-        ctx.fillRect(sx, sy, cellPx, cellPx)
+        const [sx, sy] = worldToScreen(toDisplayU(plane, u), toDisplayV(plane, v), size, pan, zoom, vScale)
+        ctx.fillRect(sx, sy, cellPx, cellH)
       })
 
       ctx.strokeStyle = 'rgb(34, 211, 238)'
@@ -372,8 +378,8 @@ export function PixelCanvas() {
         // Outline vertices are gridline positions, not cell indices, so they mirror as `-n` rather
         // than the cells' corner-anchored `-n - 1` — using the cell transform here draws the whole
         // outline one cell off from its own fill on mirrored planes. See planeDisplay.ts.
-        const [ax, ay] = worldToScreen(toDisplayGridlineU(plane, au), toDisplayGridlineV(plane, av), size, pan, zoom)
-        const [bx, by] = worldToScreen(toDisplayGridlineU(plane, bu), toDisplayGridlineV(plane, bv), size, pan, zoom)
+        const [ax, ay] = worldToScreen(toDisplayGridlineU(plane, au), toDisplayGridlineV(plane, av), size, pan, zoom, vScale)
+        const [bx, by] = worldToScreen(toDisplayGridlineU(plane, bu), toDisplayGridlineV(plane, bv), size, pan, zoom, vScale)
         // Every outline edge is axis-aligned (traceSelectionOutline only emits unit cell edges),
         // so snap the shared coordinate for the same crisp-line reason as the grid.
         ctx.beginPath()
@@ -390,7 +396,7 @@ export function PixelCanvas() {
       }
       ctx.setLineDash([])
     }
-  }, [model, palette, plane, linePreview, selection, selectPreview, floatContent, floatOrigin, antPhase, size, pan, zoom, mode, sliceMasks, slicePivots, gridExtent])
+  }, [model, palette, plane, linePreview, selection, selectPreview, floatContent, floatOrigin, antPhase, size, pan, zoom, vScale, mode, sliceMasks, slicePivots, gridExtent])
 
   useEffect(() => {
     draw()

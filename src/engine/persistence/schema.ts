@@ -1,5 +1,5 @@
 import type { AnimationType, AnimationSpeed } from '@/engine/animation/types'
-import type { Axis, BBox, ChamferClassification, GridExtent, Orientation } from '@/engine/grid/types'
+import type { Axis, BBox, ChamferClassification, GridExtent, Orientation, VoxelScaleY } from '@/engine/grid/types'
 import type { PaletteSlotRef, PaletteState } from '@/engine/palette/types'
 import type { BoxFace } from '@/engine/texture/types'
 import type { GltfExportAnchor } from '@/engine/export/gltfExport'
@@ -33,6 +33,10 @@ export type ProjectMeta = {
    * specular grain looks unique instead of every project sharing identical noise at the same voxel
    * coordinates. Generated once at project creation, then frozen for the project's lifetime. */
   noiseSeed: number
+  /** World height of one voxel as a multiple of its X/Z footprint (0.5 = flat, 1 = cubic,
+   * 2 = tall). Freely editable — unlike `gridExtent` it touches no grid/texture data, only how
+   * tall cells render and export. See engine/grid/types.ts `VoxelScaleY`. */
+  voxelScaleY: VoxelScaleY
 }
 
 export type SerializedColorCell = { x: number; y: number; z: number; paletteSlot: PaletteSlotRef }

@@ -1,3 +1,4 @@
+import type { Axis } from '@/engine/grid/types'
 import { BASE_CELL_PX, PAN_PADDING_PX } from './canvasConstants'
 
 export interface CanvasSize {
@@ -27,29 +28,37 @@ export function touchDistance(a: TouchPoint, b: TouchPoint): number {
   return Math.hypot(a.x - b.x, a.y - b.y)
 }
 
+/** V-axis display stretch for a construction plane under a Y voxel scale: X/Z planes show
+ * world Y down v (cells render `cellPx` × `cellPx·k`), while the Y plane shows X/Z on both axes
+ * and stays square. Pan stays in grid-cell units either way — only the px mapping stretches. */
+export function vScaleForPlane(axis: Axis, voxelScaleY: number): number {
+  return axis === 'y' ? 1 : voxelScaleY
+}
+
 /** World (grid-cell) coordinates to screen (CSS px, canvas-local) coordinates. */
-export function worldToScreen(u: number, v: number, size: CanvasSize, pan: CanvasPan, zoom: number): [number, number] {
+export function worldToScreen(u: number, v: number, size: CanvasSize, pan: CanvasPan, zoom: number, vScale = 1): [number, number] {
   const cellPx = BASE_CELL_PX * zoom
-  return [size.width / 2 + cellPx * (u + pan.x), size.height / 2 + cellPx * (v + pan.y)]
+  return [size.width / 2 + cellPx * (u + pan.x), size.height / 2 + cellPx * vScale * (v + pan.y)]
 }
 
 /** Inverse of `worldToScreen` — screen (CSS px) to continuous world (grid-cell) coordinates. */
-export function screenToWorld(sx: number, sy: number, size: CanvasSize, pan: CanvasPan, zoom: number): [number, number] {
+export function screenToWorld(sx: number, sy: number, size: CanvasSize, pan: CanvasPan, zoom: number, vScale = 1): [number, number] {
   const cellPx = BASE_CELL_PX * zoom
-  return [(sx - size.width / 2) / cellPx - pan.x, (sy - size.height / 2) / cellPx - pan.y]
+  return [(sx - size.width / 2) / cellPx - pan.x, (sy - size.height / 2) / (cellPx * vScale) - pan.y]
 }
 
 /**
  * Clamps pan so the grid's bounding box ([-half,half] world units, half the project's own
  * `meta.gridExtent`) can never be dragged entirely off-screen — each edge is allowed to retreat
- * only until `PAN_PADDING_PX` of the grid remains visible.
+ * only until `PAN_PADDING_PX` of the grid remains visible. The v range is computed in stretched
+ * px so the bound holds on X/Z planes under a Y voxel scale; pan itself stays in grid units.
  */
-export function clampPan(pan: CanvasPan, size: CanvasSize, zoom: number, half: number): CanvasPan {
+export function clampPan(pan: CanvasPan, size: CanvasSize, zoom: number, half: number, vScale = 1): CanvasPan {
   const cellPx = BASE_CELL_PX * zoom
   const minX = (PAN_PADDING_PX - size.width / 2) / cellPx - half
   const maxX = (size.width / 2 - PAN_PADDING_PX) / cellPx + half
-  const minY = (PAN_PADDING_PX - size.height / 2) / cellPx - half
-  const maxY = (size.height / 2 - PAN_PADDING_PX) / cellPx + half
+  const minY = (PAN_PADDING_PX - size.height / 2) / (cellPx * vScale) - half
+  const maxY = (size.height / 2 - PAN_PADDING_PX) / (cellPx * vScale) + half
   return {
     x: Math.min(Math.max(pan.x, minX), maxX),
     y: Math.min(Math.max(pan.y, minY), maxY),

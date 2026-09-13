@@ -31,6 +31,7 @@ export const createProjectSlice: Slice = (set, get) => ({
     modifiedAt: new Date().toISOString(),
     gridExtent: DEFAULT_GRID_EXTENT,
     noiseSeed: generateNoiseSeed(),
+    voxelScaleY: 1,
   },
 
   setModel: (model) =>
@@ -61,6 +62,15 @@ export const createProjectSlice: Slice = (set, get) => ({
   setProjectName: (name) =>
     set((state) => {
       state.meta.name = name
+      state.meta.modifiedAt = new Date().toISOString()
+      state.dirty = true
+    }),
+
+  setVoxelScaleY: (k) =>
+    set((state) => {
+      // Only the three offered stops are valid — anything else (e.g. a hand-edited file that
+      // slipped past validation) falls back to unit cubes rather than a broken half-state.
+      state.meta.voxelScaleY = k === 0.5 || k === 2 ? k : 1
       state.meta.modifiedAt = new Date().toISOString()
       state.dirty = true
     }),
@@ -145,6 +155,7 @@ export const createProjectSlice: Slice = (set, get) => ({
         modifiedAt: new Date().toISOString(),
         gridExtent: extent,
         noiseSeed: generateNoiseSeed(),
+        voxelScaleY: 1,
       }
       state.past = []
       state.future = []

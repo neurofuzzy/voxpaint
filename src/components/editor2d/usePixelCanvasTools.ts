@@ -9,7 +9,7 @@ import type { ConstructionPlane } from '@/engine/plane/types'
 import { useAppStore } from '@/store/useAppStore'
 import type { SelectionRegion } from '@/store/types'
 import type { CanvasPan, CanvasSize } from './cameraTransform'
-import { clampPan, screenToWorld, touchDistance, touchMidpoint } from './cameraTransform'
+import { clampPan, screenToWorld, touchDistance, touchMidpoint, vScaleForPlane } from './cameraTransform'
 import {
   BASE_CELL_PX,
   clampZoom,
@@ -33,9 +33,10 @@ function pixelToCell(
   pan: CanvasPan,
   zoom: number,
   plane: ConstructionPlane,
+  vScale: number,
 ): [number, number] {
   const rect = canvas.getBoundingClientRect()
-  const [wu, wv] = screenToWorld(clientX - rect.left, clientY - rect.top, size, pan, zoom)
+  const [wu, wv] = screenToWorld(clientX - rect.left, clientY - rect.top, size, pan, zoom, vScale)
   return [toDisplayU(plane, Math.floor(wu)), toDisplayV(plane, Math.floor(wv))]
 }
 
@@ -70,7 +71,10 @@ export function usePixelCanvasTools(canvasRef: React.RefObject<HTMLCanvasElement
   const [pan, setPan] = useState<CanvasPan>({ x: 0, y: 0 })
   // Seed from the current project's extent so a small/large grid opens framed the same as a medium
   // one, with no first-frame flash at zoom 1 (the initializer reads the live store value).
-  const [zoom, setZoom] = useState(() => defaultZoomForExtent(useAppStore.getState().meta.gridExtent))
+  const [zoom, setZoom] = useState(() => {
+    const s = useAppStore.getState()
+    return defaultZoomForExtent(s.meta.gridExtent, vScaleForPlane(s.plane.axis, s.meta.voxelScaleY))
+  })
   const sizeRef = useRef(size)
   sizeRef.current = size
   const panRef = useRef(pan)
@@ -78,6 +82,11 @@ export function usePixelCanvasTools(canvasRef: React.RefObject<HTMLCanvasElement
   const zoomRef = useRef(zoom)
   zoomRef.current = zoom
   const gridExtent = useAppStore((s) => s.meta.gridExtent)
+  const voxelScaleY = useAppStore((s) => s.meta.voxelScaleY)
+  // V-axis stretch for the active plane (Y voxel scale on X/Z planes, square on Y). Kept in a ref
+  // alongside the other camera refs so the stable pointer callbacks below always map through the
+  // current stretch without re-subscribing.
+  const vScaleRef = useRef(1)
   // Clamp against the even effective grid (what's actually drawn/paintable).
   const gridHalfRef = useRef(effectiveExtent(gridExtent) / 2)
   gridHalfRef.current = effectiveExtent(gridExtent) / 2
@@ -88,11 +97,13 @@ export function usePixelCanvasTools(canvasRef: React.RefObject<HTMLCanvasElement
   // column reads dead-centre; for even sizes it's the world origin (0, 0). Extent is locked per
   // project, so this only fires on a project switch — never mid-edit, so it won't fight the user's
   // own pan/zoom. Reads the active plane once (not a dep) so a later plane switch keeps the user's pan.
+  // A voxel-height change re-frames the same way (explicit user action via Project Settings).
   useEffect(() => {
-    setZoom(defaultZoomForExtent(effectiveExtent(gridExtent)))
-    const centre = displayViewCenter(useAppStore.getState().plane, gridExtent)
+    const s = useAppStore.getState()
+    setZoom(defaultZoomForExtent(effectiveExtent(s.meta.gridExtent), vScaleForPlane(s.plane.axis, s.meta.voxelScaleY)))
+    const centre = displayViewCenter(s.plane, s.meta.gridExtent)
     setPan({ x: -centre.u, y: -centre.v })
-  }, [gridExtent])
+  }, [gridExtent, voxelScaleY])
 
   const [linePreview, setLinePreview] = useState<{ anchor: [number, number]; end: [number, number] } | null>(null)
   const [selectPreview, setSelectPreview] = useState<SelectionRegion | null>(null)
@@ -137,20 +148,21 @@ export function usePixelCanvasTools(canvasRef: React.RefObject<HTMLCanvasElement
         const factor = Math.pow(1.1, -e.deltaY / PINCH_ZOOM_SENSITIVITY)
         const nextZoom = clampZoom(zoomRef.current * factor)
         setZoom(nextZoom)
-        setPan((p) => clampPan(p, sizeRef.current, nextZoom, gridHalfRef.current))
+        setPan((p) => clampPan(p, sizeRef.current, nextZoom, gridHalfRef.current, vScaleRef.current))
         return
       }
 
       if (e.deltaX !== 0) {
         const cellPx = BASE_CELL_PX * zoomRef.current
-        setPan((p) => clampPan({ x: p.x + e.deltaX / cellPx, y: p.y + e.deltaY / cellPx }, sizeRef.current, zoomRef.current, gridHalfRef.current))
+        const vScale = vScaleRef.current
+        setPan((p) => clampPan({ x: p.x + e.deltaX / cellPx, y: p.y + e.deltaY / (cellPx * vScale) }, sizeRef.current, zoomRef.current, gridHalfRef.current, vScale))
         return
       }
 
       const factor = Math.pow(1.1, -e.deltaY / WHEEL_ZOOM_SENSITIVITY)
       const nextZoom = clampZoom(zoomRef.current * factor)
       setZoom(nextZoom)
-      setPan((p) => clampPan(p, sizeRef.current, nextZoom, gridHalfRef.current))
+      setPan((p) => clampPan(p, sizeRef.current, nextZoom, gridHalfRef.current, vScaleRef.current))
     }
     canvas.addEventListener('wheel', handleWheel, { passive: false })
     return () => canvas.removeEventListener('wheel', handleWheel)
@@ -172,6 +184,7 @@ export function usePixelCanvasTools(canvasRef: React.RefObject<HTMLCanvasElement
   const floatOrigin = useAppStore((s) => s.floatOrigin)
   const clipboard = useAppStore((s) => s.clipboard)
   const activeTool = useAppStore((s) => s.activeTool)
+  vScaleRef.current = vScaleForPlane(plane.axis, voxelScaleY)
 
   const activeToolRef = useRef(activeTool)
   activeToolRef.current = activeTool
@@ -225,7 +238,7 @@ export function usePixelCanvasTools(canvasRef: React.RefObject<HTMLCanvasElement
       const canvas = canvasRef.current
       const pos = activeTouchesRef.current.get(pointerId)
       if (!canvas || !pos) return
-      const cell = pixelToCell(canvas, pos.clientX, pos.clientY, sizeRef.current, panRef.current, zoomRef.current, ctxRef.current.plane)
+      const cell = pixelToCell(canvas, pos.clientX, pos.clientY, sizeRef.current, panRef.current, zoomRef.current, ctxRef.current.plane, vScaleRef.current)
       const normalized = toNormalizedPointerEvent(
         { button: 0, buttons: 0, shiftKey: false, altKey: false, ctrlKey: false, metaKey: false, pointerId },
         cell,
@@ -269,7 +282,7 @@ export function usePixelCanvasTools(canvasRef: React.RefObject<HTMLCanvasElement
           const rect = canvas.getBoundingClientRect()
           const pts = [...activeTouchesRef.current.values()].map((p) => ({ x: p.clientX - rect.left, y: p.clientY - rect.top }))
           const mid = touchMidpoint(pts[0], pts[1])
-          const [anchorU, anchorV] = screenToWorld(mid.x, mid.y, size, pan, zoom)
+          const [anchorU, anchorV] = screenToWorld(mid.x, mid.y, size, pan, zoom, vScaleRef.current)
           pinchRef.current = { startDist: touchDistance(pts[0], pts[1]), anchorU, anchorV, startZoom: zoom }
           return
         }
@@ -278,7 +291,7 @@ export function usePixelCanvasTools(canvasRef: React.RefObject<HTMLCanvasElement
         // passed with no second finger — a real pinch's second contact almost never lands in the
         // same event as the first, so this window is what keeps a pinch from painting/selecting a
         // stray cell under the first finger before the second one is detected.
-        const cell = pixelToCell(canvas, e.clientX, e.clientY, size, pan, zoom, ctxRef.current.plane)
+        const cell = pixelToCell(canvas, e.clientX, e.clientY, size, pan, zoom, ctxRef.current.plane, vScaleRef.current)
         hoverCellRef.current = cell
         setHoverCell(gridCoordFromPixel(ctxRef.current.plane, cell[0], cell[1]), null)
         const normalized = toNormalizedPointerEvent(e, cell)
@@ -294,7 +307,7 @@ export function usePixelCanvasTools(canvasRef: React.RefObject<HTMLCanvasElement
         return
       }
 
-      const cell = pixelToCell(canvas, e.clientX, e.clientY, size, pan, zoom, ctxRef.current.plane)
+      const cell = pixelToCell(canvas, e.clientX, e.clientY, size, pan, zoom, ctxRef.current.plane, vScaleRef.current)
       hoverCellRef.current = cell
       setHoverCell(gridCoordFromPixel(ctxRef.current.plane, cell[0], cell[1]), null)
       canvas.setPointerCapture(e.pointerId)
@@ -318,7 +331,8 @@ export function usePixelCanvasTools(canvasRef: React.RefObject<HTMLCanvasElement
         panDrag.lastY = e.clientY
         if (Math.hypot(e.clientX - panDrag.startX, e.clientY - panDrag.startY) > PAN_DRAG_THRESHOLD_PX) panDrag.hasMoved = true
         const cellPx = BASE_CELL_PX * zoom
-        setPan((p) => clampPan({ x: p.x + dx / cellPx, y: p.y + dy / cellPx }, size, zoom, effectiveExtent(gridExtent) / 2))
+        const vScale = vScaleRef.current
+        setPan((p) => clampPan({ x: p.x + dx / cellPx, y: p.y + dy / (cellPx * vScale) }, size, zoom, effectiveExtent(gridExtent) / 2, vScale))
         return
       }
 
@@ -333,11 +347,13 @@ export function usePixelCanvasTools(canvasRef: React.RefObject<HTMLCanvasElement
           const { startDist, anchorU, anchorV, startZoom } = pinchRef.current
           const nextZoom = clampZoom(startZoom * (dist / startDist))
           const cellPxNext = BASE_CELL_PX * nextZoom
+          const vScale = vScaleRef.current
           const nextPan = clampPan(
-            { x: (mid.x - size.width / 2) / cellPxNext - anchorU, y: (mid.y - size.height / 2) / cellPxNext - anchorV },
+            { x: (mid.x - size.width / 2) / cellPxNext - anchorU, y: (mid.y - size.height / 2) / (cellPxNext * vScale) - anchorV },
             size,
             nextZoom,
             gridHalfRef.current,
+            vScale,
           )
           setZoom(nextZoom)
           setPan(nextPan)
@@ -349,7 +365,7 @@ export function usePixelCanvasTools(canvasRef: React.RefObject<HTMLCanvasElement
         if (touchHoldRef.current) return
       }
 
-      const cell = pixelToCell(canvas, e.clientX, e.clientY, size, pan, zoom, ctxRef.current.plane)
+      const cell = pixelToCell(canvas, e.clientX, e.clientY, size, pan, zoom, ctxRef.current.plane, vScaleRef.current)
       const prevCell = hoverCellRef.current
       hoverCellRef.current = cell
       // Only push a store update when the hovered *cell* actually changes, not on every mousemove
@@ -387,7 +403,7 @@ export function usePixelCanvasTools(canvasRef: React.RefObject<HTMLCanvasElement
         if (!panDrag.hasMoved && isAnimatePivot) {
           ctxRef.current.clearPivotForCurrentSlice() // self-brackets its own undo stroke
         } else if (!panDrag.hasMoved && (activeToolRef.current === 'paint' || activeToolRef.current === 'erase')) {
-          const cell = pixelToCell(canvas, e.clientX, e.clientY, size, pan, zoom, ctxRef.current.plane)
+          const cell = pixelToCell(canvas, e.clientX, e.clientY, size, pan, zoom, ctxRef.current.plane, vScaleRef.current)
           const c = ctxRef.current
           if (store.mode === 'animate') {
             c.animBeginStroke()
@@ -413,7 +429,7 @@ export function usePixelCanvasTools(canvasRef: React.RefObject<HTMLCanvasElement
           clearTimeout(touchHoldRef.current.timer)
           touchHoldRef.current = null
           canvas.releasePointerCapture(e.pointerId)
-          const cell = pixelToCell(canvas, e.clientX, e.clientY, size, pan, zoom, ctxRef.current.plane)
+          const cell = pixelToCell(canvas, e.clientX, e.clientY, size, pan, zoom, ctxRef.current.plane, vScaleRef.current)
           const normalized = toNormalizedPointerEvent(e, cell)
           const store = useAppStore.getState()
           const map = store.mode === 'animate' ? animateToolMap : toolMap
@@ -431,7 +447,7 @@ export function usePixelCanvasTools(canvasRef: React.RefObject<HTMLCanvasElement
         // through to the normal onUp dispatch below, same as mouse/pen.
       }
 
-      const cell = pixelToCell(canvas, e.clientX, e.clientY, size, pan, zoom, ctxRef.current.plane)
+      const cell = pixelToCell(canvas, e.clientX, e.clientY, size, pan, zoom, ctxRef.current.plane, vScaleRef.current)
       const store = useAppStore.getState()
       const map = store.mode === 'animate' ? animateToolMap : toolMap
       map[activeToolRef.current]?.onUp?.(ctxRef.current, toNormalizedPointerEvent(e, cell))

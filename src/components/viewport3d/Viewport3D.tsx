@@ -36,38 +36,42 @@ const CLICK_DRAG_THRESHOLD_PX = 4
 const BASE_CAMERA_POS: [number, number, number] = [18, 16, 20]
 const CAMERA_REFERENCE_EXTENT = 16
 
-/** Default camera position for a project of the given extent: the base framing scaled by the (even)
- * effective-extent ratio (so the camera pulls back for large models and pushes in for small ones),
- * then offset by the view origin shift so an odd project frames its center column dead-centre. */
-function cameraPosForExtent(gridExtent: number): [number, number, number] {
+/** Default camera position for a project of the given extent and Y voxel scale: the base
+ * framing scaled by the (even) effective-extent ratio (so the camera pulls back for large models
+ * and pushes in for small ones), stretched vertically by the voxel scale, then offset so an odd
+ * project frames its center column dead-centre. */
+function cameraPosForExtent(gridExtent: number, voxelScaleY: number): [number, number, number] {
   const s = effectiveExtent(gridExtent) / CAMERA_REFERENCE_EXTENT
   const shift = viewOriginShift(gridExtent)
-  return [BASE_CAMERA_POS[0] * s + shift, BASE_CAMERA_POS[1] * s + shift, BASE_CAMERA_POS[2] * s + shift]
+  return [BASE_CAMERA_POS[0] * s + shift, (BASE_CAMERA_POS[1] * s + shift) * voxelScaleY, BASE_CAMERA_POS[2] * s + shift]
 }
 
 /**
- * Keeps the camera framed to the project's size. On extent change (a new/loaded project of a
- * different locked-in size) it repositions the camera to the size-appropriate default, recenters
- * the orbit target, and re-captures that as the OrbitControls "home" state so the Reset-camera
- * button returns here. Extent is locked per project, so this never fires mid-edit.
+ * Keeps the camera framed to the project's size. On extent/scale change (a new/loaded project of
+ * a different locked-in size, or a voxel-height change) it repositions the camera to the
+ * size-appropriate default, recenters the orbit target, and re-captures that as the OrbitControls
+ * "home" state so the Reset-camera button returns here. Extent is locked per project, so this
+ * never fires mid-edit.
  */
 function CameraRig({ controlsRef }: { controlsRef: React.RefObject<OrbitControlsImpl | null> }) {
   const camera = useThree((s) => s.camera)
   const gridExtent = useAppStore((s) => s.meta.gridExtent)
+  const voxelScaleY = useAppStore((s) => s.meta.voxelScaleY)
   useEffect(() => {
-    const [x, y, z] = cameraPosForExtent(gridExtent)
+    const [x, y, z] = cameraPosForExtent(gridExtent, voxelScaleY)
     camera.position.set(x, y, z)
-    // Aim at the working origin — shifted half a cell for odd sizes so the center column is centred.
+    // Aim at the working origin — shifted half a cell for odd sizes so the center column is centred
+    // (and stretched by the voxel scale along Y, matching the scaled scene group below).
     const t = viewOriginShift(gridExtent)
     const controls = controlsRef.current
     if (controls) {
-      controls.target.set(t, t, t)
+      controls.target.set(t, t * voxelScaleY, t)
       controls.update()
       controls.saveState() // so controls.reset() (the Reset-camera button) returns to this framing
     } else {
-      camera.lookAt(t, t, t)
+      camera.lookAt(t, t * voxelScaleY, t)
     }
-  }, [gridExtent, camera, controlsRef])
+  }, [gridExtent, voxelScaleY, camera, controlsRef])
   return null
 }
 
@@ -215,10 +219,11 @@ export function Viewport3D() {
   const animSettings = useAppStore((s) => s.animSettings)
   const setStatusMessage = useAppStore((s) => s.setStatusMessage)
   const exposure = useAppStore((s) => s.exposure)
-  // Initial framing for the current project's extent. The <Canvas> reads this once at mount;
-  // CameraRig keeps it in sync on any later extent change. (Select the number, not a fresh array,
+  // Initial framing for the current project's extent/scale. The <Canvas> reads this once at mount;
+  // CameraRig keeps it in sync on any later change. (Select scalars, not fresh arrays/objects,
   // so this doesn't re-render on unrelated store updates.)
   const gridExtent = useAppStore((s) => s.meta.gridExtent)
+  const voxelScaleY = useAppStore((s) => s.meta.voxelScaleY)
   const containerRef = useRef<HTMLDivElement>(null)
   usePlaneLayerScroll(containerRef)
   const [showExposure, setShowExposure] = useState(false)
@@ -236,30 +241,35 @@ export function Viewport3D() {
       onPointerEnter={() => setStatusMessage(ORBIT_HINT)}
       onPointerLeave={() => setStatusMessage(null)}
     >
-      <Canvas camera={{ position: cameraPosForExtent(gridExtent), fov: 45 }} gl={{ antialias: true }}>
+      <Canvas camera={{ position: cameraPosForExtent(gridExtent, voxelScaleY), fov: 45 }} gl={{ antialias: true }}>
         <ToneMappingController exposure={exposure} />
         <CameraRig controlsRef={orbitControlsRef} />
         <color attach="background" args={['#111114']} />
         <SceneLighting />
         <SceneEnvironment />
+        {/* All working-volume contents live under the Y-scale group so voxels render flat/tall
+          while every consumer keeps speaking unit-cube grid coordinates (picking resolves through
+          the scaled parent back to grid-space cell keys). */}
         {textureMode ? (
-          <>
+          <group scale={[1, voxelScaleY, 1]}>
             <TexturedModelView />
             <BoundingBoxFaceSelector />
-          </>
+          </group>
         ) : (
           <>
-            <ConstructionPlaneVisual />
-            <ProjectBoundsBox />
-            {!hasAnimations && <VoxelInstancedMeshes ref={managerRef} />}
-            {!hasAnimations && <OptimizedMeshView />}
-            {hasAnimations && <AnimatedModelView />}
-            <VoxelFaceHighlight />
-            <VoxelGhostPreview />
-            <FloatGhostPreview />
-            <SelectionHighlight />
-            <ConstructionPlaneGizmo />
-            <PivotGizmo />
+            <group scale={[1, voxelScaleY, 1]}>
+              <ConstructionPlaneVisual />
+              <ProjectBoundsBox />
+              {!hasAnimations && <VoxelInstancedMeshes ref={managerRef} />}
+              {!hasAnimations && <OptimizedMeshView />}
+              {hasAnimations && <AnimatedModelView />}
+              <VoxelFaceHighlight />
+              <VoxelGhostPreview />
+              <FloatGhostPreview />
+              <SelectionHighlight />
+              <ConstructionPlaneGizmo />
+              <PivotGizmo />
+            </group>
             <VoxelInteractionHandler managerRef={managerRef} />
           </>
         )}

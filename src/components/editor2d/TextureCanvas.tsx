@@ -2,9 +2,10 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { forEachSelectedCell, traceSelectionOutline } from '@/engine/tools/selectionMask'
 import { projectModelToFace } from '@/engine/texture/projection'
 import { getTexel, texelIndex } from '@/engine/texture/TextureStore'
-import { EMPTY, faceSizeFor, GRAYSCALE } from '@/engine/texture/types'
+import { BOX_FACE_AXIS, EMPTY, faceSizeFor, GRAYSCALE } from '@/engine/texture/types'
 import { useAppStore } from '@/store/useAppStore'
 import { TEXEL_BASE_PX, texWorldToScreen } from './textureCanvasConstants'
+import { vScaleForPlane } from './cameraTransform'
 import { useKeyboardShortcuts } from './useKeyboardShortcuts'
 import { useTextureCanvasTools } from './useTextureCanvasTools'
 
@@ -32,8 +33,12 @@ export function TextureCanvas() {
   const setStatusMessage = useAppStore((s) => s.setStatusMessage)
   const onionSkin = useAppStore((s) => s.onionSkin)
   const gridExtent = useAppStore((s) => s.meta.gridExtent)
+  const voxelScaleY = useAppStore((s) => s.meta.voxelScaleY)
   const faceSize = faceSizeFor(gridExtent)
   const texHalf = faceSize / 2
+  // V-axis display stretch for the active face (Y voxel scale on faces whose v runs along Y,
+  // square on ±Y faces) — texels stay square in data, only their display stretches.
+  const vScale = activeBoxFace ? vScaleForPlane(BOX_FACE_AXIS[activeBoxFace].axis, voxelScaleY) : 1
   const { onPointerDown, onPointerMove, onPointerUp, linePreview, selectPreview, size, pan, zoom } = useTextureCanvasTools(canvasRef)
   useKeyboardShortcuts()
 
@@ -73,6 +78,7 @@ export function TextureCanvas() {
     ctx.fillRect(0, 0, size.width, size.height)
 
     const px = TEXEL_BASE_PX * zoom
+    const pxH = px * vScale
     const face = activeBoxFace
 
     // Face content — painted texels show their grayscale; unpainted texels reveal the model
@@ -92,23 +98,23 @@ export function TextureCanvas() {
           if (onionSkin) continue
           fill = (tu + tv) % 2 === 0 ? '#2f3840' : '#3d4852'
         }
-        const [sx, sy] = texWorldToScreen(tu, tv, size, pan, zoom, texHalf)
+        const [sx, sy] = texWorldToScreen(tu, tv, size, pan, zoom, texHalf, vScale)
         ctx.fillStyle = fill
-        ctx.fillRect(sx, sy, px + 1, px + 1)
+        ctx.fillRect(sx, sy, px + 1, pxH + 1)
       }
     }
 
     // Faint border framing the paintable face extent (no interior grid — the projection is the guide).
-    const [left, top] = texWorldToScreen(0, 0, size, pan, zoom, texHalf)
-    const [right, bottom] = texWorldToScreen(faceSize, faceSize, size, pan, zoom, texHalf)
+    const [left, top] = texWorldToScreen(0, 0, size, pan, zoom, texHalf, vScale)
+    const [right, bottom] = texWorldToScreen(faceSize, faceSize, size, pan, zoom, texHalf, vScale)
     ctx.strokeStyle = '#2a3540'
     ctx.lineWidth = 1.5
     ctx.strokeRect(snapPx(left), snapPx(top), right - left, bottom - top)
 
     // paint-tool shift-line preview
     if (linePreview) {
-      const [ax, ay] = texWorldToScreen(linePreview.anchor[0] + 0.5, linePreview.anchor[1] + 0.5, size, pan, zoom, texHalf)
-      const [ex, ey] = texWorldToScreen(linePreview.end[0] + 0.5, linePreview.end[1] + 0.5, size, pan, zoom, texHalf)
+      const [ax, ay] = texWorldToScreen(linePreview.anchor[0] + 0.5, linePreview.anchor[1] + 0.5, size, pan, zoom, texHalf, vScale)
+      const [ex, ey] = texWorldToScreen(linePreview.end[0] + 0.5, linePreview.end[1] + 0.5, size, pan, zoom, texHalf, vScale)
       ctx.strokeStyle = '#ffffff'
       ctx.lineWidth = 2
       ctx.beginPath()
@@ -123,9 +129,9 @@ export function TextureCanvas() {
         for (let du = 0; du < floatContent.width; du++) {
           const value = floatContent.cells[dv * floatContent.width + du]
           if (value === EMPTY) continue
-          const [sx, sy] = texWorldToScreen(floatOrigin.originU + du, floatOrigin.originV + dv, size, pan, zoom, texHalf)
+          const [sx, sy] = texWorldToScreen(floatOrigin.originU + du, floatOrigin.originV + dv, size, pan, zoom, texHalf, vScale)
           ctx.fillStyle = GRAYSCALE[value] ?? '#ff00ff'
-          ctx.fillRect(sx, sy, px + 1, px + 1)
+          ctx.fillRect(sx, sy, px + 1, pxH + 1)
         }
       }
     }
@@ -135,16 +141,16 @@ export function TextureCanvas() {
     if (activeRegion) {
       ctx.fillStyle = 'rgba(34, 211, 238, 0.25)'
       forEachSelectedCell(activeRegion, (u, v) => {
-        const [sx, sy] = texWorldToScreen(u, v, size, pan, zoom, texHalf)
-        ctx.fillRect(sx, sy, px + 1, px + 1)
+        const [sx, sy] = texWorldToScreen(u, v, size, pan, zoom, texHalf, vScale)
+        ctx.fillRect(sx, sy, px + 1, pxH + 1)
       })
       ctx.strokeStyle = 'rgb(34, 211, 238)'
       ctx.lineWidth = 1.5
       ctx.setLineDash([8, 6])
       ctx.lineDashOffset = -antPhase
       for (const [[au, av], [bu, bv]] of traceSelectionOutline(activeRegion)) {
-        const [ax, ay] = texWorldToScreen(au, av, size, pan, zoom, texHalf)
-        const [bx, by] = texWorldToScreen(bu, bv, size, pan, zoom, texHalf)
+        const [ax, ay] = texWorldToScreen(au, av, size, pan, zoom, texHalf, vScale)
+        const [bx, by] = texWorldToScreen(bu, bv, size, pan, zoom, texHalf, vScale)
         ctx.beginPath()
         if (ax === bx) {
           const sx = snapPx(ax)
@@ -159,7 +165,7 @@ export function TextureCanvas() {
       }
       ctx.setLineDash([])
     }
-  }, [texture, activeBoxFace, projection, onionSkin, linePreview, selection, selectPreview, floatContent, floatOrigin, antPhase, size, pan, zoom, faceSize, texHalf])
+  }, [texture, activeBoxFace, projection, onionSkin, linePreview, selection, selectPreview, floatContent, floatOrigin, antPhase, size, pan, zoom, vScale, faceSize, texHalf])
 
   useEffect(() => {
     draw()

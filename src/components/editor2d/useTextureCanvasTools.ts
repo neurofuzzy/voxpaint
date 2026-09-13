@@ -6,7 +6,8 @@ import { faceSizeFor } from '@/engine/texture/types'
 import { useAppStore } from '@/store/useAppStore'
 import type { SelectionRegion } from '@/store/types'
 import type { CanvasPan, CanvasSize } from './cameraTransform'
-import { touchDistance, touchMidpoint } from './cameraTransform'
+import { touchDistance, touchMidpoint, vScaleForPlane } from './cameraTransform'
+import { BOX_FACE_AXIS } from '@/engine/texture/types'
 import { TOUCH_GESTURE_DELAY_MS } from './canvasConstants'
 import { defaultTexZoomForExtent, TEXEL_BASE_PX, texClampPan, texClampZoom, texScreenToWorld } from './textureCanvasConstants'
 
@@ -21,9 +22,10 @@ function pixelToTexel(
   pan: CanvasPan,
   zoom: number,
   texHalf: number,
+  vScale: number,
 ): [number, number] {
   const rect = canvas.getBoundingClientRect()
-  const [tu, tv] = texScreenToWorld(clientX - rect.left, clientY - rect.top, size, pan, zoom, texHalf)
+  const [tu, tv] = texScreenToWorld(clientX - rect.left, clientY - rect.top, size, pan, zoom, texHalf, vScale)
   return [Math.floor(tu), Math.floor(tv)]
 }
 
@@ -58,6 +60,7 @@ export function useTextureCanvasTools(canvasRef: React.RefObject<HTMLCanvasEleme
   const zoomRef = useRef(zoom)
   zoomRef.current = zoom
   const gridExtent = useAppStore((s) => s.meta.gridExtent)
+  const voxelScaleY = useAppStore((s) => s.meta.voxelScaleY)
   const faceSize = faceSizeFor(gridExtent)
   const texHalf = faceSize / 2
   const texHalfRef = useRef(texHalf)
@@ -65,10 +68,14 @@ export function useTextureCanvasTools(canvasRef: React.RefObject<HTMLCanvasEleme
 
   // Re-frame on a project switch to a different size: reset to the size-appropriate default zoom and
   // recenter. Extent is locked per project, so this only fires on switch, never mid-edit.
+  // A voxel-height change re-frames the same way (explicit user action via Project Settings).
   useEffect(() => {
-    setZoom(defaultTexZoomForExtent(gridExtent))
+    const s = useAppStore.getState()
+    const face = s.activeBoxFace
+    const vs = face ? vScaleForPlane(BOX_FACE_AXIS[face].axis, s.meta.voxelScaleY) : 1
+    setZoom(defaultTexZoomForExtent(s.meta.gridExtent, vs))
     setPan({ x: 0, y: 0 })
-  }, [gridExtent])
+  }, [gridExtent, voxelScaleY])
 
   const [linePreview, setLinePreview] = useState<{ anchor: [number, number]; end: [number, number] } | null>(null)
   const [selectPreview, setSelectPreview] = useState<SelectionRegion | null>(null)
@@ -97,18 +104,19 @@ export function useTextureCanvasTools(canvasRef: React.RefObject<HTMLCanvasEleme
         const factor = Math.pow(1.1, -e.deltaY / 15)
         const nextZoom = texClampZoom(zoomRef.current * factor)
         setZoom(nextZoom)
-        setPan((p) => texClampPan(p, sizeRef.current, nextZoom, texHalfRef.current))
+        setPan((p) => texClampPan(p, sizeRef.current, nextZoom, texHalfRef.current, vScaleRef.current))
         return
       }
       if (e.deltaX !== 0) {
         const px = TEXEL_BASE_PX * zoomRef.current
-        setPan((p) => texClampPan({ x: p.x + e.deltaX / px, y: p.y + e.deltaY / px }, sizeRef.current, zoomRef.current, texHalfRef.current))
+        const vScale = vScaleRef.current
+        setPan((p) => texClampPan({ x: p.x + e.deltaX / px, y: p.y + e.deltaY / (px * vScale) }, sizeRef.current, zoomRef.current, texHalfRef.current, vScale))
         return
       }
       const factor = Math.pow(1.1, -e.deltaY / 100)
       const nextZoom = texClampZoom(zoomRef.current * factor)
       setZoom(nextZoom)
-      setPan((p) => texClampPan(p, sizeRef.current, nextZoom, texHalfRef.current))
+      setPan((p) => texClampPan(p, sizeRef.current, nextZoom, texHalfRef.current, vScaleRef.current))
     }
     canvas.addEventListener('wheel', handleWheel, { passive: false })
     return () => canvas.removeEventListener('wheel', handleWheel)
@@ -129,6 +137,11 @@ export function useTextureCanvasTools(canvasRef: React.RefObject<HTMLCanvasEleme
   const floatOrigin = useAppStore((s) => s.textureFloatOrigin)
   const clipboard = useAppStore((s) => s.textureClipboard)
   const activeTool = useAppStore((s) => s.activeTool)
+  // V-axis stretch for the active face (Y voxel scale on faces whose v runs along Y, square on
+  // ±Y faces). Ref mirror for the stable ([]) callbacks; render closures use `vScale` directly.
+  const vScale = activeBoxFace ? vScaleForPlane(BOX_FACE_AXIS[activeBoxFace].axis, voxelScaleY) : 1
+  const vScaleRef = useRef(vScale)
+  vScaleRef.current = vScale
 
   const activeToolRef = useRef(activeTool)
   activeToolRef.current = activeTool
@@ -174,7 +187,7 @@ export function useTextureCanvasTools(canvasRef: React.RefObject<HTMLCanvasEleme
       const canvas = canvasRef.current
       const pos = activeTouchesRef.current.get(pointerId)
       if (!canvas || !pos) return
-      const cell = pixelToTexel(canvas, pos.clientX, pos.clientY, sizeRef.current, panRef.current, zoomRef.current, texHalfRef.current)
+      const cell = pixelToTexel(canvas, pos.clientX, pos.clientY, sizeRef.current, panRef.current, zoomRef.current, texHalfRef.current, vScaleRef.current)
       const normalized = toNormalizedPointerEvent(
         { button: 0, buttons: 0, shiftKey: false, altKey: false, ctrlKey: false, metaKey: false, pointerId },
         cell,
@@ -214,13 +227,13 @@ export function useTextureCanvasTools(canvasRef: React.RefObject<HTMLCanvasEleme
           const rect = canvas.getBoundingClientRect()
           const pts = [...activeTouchesRef.current.values()].map((p) => ({ x: p.clientX - rect.left, y: p.clientY - rect.top }))
           const mid = touchMidpoint(pts[0], pts[1])
-          const [anchorU, anchorV] = texScreenToWorld(mid.x, mid.y, size, pan, zoom, texHalf)
+          const [anchorU, anchorV] = texScreenToWorld(mid.x, mid.y, size, pan, zoom, texHalf, vScale)
           pinchRef.current = { startDist: touchDistance(pts[0], pts[1]), anchorU, anchorV, startZoom: zoom }
           return
         }
 
         if (!activeFaceRef.current) return // nothing to draw — still tracked above for a possible pinch
-        const cell = pixelToTexel(canvas, e.clientX, e.clientY, size, pan, zoom, texHalf)
+        const cell = pixelToTexel(canvas, e.clientX, e.clientY, size, pan, zoom, texHalf, vScale)
         const normalized = toNormalizedPointerEvent(e, cell)
         touchHoldRef.current = {
           pointerId: e.pointerId,
@@ -233,11 +246,11 @@ export function useTextureCanvasTools(canvasRef: React.RefObject<HTMLCanvasEleme
       }
 
       if (!activeFaceRef.current) return
-      const cell = pixelToTexel(canvas, e.clientX, e.clientY, size, pan, zoom, texHalf)
+      const cell = pixelToTexel(canvas, e.clientX, e.clientY, size, pan, zoom, texHalf, vScale)
       canvas.setPointerCapture(e.pointerId)
       textureToolMap[activeToolRef.current].onDown?.(ctxRef.current, toNormalizedPointerEvent(e, cell))
     },
-    [canvasRef, size, pan, zoom, texHalf, finishTouchDrag],
+    [canvasRef, size, pan, zoom, texHalf, vScale, finishTouchDrag],
   )
 
   const onPointerMove = useCallback(
@@ -252,7 +265,7 @@ export function useTextureCanvasTools(canvasRef: React.RefObject<HTMLCanvasEleme
         panDrag.lastY = e.clientY
         if (Math.hypot(e.clientX - panDrag.startX, e.clientY - panDrag.startY) > PAN_DRAG_THRESHOLD_PX) panDrag.hasMoved = true
         const px = TEXEL_BASE_PX * zoom
-        setPan((p) => texClampPan({ x: p.x + dx / px, y: p.y + dy / px }, size, zoom, texHalf))
+        setPan((p) => texClampPan({ x: p.x + dx / px, y: p.y + dy / (px * vScale) }, size, zoom, texHalf, vScale))
         return
       }
 
@@ -268,10 +281,11 @@ export function useTextureCanvasTools(canvasRef: React.RefObject<HTMLCanvasEleme
           const nextZoom = texClampZoom(startZoom * (dist / startDist))
           const pxNext = TEXEL_BASE_PX * nextZoom
           const nextPan = texClampPan(
-            { x: (mid.x - size.width / 2) / pxNext - anchorU + texHalf, y: (mid.y - size.height / 2) / pxNext - anchorV + texHalf },
+            { x: (mid.x - size.width / 2) / pxNext - anchorU + texHalf, y: (mid.y - size.height / 2) / (pxNext * vScale) - anchorV + texHalf },
             size,
             nextZoom,
             texHalf,
+            vScale,
           )
           setZoom(nextZoom)
           setPan(nextPan)
@@ -283,10 +297,10 @@ export function useTextureCanvasTools(canvasRef: React.RefObject<HTMLCanvasEleme
       }
 
       if (!activeFaceRef.current) return
-      const cell = pixelToTexel(canvas, e.clientX, e.clientY, size, pan, zoom, texHalf)
+      const cell = pixelToTexel(canvas, e.clientX, e.clientY, size, pan, zoom, texHalf, vScale)
       textureToolMap[activeToolRef.current].onMove?.(ctxRef.current, toNormalizedPointerEvent(e, cell))
     },
-    [canvasRef, size, pan, zoom, texHalf],
+    [canvasRef, size, pan, zoom, texHalf, vScale],
   )
 
   const onPointerUp = useCallback(
@@ -310,7 +324,7 @@ export function useTextureCanvasTools(canvasRef: React.RefObject<HTMLCanvasEleme
           touchHoldRef.current = null
           canvas.releasePointerCapture(e.pointerId)
           if (!activeFaceRef.current) return
-          const cell = pixelToTexel(canvas, e.clientX, e.clientY, size, pan, zoom, texHalf)
+          const cell = pixelToTexel(canvas, e.clientX, e.clientY, size, pan, zoom, texHalf, vScale)
           const normalized = toNormalizedPointerEvent(e, cell)
           textureToolMap[activeToolRef.current].onDown?.(ctxRef.current, normalized)
           textureToolMap[activeToolRef.current].onUp?.(ctxRef.current, normalized)
@@ -327,11 +341,11 @@ export function useTextureCanvasTools(canvasRef: React.RefObject<HTMLCanvasEleme
       }
 
       if (!activeFaceRef.current) return
-      const cell = pixelToTexel(canvas, e.clientX, e.clientY, size, pan, zoom, texHalf)
+      const cell = pixelToTexel(canvas, e.clientX, e.clientY, size, pan, zoom, texHalf, vScale)
       textureToolMap[activeToolRef.current].onUp?.(ctxRef.current, toNormalizedPointerEvent(e, cell))
       canvas.releasePointerCapture(e.pointerId)
     },
-    [canvasRef, size, pan, zoom, texHalf],
+    [canvasRef, size, pan, zoom, texHalf, vScale],
   )
 
   return { onPointerDown, onPointerMove, onPointerUp, linePreview, selectPreview, size, pan, zoom }

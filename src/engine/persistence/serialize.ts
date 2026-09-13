@@ -148,6 +148,7 @@ export function deserializeProject(file: VoxPaintProjectFile): { model: VoxelMod
   // `noiseSeed` likewise post-dates `ProjectMeta` being otherwise fully required. Default to 0 (the
   // hash functions' unseeded behavior) rather than a fresh random seed, so an old project's noise
   // looks exactly the same as it always did instead of visibly shifting on next load.
-  const meta: ProjectMeta = { ...file.meta, noiseSeed: file.meta.noiseSeed ?? 0 }
+  // `voxelScaleY` is the same story one generation later: pre-scale files load as 1x (unit cubes).
+  const meta: ProjectMeta = { ...file.meta, noiseSeed: file.meta.noiseSeed ?? 0, voxelScaleY: file.meta.voxelScaleY ?? 1 }
   return { model: { ...built, bounds: recomputeBounds(built) }, palette, meta, texture, view, animSettings, sliceMasks, slicePivots }
 }
