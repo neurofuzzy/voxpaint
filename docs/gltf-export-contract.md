@@ -54,6 +54,20 @@ All materials use standard glTF 2.0 **metallic-roughness** PBR:
   
 - **`occlusionTexture`** (optional) — only if ambient occlusion baking is enabled. Uses `TEXCOORD_1`. Alpha channel holds the occlusion value; RGB unused (set to white in `RGBAFormat`).
 
+### Assigned builtin materials (optional texture maps)
+
+Palette slots may carry an assigned builtin surface material (vendored PBR sets — see
+`public/materials/NOTICE.md` for provenance). Groups with an assignment export its maps,
+tinted by the slot color (`baseColorFactor × baseColorTexture`):
+
+- **`baseColorTexture`** — the material's albedo (sRGB), whole-face box-mapped stretch.
+- **`roughnessTexture`** (`G` channel) / **`metalnessTexture`** (`B` channel) — when present,
+  the matching scalar factor is pinned to `1.0` so the map reads as authored. When a map is
+  absent, the manifest's scalar fallback (or the class default) applies instead.
+- Only on the untextured path: user-painted texture wins `.map` on the textured path, and
+  glass slots never carry materials. `includeTextureMaps: false` drops them with everything else.
+- Material names gain the material id: `voxel_{hex}_{class}_{materialId}`.
+
 ### Material classes and PBR parameters
 
 | Class | `metallicFactor` | `roughnessFactor` | `transmission` | Extension | Notes |
@@ -62,10 +76,11 @@ All materials use standard glTF 2.0 **metallic-roughness** PBR:
 | Emissive | 0 | 0.5 | 0 | `KHR_materials_emissive_strength` | Glowing surface. See [Emissive Animation](#emissive-animation-via-khr_animation_pointer) below. |
 | Metal | 1 | 0.2 | 0 | — | Polished metal; needs scene environment map. Optional specular-noise texture via metalness/roughness maps. |
 | Glass | 0 | 0.5* | 1 | `KHR_materials_transmission` + `KHR_materials_volume` | Frosted transparent. `*` Adjustable per-export via `glassRoughnessLevel` option (default 0.3). |
+| Carpaint | 0.9 | 0.25 | 0 | `KHR_materials_clearcoat` | Automotive paint: metallic base coat under a clearcoat layer. Needs scene environment map for the coat reflections. |
 
 ### Extension support
 
-Exactly **three** KHR material extensions are used, one per non-matte class:
+Exactly **four** KHR material extensions are used, one per non-matte class:
 
 #### `KHR_materials_emissive_strength`
 
@@ -81,9 +96,17 @@ Exactly **three** KHR material extensions are used, one per non-matte class:
 - **Volume extension fields** — `thickness: 0.5`.
 - **Why** — specifies frosted-glass opacity and refraction.
 
+#### `KHR_materials_clearcoat`
+
+- **When** — carpaint-class materials only.
+- **Values** — `clearcoatFactor: 1`, `clearcoatRoughnessFactor: 0.08`.
+- **Why** — a transparent coat layer over the metallic base coat: the second specular
+  reflection that reads as automotive paint. In three.js, automatically emitted when
+  `material.clearcoat !== 0`.
+
 ### Not used
 
-No other KHR material extensions are present (no `KHR_materials_specular`, `KHR_materials_sheen`, `KHR_materials_clearcoat`, `KHR_materials_iridescence`, `KHR_materials_anisotropy`, `KHR_materials_unlit`, `KHR_texture_transform`, etc.). The specular-noise variant on metal is done via texture maps, not the `KHR_materials_specular` extension.
+No other KHR material extensions are present (no `KHR_materials_specular`, `KHR_materials_sheen`, `KHR_materials_iridescence`, `KHR_materials_anisotropy`, `KHR_materials_unlit`, `KHR_texture_transform`, etc.). The specular-noise variant on metal is done via texture maps, not the `KHR_materials_specular` extension.
 
 ---
 
@@ -139,6 +162,15 @@ Both channels sync to the same 1-second cycle (`EMISSIVE_ANIM_CYCLE_SECONDS = 1`
 - Cameras.
 - Punctual lights (`KHR_lights_punctual`).
 - Scene graphs with non-identity top-level transforms (the root node is used; child animation nodes are present only if animations exist).
+
+### Preview-only presentation (never exported)
+
+The 3D preview's look goes beyond the model: the IBL environment choice (Neutral / Studio /
+Outdoor / custom HDR), the directional light rig, the gradient-skysphere background, and the
+tone-mapping exposure are **viewport presentation only**. They affect how every material reads
+on screen — clearcoat in particular needs a contrasty environment to show its reflections —
+but none of it is baked into the `.glb`. A viewer supplies its own environment and lighting;
+only the material parameters above travel with the file.
 
 ---
 

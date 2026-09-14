@@ -8,10 +8,14 @@ import { bakeAOToAtlas, makeSpecularNoiseTexture } from '@/engine/ao/bakeAO'
 import { unwrapGeometries } from '@/engine/ao/uvUnwrap'
 import { buildBlendAtlas } from '@/engine/texture/boxMapping'
 import { bakeOverlayTexture } from '@/engine/texture/overlay'
-import { buildTexturedGeometryByColor, buildTexturedGeometryBySlice } from '@/engine/texture/texturedGeometry'
+import { buildTexturedGeometryByColor, buildTexturedGeometryBySlice, materialUVForExtent } from '@/engine/texture/texturedGeometry'
+import { faceSizeFor } from '@/engine/texture/types'
 import { hasTextureContent } from '@/engine/texture/TextureStore'
+import { BUILTIN_MATERIAL_BY_ID, type SlotMaterialAssignments } from '@/engine/materials/builtinMaterials'
+import { loadMaterialMaps, type SlotMaterialMaps } from '@/engine/materials/materialMaps'
 import { buildOptimizedVoxelGeometryByMaterial, buildOptimizedVoxelGroupsBySlice } from '@/engine/instancing/voxelMeshBuilder'
 import { darkestBaseColor, materialParamsFor, type MaterialClass } from '@/engine/palette/palette'
+import { materialDefForGroup } from '@/engine/instancing/previewMaterial'
 import { buildEmissiveAnimIndex } from '@/engine/palette/emissiveAnimation'
 import type { SliceAnimSettings, SliceKey } from '@/engine/animation/types'
 import { assignVoxelsToNodes, hasActiveAnimations, resolveAnimCenter } from '@/engine/animation/animationLayers'
@@ -88,6 +92,10 @@ export type GltfExportOptions = {
    * exported vertices after every other bake step (overlay/AO/specular all run in unit-cube voxel
    * units), so the .glb matches the scaled 3D view — see `scaleGeometry.ts`. */
   voxelScaleY?: VoxelScaleY
+  /** Per-slot builtin-material assignments (`"<kind>:<index>"` → material id). Groups split by
+   * material and export its maps (tinted by the slot color). Ignored when `includeTextureMaps`
+   * is false, and on the textured path (user paint occupies `.map`). */
+  slotMaterials?: SlotMaterialAssignments
 }
 
 const hex6 = (colorKey: number) => colorKey.toString(16).padStart(6, '0')
@@ -286,6 +294,10 @@ export async function exportModelToGlb(
           material.ior = 1.5
           material.thickness = 0.5
         }
+        if (params.clearcoat > 0) {
+          material.clearcoat = params.clearcoat
+          material.clearcoatRoughness = params.clearcoatRoughness
+        }
         if (aoTex) material.aoMap = aoTex
         if (params.emissiveIntensity > 0) {
           material.emissive = new THREE.Color(colorKey)
@@ -313,6 +325,10 @@ export async function exportModelToGlb(
           roughness: params.roughness,
           transmission: params.transmission,
         })
+        if (params.clearcoat > 0) {
+          material.clearcoat = params.clearcoat
+          material.clearcoatRoughness = params.clearcoatRoughness
+        }
         if (aoTex && materialClass !== 'emissive') material.aoMap = aoTex
         if (materialClass === 'emissive') {
           material.emissive = new THREE.Color(colorKey)
@@ -333,16 +349,18 @@ export async function exportModelToGlb(
       }
     }
   } else {
-    // PBR path — one solid-colour optimized mesh per (materialClass, colorKey) pair, optional baked AO.
-    // When animations exist, groups are further split by slice for per-node assignment.
-    let groups: Array<{ geometry: THREE.BufferGeometry; colorKey: number; materialClass: MaterialClass; sliceKey?: string }>
+    // PBR path — one optimized mesh per (materialClass, colorKey, materialId) triple, optional
+    // baked AO. When animations exist, groups are further split by slice for per-node assignment.
+    let groups: Array<{ geometry: THREE.BufferGeometry; colorKey: number; materialClass: MaterialClass; materialId: string | null; sliceKey?: string }>
 
     const mergeCoplanar = options.optimizeMesh ?? true
+    const hasSlotMaterials = options.slotMaterials && Object.keys(options.slotMaterials).length > 0
+    const uvFor = hasSlotMaterials ? materialUVForExtent(gridExtent) : undefined
     if (hasAnimations && nodeAssignment) {
-      const sliceResult = buildOptimizedVoxelGroupsBySlice(model, palette, nodeAssignment, mergeCoplanar)
+      const sliceResult = buildOptimizedVoxelGroupsBySlice(model, palette, nodeAssignment, mergeCoplanar, options.slotMaterials, uvFor)
       groups = sliceResult.groups
     } else {
-      groups = buildOptimizedVoxelGeometryByMaterial(model, palette, mergeCoplanar).map((g) => ({ ...g, sliceKey: undefined }))
+      groups = buildOptimizedVoxelGeometryByMaterial(model, palette, mergeCoplanar, options.slotMaterials, uvFor).map((g) => ({ ...g, sliceKey: undefined }))
     }
     for (const { geometry } of groups) geometries.push(geometry)
     if (!includeTextureMaps) stripUVs(groups)
@@ -375,20 +393,54 @@ export async function exportModelToGlb(
       }
     }
 
+    // Assigned builtin materials: resolve each used id to its downscaled maps (faceSize matches
+    // the live preview exactly). A failed load falls back to the plain recipe for those groups.
+    const slotMaps = new Map<string, SlotMaterialMaps>()
+    if (includeTextureMaps && hasSlotMaterials) {
+      const ids = [...new Set(groups.map((g) => g.materialId).filter((id): id is string => !!id && !!BUILTIN_MATERIAL_BY_ID[id]))]
+      await Promise.all(ids.map(async (id) => {
+        try {
+          slotMaps.set(id, await loadMaterialMaps(BUILTIN_MATERIAL_BY_ID[id], faceSizeFor(gridExtent)))
+        } catch {
+          // Fall through — groups keep their unmapped recipe.
+        }
+      }))
+      for (const m of slotMaps.values()) {
+        if (m.map) textures.push(m.map)
+        if (m.roughnessMap) textures.push(m.roughnessMap)
+        if (m.metalnessMap) textures.push(m.metalnessMap)
+      }
+    }
+
     bakeScaleY(groups)
-    for (const { materialClass, colorKey, geometry, sliceKey } of groups) {
+    for (const { materialClass, colorKey, materialId, geometry, sliceKey } of groups) {
       const params = materialParamsFor(materialClass)
       const isGlass = materialClass === 'glass'
+      const matDef = materialDefForGroup(materialId, materialClass)
+      const matMaps = materialId ? (slotMaps.get(materialId) ?? null) : null
       const material = new THREE.MeshPhysicalMaterial({
         color: colorKey,
         vertexColors: false,
-        metalness: params.metalness,
-        roughness: isGlass ? (options.glassRoughnessLevel ?? 0.3) : params.roughness,
+        metalness: matDef?.metalness ?? params.metalness,
+        roughness: isGlass ? (options.glassRoughnessLevel ?? 0.3) : (matDef?.roughness ?? params.roughness),
         transmission: params.transmission,
       })
+      if (matMaps?.map) material.map = matMaps.map
+      if (matMaps?.roughnessMap) {
+        material.roughnessMap = matMaps.roughnessMap
+        material.roughness = 1
+      }
+      if (matMaps?.metalnessMap) {
+        material.metalnessMap = matMaps.metalnessMap
+        material.metalness = 1
+      }
       if (params.transmission > 0) {
         material.ior = 1.5
         material.thickness = 0.5
+      }
+      if (params.clearcoat > 0) {
+        material.clearcoat = params.clearcoat
+        material.clearcoatRoughness = params.clearcoatRoughness
       }
       if (params.emissiveIntensity > 0) {
         material.emissive = new THREE.Color(colorKey)
@@ -401,11 +453,12 @@ export async function exportModelToGlb(
       }
       if (materialClass === 'metal') {
         material.specularIntensity = 0
-        if (metalTex) material.metalnessMap = metalTex
-        if (roughTex) material.roughnessMap = roughTex
-        if (colorTex) material.map = colorTex
+        // Authored material maps win over the global specular-noise bake on the same channel.
+        if (!matMaps?.metalnessMap && metalTex) material.metalnessMap = metalTex
+        if (!matMaps?.roughnessMap && roughTex) material.roughnessMap = roughTex
+        if (!matMaps?.map && colorTex) material.map = colorTex
       }
-      material.name = `voxel_${hex6(colorKey)}_${materialClass}`
+      material.name = `voxel_${hex6(colorKey)}_${materialClass}${materialId ? `_${materialId}` : ''}`
       const mesh = new THREE.Mesh(geometry, material)
       mesh.name = material.name
       attachToSliceOrRoot(mesh, sliceKey, animSettings, sliceNodeInfo, sliceNodes, animNodes, root, slicePivots, voxelScaleY)

@@ -4,6 +4,7 @@ import type { CellKey, ChamferCell, Coord, VoxelModel } from '@/engine/grid/type
 import { concaveCornerGeometry, convexCornerGeometry, mirrorVGeometry, rampGeometry, thinGeometry, wedgeGeometry } from '@/engine/chamfer/chamferGeometry'
 import { materialClassFor, resolveSlotColor, type MaterialClass } from '@/engine/palette/palette'
 import type { PaletteState } from '@/engine/palette/types'
+import { BUILTIN_MATERIAL_BY_ID, slotMaterialKey, type SlotMaterialAssignments } from '@/engine/materials/builtinMaterials'
 import type { SliceKey } from '@/engine/animation/types'
 import { chamferBasisIsReflected, chamferInstanceMatrix } from './basis'
 import { optimizeGroupsByCSG, triangleCount, type VoxelGroup } from './meshOptimizer'
@@ -57,6 +58,28 @@ export type VertexUV = (chamfer: ChamferCell | undefined, normal: THREE.Vector3,
 const QUANT = 1e6
 const qkey = (v: THREE.Vector3) => `${Math.round(v.x * QUANT)},${Math.round(v.y * QUANT)},${Math.round(v.z * QUANT)}`
 const COPLANAR_DOT = 0.9999 // two triangles count as coplanar (same-facing) above this normal dot
+
+/**
+ * Attaches per-vertex `uv` from an injected generator (see `materialUVForExtent` in
+ * `engine/texture/texturedGeometry.ts`) to CSG-optimized geometry, which otherwise carries
+ * none. Applied only to groups with an assigned builtin material — plain groups stay
+ * UV-free so map-free exports carry no TEXCOORDs.
+ */
+function applyUVToGeometry(geometry: THREE.BufferGeometry, uvFor: VertexUV): void {
+  const pos = geometry.getAttribute('position') as THREE.BufferAttribute
+  const nor = geometry.getAttribute('normal') as THREE.BufferAttribute
+  const uvs = new Float32Array(pos.count * 2)
+  const n = new THREE.Vector3()
+  const v = new THREE.Vector3()
+  for (let i = 0; i < pos.count; i++) {
+    n.fromBufferAttribute(nor, i)
+    v.fromBufferAttribute(pos, i)
+    const [u, w] = uvFor(undefined, n, v)
+    uvs[i * 2] = u
+    uvs[i * 2 + 1] = w
+  }
+  geometry.setAttribute('uv', new THREE.BufferAttribute(uvs, 2))
+}
 
 // Chamfer prefab geometries (non-indexed, CCW-outward), keyed by shapeKind + mirrored variant.
 const CHAMFER_BASE: Record<string, THREE.BufferGeometry> = (() => {
@@ -259,7 +282,21 @@ export interface ColorGroupGeometry {
   colorKey: number
   /** The group's PBR material class (matte/emissive/metal/glass). */
   materialClass: MaterialClass
+  /** Assigned builtin material id, or null. Glass slots never carry one (see below). */
+  materialId: string | null
   geometry: THREE.BufferGeometry
+}
+
+/**
+ * Resolves a cell's assigned builtin material: the slot's `slotMaterials` entry, validated
+ * against the manifest (a hand-edited file may reference an unknown id — treated as none).
+ * Glass slots never carry materials (transmissive materials keep their solid tint for viewer
+ * compatibility, same rule as the painted overlay).
+ */
+export function materialIdForSlot(slot: { kind: string; index: number }, slotMaterials?: SlotMaterialAssignments): string | null {
+  if (slot.kind === 'glass') return null
+  const id = slotMaterials?.[slotMaterialKey(slot.kind, slot.index)]
+  return id && BUILTIN_MATERIAL_BY_ID[id] ? id : null
 }
 
 /**
@@ -282,15 +319,20 @@ export interface OptimizedVoxelGroups {
 }
 
 /**
- * Build per-voxel solid geometry grouped by (materialClass, colorKey), then CSG-union each group.
- * CSG boolean union naturally discards interior faces between adjacent same-colour voxels and
- * never creates false edge-bridges between disconnected components. Adjacent voxels of different
- * colours keep their shared interface faces (they live in separate CSG groups).
+ * Build per-voxel solid geometry grouped by (materialClass, colorKey, materialId), then
+ * CSG-union each group. CSG boolean union naturally discards interior faces between adjacent
+ * same-colour voxels and never creates false edge-bridges between disconnected components.
+ * Adjacent voxels of different colours (or different assigned materials) keep their shared
+ * interface faces (they live in separate CSG groups).
  *
- * Returns one `ColorGroupGeometry` per (materialClass, colorKey) pair — the consumer creates one
- * solid-colour PBR material per group. No vertex colours are needed.
+ * Returns one `ColorGroupGeometry` per (materialClass, colorKey, materialId) triple — the
+ * consumer creates one PBR material per group. No vertex colours are needed.
+ *
+ * `uvFor`, when given, attaches per-vertex material-map UVs to groups carrying a builtin
+ * material (plain groups stay UV-free). Pass it whenever assignments may exist — UVs must be
+ * present before the (async) map loads resolve, or the maps would arrive with nothing to sample.
  */
-export function buildOptimizedVoxelGroups(model: VoxelModel, palette: PaletteState, mergeCoplanar?: boolean): OptimizedVoxelGroups {
+export function buildOptimizedVoxelGroups(model: VoxelModel, palette: PaletteState, mergeCoplanar?: boolean, slotMaterials?: SlotMaterialAssignments, uvFor?: VertexUV): OptimizedVoxelGroups {
   const byGroup = new Map<string, VoxelGroup>()
   const color = new THREE.Color()
   const matrix = new THREE.Matrix4()
@@ -302,11 +344,12 @@ export function buildOptimizedVoxelGroups(model: VoxelModel, palette: PaletteSta
     const materialClass = materialClassFor(slot.kind)
     const colorKey = color.set(resolveSlotColor(palette, slot)).getHex()
     const chamfer = model.chamfer.get(key)
+    const materialId = materialIdForSlot(slot, slotMaterials)
 
-    const groupKey = `${materialClass}:${colorKey}`
+    const groupKey = `${materialClass}:${colorKey}:${materialId ?? ''}`
     let group = byGroup.get(groupKey)
     if (!group) {
-      group = { colorKey, materialClass, geometries: [] }
+      group = { colorKey, materialClass, materialId, geometries: [] }
       byGroup.set(groupKey, group)
     }
 
@@ -329,14 +372,17 @@ export function buildOptimizedVoxelGroups(model: VoxelModel, palette: PaletteSta
   const isOccupied = (x: number, y: number, z: number) => isCellOccupied(model, x, y, z)
   const groups = optimizeGroupsByCSG(Array.from(byGroup.values()), mergeCoplanar ?? true, isOccupied)
   let optimizedTriangles = 0
-  for (const g of groups) optimizedTriangles += triangleCount(g.geometry)
+  for (const g of groups) {
+    if (uvFor && g.materialId) applyUVToGeometry(g.geometry, uvFor)
+    optimizedTriangles += triangleCount(g.geometry)
+  }
 
   return { groups, rawTriangles, optimizedTriangles }
 }
 
 /** Per-(materialClass, colorKey) optimized geometries for GLTF export — one solid-colour mesh per group. */
-export function buildOptimizedVoxelGeometryByMaterial(model: VoxelModel, palette: PaletteState, mergeCoplanar?: boolean): ColorGroupGeometry[] {
-  return buildOptimizedVoxelGroups(model, palette, mergeCoplanar).groups
+export function buildOptimizedVoxelGeometryByMaterial(model: VoxelModel, palette: PaletteState, mergeCoplanar?: boolean, slotMaterials?: SlotMaterialAssignments, uvFor?: VertexUV): ColorGroupGeometry[] {
+  return buildOptimizedVoxelGroups(model, palette, mergeCoplanar, slotMaterials, uvFor).groups
 }
 
 export interface SliceGroupGeometry extends ColorGroupGeometry {
@@ -362,6 +408,8 @@ export function buildOptimizedVoxelGroupsBySlice(
   palette: PaletteState,
   nodeAssignment: Map<CellKey, SliceKey>,
   mergeCoplanar?: boolean,
+  slotMaterials?: SlotMaterialAssignments,
+  uvFor?: VertexUV,
 ): SliceGroupResult {
   const byGroup = new Map<string, VoxelGroup & { sliceKey: SliceKey }>()
   const color = new THREE.Color()
@@ -374,13 +422,14 @@ export function buildOptimizedVoxelGroupsBySlice(
     const materialClass = materialClassFor(slot.kind)
     const colorKey = color.set(resolveSlotColor(palette, slot)).getHex()
     const chamfer = model.chamfer.get(key)
+    const materialId = materialIdForSlot(slot, slotMaterials)
 
     const sliceKey = nodeAssignment.get(key) ?? ''
 
-    const groupKey = `${materialClass}:${colorKey}:${sliceKey}`
+    const groupKey = `${materialClass}:${colorKey}:${materialId ?? ''}:${sliceKey}`
     let group = byGroup.get(groupKey)
     if (!group) {
-      group = { colorKey, materialClass, geometries: [], sliceKey }
+      group = { colorKey, materialClass, materialId, geometries: [], sliceKey }
       byGroup.set(groupKey, group)
     }
 
@@ -403,7 +452,10 @@ export function buildOptimizedVoxelGroupsBySlice(
   const isOccupied = (x: number, y: number, z: number) => isCellOccupied(model, x, y, z)
   const groups: SliceGroupGeometry[] = optimizeGroupsByCSG(Array.from(byGroup.values()), mergeCoplanar ?? true, isOccupied)
   let optimizedTriangles = 0
-  for (const g of groups) optimizedTriangles += triangleCount(g.geometry)
+  for (const g of groups) {
+    if (uvFor && g.materialId) applyUVToGeometry(g.geometry, uvFor)
+    optimizedTriangles += triangleCount(g.geometry)
+  }
 
   return { groups, rawTriangles, optimizedTriangles }
 }
@@ -459,7 +511,9 @@ export function buildTexturedShellGeometryByColor(model: VoxelModel, palette: Pa
   }
   const out: ColorGroupGeometry[] = []
   for (const group of byMaterial.values()) {
-    out.push({ colorKey: group[0].colorKey, materialClass: group[0].materialClass, geometry: geometryFromFacesUV(group, uvFor) })
+    // Textured (user-painted) models ignore assigned builtin materials — the painted overlay
+    // already occupies `.map`, so there is nothing for a library albedo to multiply with.
+    out.push({ colorKey: group[0].colorKey, materialClass: group[0].materialClass, materialId: null, geometry: geometryFromFacesUV(group, uvFor) })
   }
   return out
 }
@@ -485,7 +539,7 @@ export function buildTexturedShellGeometryBySliceColor(
   const out: SliceGroupGeometry[] = []
   for (const group of byGroup.values()) {
     const sliceKey = nodeAssignment.get(group[0].cellKey!) ?? ''
-    out.push({ colorKey: group[0].colorKey, materialClass: group[0].materialClass, sliceKey, geometry: geometryFromFacesUV(group, uvFor) })
+    out.push({ colorKey: group[0].colorKey, materialClass: group[0].materialClass, materialId: null, sliceKey, geometry: geometryFromFacesUV(group, uvFor) })
   }
   return out
 }

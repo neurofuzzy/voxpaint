@@ -112,6 +112,19 @@ export function atlasUVForVertex(normal: Coord, x: number, y: number, z: number,
 }
 
 /**
+ * Plain per-face 0..1 box-map UV for builtin material maps — whole-face stretch (not the paint
+ * atlas): a faceSize-downscaled map samples 1:1 with the texel grid. Same face picks and mirror
+ * flips as the paint path, so material detail aligns with paint. Chamfer slopes sample their
+ * dominant-axis face (post-CSG triangles carry no chamfer provenance).
+ */
+export function materialUVForVertex(normal: Coord, x: number, y: number, z: number, gridExtent: GridExtent): [number, number] {
+  const face = boxFaceForCell(undefined, normal)
+  const [tu, tv] = worldToTexel(face, x, y, z, gridExtent)
+  const faceSize = faceSizeFor(gridExtent)
+  return [tu / faceSize, tv / faceSize]
+}
+
+/**
  * Inverse of `worldToTexel` for a texel **centre**: given a box face, integer texel (tu, tv), and the
  * surface's coordinate along the face axis (`depthCoord`), returns the world-space point on that face.
  * Reuses the same axis basis + per-face flips as `worldToTexel`, so the round-trip is exact — used by

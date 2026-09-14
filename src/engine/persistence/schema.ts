@@ -1,10 +1,17 @@
 import type { AnimationType, AnimationSpeed } from '@/engine/animation/types'
 import type { Axis, BBox, ChamferClassification, GridExtent, Orientation, VoxelScaleY } from '@/engine/grid/types'
+import type { SlotMaterialAssignments } from '@/engine/materials/builtinMaterials'
 import type { PaletteSlotRef, PaletteState } from '@/engine/palette/types'
 import type { BoxFace } from '@/engine/texture/types'
 import type { GltfExportAnchor } from '@/engine/export/gltfExport'
 
-export const CURRENT_SCHEMA_VERSION = 6 as const
+export const CURRENT_SCHEMA_VERSION = 8 as const
+
+/** IBL environment source for the 3D preview: `neutral` is the built-in RoomEnvironment,
+ * `studio` is a high-contrast procedural softbox rig (crisp coat reflections on carpaint),
+ * `outdoor` is a sunny procedural sky with clouds and meadow bounce, `custom` is a
+ * user-supplied .hdr/.exr. Preview-only — never baked into the model or export. */
+export type EnvironmentChoice = 'neutral' | 'studio' | 'outdoor' | 'custom'
 
 export type ViewSettings = {
   ambientOcclusion: boolean
@@ -13,6 +20,8 @@ export type ViewSettings = {
   aoStrength: number
   glassRoughnessLevel: number
   exposure: number
+  /** Preview-only IBL environment (see `EnvironmentChoice`). Optional — older files default to `neutral`. */
+  environment?: EnvironmentChoice
   exportScaleFactor: number
   exportAnchor: GltfExportAnchor
   /** GLTF export: anchor relative to the voxels' own AABB instead of the canvas origin. */
@@ -122,11 +131,20 @@ export type VoxPaintProjectFileV2 = {
  *
  * v6: `meta.gridExtent` becomes required — the project's locked-in working-cube size, chosen at
  * creation (see engine/grid/types.ts `GridExtent`). Older files didn't have per-project sizing at
- * all (every project used the same fixed 16 extent), so the v5→v6 migration just stamps `16`. */
+ * all (every project used the same fixed 16 extent), so the v5→v6 migration just stamps `16`.
+ *
+ * v7: the palette gains a `carpaint` group (clearcoat automotive paint). Older files have no
+ * carpaint swatches, so the v6→v7 migration seeds them from the current defaults.
+ *
+ * v8: per-slot builtin-material assignments (`slotMaterials`: `"<kind>:<index>"` → material id).
+ * Older files have no assignments, so v7 files load with none (every slot renders its plain
+ * class recipe, matching their pre-material behavior). */
 export type VoxPaintProjectFile = {
   schemaVersion: typeof CURRENT_SCHEMA_VERSION
   meta: ProjectMeta
   palette: PaletteState
+  /** Optional — absent on pre-v8 files, defaulting to no assignments. */
+  slotMaterials?: SlotMaterialAssignments
   model: {
     bounds: BBox | null
     colorCells: SerializedColorCell[]

@@ -1,6 +1,7 @@
 import { decodeKey, emptyModel, encodeKey, recomputeBounds } from '@/engine/grid/GridStore'
 import type { CellKey, GridExtent, VoxelModel } from '@/engine/grid/types'
 import { DEFAULT_PALETTE } from '@/engine/palette/defaultPalette'
+import type { SlotMaterialAssignments } from '@/engine/materials/builtinMaterials'
 import type { PaletteState } from '@/engine/palette/types'
 import type { BoxFace, TextureModel } from '@/engine/texture/types'
 import { BOX_FACES, faceSizeFor, TEXEL_SCALE } from '@/engine/texture/types'
@@ -97,7 +98,7 @@ function deserializeSlicePivots(pivots: SerializedSlicePivot[]): Map<SliceKey, C
   return map
 }
 
-export function serializeProject(model: VoxelModel, palette: PaletteState, meta: ProjectMeta, texture: TextureModel, view?: ViewSettings, animSettings?: Map<SliceKey, SliceAnimSettings>, sliceMasks?: Map<SliceKey, Set<CellKey>>, slicePivots?: Map<SliceKey, CellKey>): VoxPaintProjectFile {
+export function serializeProject(model: VoxelModel, palette: PaletteState, meta: ProjectMeta, texture: TextureModel, view?: ViewSettings, animSettings?: Map<SliceKey, SliceAnimSettings>, sliceMasks?: Map<SliceKey, Set<CellKey>>, slicePivots?: Map<SliceKey, CellKey>, slotMaterials?: SlotMaterialAssignments): VoxPaintProjectFile {
   const colorCells = Array.from(model.color.entries()).map(([key, cell]) => {
     const [x, y, z] = decodeKey(key)
     return { x, y, z, paletteSlot: cell.paletteSlot }
@@ -110,6 +111,7 @@ export function serializeProject(model: VoxelModel, palette: PaletteState, meta:
     schemaVersion: CURRENT_SCHEMA_VERSION,
     meta,
     palette,
+    slotMaterials,
     model: { bounds: model.bounds, colorCells, chamferCells },
     texture: serializeTexture(texture, meta.gridExtent),
     view,
@@ -119,7 +121,7 @@ export function serializeProject(model: VoxelModel, palette: PaletteState, meta:
   }
 }
 
-export function deserializeProject(file: VoxPaintProjectFile): { model: VoxelModel; palette: PaletteState; meta: ProjectMeta; texture: TextureModel; view: ViewSettings; animSettings: Map<SliceKey, SliceAnimSettings>; sliceMasks: Map<SliceKey, Set<CellKey>>; slicePivots: Map<SliceKey, CellKey> } {
+export function deserializeProject(file: VoxPaintProjectFile): { model: VoxelModel; palette: PaletteState; meta: ProjectMeta; texture: TextureModel; view: ViewSettings; animSettings: Map<SliceKey, SliceAnimSettings>; sliceMasks: Map<SliceKey, Set<CellKey>>; slicePivots: Map<SliceKey, CellKey>; slotMaterials: SlotMaterialAssignments } {
   const model = emptyModel()
   const color = new Map(model.color)
   const chamfer = new Map(model.chamfer)
@@ -137,7 +139,7 @@ export function deserializeProject(file: VoxPaintProjectFile): { model: VoxelMod
 
   const built: VoxelModel = { color, chamfer, bounds: file.model.bounds }
   const texture = file.texture ? deserializeTexture(file.texture, file.meta.gridExtent) : emptyTextureModel(file.meta.gridExtent)
-  const view: ViewSettings = { ambientOcclusion: false, noiseLevel: 0, specularNoiseLevel: 0, aoStrength: 1, glassRoughnessLevel: 0.3, exposure: 1, exportScaleFactor: 100, exportAnchor: 'center', exportAlignToObjectBounds: false, exportDisableMeshOptimization: false, exportIncludeTextureMaps: true, ...file.view }
+  const view: ViewSettings = { ambientOcclusion: false, noiseLevel: 0, specularNoiseLevel: 0, aoStrength: 1, glassRoughnessLevel: 0.3, exposure: 1, environment: 'neutral', exportScaleFactor: 100, exportAnchor: 'center', exportAlignToObjectBounds: false, exportDisableMeshOptimization: false, exportIncludeTextureMaps: true, ...file.view }
   const animSettings = file.animations ? deserializeAnimations(file.animations) : new Map()
   const sliceMasks = file.masks ? deserializeSliceMasks(file.masks) : new Map()
   const slicePivots = file.pivots ? deserializeSlicePivots(file.pivots) : new Map()
@@ -150,5 +152,7 @@ export function deserializeProject(file: VoxPaintProjectFile): { model: VoxelMod
   // looks exactly the same as it always did instead of visibly shifting on next load.
   // `voxelScaleY` is the same story one generation later: pre-scale files load as 1x (unit cubes).
   const meta: ProjectMeta = { ...file.meta, noiseSeed: file.meta.noiseSeed ?? 0, voxelScaleY: file.meta.voxelScaleY ?? 1 }
-  return { model: { ...built, bounds: recomputeBounds(built) }, palette, meta, texture, view, animSettings, sliceMasks, slicePivots }
+  // Pre-v8 files have no material assignments — every slot renders its plain class recipe.
+  const slotMaterials: SlotMaterialAssignments = { ...file.slotMaterials }
+  return { model: { ...built, bounds: recomputeBounds(built) }, palette, meta, texture, view, animSettings, sliceMasks, slicePivots, slotMaterials }
 }

@@ -23,5 +23,6 @@ export const DEFAULT_PALETTE: PaletteState = {
   emissive: ['#ff6b4a', '#4ad9ff', '#b04aff', '#d6ff6b'],
   metal: ['#f0f0f0', '#ffd16d', '#b68259', '#e7967a'], // silver, gold, bronze, copper
   glass: ['#8a80a6', '#1a56e9', '#d98421', '#8aa06e'], // gray, blue, amber, green
+  carpaint: ['#c01818', '#1848c0', '#18a058', '#e8e8e8'], // candy red, racing blue, british green, pearl white
   emissiveAnim: ['none', 'none', 'none', 'none'],
 }

@@ -1,8 +1,8 @@
 /** A palette slot's kind also selects its **material class** at render/export time (see
  * `materialClassFor` in palette.ts): base → matte, emissive → glowing, metal → polished PBR metal,
- * glass → frosted transmissive. (Replaced the earlier animation-oriented `blink`/`pulse` kinds,
- * which glTF can't represent.) */
-export type PaletteSlotKind = 'base' | 'emissive' | 'metal' | 'glass'
+ * glass → frosted transmissive, carpaint → clearcoat automotive paint. (Replaced the earlier
+ * animation-oriented `blink`/`pulse` kinds, which glTF can't represent.) */
+export type PaletteSlotKind = 'base' | 'emissive' | 'metal' | 'glass' | 'carpaint'
 
 export type PaletteSlotRef = {
   kind: PaletteSlotKind
@@ -23,6 +23,7 @@ export type PaletteState = {
   emissive: string[] // 4 hex colors
   metal: string[] // 4 hex colors (specular tint for polished metals)
   glass: string[] // 4 hex colors (frosted-glass tint)
+  carpaint: string[] // 4 hex colors (base-coat color under a clearcoat layer)
   /** Animation mode per emissive slot, index-aligned with `emissive`. */
   emissiveAnim: EmissiveAnimMode[]
 }

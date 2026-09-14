@@ -25,6 +25,7 @@ function withinSliceRange(offset: number, half: number): boolean {
 export const createProjectSlice: Slice = (set, get) => ({
   model: emptyModel(),
   palette: DEFAULT_PALETTE,
+  slotMaterials: {},
   meta: {
     name: 'Untitled Project',
     createdAt: new Date().toISOString(),
@@ -48,6 +49,7 @@ export const createProjectSlice: Slice = (set, get) => ({
       state.palette.emissive = [...palette.emissive]
       state.palette.metal = [...palette.metal]
       state.palette.glass = [...palette.glass]
+      state.palette.carpaint = [...palette.carpaint]
       // emissiveAnim intentionally untouched — a theme swaps colors, not the user's blink/pulse config.
       state.meta.modifiedAt = new Date().toISOString()
       state.dirty = true
@@ -56,6 +58,13 @@ export const createProjectSlice: Slice = (set, get) => ({
   setEmissiveAnimMode: (index, mode) =>
     set((state) => {
       state.palette.emissiveAnim[index] = mode
+      state.dirty = true
+    }),
+
+  setSlotMaterial: (slotKey, materialId) =>
+    set((state) => {
+      if (materialId) state.slotMaterials[slotKey] = materialId
+      else delete state.slotMaterials[slotKey]
       state.dirty = true
     }),
 
@@ -155,6 +164,7 @@ export const createProjectSlice: Slice = (set, get) => ({
       const extent = Math.max(2, Math.min(MAX_GRID_EXTENT, Math.round(gridExtent)))
       state.model = emptyModel()
       state.palette = DEFAULT_PALETTE
+      state.slotMaterials = {}
       state.meta = {
         name: name || 'Untitled Project',
         createdAt: new Date().toISOString(),

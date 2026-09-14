@@ -3,9 +3,9 @@ import type { PaletteState } from './types'
 /**
  * Pre-made themed palettes, generated from a curated subset of etc/colors/ by
  * scripts/generate-palette-themes.ts — do not hand-edit; re-run the script instead. `base` favors
- * hue-group variety over shade ramps (2nd + 4th shade of each available hue-group); `metal`/`glass`
- * are hand-authored per theme (see the script's MATERIALS table) for genuine material variety —
- * see the script's doc comment for the full rationale.
+ * hue-group variety over shade ramps (2nd + 4th shade of each available hue-group); `metal`/`glass`/
+ * `carpaint` are hand-authored per theme (see the script's MATERIALS table) for genuine material
+ * variety — see the script's doc comment for the full rationale.
  */
 export type PaletteTheme = { id: string; name: string; palette: PaletteState }
 
@@ -18,17 +18,7 @@ export const PALETTE_THEMES: PaletteTheme[] = [
       emissive: ['#dd0000', '#ff3300', '#ff9900', '#eecc00'],
       metal: ['#5a6670', '#c9a227', '#8a4a2e', '#d8dce0'],
       glass: ['#7fff3f', '#ff5a1f', '#3fe0ff', '#ff3fc4'],
-      emissiveAnim: ['none', 'none', 'none', 'none'],
-    },
-  },
-  {
-    id: "toy-town",
-    name: "Toy Town",
-    palette: {
-      base: ['#3A9A52', '#6EBA76', '#1B54A0', '#4A8ED0', '#E8C400', '#F5D440', '#C91A1A', '#E84D4D', '#A87840', '#D4A868', '#8A3A28', '#B86848', '#6E3A82', '#B088C8', '#4A4A4C', '#9C9C9C'],
-      emissive: ['#ffdd55', '#ff5555', '#55aaff', '#55ff88'],
-      metal: ['#a8b0b6', '#d4a830', '#7a4030', '#9a6a40'],
-      glass: ['#b3e8ff', '#6bff5a', '#ff6655', '#ffee55'],
+      carpaint: ['#c01a3f', '#1ac08a', '#7a1ac0', '#e8e81a'],
       emissiveAnim: ['none', 'none', 'none', 'none'],
     },
   },
@@ -40,17 +30,7 @@ export const PALETTE_THEMES: PaletteTheme[] = [
       emissive: ['#ff9c18', '#f8f0d8', '#88d4ff', '#d8c098'],
       metal: ['#8a8f94', '#a67c3d', '#4a4e57', '#6b5433'],
       glass: ['#3fae5c', '#3f7fbf', '#d99a3f', '#b23f4a'],
-      emissiveAnim: ['none', 'none', 'none', 'none'],
-    },
-  },
-  {
-    id: "urban-graffiti",
-    name: "Urban Graffiti",
-    palette: {
-      base: ['#AA0038', '#FF55A0', '#1144BB', '#44A0FF', '#339900', '#88EE33', '#CC3300', '#FFAA44', '#CC9900', '#FFEE55', '#7722BB', '#BB55FF', '#006699', '#44CCFF', '#111114', '#88888C'],
-      emissive: ['#ff33cc', '#33ff88', '#ffaa00', '#3388ff'],
-      metal: ['#8a8e92', '#c4a030', '#6a3a2a', '#4a4a4e'],
-      glass: ['#ff66cc', '#66ff66', '#ffcc33', '#33ccff'],
+      carpaint: ['#7a1a1a', '#1a3f7a', '#3f6b1a', '#4a4a4e'],
       emissiveAnim: ['none', 'none', 'none', 'none'],
     },
   },
@@ -62,6 +42,31 @@ export const PALETTE_THEMES: PaletteTheme[] = [
       emissive: ['#fff498', '#98ffcc', '#ffb888', '#98f0ff'],
       metal: ['#c9d9c9', '#d9b04a', '#7a8f5a', '#a06b45'],
       glass: ['#f2d94a', '#c4425a', '#7ec8e0', '#5cae5c'],
+      carpaint: ['#3fae1a', '#e0a81a', '#1a6bc0', '#f2f2e8'],
+      emissiveAnim: ['none', 'none', 'none', 'none'],
+    },
+  },
+  {
+    id: "toy-town",
+    name: "Toy Town",
+    palette: {
+      base: ['#3A9A52', '#6EBA76', '#1B54A0', '#4A8ED0', '#E8C400', '#F5D440', '#C91A1A', '#E84D4D', '#A87840', '#D4A868', '#8A3A28', '#B86848', '#6E3A82', '#B088C8', '#4A4A4C', '#9C9C9C'],
+      emissive: ['#ffdd55', '#ff5555', '#55aaff', '#55ff88'],
+      metal: ['#a8b0b6', '#d4a830', '#7a4030', '#9a6a40'],
+      glass: ['#b3e8ff', '#6bff5a', '#ff6655', '#ffee55'],
+      carpaint: ['#1a8a3f', '#c0a01a', '#c02a2a', '#e8e8e8'],
+      emissiveAnim: ['none', 'none', 'none', 'none'],
+    },
+  },
+  {
+    id: "urban-graffiti",
+    name: "Urban Graffiti",
+    palette: {
+      base: ['#AA0038', '#FF55A0', '#1144BB', '#44A0FF', '#339900', '#88EE33', '#CC3300', '#FFAA44', '#CC9900', '#FFEE55', '#7722BB', '#BB55FF', '#006699', '#44CCFF', '#111114', '#88888C'],
+      emissive: ['#ff33cc', '#33ff88', '#ffaa00', '#3388ff'],
+      metal: ['#8a8e92', '#c4a030', '#6a3a2a', '#4a4a4e'],
+      glass: ['#ff66cc', '#66ff66', '#ffcc33', '#33ccff'],
+      carpaint: ['#c01a66', '#1ac06b', '#e08a1a', '#141416'],
       emissiveAnim: ['none', 'none', 'none', 'none'],
     },
   },
@@ -73,6 +78,7 @@ export const PALETTE_THEMES: PaletteTheme[] = [
       emissive: ['#fff2cc', '#ff3b1f', '#33f2ff', '#5a8cff'],
       metal: ['#ff7b3f', '#3fa9d9', '#2b2b2e', '#c9c9c9'],
       glass: ['#ff5a2e', '#ffcc33', '#2ed9ff', '#1a3fff'],
+      carpaint: ['#e01a1a', '#1a4fe0', '#0aa050', '#f0f0f0'],
       emissiveAnim: ['none', 'none', 'none', 'none'],
     },
   },

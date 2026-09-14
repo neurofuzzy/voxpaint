@@ -5,11 +5,13 @@ export const PALETTE_SLOT_COUNTS: Record<PaletteSlotKind, number> = {
   emissive: 4,
   metal: 4,
   glass: 4,
+  carpaint: 4,
 }
 
 /** The PBR material archetype a palette slot renders/exports as. Mirrors the palette's slot kinds:
- * base → matte, emissive → glowing, metal → polished metal, glass → frosted transmissive. */
-export type MaterialClass = 'matte' | 'emissive' | 'metal' | 'glass'
+ * base → matte, emissive → glowing, metal → polished metal, glass → frosted transmissive,
+ * carpaint → clearcoat automotive paint. */
+export type MaterialClass = 'matte' | 'emissive' | 'metal' | 'glass' | 'carpaint'
 
 /** Maps a palette slot kind to its material class (the render/export archetype). */
 export function materialClassFor(kind: PaletteSlotKind): MaterialClass {
@@ -22,30 +24,41 @@ export function materialClassFor(kind: PaletteSlotKind): MaterialClass {
       return 'metal'
     case 'glass':
       return 'glass'
+    case 'carpaint':
+      return 'carpaint'
   }
 }
 
 /** PBR parameters fed to `MeshPhysicalMaterial` (preview) and the glTF export material for a class.
  * Ranges follow `etc/specs/gltf-materials-maps.md` §3; single representative values are chosen here.
- * The slot's palette hex supplies the base color (specular tint for metal, absorption tint for glass). */
+ * The slot's palette hex supplies the base color (specular tint for metal, absorption tint for glass,
+ * base-coat color for carpaint). */
 export type MaterialParams = {
   metalness: number
   roughness: number
   transmission: number
   /** >0 only for the emissive class; the slot color also becomes `material.emissive`. */
   emissiveIntensity: number
+  /** >0 only for the carpaint class; exports as `KHR_materials_clearcoat`. */
+  clearcoat: number
+  /** Clearcoat layer roughness (carpaint only). */
+  clearcoatRoughness: number
 }
 
 export function materialParamsFor(cls: MaterialClass): MaterialParams {
   switch (cls) {
     case 'matte':
-      return { metalness: 0, roughness: 0.6, transmission: 0, emissiveIntensity: 0 }
+      return { metalness: 0, roughness: 0.6, transmission: 0, emissiveIntensity: 0, clearcoat: 0, clearcoatRoughness: 0 }
     case 'emissive':
-      return { metalness: 0, roughness: 0.5, transmission: 0, emissiveIntensity: 1.5 }
+      return { metalness: 0, roughness: 0.5, transmission: 0, emissiveIntensity: 1.5, clearcoat: 0, clearcoatRoughness: 0 }
     case 'metal':
-      return { metalness: 1, roughness: 0.2, transmission: 0, emissiveIntensity: 0 }
+      return { metalness: 1, roughness: 0.2, transmission: 0, emissiveIntensity: 0, clearcoat: 0, clearcoatRoughness: 0 }
     case 'glass':
-      return { metalness: 0, roughness: 0.5, transmission: 1, emissiveIntensity: 0 }
+      return { metalness: 0, roughness: 0.5, transmission: 1, emissiveIntensity: 0, clearcoat: 0, clearcoatRoughness: 0 }
+    case 'carpaint':
+      // Automotive paint per the Khronos `ToyCar` reference recipe: metallic base coat
+      // (metalness 0.8–1.0, low roughness) under a full-strength clearcoat layer.
+      return { metalness: 0.9, roughness: 0.25, transmission: 0, emissiveIntensity: 0, clearcoat: 1, clearcoatRoughness: 0.08 }
   }
 }
 

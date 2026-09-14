@@ -6,7 +6,11 @@ import { buildAnimatedSliceMeshes } from '@/engine/animation/animatedPreviewBuil
 import { isActiveAnimation, updateAnimatedGroupTransform } from '@/engine/animation/animationLayers'
 import type { SliceKey } from '@/engine/animation/types'
 import { tickEmissiveAnimation } from '@/engine/instancing/previewMaterial'
+import { materialIdForSlot } from '@/engine/instancing/voxelMeshBuilder'
+import { faceSizeFor } from '@/engine/texture/types'
+import { materialUVForExtent } from '@/engine/texture/texturedGeometry'
 import { useAppStore } from '@/store/useAppStore'
+import { useSlotMaterialMaps } from './useSlotMaterialMaps'
 
 type AnimGroup = {
   group: THREE.Group
@@ -24,13 +28,25 @@ export function AnimatedModelView() {
   const texture = useAppStore((s) => s.texture)
   const glassRoughnessLevel = useAppStore((s) => s.glassRoughnessLevel)
   const gridExtent = useAppStore((s) => s.meta.gridExtent)
+  const slotMaterials = useAppStore((s) => s.slotMaterials)
 
   const animGroupRefs = useRef<Map<SliceKey, AnimGroup>>(new Map())
   const rootGroup = useMemo(() => new THREE.Group(), [])
 
+  // Material ids in use, collected straight from the model (groups aren't built yet).
+  const materialIds = useMemo(() => {
+    const ids = new Set<string>()
+    for (const cell of model.color.values()) {
+      const id = materialIdForSlot(cell.paletteSlot, slotMaterials)
+      if (id) ids.add(id)
+    }
+    return [...ids]
+  }, [model, slotMaterials])
+  const slotMaps = useSlotMaterialMaps(materialIds, faceSizeFor(gridExtent))
+
   const built = useMemo(
-    () => buildAnimatedSliceMeshes(model, palette, animSettings, sliceMasks, texture, gridExtent, glassRoughnessLevel, slicePivots),
-    [model, palette, animSettings, sliceMasks, texture, gridExtent, glassRoughnessLevel, slicePivots],
+    () => buildAnimatedSliceMeshes(model, palette, animSettings, sliceMasks, texture, gridExtent, glassRoughnessLevel, slicePivots, slotMaterials, slotMaps, Object.keys(slotMaterials).length > 0 ? materialUVForExtent(gridExtent) : undefined),
+    [model, palette, animSettings, sliceMasks, texture, gridExtent, glassRoughnessLevel, slicePivots, slotMaterials, slotMaps],
   )
 
   // Build the scene graph imperatively — one Group per slice, with mesh children added directly.

@@ -4,14 +4,17 @@ import { useFrame } from '@react-three/fiber'
 import { buildBlendAtlas } from '@/engine/texture/boxMapping'
 import { bakeOverlayTexturesByColor } from '@/engine/texture/overlay'
 import { buildTexturedGeometryByColor } from '@/engine/texture/texturedGeometry'
+import { materialUVForExtent } from '@/engine/texture/texturedGeometry'
 import { hasTextureContent } from '@/engine/texture/TextureStore'
 import { buildOptimizedVoxelGroups } from '@/engine/instancing/voxelMeshBuilder'
 import { triangleCount } from '@/engine/instancing/meshOptimizer'
-import { buildPreviewMaterial, tickEmissiveAnimation } from '@/engine/instancing/previewMaterial'
+import { buildPreviewMaterial, materialDefForGroup, tickEmissiveAnimation } from '@/engine/instancing/previewMaterial'
 import { buildEmissiveAnimIndex } from '@/engine/palette/emissiveAnimation'
 import { darkestBaseColor } from '@/engine/palette/palette'
+import { faceSizeFor } from '@/engine/texture/types'
 import { useAppStore } from '@/store/useAppStore'
 import { usePreviewAOMaps } from './usePreviewAOMaps'
+import { useSlotMaterialMaps } from './useSlotMaterialMaps'
 
 const wireframeOverlayMaterial = new THREE.MeshBasicMaterial({ color: 0xffffff, wireframe: true })
 
@@ -47,6 +50,7 @@ export function OptimizedMeshView() {
   const glassRoughnessLevel = useAppStore((s) => s.glassRoughnessLevel)
   const gridExtent = useAppStore((s) => s.meta.gridExtent)
   const noiseSeed = useAppStore((s) => s.meta.noiseSeed)
+  const slotMaterials = useAppStore((s) => s.slotMaterials)
 
   const setMeshTriangles = useAppStore((s) => s.setMeshTriangles)
 
@@ -58,8 +62,10 @@ export function OptimizedMeshView() {
       const triangles = groups.reduce((sum, g) => sum + triangleCount(g.geometry), 0)
       return { groups, rawTriangles: triangles, optimizedTriangles: triangles }
     }
-    return buildOptimizedVoxelGroups(model, palette, optimizedMesh)
-  }, [model, palette, optimizedMesh, textured, gridExtent])
+    // UVs ride along whenever assignments may exist — they must predate the async map loads.
+    const uvFor = Object.keys(slotMaterials).length > 0 ? materialUVForExtent(gridExtent) : undefined
+    return buildOptimizedVoxelGroups(model, palette, optimizedMesh, slotMaterials, uvFor)
+  }, [model, palette, optimizedMesh, textured, gridExtent, slotMaterials])
 
   // Emissive materials skip AO/noise baking entirely (a glowing surface shouldn't be shadowed or
   // dirtied) — excluded here so the unwrap atlas never allocates space for them; they still act as
@@ -89,22 +95,32 @@ export function OptimizedMeshView() {
   const emissiveAnimIndex = useMemo(() => buildEmissiveAnimIndex(palette), [palette])
   const emissiveAnimOffColor = useMemo(() => new THREE.Color(darkestBaseColor(palette)), [palette])
 
+  // Assigned builtin materials resolve async (cached per material+faceSize); groups without a
+  // resolved entry render their plain class recipe until the load lands, then rebuild once.
+  const materialIds = useMemo(
+    () => [...new Set(built.groups.map((g) => g.materialId).filter((id): id is string => !!id))],
+    [built.groups],
+  )
+  const slotMaps = useSlotMaterialMaps(materialIds, faceSizeFor(gridExtent))
+
   // One MeshPhysicalMaterial per colour group. PBR params per class, plus the baked overlay map
   // when textured. Wireframe-overlay z-fighting avoidance (polygonOffset) applies to both branches.
   const materials = useMemo(() => {
-    return built.groups.map(({ materialClass, colorKey }) => {
+    return built.groups.map(({ materialClass, colorKey, materialId }) => {
       const m = buildPreviewMaterial(materialClass, colorKey, {
         overlayMap: overlayByColor?.get(colorKey) ?? null,
         glassRoughnessLevel,
         emissiveAnimMode: emissiveAnimIndex.get(colorKey),
         emissiveAnimOffColor,
+        materialDef: materialDefForGroup(materialId, materialClass),
+        materialMaps: materialId ? (slotMaps.get(materialId) ?? null) : null,
       })
       m.polygonOffset = true
       m.polygonOffsetFactor = 1
       m.polygonOffsetUnits = 1
       return m
     })
-  }, [built.groups, overlayByColor, glassRoughnessLevel, emissiveAnimIndex, emissiveAnimOffColor])
+  }, [built.groups, overlayByColor, glassRoughnessLevel, emissiveAnimIndex, emissiveAnimOffColor, slotMaps])
 
   useFrame(() => {
     const elapsed = performance.now() / 1000
@@ -121,13 +137,15 @@ export function OptimizedMeshView() {
       const group = built.groups[i]
       const isMetal = group.materialClass === 'metal'
       const hasOverlay = !!overlayByColor?.get(group.colorKey)
+      const matMaps = group.materialId ? (slotMaps.get(group.materialId) ?? null) : null
       m.aoMap = group.materialClass !== 'emissive' ? (aoTexture ?? null) : null
-      m.metalnessMap = isMetal ? metalnessTexture : null
-      m.roughnessMap = isMetal ? roughnessTexture : null
-      if (isMetal && !hasOverlay && metalBaseColorTexture) m.map = metalBaseColorTexture
+      // Authored material maps win over the global specular-noise bake on the same channel.
+      m.metalnessMap = matMaps?.metalnessMap ?? (isMetal ? metalnessTexture : null)
+      m.roughnessMap = matMaps?.roughnessMap ?? (isMetal ? roughnessTexture : null)
+      if (isMetal && !hasOverlay && !matMaps?.map && metalBaseColorTexture) m.map = metalBaseColorTexture
       m.needsUpdate = true
     }
-  }, [materials, built.groups, aoTexture, metalnessTexture, roughnessTexture, metalBaseColorTexture, overlayByColor])
+  }, [materials, built.groups, aoTexture, metalnessTexture, roughnessTexture, metalBaseColorTexture, overlayByColor, slotMaps])
 
   useEffect(() => {
     setMeshTriangles({ optimized: built.optimizedTriangles, raw: built.rawTriangles })

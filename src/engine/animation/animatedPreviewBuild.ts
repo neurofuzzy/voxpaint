@@ -7,7 +7,10 @@ import { bakeOverlayTexturesByColor } from '@/engine/texture/overlay'
 import { buildTexturedGeometryBySlice } from '@/engine/texture/texturedGeometry'
 import { hasTextureContent } from '@/engine/texture/TextureStore'
 import { buildOptimizedVoxelGroupsBySlice } from '@/engine/instancing/voxelMeshBuilder'
-import { buildPreviewMaterial } from '@/engine/instancing/previewMaterial'
+import type { VertexUV } from '@/engine/instancing/voxelMeshBuilder'
+import { buildPreviewMaterial, materialDefForGroup } from '@/engine/instancing/previewMaterial'
+import type { SlotMaterialAssignments } from '@/engine/materials/builtinMaterials'
+import type { SlotMaterialMaps } from '@/engine/materials/materialMaps'
 import { buildEmissiveAnimIndex } from '@/engine/palette/emissiveAnimation'
 import { darkestBaseColor } from '@/engine/palette/palette'
 import { assignVoxelsToNodes, resolveAnimCenter } from './animationLayers'
@@ -36,6 +39,9 @@ export function buildAnimatedSliceMeshes(
   gridExtent: GridExtent,
   glassRoughnessLevel: number,
   slicePivots: Map<SliceKey, CellKey>,
+  slotMaterials?: SlotMaterialAssignments,
+  materialMaps?: Map<string, SlotMaterialMaps>,
+  uvFor?: VertexUV,
 ): AnimatedSliceMeshes | null {
   if (animSettings.size === 0) return null
   const { nodes } = assignVoxelsToNodes(model, animSettings, sliceMasks)
@@ -50,7 +56,7 @@ export function buildAnimatedSliceMeshes(
   const textured = hasTextureContent(texture)
   const groups = textured
     ? buildTexturedGeometryBySlice(model, palette, nodeAssignment, gridExtent)
-    : buildOptimizedVoxelGroupsBySlice(model, palette, nodeAssignment).groups
+    : buildOptimizedVoxelGroupsBySlice(model, palette, nodeAssignment, true, slotMaterials, uvFor).groups
 
   const overlayByColor = textured
     ? bakeOverlayTexturesByColor(groups.map((g) => g.colorKey), buildBlendAtlas(texture, gridExtent))
@@ -65,7 +71,7 @@ export function buildAnimatedSliceMeshes(
   const sliceInfo = new Map<SliceKey, { axis: Axis; offset: number; center: THREE.Vector3 }>()
 
   for (const g of groups) {
-    const matKey = `${g.materialClass}:${g.colorKey}`
+    const matKey = `${g.materialClass}:${g.colorKey}:${g.materialId ?? ''}`
     let matIdx = materialIndexMap.get(matKey)
     if (matIdx === undefined) {
       matIdx = materials.length
@@ -75,6 +81,8 @@ export function buildAnimatedSliceMeshes(
         glassRoughnessLevel,
         emissiveAnimMode: emissiveAnimIndex.get(g.colorKey),
         emissiveAnimOffColor,
+        materialDef: materialDefForGroup(g.materialId, g.materialClass),
+        materialMaps: g.materialId ? (materialMaps?.get(g.materialId) ?? null) : null,
       }))
     }
 

@@ -1,5 +1,7 @@
 import * as THREE from 'three'
 import { materialParamsFor, type MaterialClass } from '@/engine/palette/palette'
+import { BUILTIN_MATERIAL_BY_ID, type BuiltinMaterialDef } from '@/engine/materials/builtinMaterials'
+import type { SlotMaterialMaps } from '@/engine/materials/materialMaps'
 import { emissiveAnimFactor } from '@/engine/palette/emissiveAnimation'
 import type { EmissiveAnimMode } from '@/engine/palette/types'
 
@@ -15,6 +17,12 @@ export type PreviewMaterialOptions = {
   metalnessMap?: THREE.Texture | null
   roughnessMap?: THREE.Texture | null
   metalBaseColorMap?: THREE.Texture | null
+  /** Assigned builtin material (resolved from the group's `materialId`, null = none). Its maps
+   * tint/roughen the slot color: `map × color` multiply, roughness/metalness maps with their
+   * scalars pinned to 1.0, scalar `roughness`/`metalness` fallbacks when a map is absent.
+   * Ignored for glass (solid tint rule, same as the painted overlay). */
+  materialDef?: BuiltinMaterialDef | null
+  materialMaps?: SlotMaterialMaps | null
   /** Emissive-only: blink/pulse this material's glow live (see `tickEmissiveAnimation`). */
   emissiveAnimMode?: EmissiveAnimMode
   /** Emissive-only: the color a blinking/pulsing material's albedo fades TOWARD at "off", instead of
@@ -47,6 +55,15 @@ export function tickEmissiveAnimation(material: THREE.Material, elapsedSeconds: 
 }
 
 /**
+ * Resolves a group's material definition from its `materialId` (null-safe: unknown ids and
+ * glass groups yield null). Single lookup shared by every preview surface and the export.
+ */
+export function materialDefForGroup(materialId: string | null | undefined, materialClass: MaterialClass): BuiltinMaterialDef | null {
+  if (!materialId || materialClass === 'glass') return null
+  return BUILTIN_MATERIAL_BY_ID[materialId] ?? null
+}
+
+/**
  * One `MeshPhysicalMaterial` per (materialClass, colorKey) group — the single recipe shared by
  * Model, Texture, and Animate mode live previews and mirrored by the glTF export
  * (`gltfExport.ts`), so every render surface agrees on what a materialClass actually looks like.
@@ -56,15 +73,33 @@ export function buildPreviewMaterial(materialClass: MaterialClass, colorKey: num
   const isGlass = materialClass === 'glass'
   const overlayMap = isGlass ? null : (options.overlayMap ?? null)
   const color = new THREE.Color(colorKey)
+  const matDef = !isGlass ? (options.materialDef ?? null) : null
+  const matMaps = matDef ? (options.materialMaps ?? null) : null
 
   const material = new THREE.MeshPhysicalMaterial({
     color: overlayMap ? 0xffffff : color,
     map: overlayMap,
-    metalness: params.metalness,
-    roughness: isGlass ? options.glassRoughnessLevel : params.roughness,
+    metalness: matDef?.metalness ?? params.metalness,
+    roughness: isGlass ? options.glassRoughnessLevel : (matDef?.roughness ?? params.roughness),
     transmission: params.transmission,
     side: THREE.DoubleSide,
   })
+  // Assigned builtin material: albedo map tints (multiplies) the slot color; data maps take
+  // over their channel with the scalar pinned to 1.0 so the map reads as authored. A painted
+  // overlay occupies `.map` instead (user paint wins) — data maps still apply.
+  if (matMaps?.map && !overlayMap) material.map = matMaps.map
+  if (matMaps?.roughnessMap) {
+    material.roughnessMap = matMaps.roughnessMap
+    material.roughness = 1
+  }
+  if (matMaps?.metalnessMap) {
+    material.metalnessMap = matMaps.metalnessMap
+    material.metalness = 1
+  }
+  if (params.clearcoat > 0) {
+    material.clearcoat = params.clearcoat
+    material.clearcoatRoughness = params.clearcoatRoughness
+  }
   if (params.transmission > 0) {
     material.ior = 1.5
     material.thickness = 0.5
@@ -83,9 +118,10 @@ export function buildPreviewMaterial(materialClass: MaterialClass, colorKey: num
   if (options.aoMap) material.aoMap = options.aoMap
   if (materialClass === 'metal') {
     material.specularIntensity = 0
-    if (options.metalnessMap) material.metalnessMap = options.metalnessMap
-    if (options.roughnessMap) material.roughnessMap = options.roughnessMap
-    if (!overlayMap && options.metalBaseColorMap) material.map = options.metalBaseColorMap
+    // Authored material maps win over the global specular-noise bake on the same channel.
+    if (!matMaps?.metalnessMap && options.metalnessMap) material.metalnessMap = options.metalnessMap
+    if (!matMaps?.roughnessMap && options.roughnessMap) material.roughnessMap = options.roughnessMap
+    if (!overlayMap && !matMaps?.map && options.metalBaseColorMap) material.map = options.metalBaseColorMap
   }
   return material
 }

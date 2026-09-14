@@ -49,6 +49,19 @@ MIGRATIONS[4] = (doc) => ({ ...doc, schemaVersion: 5 })
  * painted bounds and their texture's existing `faceSize` (16 × texelScale) exactly. */
 MIGRATIONS[5] = (doc) => ({ ...doc, schemaVersion: 6, meta: { ...doc.meta, gridExtent: doc.meta?.gridExtent ?? 16 } })
 
+/** v6 → v7: the palette gains a `carpaint` group (clearcoat automotive paint). Pre-v7 projects
+ * have no carpaint swatches, so seed them from the current defaults — no cell references can
+ * exist yet (the kind didn't exist), so no remapping is needed. */
+MIGRATIONS[6] = (doc) => ({
+  ...doc,
+  schemaVersion: 7,
+  palette: { ...doc.palette, carpaint: doc.palette?.carpaint ?? DEFAULT_PALETTE.carpaint },
+})
+
+/** v7 → v8: per-slot builtin-material assignments were added. Pre-v8 projects have none, so
+ * they load with every slot on its plain class recipe — exactly how they always rendered. */
+MIGRATIONS[7] = (doc) => ({ ...doc, schemaVersion: 8, slotMaterials: doc.slotMaterials ?? {} })
+
 export class UnsupportedSchemaVersionError extends Error {
   constructor(foundVersion: unknown) {
     super(`This file is from a newer version of VoxPaint (schemaVersion=${String(foundVersion)}). Please update the app.`)

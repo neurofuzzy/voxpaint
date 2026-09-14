@@ -19,6 +19,9 @@ export const createViewSlice: Slice = (set) => ({
   meshTriangles: null,
   aoStrength: 1,
   exposure: 1,
+  environment: 'neutral',
+  customEnvUrl: null,
+  customEnvName: null,
   statusMessage: null,
   onionSkin: true,
   exportScaleFactor: 100,
@@ -38,6 +41,9 @@ export const createViewSlice: Slice = (set) => ({
   setMeshTriangles: (v) => set((state) => { state.meshTriangles = v }),
   setAoStrength: (v) => set((state) => { state.aoStrength = v; state.dirty = true }),
   setExposure: (v) => set((state) => { state.exposure = v; state.dirty = true }),
+  setEnvironment: (v) => set((state) => { state.environment = v; state.dirty = true }),
+  // Session-only (a blob URL can't be persisted) — deliberately doesn't dirty the project.
+  setCustomEnvUrl: (url, name) => set((state) => { state.customEnvUrl = url; state.customEnvName = name }),
   setHoverCell: (coord, chamferValid) =>
     set((state) => {
       state.hoverCell = coord

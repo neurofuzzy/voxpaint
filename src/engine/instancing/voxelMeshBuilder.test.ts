@@ -36,6 +36,40 @@ describe('CSG per-color-group optimizer', () => {
     expect(built.rawTriangles).toBe(24)
     expect(built.optimizedTriangles).toBe(24)
   })
+
+  it('splits same-colour voxels by assigned builtin material', () => {
+    const plain = buildOptimizedVoxelGroups(twoVoxels(base0, base0), DEFAULT_PALETTE)
+    expect(plain.groups).toHaveLength(1)
+    expect(plain.groups[0].materialId).toBeNull()
+
+    const split = buildOptimizedVoxelGroups(twoVoxels(base0, base0), DEFAULT_PALETTE, true, { 'base:0': 'cast-iron' })
+    // Both voxels share slot base:0, so both land in the cast-iron group — still one group.
+    expect(split.groups).toHaveLength(1)
+    expect(split.groups[0].materialId).toBe('cast-iron')
+
+    const mixed = buildOptimizedVoxelGroups(twoVoxels(base0, base1), DEFAULT_PALETTE, true, { 'base:0': 'cast-iron' })
+    // Different slots (and colors) with a material on only one → two groups.
+    expect(mixed.groups).toHaveLength(2)
+
+    // True split: two slots sharing one hex merge without materials, and split with one assigned.
+    const dupPalette = { ...DEFAULT_PALETTE, base: [DEFAULT_PALETTE.base[0], DEFAULT_PALETTE.base[0], ...DEFAULT_PALETTE.base.slice(2)] }
+    const merged = buildOptimizedVoxelGroups(twoVoxels(base0, base1), dupPalette)
+    expect(merged.groups).toHaveLength(1)
+    const resplit = buildOptimizedVoxelGroups(twoVoxels(base0, base1), dupPalette, true, { 'base:0': 'cast-iron' })
+    expect(resplit.groups).toHaveLength(2)
+    expect(resplit.groups.map((g) => g.materialId).sort()).toEqual(['cast-iron', null])
+
+    const sameColor = buildOptimizedVoxelGroups(twoVoxels(base0, base0), DEFAULT_PALETTE, true, { 'base:0': 'unknown-id' })
+    // Unknown ids (e.g. hand-edited files) fall back to the plain recipe — no split.
+    expect(sameColor.groups).toHaveLength(1)
+    expect(sameColor.groups[0].materialId).toBeNull()
+  })
+
+  it('never assigns materials to glass slots', () => {
+    const built = buildOptimizedVoxelGroups(twoVoxels(glass0, glass0), DEFAULT_PALETTE, true, { 'glass:0': 'cast-iron' })
+    expect(built.groups).toHaveLength(1)
+    expect(built.groups[0].materialId).toBeNull()
+  })
 })
 
 describe('coplanar merge with a pinch vertex (donut face whose ring closes through a corner)', () => {

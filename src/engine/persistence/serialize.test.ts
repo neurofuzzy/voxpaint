@@ -20,7 +20,7 @@ describe('serialize with texture', () => {
     texture.faces.nx[100] = 1
 
     const file = serializeProject(model, DEFAULT_PALETTE, meta, texture)
-    expect(file.schemaVersion).toBe(6)
+    expect(file.schemaVersion).toBe(8)
     expect(file.texture?.faceSize).toBeGreaterThan(0)
 
     const restored = deserializeProject(file)
@@ -40,7 +40,7 @@ describe('v1 → current migration', () => {
       model: { bounds: null, colorCells: [], chamferCells: [] },
     }
     const migrated = migrateToCurrent(v1)
-    expect(migrated.schemaVersion).toBe(6)
+    expect(migrated.schemaVersion).toBe(8)
     expect(migrated.texture).toBeUndefined()
     expect(migrated.meta.gridExtent).toBe(16)
 
@@ -72,7 +72,7 @@ describe('v2 → v3 migration (blink/pulse → metal/glass)', () => {
       },
     }
     const migrated = migrateToCurrent(v2) as any
-    expect(migrated.schemaVersion).toBe(6)
+    expect(migrated.schemaVersion).toBe(8)
     // Palette reshaped: metal/glass present, blink/pulse gone; base/emissive preserved.
     expect(migrated.palette.metal).toHaveLength(4)
     expect(migrated.palette.glass).toHaveLength(4)
@@ -83,5 +83,47 @@ describe('v2 → v3 migration (blink/pulse → metal/glass)', () => {
     expect(migrated.model.colorCells[0].paletteSlot).toEqual({ kind: 'base', index: 2 })
     expect(migrated.model.colorCells[1].paletteSlot).toEqual({ kind: 'emissive', index: 3 })
     expect(migrated.model.colorCells[2].paletteSlot).toEqual({ kind: 'emissive', index: 1 })
+  })
+})
+
+describe('v6 → v7 migration (carpaint)', () => {
+  it('seeds the carpaint group from defaults on pre-v7 files', () => {
+    const v6 = {
+      schemaVersion: 6,
+      meta,
+      palette: {
+        base: DEFAULT_PALETTE.base,
+        emissive: DEFAULT_PALETTE.emissive,
+        metal: DEFAULT_PALETTE.metal,
+        glass: DEFAULT_PALETTE.glass,
+        emissiveAnim: ['none', 'none', 'none', 'none'],
+      },
+      model: { bounds: null, colorCells: [], chamferCells: [] },
+    }
+    const migrated = migrateToCurrent(v6) as any
+    expect(migrated.schemaVersion).toBe(8)
+    expect(migrated.palette.carpaint).toEqual(DEFAULT_PALETTE.carpaint)
+  })
+})
+
+describe('v7 → v8 migration (slotMaterials)', () => {
+  it('loads pre-v8 files with no material assignments', () => {
+    const v7 = {
+      schemaVersion: 7,
+      meta,
+      palette: DEFAULT_PALETTE,
+      model: { bounds: null, colorCells: [], chamferCells: [] },
+    }
+    const migrated = migrateToCurrent(v7) as any
+    expect(migrated.schemaVersion).toBe(8)
+    expect(migrated.slotMaterials).toEqual({})
+    expect(deserializeProject(migrated).slotMaterials).toEqual({})
+  })
+
+  it('round-trips slot materials through serialize → deserialize', () => {
+    const model = emptyModel()
+    const file = serializeProject(model, DEFAULT_PALETTE, meta, emptyTextureModel(meta.gridExtent), undefined, undefined, undefined, undefined, { 'base:0': 'cast-iron', 'metal:1': 'copper-brushed' })
+    expect(file.slotMaterials).toEqual({ 'base:0': 'cast-iron', 'metal:1': 'copper-brushed' })
+    expect(deserializeProject(file).slotMaterials).toEqual({ 'base:0': 'cast-iron', 'metal:1': 'copper-brushed' })
   })
 })

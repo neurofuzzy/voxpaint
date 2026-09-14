@@ -1,8 +1,10 @@
 import type { Axis, CellKey, ChamferCell, Coord, GridExtent, Orientation, VoxelModel, VoxelScaleY } from '@/engine/grid/types'
 import type { GltfExportAnchor } from '@/engine/export/gltfExport'
 import type { EmissiveAnimMode, PaletteSlotRef, PaletteState } from '@/engine/palette/types'
+import type { SlotMaterialAssignments } from '@/engine/materials/builtinMaterials'
 import type { ConstructionPlane } from '@/engine/plane/types'
 import type { ProjectMeta } from '@/engine/persistence/schema'
+import type { EnvironmentChoice } from '@/engine/persistence/schema'
 import type { BoxFace, TextureModel } from '@/engine/texture/types'
 import type { TexelClip } from '@/engine/texture/texelOps'
 import type { AnimationSpeed, AnimationType, SliceAnimSettings, SliceKey } from '@/engine/animation/types'
@@ -70,6 +72,11 @@ export type ProjectSlice = {
   applyPaletteTheme: (palette: PaletteState) => void
   /** Sets the blink/pulse animation mode for one emissive palette slot (0–3). */
   setEmissiveAnimMode: (index: number, mode: EmissiveAnimMode) => void
+  /** Per-slot builtin-material assignments (`"<kind>:<index>"` → material id). Independent of
+   * palette colors and themes (like `emissiveAnim`): a theme swaps colors, never materials. */
+  slotMaterials: SlotMaterialAssignments
+  /** Assigns (or clears, with null) a builtin material on one palette slot. */
+  setSlotMaterial: (slotKey: string, materialId: string | null) => void
   setProjectName: (name: string) => void
   /** Sets the project-level Y voxel scale (0.5x / 1x / 2x, Project Settings). Unlike a resize this
    * touches no grid/texture data and clears no history — the grid stays integer and only
@@ -173,6 +180,13 @@ export type ViewSlice = {
    * NeutralToneMapping (Canvas.tsx), so it's the user-facing lever for brightness since the
    * baked-in light intensities can't be tuned by eye from here. */
   exposure: number
+  /** 3D preview: IBL environment source (see `EnvironmentChoice` in engine/persistence/schema.ts).
+   * Preview-only — never exported. Persisted in view settings like exposure. */
+  environment: EnvironmentChoice
+  /** Session-only blob URL + filename for a user-supplied HDR (`environment === 'custom'`).
+   * Never persisted (a blob URL doesn't survive reload) and never dirties the project. */
+  customEnvUrl: string | null
+  customEnvName: string | null
   /** Dynamic status message shown in the footer's center area. Components set this on hover to
    * show contextual info; cleared on pointer leave. Falls back to the active tool hint when null. */
   statusMessage: string | null
@@ -202,6 +216,8 @@ export type ViewSlice = {
   setGlassRoughnessLevel: (v: number) => void
   setMeshTriangles: (v: { optimized: number; raw: number } | null) => void
   setExposure: (v: number) => void
+  setEnvironment: (v: EnvironmentChoice) => void
+  setCustomEnvUrl: (url: string | null, name: string | null) => void
   setAoStrength: (v: number) => void
   setStatusMessage: (msg: string | null) => void
   setOnionSkin: (v: boolean) => void

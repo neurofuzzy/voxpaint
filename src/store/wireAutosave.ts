@@ -9,7 +9,7 @@ export function restoreAutosave(): void {
   try {
     const file = loadAutosave()
     if (!file) return
-    const { model, palette, meta, texture, view, animSettings, sliceMasks, slicePivots } = deserializeProject(file)
+    const { model, palette, meta, texture, view, animSettings, sliceMasks, slicePivots, slotMaterials } = deserializeProject(file)
     useAppStore.getState().setModel(model)
     useAppStore.getState().setPalette(palette)
     useAppStore.getState().setTexture(texture)
@@ -21,6 +21,9 @@ export function restoreAutosave(): void {
       state.aoStrength = view.aoStrength ?? 1
       state.glassRoughnessLevel = view.glassRoughnessLevel ?? 0.3
       state.exposure = view.exposure ?? 1
+      // A restored `custom` choice points at a blob URL that didn't survive the reload — the file
+      // must be re-picked each session, so fall back to neutral rather than a broken env.
+      state.environment = view.environment === 'custom' ? 'neutral' : (view.environment ?? 'neutral')
       state.exportScaleFactor = view.exportScaleFactor ?? 100
       state.exportAnchor = view.exportAnchor ?? 'center'
       state.exportAlignToObjectBounds = view.exportAlignToObjectBounds ?? false
@@ -28,6 +31,7 @@ export function restoreAutosave(): void {
       state.animSettings = animSettings
       state.sliceMasks = sliceMasks
       state.slicePivots = slicePivots
+      state.slotMaterials = slotMaterials
     })
   } catch (err) {
     console.error('Failed to restore autosave', err)
@@ -42,10 +46,11 @@ const flush = debounce(() => {
       state.palette,
       state.meta,
       state.texture,
-      { ambientOcclusion: state.ambientOcclusion, noiseLevel: state.noiseLevel, specularNoiseLevel: state.specularNoiseLevel, aoStrength: state.aoStrength, glassRoughnessLevel: state.glassRoughnessLevel, exposure: state.exposure, exportScaleFactor: state.exportScaleFactor, exportAnchor: state.exportAnchor, exportAlignToObjectBounds: state.exportAlignToObjectBounds, exportDisableMeshOptimization: state.exportDisableMeshOptimization },
+      { ambientOcclusion: state.ambientOcclusion, noiseLevel: state.noiseLevel, specularNoiseLevel: state.specularNoiseLevel, aoStrength: state.aoStrength, glassRoughnessLevel: state.glassRoughnessLevel, exposure: state.exposure, environment: state.environment, exportScaleFactor: state.exportScaleFactor, exportAnchor: state.exportAnchor, exportAlignToObjectBounds: state.exportAlignToObjectBounds, exportDisableMeshOptimization: state.exportDisableMeshOptimization },
       state.animSettings,
       state.sliceMasks,
       state.slicePivots,
+      state.slotMaterials,
     )
     saveAutosave(file)
     state.markSaved(new Date().toISOString())

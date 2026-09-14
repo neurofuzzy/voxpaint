@@ -27,12 +27,16 @@ interface Tri {
 export interface VoxelGroup {
   colorKey: number
   materialClass: MaterialClass
+  /** Assigned builtin material id (null = none). Part of the grouping key. */
+  materialId: string | null
   geometries: THREE.BufferGeometry[]
 }
 
 export interface ColorGroupGeometry {
   colorKey: number
   materialClass: MaterialClass
+  /** Assigned builtin material id (null = none). */
+  materialId: string | null
   geometry: THREE.BufferGeometry
 }
 

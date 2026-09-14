@@ -17,7 +17,8 @@
  * and early mechanical attempts (a leftover hue-group for metal, raw backgroundColors for glass)
  * produced same-hue "metal" and near-black "glass" that didn't read as either material. Both are
  * hand-authored per theme below: metals get genuine hue variety (not just one tinted ramp), glass
- * gets saturated, actually-colored translucent tones.
+ * gets saturated, actually-colored translucent tones. `carpaint` follows the same treatment —
+ * deep saturated base-coat colors that show off the clearcoat layer.
  *
  * Usage: npx tsx scripts/generate-palette-themes.ts
  */
@@ -30,8 +31,10 @@ import type { PaletteState } from '../src/engine/palette/types'
 type PaletteTheme = { id: string; name: string; palette: PaletteState }
 
 // Only these themes, in this order (plus the app's own hand-tuned DEFAULT_PALETTE, prepended
-// separately in the UI — see components/panels/PaletteThemeMenu.tsx).
-const INCLUDED_IDS = ['sploder-default', 'roguelike', 'iron-age', 'deep_colonizer', 'sprouts-stalks']
+// separately in the UI — see components/panels/PaletteThemeMenu.tsx). These three are derived
+// from etc/colors/; the rest below live in CUSTOM_THEMES (toy-town and urban-graffiti were
+// promoted to fully hand-authored after their etc/colors sources were retired).
+const INCLUDED_IDS = ['sploder-default', 'roguelike', 'sprouts-stalks']
 
 /** Display-name overrides — the source etc/colors/ name doesn't always read well in this app. */
 const NAME_OVERRIDES: Record<string, string> = {
@@ -44,8 +47,35 @@ const NAME_OVERRIDES: Record<string, string> = {
  * through red/orange/yellow to white-hot) followed by 8 complementary colors on the opposite side
  * of the wheel (dark blue through cyan to near-white), the same dark-to-bright progression mirrored
  * in hue — a coherent "fire and ice" 16-swatch spread.
+ *
+ * toy-town and urban-graffiti are likewise fully hand-authored (formerly derived; their sources
+ * were retired, so their palettes are now frozen verbatim).
  */
 const CUSTOM_THEMES: PaletteTheme[] = [
+  {
+    id: 'toy-town',
+    name: 'Toy Town',
+    palette: {
+      base: ['#3A9A52', '#6EBA76', '#1B54A0', '#4A8ED0', '#E8C400', '#F5D440', '#C91A1A', '#E84D4D', '#A87840', '#D4A868', '#8A3A28', '#B86848', '#6E3A82', '#B088C8', '#4A4A4C', '#9C9C9C'],
+      emissive: ['#ffdd55', '#ff5555', '#55aaff', '#55ff88'],
+      metal: ['#a8b0b6', '#d4a830', '#7a4030', '#9a6a40'],
+      glass: ['#b3e8ff', '#6bff5a', '#ff6655', '#ffee55'],
+      carpaint: ['#1a8a3f', '#c0a01a', '#c02a2a', '#e8e8e8'], // toy green, taxi yellow, fire-engine red, porcelain white
+      emissiveAnim: ['none', 'none', 'none', 'none'],
+    },
+  },
+  {
+    id: 'urban-graffiti',
+    name: 'Urban Graffiti',
+    palette: {
+      base: ['#AA0038', '#FF55A0', '#1144BB', '#44A0FF', '#339900', '#88EE33', '#CC3300', '#FFAA44', '#CC9900', '#FFEE55', '#7722BB', '#BB55FF', '#006699', '#44CCFF', '#111114', '#88888C'],
+      emissive: ['#ff33cc', '#33ff88', '#ffaa00', '#3388ff'],
+      metal: ['#8a8e92', '#c4a030', '#6a3a2a', '#4a4a4e'],
+      glass: ['#ff66cc', '#66ff66', '#ffcc33', '#33ccff'],
+      carpaint: ['#c01a66', '#1ac06b', '#e08a1a', '#141416'], // magenta, acid green, safety orange, blackout
+      emissiveAnim: ['none', 'none', 'none', 'none'],
+    },
+  },
   {
     id: 'blackbody',
     name: 'Blackbody',
@@ -59,32 +89,28 @@ const CUSTOM_THEMES: PaletteTheme[] = [
       emissive: ['#fff2cc', '#ff3b1f', '#33f2ff', '#5a8cff'], // white-hot, red-hot, cyan glow, blue glow
       metal: ['#ff7b3f', '#3fa9d9', '#2b2b2e', '#c9c9c9'], // molten steel, frost titanium, tungsten, platinum
       glass: ['#ff5a2e', '#ffcc33', '#2ed9ff', '#1a3fff'], // ember, amber, ice, deep blue
+      carpaint: ['#e01a1a', '#1a4fe0', '#0aa050', '#f0f0f0'], // ember red, ice blue, leaf green, pearl white
       emissiveAnim: ['none', 'none', 'none', 'none'],
     },
   },
 ]
 
-/** Hand-authored metal/glass per theme — see the file-level doc comment for why these aren't derived. */
-const MATERIALS: Record<string, { metal: string[]; glass: string[] }> = {
+/** Hand-authored metal/glass/carpaint per theme — see the file-level doc comment for why these aren't derived. */
+const MATERIALS: Record<string, { metal: string[]; glass: string[]; carpaint: string[] }> = {
   'sploder-default': {
     metal: ['#5a6670', '#c9a227', '#8a4a2e', '#d8dce0'], // gunmetal, brass, scorched copper, quicksilver
     glass: ['#7fff3f', '#ff5a1f', '#3fe0ff', '#ff3fc4'], // acid green, magma orange, cavern cyan, toxic magenta
+    carpaint: ['#c01a3f', '#1ac08a', '#7a1ac0', '#e8e81a'], // hot magenta-red, acid green, toxic purple, neon yellow
   },
   roguelike: {
     metal: ['#8a8f94', '#a67c3d', '#4a4e57', '#6b5433'], // tarnished silver, aged bronze, dark steel, dull iron
     glass: ['#3fae5c', '#3f7fbf', '#d99a3f', '#b23f4a'], // emerald potion, sapphire, amber ale, ruby
-  },
-  'iron-age': {
-    metal: ['#3d3d3f', '#9c6b34', '#5a8a72', '#8a97a3'], // dark iron, warm bronze, patina copper, polished steel
-    glass: ['#c48a3f', '#3f6b4a', '#3f5a8a', '#7a3040'], // amber bottle, forest green, deep blue, wine red
-  },
-  deep_colonizer: {
-    metal: ['#c8d4d8', '#2e3a42', '#4a8f7a', '#a67a4a'], // titanium, dark gunmetal, bio-copper, amber bronze
-    glass: ['#3fd9c4', '#6b3fbf', '#d98a3f', '#ff6b9c'], // glowing cyan, deep purple, amber warning, coral pink
+    carpaint: ['#7a1a1a', '#1a3f7a', '#3f6b1a', '#4a4a4e'], // oxblood, navy, moss, primer gray
   },
   'sprouts-stalks': {
     metal: ['#c9d9c9', '#d9b04a', '#7a8f5a', '#a06b45'], // dew silver, honey gold, mossy bronze, bark copper
     glass: ['#f2d94a', '#c4425a', '#7ec8e0', '#5cae5c'], // sunflower, berry, dew blue, leaf green
+    carpaint: ['#3fae1a', '#e0a81a', '#1a6bc0', '#f2f2e8'], // leaf green, sunflower, dew blue, petal white
   },
 }
 
@@ -137,13 +163,14 @@ function deriveBase(source: ColorPalette): string[] {
 
 function toPaletteState(source: ColorPalette): PaletteState {
   const materials = MATERIALS[source.id]
-  if (!materials) throw new Error(`${source.id}: no hand-authored metal/glass in MATERIALS`)
+  if (!materials) throw new Error(`${source.id}: no hand-authored metal/glass/carpaint in MATERIALS`)
   if (source.effectColors.length !== 4) throw new Error(`${source.id}: expected exactly 4 effectColors, got ${source.effectColors.length}`)
 
   return {
     base: deriveBase(source),
     metal: materials.metal,
     glass: materials.glass,
+    carpaint: materials.carpaint,
     emissive: [...source.effectColors],
     emissiveAnim: ['none', 'none', 'none', 'none'],
   }
@@ -161,6 +188,7 @@ function themeLiteral(theme: PaletteTheme): string {
       emissive: ${hexArray(p.emissive)},
       metal: ${hexArray(p.metal)},
       glass: ${hexArray(p.glass)},
+      carpaint: ${hexArray(p.carpaint)},
       emissiveAnim: ['none', 'none', 'none', 'none'],
     },
   }`
@@ -171,9 +199,9 @@ const header = `import type { PaletteState } from './types'
 /**
  * Pre-made themed palettes, generated from a curated subset of etc/colors/ by
  * scripts/generate-palette-themes.ts — do not hand-edit; re-run the script instead. \`base\` favors
- * hue-group variety over shade ramps (2nd + 4th shade of each available hue-group); \`metal\`/\`glass\`
- * are hand-authored per theme (see the script's MATERIALS table) for genuine material variety —
- * see the script's doc comment for the full rationale.
+ * hue-group variety over shade ramps (2nd + 4th shade of each available hue-group); \`metal\`/\`glass\`/
+ * \`carpaint\` are hand-authored per theme (see the script's MATERIALS table) for genuine material
+ * variety — see the script's doc comment for the full rationale.
  */
 export type PaletteTheme = { id: string; name: string; palette: PaletteState }
 

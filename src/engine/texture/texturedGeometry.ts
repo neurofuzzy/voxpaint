@@ -4,7 +4,7 @@ import type { PaletteState } from '@/engine/palette/types'
 import type { SliceKey } from '@/engine/animation/types'
 import type { ColorGroupGeometry, SliceGroupGeometry, VertexUV } from '@/engine/instancing/voxelMeshBuilder'
 import { buildTexturedShellGeometry, buildTexturedShellGeometryByColor, buildTexturedShellGeometryBySliceColor } from '@/engine/instancing/voxelMeshBuilder'
-import { atlasUVFor, boxFaceForCell, worldToTexel } from './boxMapping'
+import { atlasUVFor, boxFaceForCell, materialUVForVertex, worldToTexel } from './boxMapping'
 
 /**
  * The box-map UV generator: pick the box face for the cell (chamfer → authored axis; cube → normal),
@@ -38,4 +38,15 @@ export function buildTexturedGeometryBySlice(
   gridExtent: GridExtent,
 ): SliceGroupGeometry[] {
   return buildTexturedShellGeometryBySliceColor(model, palette, uvForExtent(gridExtent), nodeAssignment)
+}
+
+/**
+ * Material-map UV generator for the CSG-optimized (untextured) path, whose geometry carries no
+ * UVs of its own: plain per-face 0..1 box mapping (`materialUVForVertex`) injected through the
+ * builders' `uvFor` callback so `engine/instancing` keeps no dependency on `engine/texture`.
+ */
+export function materialUVForExtent(gridExtent: GridExtent): VertexUV {
+  return (_chamfer, normal, vertex) => {
+    return materialUVForVertex([normal.x, normal.y, normal.z], vertex.x, vertex.y, vertex.z, gridExtent)
+  }
 }
