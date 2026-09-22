@@ -179,6 +179,7 @@ export const createProjectSlice: Slice = (set, get) => ({
       state.exportScaleFactor = 100
       state.exportAnchor = 'center'
       state.exportIncludeTextureMaps = true
+      state.exportIncludeAOMaps = true
       state.animSettings = new Map()
       state.sliceMasks = new Map()
       state.slicePivots = new Map()

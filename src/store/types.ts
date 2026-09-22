@@ -190,6 +190,9 @@ export type ViewSlice = {
   /** GLTF export: emit texture maps — baked color overlay, ambient occlusion, metal maps
    * (default true). Off = solid materials + bare geometry, no maps or TEXCOORDs. */
   exportIncludeTextureMaps: boolean
+  /** GLTF export: bake ambient occlusion into an aoMap (default true). Off skips the AO bake
+   * (and any aoMap assignment) while leaving other texture maps untouched. */
+  exportIncludeAOMaps: boolean
   setFullscreen: (v: boolean) => void
   setEdit3D: (v: boolean) => void
   setHoverCell: (coord: Coord | null, chamferValid: boolean | null) => void
@@ -210,6 +213,7 @@ export type ViewSlice = {
   setExportAlignToObjectBounds: (v: boolean) => void
   setExportDisableMeshOptimization: (v: boolean) => void
   setExportIncludeTextureMaps: (v: boolean) => void
+  setExportIncludeAOMaps: (v: boolean) => void
 }
 
 export type PersistenceSlice = {

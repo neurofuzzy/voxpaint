@@ -3,10 +3,9 @@ import * as THREE from 'three'
 import { useFrame } from '@react-three/fiber'
 import { buildBlendAtlas } from '@/engine/texture/boxMapping'
 import { bakeOverlayTexturesByColor } from '@/engine/texture/overlay'
-import { buildTexturedGeometryByColor } from '@/engine/texture/texturedGeometry'
+import { buildTexturedGeometryByColorMerged } from '@/engine/texture/texturedGeometry'
 import { hasTextureContent } from '@/engine/texture/TextureStore'
 import { buildOptimizedVoxelGroups } from '@/engine/instancing/voxelMeshBuilder'
-import { triangleCount } from '@/engine/instancing/meshOptimizer'
 import { buildPreviewMaterial, tickEmissiveAnimation } from '@/engine/instancing/previewMaterial'
 import { buildEmissiveAnimIndex } from '@/engine/palette/emissiveAnimation'
 import { darkestBaseColor } from '@/engine/palette/palette'
@@ -22,10 +21,12 @@ const wireframeOverlayMaterial = new THREE.MeshBasicMaterial({ color: 0xffffff, 
  *
  * When the model has no painted texture, geometry is shell-culled and CSG-optimized (the "optimized
  * mesh" toggle merges coplanar faces on top) — solid palette colour, no vertex colours. When the
- * model *does* have painted texture content, this instead uses the same box-mapped, baked-overlay
- * geometry Texture mode uses (bypassing CSG optimization, which doesn't preserve per-face UVs), so
- * Model mode shows paint too. The `optimizedMesh` toggle and triangle-reduction stat are therefore
- * inert while textured — there's nothing to reduce without the CSG pass.
+ * model *does* have painted texture content, this instead uses the box-mapped shell with a
+ * tag-aware coplanar merge (same toggle): merge groups never mix materials, colors, or texture
+ * pages, and UVs are recomputed per merged vertex from (page, position), so Model mode shows
+ * paint with real triangle reduction and a live raw/merged stat. (CSG union itself is still
+ * bypassed while textured — it doesn't preserve per-face UVs — but the shell cull already
+ * removes hidden interior faces, which is what the union contributed here.)
  *
  * Ambient occlusion is baked into a uv1-unwrapped atlas (non-overlapping, depth-correct hemisphere
  * sampling from the 3D voxel occupancy field) and applied via `material.aoMap`, in both branches.
@@ -54,9 +55,8 @@ export function OptimizedMeshView() {
 
   const built = useMemo(() => {
     if (textured) {
-      const groups = buildTexturedGeometryByColor(model, palette, gridExtent)
-      const triangles = groups.reduce((sum, g) => sum + triangleCount(g.geometry), 0)
-      return { groups, rawTriangles: triangles, optimizedTriangles: triangles }
+      const merged = buildTexturedGeometryByColorMerged(model, palette, gridExtent, optimizedMesh)
+      return { groups: merged.groups, rawTriangles: merged.rawTriangles, optimizedTriangles: merged.optimizedTriangles }
     }
     return buildOptimizedVoxelGroups(model, palette, optimizedMesh)
   }, [model, palette, optimizedMesh, textured, gridExtent])

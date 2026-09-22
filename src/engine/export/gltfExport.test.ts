@@ -7,9 +7,41 @@ import type { TextureModel } from '@/engine/texture/types'
 import { emptyTextureModel } from '@/engine/texture/TextureStore'
 import { exportModelToGlb } from './gltfExport'
 
-// three's GLTFExporter assembles the binary .glb via Blob + FileReader — browser APIs absent in
-// the node test environment. Minimal FileReader supporting only the ArrayBuffer path the binary
-// export uses (this test exports no textures, so the image/data-URL paths never run).
+// three's GLTFExporter rasterizes every texture image through a 2D canvas — also absent in
+// node. Minimal stub supporting only the DataTexture path maps-on exports take (aoMap): the
+// exporter copies image bytes via putImageData, then blobs the canvas for the binary chunk.
+// Pixel fidelity is irrelevant here (tests only read the JSON chunk), so toBlob emits filler.
+if (typeof (globalThis as Record<string, unknown>).document === 'undefined') {
+  class StubCanvasContext {
+    translate() { /* no-op */ }
+    scale() { /* no-op */ }
+    putImageData() { /* no-op */ }
+  }
+  class StubCanvas {
+    width = 1
+    height = 1
+    getContext() {
+      return new StubCanvasContext()
+    }
+    toBlob(cb: (blob: Blob | null) => void) {
+      cb(new Blob(['stub'], { type: 'image/png' }))
+    }
+  }
+  class StubImageData {
+    data: Uint8ClampedArray
+    width: number
+    height: number
+    constructor(data: Uint8ClampedArray, width: number, height: number) {
+      this.data = data
+      this.width = width
+      this.height = height
+    }
+  }
+  const g = globalThis as Record<string, unknown>
+  g.document = { createElement: () => new StubCanvas() }
+  g.ImageData = StubImageData
+}
+// Binary .glb assembly via Blob + FileReader — the ArrayBuffer path the exporter uses.
 if (typeof (globalThis as Record<string, unknown>).FileReader === 'undefined') {
   class NodeFileReader {
     result: ArrayBuffer | null = null
@@ -38,6 +70,7 @@ interface GlbJson {
   images?: unknown[]
   textures?: unknown[]
   samplers?: unknown[]
+  accessors?: Array<{ count?: number }>
   materials?: Array<{
     name?: string
     baseColorTexture?: unknown
@@ -134,8 +167,7 @@ function expectMapFree(json: GlbJson) {
   }
 }
 
-describe('exportModelToGlb includeTextureMaps', () => {
-  it('textured export without maps is map-free but keeps solid colours', async () => {
+describe('exportModelToGlb includeTextureMaps', () => {  it('textured export without maps is map-free but keeps solid colours', async () => {
     const { model, texture } = texturedPillar()
     const glb = await exportModelToGlb(model, DEFAULT_PALETTE, 16, texture, { includeTextureMaps: false })
     expectMapFree(glbJson(glb))
@@ -144,5 +176,59 @@ describe('exportModelToGlb includeTextureMaps', () => {
   it('untextured export without maps is likewise map-free', async () => {
     const glb = await exportModelToGlb(pillarVoxel(), DEFAULT_PALETTE, 16, undefined, { includeTextureMaps: false })
     expectMapFree(glbJson(glb))
+  })
+})
+
+/** Total POSITION vertices across every exported mesh primitive. */
+function positionVertexCount(json: GlbJson): number {
+  let total = 0
+  for (const mesh of json.meshes ?? []) {
+    for (const prim of mesh.primitives) {
+      total += json.accessors?.[prim.attributes.POSITION]?.count ?? 0
+    }
+  }
+  return total
+}
+
+describe('exportModelToGlb textured mesh optimization', () => {  it('merges coplanar textured faces by default; optimizeMesh:false keeps per-voxel triangulation', async () => {
+    const model = emptyModel()
+    model.color.set(encodeKey(0, 0, 0), { paletteSlot: base0 })
+    model.color.set(encodeKey(1, 0, 0), { paletteSlot: base0 })
+    const withBounds = { ...model, bounds: recomputeBounds(model) }
+    const texture = emptyTextureModel(16)
+    texture.faces.px[0] = 0
+    // Map-free so no canvas APIs run in node — geometry still takes the textured path.
+    const merged = positionVertexCount(
+      glbJson(await exportModelToGlb(withBounds, DEFAULT_PALETTE, 16, texture, { includeTextureMaps: false })),
+    )
+    const raw = positionVertexCount(
+      glbJson(
+        await exportModelToGlb(withBounds, DEFAULT_PALETTE, 16, texture, { includeTextureMaps: false, optimizeMesh: false }),
+      ),
+    )
+    expect(merged).toBeGreaterThan(0)
+    expect(merged).toBeLessThan(raw)
+  })
+})
+
+/** Material names carrying an occlusionTexture in the exported JSON. */
+function materialsWithOcclusion(json: GlbJson): string[] {
+  return (json.materials ?? []).filter((m) => m.occlusionTexture !== undefined).map((m) => m.name ?? '')
+}
+
+describe('exportModelToGlb AO map exclusion', () => {
+  it('emits occlusionTexture with ambientOcclusion on and omits it when off (maps otherwise intact)', async () => {
+    const withAO = glbJson(
+      await exportModelToGlb(pillarVoxel(), DEFAULT_PALETTE, 16, undefined, { includeTextureMaps: true, ambientOcclusion: true }),
+    )
+    expect(withAO.materials!.length).toBeGreaterThan(0)
+    expect(materialsWithOcclusion(withAO).length).toBeGreaterThan(0)
+
+    const withoutAO = glbJson(
+      await exportModelToGlb(pillarVoxel(), DEFAULT_PALETTE, 16, undefined, { includeTextureMaps: true, ambientOcclusion: false }),
+    )
+    expect(materialsWithOcclusion(withoutAO)).toEqual([])
+    // Same materials otherwise — only the AO map is gone.
+    expect(withoutAO.materials!.length).toBe(withAO.materials!.length)
   })
 })

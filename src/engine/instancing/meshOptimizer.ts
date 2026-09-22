@@ -11,6 +11,14 @@ interface Tri {
   normal: THREE.Vector3
   plane: THREE.Plane
   vertices: THREE.Vector3[]
+  /**
+   * Merge-group discriminator carried alongside the geometry. Triangles only ever merge with
+   * same-key partners (checked in both grouping passes below); the merged output inherits the
+   * group key. Callers that don't care pass a uniform key and get exactly the legacy behavior.
+   * The textured path uses this for its box-face tag so coplanar faces sampling different
+   * texture pages are never welded into one polygon.
+   */
+  key: string
 }
 
 /**
@@ -239,6 +247,7 @@ function mergeConnectedGroups(groups: Tri[][]): Tri[][] {
       for (let j = i + 1; j < current.length; j++) {
         if (placed.has(j)) continue
         const head = current[j][0]
+        if (group[0].key !== head.key) continue
         if (group[0].normal.dot(head.normal) <= NORMAL_THRESHOLD) continue
         if (Math.abs(group[0].plane.distanceToPoint(head.vertices[0])) > COPLANAR_THRESHOLD) continue
         if (!groupsShareEdge(group, current[j])) continue
@@ -470,7 +479,7 @@ function mergeCoplanarTriangles(triangles: Tri[]): Tri[] {
     if (calcNormal.lengthSq() > 0) calcNormal.normalize()
 
     const vertices = calcNormal.dot(normal) < -0.5 ? [v0, v2, v1] : [v0, v1, v2]
-    out.push({ vertices, normal: normal.clone(), plane: reference.plane })
+    out.push({ vertices, normal: normal.clone(), plane: reference.plane, key: reference.key })
   }
 
   return out.length > 0 ? out : triangles
@@ -483,9 +492,24 @@ function toNonIndexed(geometry: THREE.BufferGeometry): THREE.BufferGeometry {
 
 /** Merge coplanar edge-connected faces on a post-CSG geometry to reduce triangle count. */
 function mergeCoplanarFaces(geometry: THREE.BufferGeometry): THREE.BufferGeometry {
+  return mergeCoplanarFacesWithKeys(geometry, () => '').geometry
+}
+
+/**
+ * Tag-aware coplanar merge: like `mergeCoplanarFaces`, but triangles only merge with partners
+ * carrying the same per-triangle key, and the key of every surviving output triangle is
+ * returned alongside the geometry (one entry per output triangle, in emitted order). The
+ * textured path keys on its box-face tag so a weld never mixes texture pages; UVs are then
+ * recomputed per vertex from (key, position), which is exact because the box-map projection is
+ * affine in position for a fixed page (barycentric interpolation reproduces it precisely).
+ */
+export function mergeCoplanarFacesWithKeys(
+  geometry: THREE.BufferGeometry,
+  getKey: (triangleIndex: number) => string,
+): { geometry: THREE.BufferGeometry; keys: string[] } {
   const positionAttr = geometry.getAttribute('position') as THREE.BufferAttribute
   const normalAttr = geometry.getAttribute('normal') as THREE.BufferAttribute
-  if (!positionAttr || !normalAttr) return geometry
+  if (!positionAttr || !normalAttr) return { geometry, keys: [] }
 
   const triangleTotal = positionAttr.count / 3
   const triangles: Tri[] = []
@@ -500,6 +524,7 @@ function mergeCoplanarFaces(geometry: THREE.BufferGeometry): THREE.BufferGeometr
       normal,
       plane: new THREE.Plane().setFromNormalAndCoplanarPoint(normal, v0),
       vertices: [v0, v1, v2],
+      key: getKey(t),
     })
   }
 
@@ -508,6 +533,7 @@ function mergeCoplanarFaces(geometry: THREE.BufferGeometry): THREE.BufferGeometr
     let placed = false
     for (const group of groups) {
       const head = group[0]
+      if (tri.key !== head.key) continue
       if (tri.normal.dot(head.normal) <= NORMAL_THRESHOLD) continue
       if (Math.abs(head.plane.distanceToPoint(tri.vertices[0])) > COPLANAR_THRESHOLD) continue
       if (!group.some((g) => trianglesShareEdge(tri, g))) continue
@@ -528,15 +554,17 @@ function mergeCoplanarFaces(geometry: THREE.BufferGeometry): THREE.BufferGeometr
 
   const positions: number[] = []
   const normals: number[] = []
+  const keys: string[] = []
   for (const tri of optimized) {
     for (const v of tri.vertices) {
       positions.push(v.x, v.y, v.z)
       normals.push(tri.normal.x, tri.normal.y, tri.normal.z)
     }
+    keys.push(tri.key)
   }
 
   const out = new THREE.BufferGeometry()
   out.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3))
   out.setAttribute('normal', new THREE.Float32BufferAttribute(normals, 3))
-  return out
+  return { geometry: out, keys }
 }

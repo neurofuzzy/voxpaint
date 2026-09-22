@@ -8,7 +8,7 @@ import { bakeAOToAtlas, makeSpecularNoiseTexture } from '@/engine/ao/bakeAO'
 import { unwrapGeometries } from '@/engine/ao/uvUnwrap'
 import { buildBlendAtlas } from '@/engine/texture/boxMapping'
 import { bakeOverlayTexture } from '@/engine/texture/overlay'
-import { buildTexturedGeometryByColor, buildTexturedGeometryBySlice } from '@/engine/texture/texturedGeometry'
+import { buildTexturedGeometryByColorMerged, buildTexturedGeometryBySlice } from '@/engine/texture/texturedGeometry'
 import { hasTextureContent } from '@/engine/texture/TextureStore'
 import { buildOptimizedVoxelGeometryByMaterial, buildOptimizedVoxelGroupsBySlice } from '@/engine/instancing/voxelMeshBuilder'
 import { darkestBaseColor, materialParamsFor, type MaterialClass } from '@/engine/palette/palette'
@@ -77,7 +77,8 @@ export type GltfExportOptions = {
   /** Merge coplanar faces on the PBR (untextured) path (default true). Set false to keep the raw
    * per-voxel surface triangulation — the CSG union still welds cells and drops hidden interior
    * faces, but the exposed surface stays subdivided per voxel so downstream tools can deform the
-   * mesh along its original voxel topology. No effect on the textured path (already per-voxel). */
+   * mesh along its original voxel topology. On the textured path this gates the tag-aware
+   * coplanar merge instead (same default); the animated textured path always stays per-voxel. */
   optimizeMesh?: boolean
   /** Emit texture maps: the baked color overlay, ambient-occlusion, and metal specular-noise maps
    * (default true). Set false to export materials + geometry only — no `map`/`aoMap`/metalness-map
@@ -230,7 +231,7 @@ export async function exportModelToGlb(
     const groups: Array<{ geometry: THREE.BufferGeometry; colorKey: number; materialClass: MaterialClass; sliceKey?: string }> =
       hasAnimations && nodeAssignment
         ? buildTexturedGeometryBySlice(model, palette, nodeAssignment, gridExtent)
-        : buildTexturedGeometryByColor(model, palette, gridExtent).map((g) => ({ ...g, sliceKey: undefined }))
+        : buildTexturedGeometryByColorMerged(model, palette, gridExtent, options.optimizeMesh ?? true).groups.map((g) => ({ ...g, sliceKey: undefined }))
     for (const { geometry } of groups) geometries.push(geometry)
     if (!includeTextureMaps) stripUVs(groups)
 
@@ -243,16 +244,22 @@ export async function exportModelToGlb(
     // everything else (bakeAOToAtlas samples the full `model`, not the atlas contents), so excluding
     // them here only means they never get an aoMap of their own.
     const aoGroups = groups.filter((g) => g.materialClass !== 'emissive')
-    if (includeTextureMaps && (options.ambientOcclusion || (options.specularNoiseLevel ?? 0) > 0) && aoGroups.length > 0) {
+    // AO maps are independently excludable (`options.ambientOcclusion`); specular-noise maps
+    // still bake when requested even with AO off (they share the unwrap atlas, not the AO bake).
+    const wantAO = includeTextureMaps && !!options.ambientOcclusion && aoGroups.length > 0
+    const specularLevel = options.specularNoiseLevel ?? 0
+    if (includeTextureMaps && (wantAO || specularLevel > 0) && aoGroups.length > 0) {
       const unwrapped = unwrapGeometries(aoGroups.map((g) => g.geometry))
       for (let i = 0; i < aoGroups.length; i++) {
         aoGroups[i].geometry.setAttribute('uv1', new THREE.Float32BufferAttribute(unwrapped.uv1Arrays[i], 2))
       }
-      const baked = bakeAOToAtlas(model, unwrapped.atlas, options.noiseLevel ?? 0, options.aoStrength ?? 1, animatedKeys, options.noiseSeed ?? 0)
-      aoTex = aoMapTexture(baked.data, baked.width, baked.height)
-      textures.push(aoTex)
+      if (wantAO) {
+        const baked = bakeAOToAtlas(model, unwrapped.atlas, options.noiseLevel ?? 0, options.aoStrength ?? 1, animatedKeys, options.noiseSeed ?? 0)
+        aoTex = aoMapTexture(baked.data, baked.width, baked.height)
+        textures.push(aoTex)
+      }
 
-      const sl = options.specularNoiseLevel ?? 0
+      const sl = specularLevel
       if (sl > 0) {
         const spec = makeSpecularNoiseTexture(unwrapped.atlas, sl, options.noiseSeed ?? 0)
         metalTex = noiseMapTexture(spec.metalness.data, spec.metalness.width, spec.metalness.height)
@@ -353,18 +360,22 @@ export async function exportModelToGlb(
     let colorTex: THREE.Texture | null = null
     // See the textured path above: emissive materials skip AO/noise entirely.
     const aoGroups = groups.filter((g) => g.materialClass !== 'emissive')
-    if (includeTextureMaps && (options.ambientOcclusion || (options.specularNoiseLevel ?? 0) > 0) && aoGroups.length > 0) {
+    const wantAO = includeTextureMaps && !!options.ambientOcclusion && aoGroups.length > 0
+    const specularLevel = options.specularNoiseLevel ?? 0
+    if (includeTextureMaps && (wantAO || specularLevel > 0) && aoGroups.length > 0) {
       const unwrapped = unwrapGeometries(aoGroups.map((g) => g.geometry))
       for (let i = 0; i < aoGroups.length; i++) {
         const uv1 = new THREE.Float32BufferAttribute(unwrapped.uv1Arrays[i], 2)
         aoGroups[i].geometry.setAttribute('uv1', uv1)
         aoGroups[i].geometry.setAttribute('uv', uv1)
       }
-      const baked = bakeAOToAtlas(model, unwrapped.atlas, options.noiseLevel ?? 0, options.aoStrength ?? 1, animatedKeys, options.noiseSeed ?? 0)
-      aoTex = aoMapTexture(baked.data, baked.width, baked.height)
-      textures.push(aoTex)
+      if (wantAO) {
+        const baked = bakeAOToAtlas(model, unwrapped.atlas, options.noiseLevel ?? 0, options.aoStrength ?? 1, animatedKeys, options.noiseSeed ?? 0)
+        aoTex = aoMapTexture(baked.data, baked.width, baked.height)
+        textures.push(aoTex)
+      }
 
-      const sl = options.specularNoiseLevel ?? 0
+      const sl = specularLevel
       if (sl > 0) {
         const spec = makeSpecularNoiseTexture(unwrapped.atlas, sl, options.noiseSeed ?? 0)
         metalTex = noiseMapTexture(spec.metalness.data, spec.metalness.width, spec.metalness.height)

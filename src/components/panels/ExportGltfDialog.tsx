@@ -21,11 +21,13 @@ export function ExportGltfDialog({ open, onOpenChange }: { open: boolean; onOpen
   const exportAlignToObjectBounds = useAppStore((s) => s.exportAlignToObjectBounds)
   const exportDisableMeshOptimization = useAppStore((s) => s.exportDisableMeshOptimization)
   const exportIncludeTextureMaps = useAppStore((s) => s.exportIncludeTextureMaps)
+  const exportIncludeAOMaps = useAppStore((s) => s.exportIncludeAOMaps)
   const setExportScaleFactor = useAppStore((s) => s.setExportScaleFactor)
   const setExportAnchor = useAppStore((s) => s.setExportAnchor)
   const setExportAlignToObjectBounds = useAppStore((s) => s.setExportAlignToObjectBounds)
   const setExportDisableMeshOptimization = useAppStore((s) => s.setExportDisableMeshOptimization)
   const setExportIncludeTextureMaps = useAppStore((s) => s.setExportIncludeTextureMaps)
+  const setExportIncludeAOMaps = useAppStore((s) => s.setExportIncludeAOMaps)
 
   useEffect(() => {
     if (open) setScaleInput(String(exportScaleFactor))
@@ -59,7 +61,7 @@ export function ExportGltfDialog({ open, onOpenChange }: { open: boolean; onOpen
     try {
       showToast('Exporting GLTF…')
       const glb = await exportModelToGlb(model, palette, gridExtent, texture, {
-        ambientOcclusion: true,
+        ambientOcclusion: state.exportIncludeAOMaps,
         noiseLevel,
         specularNoiseLevel,
         aoStrength,
@@ -148,6 +150,16 @@ export function ExportGltfDialog({ open, onOpenChange }: { open: boolean; onOpen
                 className="h-4 w-4 shrink-0 cursor-pointer accent-violet-500"
               />
               <span className="text-sm text-neutral-400">Include texture maps</span>
+            </label>
+
+            <label className="flex items-center gap-2.5 ml-[4.5rem] cursor-pointer select-none" title="Off skips the ambient-occlusion bake (no aoMap); other texture maps are unaffected">
+              <input
+                type="checkbox"
+                checked={exportIncludeAOMaps}
+                onChange={(e) => setExportIncludeAOMaps(e.target.checked)}
+                className="h-4 w-4 shrink-0 cursor-pointer accent-violet-500"
+              />
+              <span className="text-sm text-neutral-400">Include AO maps</span>
             </label>
 
             <label className="flex items-center gap-2.5 ml-[4.5rem] cursor-pointer select-none" title="Keep per-voxel topology for deforming in other apps">

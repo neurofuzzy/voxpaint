@@ -26,6 +26,7 @@ export const createViewSlice: Slice = (set) => ({
   exportAlignToObjectBounds: false,
   exportDisableMeshOptimization: false,
   exportIncludeTextureMaps: true,
+  exportIncludeAOMaps: true,
 
   setFullscreen: (v) => set((state) => { state.fullscreen = v }),
   setEdit3D: (v) => set((state) => { state.edit3D = v }),
@@ -51,4 +52,5 @@ export const createViewSlice: Slice = (set) => ({
   setExportAlignToObjectBounds: (v) => set((state) => { state.exportAlignToObjectBounds = v; state.dirty = true }),
   setExportDisableMeshOptimization: (v) => set((state) => { state.exportDisableMeshOptimization = v; state.dirty = true }),
   setExportIncludeTextureMaps: (v) => set((state) => { state.exportIncludeTextureMaps = v; state.dirty = true }),
+  setExportIncludeAOMaps: (v) => set((state) => { state.exportIncludeAOMaps = v; state.dirty = true }),
 })
