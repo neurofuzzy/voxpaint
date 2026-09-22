@@ -458,7 +458,7 @@ export async function exportModelToGlb(
         if (!matMaps?.roughnessMap && roughTex) material.roughnessMap = roughTex
         if (!matMaps?.map && colorTex) material.map = colorTex
       }
-      material.name = `voxel_${hex6(colorKey)}_${materialClass}${materialId ? `_${materialId}` : ''}`
+      material.name = `voxel_${hex6(colorKey)}_${materialClass}${materialId && BUILTIN_MATERIAL_BY_ID[materialId] ? `_${materialId}` : ''}`
       const mesh = new THREE.Mesh(geometry, material)
       mesh.name = material.name
       attachToSliceOrRoot(mesh, sliceKey, animSettings, sliceNodeInfo, sliceNodes, animNodes, root, slicePivots, voxelScaleY)

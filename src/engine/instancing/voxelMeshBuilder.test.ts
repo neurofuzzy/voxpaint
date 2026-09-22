@@ -65,10 +65,25 @@ describe('CSG per-color-group optimizer', () => {
     expect(sameColor.groups[0].materialId).toBeNull()
   })
 
-  it('never assigns materials to glass slots', () => {
+  it('never assigns texture materials to glass slots', () => {
     const built = buildOptimizedVoxelGroups(twoVoxels(glass0, glass0), DEFAULT_PALETTE, true, { 'glass:0': 'cast-iron' })
     expect(built.groups).toHaveLength(1)
     expect(built.groups[0].materialId).toBeNull()
+  })
+
+  it('resolves class-id assignments to their effective class', () => {
+    const emissive = buildOptimizedVoxelGroups(twoVoxels(base0, base0), DEFAULT_PALETTE, true, { 'base:0': 'emissive' })
+    expect(emissive.groups).toHaveLength(1)
+    expect(emissive.groups[0].materialClass).toBe('emissive')
+    expect(emissive.groups[0].materialId).toBe('emissive')
+
+    const glass = buildOptimizedVoxelGroups(twoVoxels(base0, base1), DEFAULT_PALETTE, true, { 'base:0': 'glass' })
+    expect(glass.groups).toHaveLength(2)
+    expect(glass.groups.find((g) => g.materialId === 'glass')?.materialClass).toBe('glass')
+
+    const carpaint = buildOptimizedVoxelGroups(twoVoxels(base0, base0), DEFAULT_PALETTE, true, { 'base:0': 'carpaint' })
+    expect(carpaint.groups).toHaveLength(1)
+    expect(carpaint.groups[0].materialClass).toBe('carpaint')
   })
 })
 

@@ -4,7 +4,7 @@ import type { CellKey, ChamferCell, Coord, VoxelModel } from '@/engine/grid/type
 import { concaveCornerGeometry, convexCornerGeometry, mirrorVGeometry, rampGeometry, thinGeometry, wedgeGeometry } from '@/engine/chamfer/chamferGeometry'
 import { materialClassFor, resolveSlotColor, type MaterialClass } from '@/engine/palette/palette'
 import type { PaletteState } from '@/engine/palette/types'
-import { BUILTIN_MATERIAL_BY_ID, slotMaterialKey, type SlotMaterialAssignments } from '@/engine/materials/builtinMaterials'
+import { BUILTIN_MATERIAL_BY_ID, effectiveMaterialClass, isClassMaterialId, slotMaterialKey, type SlotMaterialAssignments } from '@/engine/materials/builtinMaterials'
 import type { SliceKey } from '@/engine/animation/types'
 import { chamferBasisIsReflected, chamferInstanceMatrix } from './basis'
 import { optimizeGroupsByCSG, triangleCount, type VoxelGroup } from './meshOptimizer'
@@ -282,21 +282,24 @@ export interface ColorGroupGeometry {
   colorKey: number
   /** The group's PBR material class (matte/emissive/metal/glass). */
   materialClass: MaterialClass
-  /** Assigned builtin material id, or null. Glass slots never carry one (see below). */
+  /** Assigned material id (class override or texture set), or null. */
   materialId: string | null
   geometry: THREE.BufferGeometry
 }
 
 /**
- * Resolves a cell's assigned builtin material: the slot's `slotMaterials` entry, validated
- * against the manifest (a hand-edited file may reference an unknown id — treated as none).
- * Glass slots never carry materials (transmissive materials keep their solid tint for viewer
- * compatibility, same rule as the painted overlay).
+ * Resolves a cell's assigned material id: the slot's `slotMaterials` entry, validated
+ * (a hand-edited file may reference an unknown id — treated as none). Class ids
+ * (`emissive`/`glass`/`carpaint`) always resolve — they switch the effective class.
+ * Texture ids on glass-kind slots resolve to null (transmissive materials keep their solid
+ * tint for viewer compatibility, same rule as the painted overlay).
  */
 export function materialIdForSlot(slot: { kind: string; index: number }, slotMaterials?: SlotMaterialAssignments): string | null {
-  if (slot.kind === 'glass') return null
   const id = slotMaterials?.[slotMaterialKey(slot.kind, slot.index)]
-  return id && BUILTIN_MATERIAL_BY_ID[id] ? id : null
+  if (!id) return null
+  if (isClassMaterialId(id)) return id
+  if (slot.kind === 'glass') return null
+  return BUILTIN_MATERIAL_BY_ID[id] ? id : null
 }
 
 /**
@@ -341,7 +344,7 @@ export function buildOptimizedVoxelGroups(model: VoxelModel, palette: PaletteSta
   for (const key of model.color.keys()) {
     const coord = decodeKey(key)
     const slot = model.color.get(key)!.paletteSlot
-    const materialClass = materialClassFor(slot.kind)
+    const materialClass = effectiveMaterialClass(slot.kind, slot.index, slotMaterials)
     const colorKey = color.set(resolveSlotColor(palette, slot)).getHex()
     const chamfer = model.chamfer.get(key)
     const materialId = materialIdForSlot(slot, slotMaterials)
@@ -419,7 +422,7 @@ export function buildOptimizedVoxelGroupsBySlice(
   for (const key of model.color.keys()) {
     const coord = decodeKey(key)
     const slot = model.color.get(key)!.paletteSlot
-    const materialClass = materialClassFor(slot.kind)
+    const materialClass = effectiveMaterialClass(slot.kind, slot.index, slotMaterials)
     const colorKey = color.set(resolveSlotColor(palette, slot)).getHex()
     const chamfer = model.chamfer.get(key)
     const materialId = materialIdForSlot(slot, slotMaterials)

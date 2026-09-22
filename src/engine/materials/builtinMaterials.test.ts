@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
-import { BUILTIN_MATERIALS, BUILTIN_MATERIAL_BY_ID, slotMaterialKey, type SlotMaterialAssignments } from './builtinMaterials'
+import type { PaletteSlotKind } from '@/engine/palette/types'
+import { BUILTIN_MATERIALS, BUILTIN_MATERIAL_BY_ID, CLASS_MATERIAL_IDS, effectiveMaterialClass, isClassMaterialId, slotMaterialKey, type SlotMaterialAssignments } from './builtinMaterials'
 
 describe('builtin material manifest', () => {
   it('has unique ids that resolve through the lookup', () => {
@@ -26,5 +27,18 @@ describe('builtin material manifest', () => {
     expect(slotMaterialKey('base', 0)).toBe('base:0')
     const assignments: SlotMaterialAssignments = { [slotMaterialKey('metal', 1)]: 'copper-brushed' }
     expect(assignments['metal:1']).toBe('copper-brushed')
+  })
+
+  it('resolves class-id assignments to their effective class', () => {
+    for (const id of CLASS_MATERIAL_IDS) {
+      expect(isClassMaterialId(id)).toBe(true)
+      expect(effectiveMaterialClass('base' as PaletteSlotKind, 0, { 'base:0': id })).toBe(id)
+    }
+    expect(isClassMaterialId('cast-iron')).toBe(false)
+    expect(isClassMaterialId('unknown-id')).toBe(false)
+    // No assignment (or a texture id) → the slot kind's own class.
+    expect(effectiveMaterialClass('base' as PaletteSlotKind, 0, {})).toBe('matte')
+    expect(effectiveMaterialClass('base' as PaletteSlotKind, 0, { 'base:0': 'cast-iron' })).toBe('matte')
+    expect(effectiveMaterialClass('metal' as PaletteSlotKind, 0, {})).toBe('metal')
   })
 })

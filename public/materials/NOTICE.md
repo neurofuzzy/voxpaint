@@ -23,8 +23,13 @@ The MIT license requires this attribution notice to be preserved — do not remo
 | asphalt | TH: Aerial Asphalt | cb4944e4-3c67-4f7d-b0fc-96702ec10e23 | albedo, roughness |
 | leather-brown | TH: Brown Leather | 2f568489-6b81-43ab-aa33-cc4f7e32fdce | albedo, roughness |
 | oak-pale | Pale Oak Solid Wood | ca0978cd-367c-4ee8-9527-ace8bf030f99 | albedo |
+| fleece-midnite | Midnite Fleece Fabric | 22d5975e-934c-4ea2-ab44-62b2ec8617ce | albedo |
 
 Each folder also holds `thumb.jpg` (the library's own sphere render, 256px) for future UI use.
+
+Deliberately omitted: rubber and plastic. Their packages are procedural-only (noise normals,
+no baked color/roughness maps) — and both are just the plain matte recipe at different
+roughnesses, which is what unassigned base slots already are.
 
 Normal maps are intentionally **not** vendored (see `docs/gltf-export-contract.md` —
 the box-map mirror flips break tangent handedness on some faces).

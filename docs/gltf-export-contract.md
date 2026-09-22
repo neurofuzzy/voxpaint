@@ -56,9 +56,10 @@ All materials use standard glTF 2.0 **metallic-roughness** PBR:
 
 ### Assigned builtin materials (optional texture maps)
 
-Palette slots may carry an assigned builtin surface material (vendored PBR sets — see
-`public/materials/NOTICE.md` for provenance). Groups with an assignment export its maps,
-tinted by the slot color (`baseColorFactor × baseColorTexture`):
+Palette slots may carry an assigned surface material — either a parametric class
+(`emissive`/`glass`/`carpaint`, behaving exactly as the class rows of the table above) or a
+vendored PBR set (see `public/materials/NOTICE.md` for provenance). Groups with a vendored
+assignment export its maps, tinted by the slot color (`baseColorFactor × baseColorTexture`):
 
 - **`baseColorTexture`** — the material's albedo (sRGB), whole-face box-mapped stretch.
 - **`roughnessTexture`** (`G` channel) / **`metalnessTexture`** (`B` channel) — when present,

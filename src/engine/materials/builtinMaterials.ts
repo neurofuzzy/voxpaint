@@ -11,7 +11,13 @@
  *
  * Glass slots ignore materials entirely (same rule as the painted overlay — transmissive
  * materials keep their solid tint for viewer compatibility).
+ *
+ * Parametric classes (emissive/glass/carpaint) are assigned the same way, as *class ids*
+ * rather than texture sets — see `CLASS_MATERIAL_IDS`. Rubber and plastic need no entries:
+ * both are just the plain matte recipe at different roughnesses (what the base row already is).
  */
+import { materialClassFor, type MaterialClass } from '@/engine/palette/palette'
+import type { PaletteSlotKind } from '@/engine/palette/types'
 export type BuiltinMaterialDef = {
   id: string
   name: string
@@ -58,11 +64,42 @@ export const BUILTIN_MATERIALS: BuiltinMaterialDef[] = [
   mat('asphalt', 'Asphalt', dir('asphalt', { albedo: true, roughness: true }), { metalness: 0 }),
   mat('leather-brown', 'Leather', dir('leather-brown', { albedo: true, roughness: true }), { metalness: 0 }),
   mat('oak-pale', 'Pale Oak', dir('oak-pale', { albedo: true }), { roughness: 0.55, metalness: 0 }),
+  mat('fleece-midnite', 'Midnite Fleece', dir('fleece-midnite', { albedo: true }), { roughness: 0.9, metalness: 0 }),
 ]
 
 export const BUILTIN_MATERIAL_BY_ID: Record<string, BuiltinMaterialDef> = Object.fromEntries(
   BUILTIN_MATERIALS.map((m) => [m.id, m]),
 )
+
+/**
+ * Parametric class assignments: the material row's non-texture entries. These carry no maps —
+ * they switch the slot's effective material class (see `effectiveMaterialClass`), so the
+ * palette's old kind rows (emissive/metal/glass/carpaint) are fully expressible as assignments
+ * on plain base slots.
+ */
+export const CLASS_MATERIAL_IDS = ['emissive', 'glass', 'carpaint'] as const
+export type ClassMaterialId = (typeof CLASS_MATERIAL_IDS)[number]
+
+export const CLASS_MATERIAL_NAMES: Record<ClassMaterialId, string> = {
+  emissive: 'Emissive',
+  glass: 'Glass',
+  carpaint: 'Carpaint',
+}
+
+export function isClassMaterialId(id: string): id is ClassMaterialId {
+  return (CLASS_MATERIAL_IDS as readonly string[]).includes(id)
+}
+
+/** A slot's effective material class: a class-id assignment wins, otherwise the slot kind. */
+export function effectiveMaterialClass(
+  kind: PaletteSlotKind,
+  index: number,
+  slotMaterials?: SlotMaterialAssignments,
+): MaterialClass {
+  const id = slotMaterials?.[slotMaterialKey(kind, index)]
+  if (id && isClassMaterialId(id)) return id
+  return materialClassFor(kind)
+}
 
 /** `"<kind>:<index>"` key under which a slot's material assignment is stored. */
 export function slotMaterialKey(kind: string, index: number): string {
