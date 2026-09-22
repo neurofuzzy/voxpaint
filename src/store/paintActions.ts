@@ -4,6 +4,7 @@ import type { Axis, Coord, Orientation, Rotation } from '@/engine/grid/types'
 import type { PaletteSlotRef } from '@/engine/palette/types'
 import type { ConstructionPlane } from '@/engine/plane/types'
 import { classify, sampleNeighbors } from '@/engine/chamfer/chamferResolver'
+import { findDualRampRotation, findWedgeRampDual } from '@/engine/chamfer/rampDual'
 import { gridCoordFromPixel, pixelFromGridCoord } from '@/engine/plane/constructionPlane'
 import { axisIndex } from '@/engine/plane/planeGeometry'
 import { isCellSelected } from '@/engine/tools/selectionMask'
@@ -210,6 +211,35 @@ export const createPaintActionsSlice: Slice = (set, get) => ({
     let changed = false
     set((state) => {
       changed = applyMaterialCell(state, coord, activePaletteSlot)
+    })
+    return changed
+  },
+
+  rebaseRampCell: (u: number, v: number) => {
+    get().bakeFloatIfAny()
+    const { plane, selection, meta } = get()
+    const coord = gridCoordFromPixel(plane, u, v)
+    if (!withinWorkingBounds(coord, meta.gridExtent)) return false
+    if (selection && !isCellSelected(selection, u, v)) return false
+    let changed = false
+    set((state) => {
+      const key = encodeKey(...coord)
+      const cell = state.model.chamfer.get(key)
+      const kind = cell?.resolvedTo?.shapeKind
+      // Ramps and wedges are congruent prisms — both rebase onto a ramp basis reproducing the
+      // exact solid (a wedge source converts shapeKind, since its dual is always a ramp).
+      if (kind !== 'ramp' && kind !== 'wedge') return
+      const rotation = kind === 'ramp'
+        ? findDualRampRotation(cell!, plane.axis, plane.orientation)
+        : findWedgeRampDual(cell!, plane.axis, plane.orientation)
+      if (rotation === null) return
+      if (kind === 'ramp' && rotation === cell!.resolvedTo!.rotation && cell!.planeAxis === plane.axis && cell!.planeOrientation === plane.orientation) return
+      cell!.planeAxis = plane.axis
+      cell!.planeOrientation = plane.orientation
+      cell!.resolvedTo = { shapeKind: 'ramp', rotation }
+      state.meta.modifiedAt = new Date().toISOString()
+      state.dirty = true
+      changed = true
     })
     return changed
   },

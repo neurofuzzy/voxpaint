@@ -7,7 +7,7 @@ import type { BoxFace, TextureModel } from '@/engine/texture/types'
 import type { TexelClip } from '@/engine/texture/texelOps'
 import type { AnimationSpeed, AnimationType, SliceAnimSettings, SliceKey } from '@/engine/animation/types'
 
-export type ToolId = 'paint' | 'erase' | 'eyedropper' | 'select' | 'fill' | 'clone' | 'move' | 'material' | 'pivot'
+export type ToolId = 'paint' | 'erase' | 'eyedropper' | 'select' | 'fill' | 'clone' | 'move' | 'material' | 'pivot' | 'textureface'
 export type VoxelKind = 'cube' | 'ramp' | 'wedge' | 'thin'
 
 export type SelectionRegion = {
@@ -190,6 +190,9 @@ export type ViewSlice = {
   /** GLTF export: emit texture maps — baked color overlay, ambient occlusion, metal maps
    * (default true). Off = solid materials + bare geometry, no maps or TEXCOORDs. */
   exportIncludeTextureMaps: boolean
+  /** GLTF export: bake ambient occlusion into an aoMap (default true). Off skips the AO bake
+   * (and any aoMap assignment) while leaving other texture maps untouched. */
+  exportIncludeAOMaps: boolean
   setFullscreen: (v: boolean) => void
   setEdit3D: (v: boolean) => void
   setHoverCell: (coord: Coord | null, chamferValid: boolean | null) => void
@@ -210,6 +213,7 @@ export type ViewSlice = {
   setExportAlignToObjectBounds: (v: boolean) => void
   setExportDisableMeshOptimization: (v: boolean) => void
   setExportIncludeTextureMaps: (v: boolean) => void
+  setExportIncludeAOMaps: (v: boolean) => void
 }
 
 export type PersistenceSlice = {
@@ -246,6 +250,14 @@ export type PaintActionsSlice = {
   paintMaterialCell: (u: number, v: number) => boolean
   /** Direct-3D recolor at an explicit grid coordinate (Edit mode). No selection clip. */
   paintMaterialAtCoord: (coord: Coord) => boolean
+  /**
+   * Re-authors the ramp or wedge at plane-space (u,v) onto the active construction plane's
+   * basis, reproducing its exact solid so only its box-mapped texture face changes (a wedge
+   * source converts to its congruent ramp). Existing resolved ramps/wedges only — no-op
+   * (false) on empty/out-of-bounds cells, other shapes, and solids the active plane can't
+   * express (so drags don't record junk undo steps).
+   */
+  rebaseRampCell: (u: number, v: number) => boolean
 }
 
 /** `rotate` is the clockwise quarter-turn (the bare name predates `rotate-ccw` and is what the `r`

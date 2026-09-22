@@ -7,6 +7,7 @@ const TOOL_KEYS: Record<string, ToolId> = {
   e: 'erase',
   i: 'eyedropper',
   m: 'material',
+  t: 'textureface',
   s: 'select',
   k: 'fill',
   c: 'clone',

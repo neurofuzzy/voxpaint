@@ -6,7 +6,7 @@ import { materialClassFor, resolveSlotColor, type MaterialClass } from '@/engine
 import type { PaletteState } from '@/engine/palette/types'
 import type { SliceKey } from '@/engine/animation/types'
 import { chamferBasisIsReflected, chamferInstanceMatrix } from './basis'
-import { optimizeGroupsByCSG, triangleCount, type VoxelGroup } from './meshOptimizer'
+import { mergeCoplanarFacesWithKeys, optimizeGroupsByCSG, triangleCount, type VoxelGroup } from './meshOptimizer'
 
 /**
  * Bakes the whole model into a single optimized "shell" mesh for the 3D preview's optimized-mesh
@@ -467,8 +467,7 @@ export function buildTexturedShellGeometryByColor(model: VoxelModel, palette: Pa
 /** Per-(color, material class, animation slice) split of the textured shell, for animated GLTF
  * export. Faces spanning two different animation nodes are never shell-culled (see
  * `removeInteriorFaces`), so each node's mesh stays watertight once it moves independently. */
-export function buildTexturedShellGeometryBySliceColor(
-  model: VoxelModel,
+export function buildTexturedShellGeometryBySliceColor(  model: VoxelModel,
   palette: PaletteState,
   uvFor: VertexUV,
   nodeAssignment: Map<CellKey, SliceKey>,
@@ -488,4 +487,129 @@ export function buildTexturedShellGeometryBySliceColor(
     out.push({ colorKey: group[0].colorKey, materialClass: group[0].materialClass, sliceKey, geometry: geometryFromFacesUV(group, uvFor) })
   }
   return out
+}
+
+/**
+ * Box-face tag a shell face samples its texture from, injected so `engine/instancing` keeps no
+ * dependency on `engine/texture` (same pattern as `VertexUV`). The texture layer resolves it via
+ * `boxFaceForCell` — the exact page the unmerged path would sample for this face.
+ */
+export type TexturedFaceTag = string
+export type TagForTexturedFace = (chamfer: ChamferCell | undefined, normal: THREE.Vector3) => TexturedFaceTag
+/** UV lookup for a merged vertex: the box-map projection of `vertex` onto the tagged page. */
+export type UVForTexturedTag = (tag: TexturedFaceTag, vertex: THREE.Vector3) => [number, number]
+
+export interface TexturedGroupsResult {
+  groups: ColorGroupGeometry[]
+  /** Shell triangles after interior-face culling, before any coplanar merge. */
+  rawTriangles: number
+  /** Triangles after the (optional) coplanar merge. */
+  optimizedTriangles: number
+}
+
+/**
+ * Per-(color, material class) textured shell with an optional tag-aware coplanar merge — the
+ * Model-mode preview path for textured models. Merge groups are keyed on (material, color,
+ * texture page), so a weld never mixes materials, colors, or texture pages; UVs are recomputed
+ * per merged vertex from (page, position), which is exact because the box-map projection is
+ * affine in position for a fixed page (the rasterizer's barycentric interpolation then
+ * reproduces the per-texel mapping precisely, including across freshly triangulated interiors).
+ *
+ * With `mergeCoplanar` off this reduces to the plain shell (same output as
+ * `buildTexturedShellGeometryByColor`, plus counts) — the toggle-off path stays untouched.
+ */
+export function buildTexturedShellGeometryByColorMerged(
+  model: VoxelModel,
+  palette: PaletteState,
+  tagFor: TagForTexturedFace,
+  uvForTag: UVForTexturedTag,
+  mergeCoplanar: boolean,
+): TexturedGroupsResult {
+  const { faces } = buildShellFaces(model, palette)
+  const byMaterial = new Map<string, Face[]>()
+  for (const f of faces) {
+    const matKey = `${f.colorKey}:${f.materialClass}`
+    const group = byMaterial.get(matKey)
+    if (group) group.push(f)
+    else byMaterial.set(matKey, [f])
+  }
+
+  const out: ColorGroupGeometry[] = []
+  let optimizedTriangles = 0
+  const color = new THREE.Color()
+  for (const group of byMaterial.values()) {
+    const [{ colorKey, materialClass }] = group
+    color.setHex(colorKey)
+    if (!mergeCoplanar) {
+      const positions: number[] = []
+      const normals: number[] = []
+      const colors: number[] = []
+      const uvs: number[] = []
+      for (const f of group) {
+        const tag = tagFor(f.chamfer, f.normal)
+        for (const v of [f.a, f.b, f.c]) {
+          positions.push(v.x, v.y, v.z)
+          normals.push(f.normal.x, f.normal.y, f.normal.z)
+          colors.push(color.r, color.g, color.b)
+          const [uu, vv] = uvForTag(tag, v)
+          uvs.push(uu, vv)
+        }
+      }
+      const geometry = new THREE.BufferGeometry()
+      geometry.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3))
+      geometry.setAttribute('normal', new THREE.Float32BufferAttribute(normals, 3))
+      geometry.setAttribute('color', new THREE.Float32BufferAttribute(colors, 3))
+      geometry.setAttribute('uv', new THREE.Float32BufferAttribute(uvs, 2))
+      optimizedTriangles += triangleCount(geometry)
+      out.push({ colorKey, materialClass, geometry })
+      continue
+    }
+
+    // Merge input soup (position + flat normal per shell triangle) with the texture page as the
+    // per-triangle merge key; the merged output reports one page per surviving triangle.
+    const inPositions: number[] = []
+    const inNormals: number[] = []
+    const inTags: string[] = []
+    for (const f of group) {
+      const tag = tagFor(f.chamfer, f.normal)
+      for (const v of [f.a, f.b, f.c]) {
+        inPositions.push(v.x, v.y, v.z)
+        inNormals.push(f.normal.x, f.normal.y, f.normal.z)
+      }
+      inTags.push(tag)
+    }
+    const soup = new THREE.BufferGeometry()
+    soup.setAttribute('position', new THREE.Float32BufferAttribute(inPositions, 3))
+    soup.setAttribute('normal', new THREE.Float32BufferAttribute(inNormals, 3))
+    const merged = mergeCoplanarFacesWithKeys(soup, (t) => inTags[t])
+    soup.dispose()
+
+    const mergedPos = merged.geometry.getAttribute('position') as THREE.BufferAttribute
+    const mergedNrm = merged.geometry.getAttribute('normal') as THREE.BufferAttribute
+    const positions: number[] = []
+    const normals: number[] = []
+    const colors: number[] = []
+    const uvs: number[] = []
+    const v = new THREE.Vector3()
+    for (let t = 0; t < merged.keys.length; t++) {
+      for (let k = 0; k < 3; k++) {
+        v.fromBufferAttribute(mergedPos, t * 3 + k)
+        positions.push(v.x, v.y, v.z)
+        normals.push(mergedNrm.getX(t * 3 + k), mergedNrm.getY(t * 3 + k), mergedNrm.getZ(t * 3 + k))
+        colors.push(color.r, color.g, color.b)
+        const [uu, vv] = uvForTag(merged.keys[t], v)
+        uvs.push(uu, vv)
+      }
+    }
+    const geometry = new THREE.BufferGeometry()
+    geometry.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3))
+    geometry.setAttribute('normal', new THREE.Float32BufferAttribute(normals, 3))
+    geometry.setAttribute('color', new THREE.Float32BufferAttribute(colors, 3))
+    geometry.setAttribute('uv', new THREE.Float32BufferAttribute(uvs, 2))
+    merged.geometry.dispose()
+    optimizedTriangles += triangleCount(geometry)
+    out.push({ colorKey, materialClass, geometry })
+  }
+
+  return { groups: out, rawTriangles: faces.length, optimizedTriangles }
 }

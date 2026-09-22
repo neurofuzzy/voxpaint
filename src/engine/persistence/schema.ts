@@ -21,6 +21,8 @@ export type ViewSettings = {
   exportDisableMeshOptimization?: boolean
   /** GLTF export: emit texture maps (baked color overlay, AO, metal maps). Defaults true. */
   exportIncludeTextureMaps?: boolean
+  /** GLTF export: bake ambient occlusion into an aoMap. Defaults true. */
+  exportIncludeAOMaps?: boolean
 }
 
 export type ProjectMeta = {

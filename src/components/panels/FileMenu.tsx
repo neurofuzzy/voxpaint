@@ -18,8 +18,8 @@ export function FileMenu() {
   const setStatusMessage = useAppStore((s) => s.setStatusMessage)
 
   function handleExport() {
-    const { model, palette, meta, texture, ambientOcclusion, noiseLevel, specularNoiseLevel, aoStrength, glassRoughnessLevel, exposure, exportScaleFactor, exportAnchor, exportAlignToObjectBounds, exportIncludeTextureMaps, animSettings, sliceMasks, slicePivots } = useAppStore.getState()
-    downloadProjectFile(serializeProject(model, palette, meta, texture, { ambientOcclusion, noiseLevel, specularNoiseLevel, aoStrength, glassRoughnessLevel, exposure, exportScaleFactor, exportAnchor, exportAlignToObjectBounds, exportIncludeTextureMaps }, animSettings, sliceMasks, slicePivots))
+    const { model, palette, meta, texture, ambientOcclusion, noiseLevel, specularNoiseLevel, aoStrength, glassRoughnessLevel, exposure, exportScaleFactor, exportAnchor, exportAlignToObjectBounds, exportIncludeTextureMaps, exportIncludeAOMaps, animSettings, sliceMasks, slicePivots } = useAppStore.getState()
+    downloadProjectFile(serializeProject(model, palette, meta, texture, { ambientOcclusion, noiseLevel, specularNoiseLevel, aoStrength, glassRoughnessLevel, exposure, exportScaleFactor, exportAnchor, exportAlignToObjectBounds, exportIncludeTextureMaps, exportIncludeAOMaps }, animSettings, sliceMasks, slicePivots))
     showToast('Project exported.')
   }
 
@@ -66,6 +66,7 @@ export function FileMenu() {
         s.exportAnchor = view.exportAnchor ?? 'center'
         s.exportAlignToObjectBounds = view.exportAlignToObjectBounds ?? false
         s.exportIncludeTextureMaps = view.exportIncludeTextureMaps ?? true
+        s.exportIncludeAOMaps = view.exportIncludeAOMaps ?? true
         s.animSettings = animSettings
         s.sliceMasks = sliceMasks
         s.slicePivots = slicePivots
