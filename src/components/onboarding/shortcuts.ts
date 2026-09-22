@@ -22,6 +22,7 @@ export function shortcutGroups(mod: string): ShortcutGroup[] {
         { keys: ['E'], label: 'Erase' },
         { keys: ['I'], label: 'Eyedropper' },
         { keys: ['M'], label: 'Material' },
+        { keys: ['T'], label: 'Texture Face' },
         { keys: ['S'], label: 'Select' },
         { keys: ['K'], label: 'Fill' },
         { keys: ['C'], label: 'Clone' },

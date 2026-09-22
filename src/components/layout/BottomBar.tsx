@@ -12,6 +12,7 @@ const TOOL_HINTS: Record<ToolId, string> = {
   clone: 'alt+click to set a clone source, then drag to stamp',
   move: 'drag to shift every pixel on this slice',
   pivot: 'click to pin the rotation/pendulum pivot for this slice · right-click: clear',
+  textureface: 'click or drag ramps + wedges to re-map their texture face to the current plane · geometry unchanged',
 }
 
 /**

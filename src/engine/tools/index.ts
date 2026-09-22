@@ -10,6 +10,7 @@ import { cloneTool } from './cloneTool'
 import { moveTool } from './moveTool'
 import { maskPaintTool, maskEraseTool } from './maskTools'
 import { pivotTool } from './pivotTool'
+import { textureFaceTool } from './textureFaceTool'
 
 export type { ToolHandler, ToolContext, ToolDragState } from './types'
 
@@ -22,6 +23,7 @@ export const toolMap: Record<ToolId, ToolHandler> = {
   fill: fillTool,
   clone: cloneTool,
   move: moveTool,
+  textureface: textureFaceTool,
   // Pivot only exists in Animate mode's toolbar (see ToolPalette.tsx's ANIMATE_TOOLS) — this is a
   // harmless no-op fallback for the (normally unreachable) case where `activeTool` is still
   // 'pivot' after switching out of Animate mode.

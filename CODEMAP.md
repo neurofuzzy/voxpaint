@@ -1,8 +1,8 @@
 ```
 # Auto-generated project map
-# Last updated: 2026-09-13 23:37:39
-# Files: 182
-# Lines of code: ~19446
+# Last updated: 2026-09-22 06:35:30
+# Files: 186
+# Lines of code: ~19875
 ```
 - **/assets**
 - **/components**
@@ -273,6 +273,10 @@
       - Function: `sampleNeighbors` - Samples the 8-neighborhood around a (u,v) pixel...
       - Function: `classify` - Classifies a chamfer cell's shape from its 8-ne...
       - Function: `resolveChamferCellsOnPlane` - Re-attempts resolution for every still-unresolv...
+    - [rampDual.test.ts](../src/engine/chamfer/rampDual.test.ts)
+    - [rampDual.ts](../src/engine/chamfer/rampDual.ts)
+      - Function: `findDualRampRotation` - The rotation that reproduces `cell`'s solid on ...
+      - Function: `findWedgeRampDual` - The ramp rotation that reproduces a *wedge* cel...
     - [types.ts](../src/engine/chamfer/types.ts)
       - Type: `NeighborSample`
   - **/csg**
@@ -565,6 +569,8 @@
       - Function: `mirrorRegion`
     - [selectTool.ts](../src/engine/tools/selectTool.ts)
       - Variable: `selectTool`
+    - [textureFaceTool.ts](../src/engine/tools/textureFaceTool.ts)
+      - Variable: `textureFaceTool` - Texture-face paint: re-authors a ramp or wedge ...
     - [transform.ts](../src/engine/tools/transform.ts)
       - Function: `mirrorClassification` - Renumbers a resolved shape for a mirror in logi...
       - Function: `rotateClassification90` - Renumbers a resolved shape for a 90° turn in th...
@@ -597,6 +603,7 @@
   - [projectSlice.ts](../src/store/projectSlice.ts)
     - Function: `createProjectSlice`
   - [projectSwitch.test.ts](../src/store/projectSwitch.test.ts)
+  - [rebaseRampCell.test.ts](../src/store/rebaseRampCell.test.ts)
   - [selectionSlice.ts](../src/store/selectionSlice.ts)
     - Function: `createSelectionSlice`
   - [textureSlice.test.ts](../src/store/textureSlice.test.ts)

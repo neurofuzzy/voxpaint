@@ -248,4 +248,6 @@ export const textureToolMap: Record<ToolId, TextureToolHandler> = {
   pivot: {},
   // Material repaints voxel palette slots, meaningless on texel grids — harmless no-op here.
   material: {},
+  // Texture-face rebases voxel chamfer bases, meaningless on texel grids — harmless no-op here.
+  textureface: {},
 }

@@ -7,7 +7,7 @@ import type { BoxFace, TextureModel } from '@/engine/texture/types'
 import type { TexelClip } from '@/engine/texture/texelOps'
 import type { AnimationSpeed, AnimationType, SliceAnimSettings, SliceKey } from '@/engine/animation/types'
 
-export type ToolId = 'paint' | 'erase' | 'eyedropper' | 'select' | 'fill' | 'clone' | 'move' | 'material' | 'pivot'
+export type ToolId = 'paint' | 'erase' | 'eyedropper' | 'select' | 'fill' | 'clone' | 'move' | 'material' | 'pivot' | 'textureface'
 export type VoxelKind = 'cube' | 'ramp' | 'wedge' | 'thin'
 
 export type SelectionRegion = {
@@ -246,6 +246,14 @@ export type PaintActionsSlice = {
   paintMaterialCell: (u: number, v: number) => boolean
   /** Direct-3D recolor at an explicit grid coordinate (Edit mode). No selection clip. */
   paintMaterialAtCoord: (coord: Coord) => boolean
+  /**
+   * Re-authors the ramp or wedge at plane-space (u,v) onto the active construction plane's
+   * basis, reproducing its exact solid so only its box-mapped texture face changes (a wedge
+   * source converts to its congruent ramp). Existing resolved ramps/wedges only — no-op
+   * (false) on empty/out-of-bounds cells, other shapes, and solids the active plane can't
+   * express (so drags don't record junk undo steps).
+   */
+  rebaseRampCell: (u: number, v: number) => boolean
 }
 
 /** `rotate` is the clockwise quarter-turn (the bare name predates `rotate-ccw` and is what the `r`

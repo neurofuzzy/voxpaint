@@ -26,6 +26,8 @@ export interface ToolContext {
   paintCell: (u: number, v: number) => boolean
   eraseCell: (coord: [number, number, number]) => void
   paintMaterialCell: (u: number, v: number) => boolean
+  /** Texture-face rebase: re-authors the ramp/wedge at (u,v) onto the active plane's basis. */
+  rebaseRampCell: (u: number, v: number) => boolean
   floodFill: (u: number, v: number) => void
   /** 3D connected fill, alt-click's variant — only meaningful when (u,v) is an existing voxel. */
   floodFill3D: (u: number, v: number) => void
