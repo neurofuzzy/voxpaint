@@ -1,6 +1,6 @@
 import * as ToggleGroup from '@radix-ui/react-toggle-group'
 import * as Tooltip from '@radix-ui/react-tooltip'
-import { Brush, Copy, Droplet, Eraser, MapPin, Move, Pin, Pipette, Repeat, SquareDashedMousePointer, PaintBucket } from 'lucide-react'
+import { Brush, Copy, Droplet, Eraser, MapPin, Move, Pin, Pipette, SquareArrowOutDownLeft, SquareDashedMousePointer, PaintBucket } from 'lucide-react'
 import { useAppStore } from '@/store/useAppStore'
 import type { ToolId } from '@/store/types'
 
@@ -9,7 +9,7 @@ const TOOLS: Array<{ id: ToolId; label: string; icon: typeof Brush; hint: string
   { id: 'erase', label: 'Erase', icon: Eraser, hint: 'click or drag to erase · shift+drag: straight line' },
   { id: 'eyedropper', label: 'Eyedropper', icon: Pipette, hint: 'click to pick a color from the model' },
   { id: 'material', label: 'Material', icon: Droplet, hint: 'click or drag to repaint occupied voxels · never adds or deletes' },
-  { id: 'textureface', label: 'Texture Face', icon: Repeat, hint: 'click or drag ramps + wedges to re-map their texture face to the current plane · geometry unchanged' },
+  { id: 'textureface', label: 'Texture Face', icon: SquareArrowOutDownLeft, hint: 'click or drag ramps, wedges + thin slabs to re-map their texture face to the current plane · geometry unchanged' },
   { id: 'select', label: 'Select', icon: SquareDashedMousePointer, hint: 'drag to select · alt+drag: lasso' },
   { id: 'fill', label: 'Fill', icon: PaintBucket, hint: 'click to flood-fill connected cells · alt+click an existing voxel: fill in 3D' },
   { id: 'clone', label: 'Clone', icon: Copy, hint: 'alt+click to set a clone source, then drag to stamp' },

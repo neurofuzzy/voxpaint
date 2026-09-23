@@ -114,4 +114,56 @@ describe('rebaseRampCell', () => {
     expect(s.rebaseRampCell(u, v)).toBe(false)
     s.commitStroke()
   })
+
+  it('flips a thin slab on its own axis, preserving the solid and color', () => {
+    const thin = emptyModel()
+    thin.color.set(encodeKey(0, 0, 0), { paletteSlot: { kind: 'base', index: 3 } })
+    thin.chamfer.set(encodeKey(0, 0, 0), {
+      planeAxis: 'z',
+      planeOrientation: 1,
+      resolvedTo: { shapeKind: 'thin', rotation: 0 },
+    })
+    useAppStore.getState().setModel(thin)
+    // Active plane from beforeEach is (z,-1), the slab's own axis flipped.
+    const s = useAppStore.getState()
+    const { u, v } = pixelFromGridCoord(s.plane, [0, 0, 0])
+    s.beginStroke()
+    expect(s.rebaseRampCell(u, v)).toBe(true)
+    s.commitStroke()
+
+    const after = useAppStore.getState()
+    const cell = after.model.chamfer.get(encodeKey(0, 0, 0))!
+    expect(cell.planeAxis).toBe('z')
+    expect(cell.planeOrientation).toBe(-1)
+    expect(cell.resolvedTo).toEqual({ shapeKind: 'thin', rotation: 0 })
+    expect(after.model.color.get(encodeKey(0, 0, 0))).toEqual({ paletteSlot: { kind: 'base', index: 3 } })
+
+    // Idempotent once flipped.
+    s.beginStroke()
+    expect(s.rebaseRampCell(u, v)).toBe(false)
+    s.commitStroke()
+  })
+
+  it('refuses a cross-axis thin facing (that would rotate the slab)', () => {
+    const thin = emptyModel()
+    thin.color.set(encodeKey(0, 0, 0), { paletteSlot: { kind: 'base', index: 3 } })
+    thin.chamfer.set(encodeKey(0, 0, 0), {
+      planeAxis: 'z',
+      planeOrientation: 1,
+      resolvedTo: { shapeKind: 'thin', rotation: 0 },
+    })
+    useAppStore.getState().setModel(thin)
+    useAppStore.getState().setPlaneAxisOrientation('x', 1)
+    const s = useAppStore.getState()
+    const { u, v } = pixelFromGridCoord(s.plane, [0, 0, 0])
+    s.beginStroke()
+    expect(s.rebaseRampCell(u, v)).toBe(false)
+    s.commitStroke()
+
+    expect(useAppStore.getState().model.chamfer.get(encodeKey(0, 0, 0))).toEqual({
+      planeAxis: 'z',
+      planeOrientation: 1,
+      resolvedTo: { shapeKind: 'thin', rotation: 0 },
+    })
+  })
 })

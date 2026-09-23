@@ -1,8 +1,6 @@
 import type { StateCreator } from 'zustand'
-import { effectiveExtent, encodeKey, expandBounds, withinWorkingBounds } from '@/engine/grid/GridStore'
-import type { Coord } from '@/engine/grid/types'
+import { encodeKey, expandBounds, withinWorkingBounds } from '@/engine/grid/GridStore'
 import { gridCoordFromPixel } from '@/engine/plane/constructionPlane'
-import { axisIndex } from '@/engine/plane/planeGeometry'
 import { rebaseChamferCell } from '@/engine/chamfer/faceBasis'
 import { fillLeaksToEdges, floodFillRegion, floodFillRegion3D } from '@/engine/tools/floodFill'
 import { applyClipboardAt, clearRegion, copyRegionToClipboard, transformClipboardToPlane } from '@/engine/tools/clipboard'
@@ -143,21 +141,15 @@ export const createToolActionsSlice: Slice = (set, get) => ({
     let skipped = 0
     get().beginStroke()
     set((state) => {
-      // The selection mask is 2D but pasted walls span slices, so the footprint is projected
-      // through the full depth along the plane normal — one shot faces the whole wall.
-      const axisIdx = axisIndex(state.plane.axis)
-      const half = effectiveExtent(state.meta.gridExtent) / 2
+      // Only cells on the active slice: the selection mask lives in the active plane's frame,
+      // so anything off-slice is outside what's actually selected.
       forEachSelectedCell(selection, (u, v) => {
-        const base = gridCoordFromPixel(state.plane, u, v)
-        for (let d = -half; d < half; d++) {
-          const coord: Coord = [base[0], base[1], base[2]]
-          coord[axisIdx] = d
-          const cell = state.model.chamfer.get(encodeKey(...coord))
-          // Plain cubes sample texture by face normal — never mis-faced, silently ignored.
-          if (!cell) continue
-          if (rebaseChamferCell(cell, state.plane.axis, state.plane.orientation)) faced++
-          else skipped++
-        }
+        const coord = gridCoordFromPixel(state.plane, u, v)
+        const cell = state.model.chamfer.get(encodeKey(...coord))
+        // Plain cubes sample texture by face normal — never mis-faced, silently ignored.
+        if (!cell) return
+        if (rebaseChamferCell(cell, state.plane.axis, state.plane.orientation)) faced++
+        else skipped++
       })
       if (faced > 0) {
         state.meta.modifiedAt = new Date().toISOString()

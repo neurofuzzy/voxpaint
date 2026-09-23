@@ -226,6 +226,17 @@ export const createPaintActionsSlice: Slice = (set, get) => ({
       const key = encodeKey(...coord)
       const cell = state.model.chamfer.get(key)
       const kind = cell?.resolvedTo?.shapeKind
+      // Thin slabs flip orientation on their own axis: the centered slab is mirror-symmetric,
+      // so the solid is identical and only the sampled texture face switches. A cross-axis
+      // facing would rotate the slab (a geometry edit) and is refused.
+      if (kind === 'thin') {
+        if (cell!.planeAxis !== plane.axis || cell!.planeOrientation === plane.orientation) return
+        cell!.planeOrientation = plane.orientation
+        state.meta.modifiedAt = new Date().toISOString()
+        state.dirty = true
+        changed = true
+        return
+      }
       // Ramps and wedges are congruent prisms — both rebase onto a ramp basis reproducing the
       // exact solid (a wedge source converts shapeKind, since its dual is always a ramp).
       if (kind !== 'ramp' && kind !== 'wedge') return

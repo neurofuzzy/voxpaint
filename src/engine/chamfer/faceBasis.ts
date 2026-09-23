@@ -7,15 +7,15 @@ import { findDualRampRotation, findWedgeRampDual } from './rampDual'
  * selection-scale sibling of the single-cell texture-face tool (`rebaseRampCell`). The caller
  * mutates the cell in place (an Immer draft in practice) and runs inside one undo stroke.
  *
- * Returns true when the cell changed:
+ * Geometry is never altered — this only switches which texture face a cell samples:
  * - ramp/wedge: exact-solid dual rebase (same rules as `rebaseRampCell` — a wedge source
  *   converts to its congruent ramp). False when inexpressible on the target basis, or when a
  *   ramp is already there (idempotent no-op).
- * - thin: the slab has no rotation, so facing is just the basis itself. A same-axis flip keeps
- *   the identical solid (the centered box is mirror-symmetric) and only switches the sampled
- *   texture face; a cross-axis facing reorients the slab into the target plane.
+ * - thin: same-axis orientation flips only. The centered slab is mirror-symmetric, so the solid
+ *   is identical and only the sampled face switches. A cross-axis facing would rotate the slab
+ *   (a geometry edit) and is refused.
  * - unresolved (`resolvedTo: null`): renders as a plain cube but still samples texture by its
- *   basis, so the basis is updated while the shape stays unresolved.
+ *   basis, so the basis is updated while the shape stays unresolved. Still a cube either way.
  * - convex/concave: no exact dual exists (see `rampDual.ts`) and re-basing would alter the
  *   solid — always false, left untouched.
  */
@@ -41,8 +41,8 @@ export function rebaseChamferCell(cell: ChamferCell, targetAxis: Axis, targetOri
     return true
   }
   if (kind === 'thin') {
-    if (cell.planeAxis === targetAxis && cell.planeOrientation === targetOrientation) return false
-    cell.planeAxis = targetAxis
+    if (cell.planeAxis !== targetAxis) return false
+    if (cell.planeOrientation === targetOrientation) return false
     cell.planeOrientation = targetOrientation
     return true
   }

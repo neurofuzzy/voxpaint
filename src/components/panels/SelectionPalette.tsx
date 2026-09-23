@@ -1,5 +1,5 @@
 import * as Tooltip from '@radix-ui/react-tooltip'
-import { FlipHorizontal, FlipVertical, Layers, RotateCcw, RotateCw, SquareDashed, Trash2 } from 'lucide-react'
+import { FlipHorizontal, FlipVertical, RotateCcw, RotateCw, SquareArrowOutDownLeft, SquareDashed, Trash2 } from 'lucide-react'
 import { showToast } from '@/components/ui/toastBus'
 import { useAppStore } from '@/store/useAppStore'
 import type { SelectionTransformKind } from '@/store/types'
@@ -52,8 +52,8 @@ const ACTIONS: Action[] = [
   {
     id: 'face',
     label: 'Face Selection',
-    icon: Layers,
-    hint: 're-face every ramp, wedge, thin, and unshaped voxel under the selection — through the full depth — onto the active construction plane, so pasted walls sample the right texture face',
+    icon: SquareArrowOutDownLeft,
+    hint: 're-face every ramp, wedge, thin, and unshaped voxel in the selection onto the active construction plane, so pasted walls sample the right texture face · geometry unchanged',
     run: (a) => faceToast(a.faceSelection(), a.faceDir),
     modelOnly: true,
   },

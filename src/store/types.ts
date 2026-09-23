@@ -263,11 +263,13 @@ export type PaintActionsSlice = {
   /** Direct-3D recolor at an explicit grid coordinate (Edit mode). No selection clip. */
   paintMaterialAtCoord: (coord: Coord) => boolean
   /**
-   * Re-authors the ramp or wedge at plane-space (u,v) onto the active construction plane's
-   * basis, reproducing its exact solid so only its box-mapped texture face changes (a wedge
-   * source converts to its congruent ramp). Existing resolved ramps/wedges only — no-op
-   * (false) on empty/out-of-bounds cells, other shapes, and solids the active plane can't
-   * express (so drags don't record junk undo steps).
+   * Re-authors the ramp, wedge, or thin slab at plane-space (u,v) onto the active construction
+   * plane's basis, reproducing its exact solid so only its box-mapped texture face changes (a
+   * wedge source converts to its congruent ramp; a thin slab only ever flips orientation on its
+   * own axis, since turning it would rotate the slab). Existing resolved ramps/wedges/thins
+   * only — no-op (false) on empty/out-of-bounds cells, other shapes, and solids the active
+   * plane can't express (so drags don't record junk undo steps). Plain cubes sample texture by
+   * face normal and need no facing.
    */
   rebaseRampCell: (u: number, v: number) => boolean
 }
@@ -291,11 +293,13 @@ export type ToolActionsSlice = {
   cutSelection: () => void
   deleteSelection: () => void
   /** Re-faces every chamfer cell under the selection onto the active construction plane's basis
-   * (ramps/wedges via exact-solid dual rebase, thin slabs and unresolved cells via basis update;
-   * convex/concave corners and inexpressible slopes are left alone). The 2D mask is projected
-   * through the full depth along the plane normal, so one shot faces a whole pasted wall. Plain
-   * cubes need no facing and are ignored. One undo stroke. Returns faced/skipped chamfer-cell
-   * counts for the caller to report (the toast lives in SelectionPalette, not the store). */
+   * — the selection-scale texture-face tool. Geometry is never touched: ramps/wedges rebase via
+   * exact-solid duals, thin slabs and unresolved cells only take same-axis orientation flips
+   * (the centered slab is mirror-symmetric, so the solid is identical and only the sampled
+   * texture face switches). Convex/concave corners, cross-axis thins, and inexpressible slopes
+   * are left alone. Only cells on the active slice are affected; plain cubes need no facing and
+   * are ignored. One undo stroke. Returns faced/skipped chamfer-cell counts for the caller to
+   * report (the toast lives in SelectionPalette, not the store). */
   faceSelection: () => { faced: number; skipped: number }
   /** Pastes the clipboard as a new floating selection at (u,v) — does not commit to the model.
    * Content copied off a different construction plane is re-expressed for the active one first

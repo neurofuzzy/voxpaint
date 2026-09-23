@@ -180,10 +180,10 @@ describe('faceSelection', () => {
     useAppStore.getState().newProject('Test', 16)
   })
 
-  it('re-faces a thin slab onto the active plane and ignores cubes', () => {
+  it('re-faces a thin slab onto the flipped plane orientation and ignores cubes', () => {
     const s = useAppStore.getState()
     s.setActivePaletteSlot(SLOT_A)
-    // Thin slab authored on the default z/1 plane, plus a plain cube beside it.
+    // Thin slab authored on the default z/1 plane, plus a plain cube beside it (same slice).
     s.setActiveVoxelKind('thin')
     s.beginStroke()
     s.paintCell(0, 0)
@@ -196,16 +196,16 @@ describe('faceSelection', () => {
     const thinBefore = useAppStore.getState().model.chamfer.get(keyFor(0, 0))!
     expect(thinBefore.planeAxis).toBe('z')
 
-    // Face the selection west: the slab flips basis, the cube is untouched. The selection is
-    // drawn on the x-plane, where the slab ([0,-1,0]) and cube ([1,-1,0]) share footprint u=-1.
-    useAppStore.getState().setPlaneAxisOrientation('x', -1)
-    useAppStore.getState().setSelection(rectRegion(-1, 0, 0, 0))
+    // Flip the plane to face the other way: the slab flips orientation (identical solid, new
+    // texture face), the cube is untouched.
+    useAppStore.getState().setPlaneAxisOrientation('z', -1)
+    useAppStore.getState().setSelection(rectRegion(0, 0, 1, 0))
     const result = useAppStore.getState().faceSelection()
     expect(result).toEqual({ faced: 1, skipped: 0 })
 
     const after = useAppStore.getState()
     const thin = after.model.chamfer.get(keyFor(0, 0))!
-    expect(thin.planeAxis).toBe('x')
+    expect(thin.planeAxis).toBe('z')
     expect(thin.planeOrientation).toBe(-1)
     expect(thin.resolvedTo).toEqual({ shapeKind: 'thin', rotation: 0 })
     expect(after.model.chamfer.has(keyFor(1, 0))).toBe(false) // cube gained no basis
@@ -213,6 +213,20 @@ describe('faceSelection', () => {
 
     // Undo restores the original basis.
     after.undo()
+    expect(useAppStore.getState().model.chamfer.get(keyFor(0, 0))?.planeOrientation).toBe(1)
+  })
+
+  it('only affects the selected slice and refuses geometry edits', () => {
+    const s = useAppStore.getState()
+    s.setActiveVoxelKind('thin')
+    s.beginStroke()
+    s.paintCell(0, 0)
+    s.commitStroke()
+
+    // Cross-axis facing would rotate the slab — refused, counted as skipped.
+    useAppStore.getState().setPlaneAxisOrientation('x', 1)
+    useAppStore.getState().setSelection(rectRegion(-1, 0, 0, 0))
+    expect(useAppStore.getState().faceSelection()).toEqual({ faced: 0, skipped: 1 })
     expect(useAppStore.getState().model.chamfer.get(keyFor(0, 0))?.planeAxis).toBe('z')
   })
 

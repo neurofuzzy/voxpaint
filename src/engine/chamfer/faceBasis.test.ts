@@ -36,15 +36,15 @@ describe('rebaseChamferCell', () => {
     expect(cell.planeAxis).toBe('x')
   })
 
-  it('re-faces thin slabs, including cross-axis', () => {
+  it('flips thin slabs on their own axis, never across axes', () => {
     const flip: ChamferCell = { planeAxis: 'x', planeOrientation: -1, resolvedTo: { shapeKind: 'thin', rotation: 0 } }
     expect(rebaseChamferCell(flip, 'x', 1)).toBe(true)
-    expect(flip.planeOrientation).toBe(1)
-    expect(flip.resolvedTo).toEqual({ shapeKind: 'thin', rotation: 0 })
+    expect(flip).toEqual({ planeAxis: 'x', planeOrientation: 1, resolvedTo: { shapeKind: 'thin', rotation: 0 } })
 
+    // Cross-axis would rotate the slab (a geometry edit) — refused.
     const turn: ChamferCell = { planeAxis: 'x', planeOrientation: -1, resolvedTo: { shapeKind: 'thin', rotation: 0 } }
-    expect(rebaseChamferCell(turn, 'z', 1)).toBe(true)
-    expect(turn.planeAxis).toBe('z')
+    expect(rebaseChamferCell(turn, 'z', 1)).toBe(false)
+    expect(turn.planeAxis).toBe('x')
   })
 
   it('updates the basis of unresolved cells without resolving them', () => {

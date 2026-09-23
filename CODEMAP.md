@@ -1,8 +1,8 @@
 ```
 # Auto-generated project map
-# Last updated: 2026-09-23 06:07:45
+# Last updated: 2026-09-23 06:28:24
 # Files: 197
-# Lines of code: ~21741
+# Lines of code: ~21817
 ```
 - **/assets**
 - **/components**
@@ -601,7 +601,7 @@
     - [selectTool.ts](../src/engine/tools/selectTool.ts)
       - Variable: `selectTool`
     - [textureFaceTool.ts](../src/engine/tools/textureFaceTool.ts)
-      - Variable: `textureFaceTool` - Texture-face paint: re-authors a ramp or wedge ...
+      - Variable: `textureFaceTool` - Texture-face paint: re-authors a ramp, wedge, o...
     - [transform.ts](../src/engine/tools/transform.ts)
       - Function: `mirrorClassification` - Renumbers a resolved shape for a mirror in logi...
       - Function: `rotateClassification90` - Renumbers a resolved shape for a 90° turn in th...
