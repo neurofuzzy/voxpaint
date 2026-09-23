@@ -386,6 +386,7 @@ function VoxelInteractionHandler({ managerRef, controlsRef }: {
           store.selectMarker(existing.id)
           return
         }
+        store.bakeFloatIfAny()
         store.beginStroke()
         store.addMarker(coord)
         store.commitStroke()

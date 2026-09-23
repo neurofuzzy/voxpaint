@@ -1,8 +1,8 @@
 ```
 # Auto-generated project map
-# Last updated: 2026-09-22 07:04:39
-# Files: 187
-# Lines of code: ~20326
+# Last updated: 2026-09-23 05:32:45
+# Files: 195
+# Lines of code: ~21200
 ```
 - **/assets**
 - **/components**
@@ -96,6 +96,8 @@
       - Function: `FullscreenToggle`
     - [LayerToggle.tsx](../src/components/panels/LayerToggle.tsx)
       - Function: `VoxelKindToggle` - Which kind of voxel paint writes — cube vs. cha...
+    - [MarkersPanel.tsx](../src/components/panels/MarkersPanel.tsx)
+      - Function: `MarkersPanel` - Floating markers list pinned to the top-left of...
     - [ModelStats.tsx](../src/components/panels/ModelStats.tsx)
       - Function: `ModelStats`
     - [ModeTabs.tsx](../src/components/panels/ModeTabs.tsx)
@@ -152,6 +154,8 @@
       - Function: `ExposureSlider` - Always-on floating vertical fader for tone-mapp...
     - [FloatGhostPreview.tsx](../src/components/viewport3d/FloatGhostPreview.tsx)
       - Function: `FloatGhostPreview` - Semi-transparent 3D preview of the floating sel...
+    - [MarkersView.tsx](../src/components/viewport3d/MarkersView.tsx)
+      - Function: `MarkersView` - 3D view of design markers: one small octahedron...
     - [ModelSettings.tsx](../src/components/viewport3d/ModelSettings.tsx)
       - Function: `ModelSettings` - Model-mode settings: ambient occlusion, glass r...
     - [OptimizedMeshView.tsx](../src/components/viewport3d/OptimizedMeshView.tsx)
@@ -388,6 +392,17 @@
       - Type: `UVForTexturedTag` - UV lookup for a merged vertex: the box-map proj...
       - Interface: `TexturedGroupsResult`
       - Function: `buildTexturedShellGeometryByColorMerged` - Per-(color, material class) textured shell with...
+  - **/markers**
+    - [markers.test.ts](../src/engine/markers/markers.test.ts)
+    - [markers.ts](../src/engine/markers/markers.ts)
+      - Function: `createMarker` - Creates a marker at a grid cell. The label defa...
+      - Function: `markerWorldCenter` - World-space center of a marker's cell, in the s...
+      - Function: `markerInBounds` - True when the marker's cell is inside the proje...
+      - Function: `sanitizeMarkerLabel` - Strips a label down to glTF-node-safe character...
+      - Function: `markerNodeName` - Unique, human-readable glTF node name for a mar...
+    - [types.ts](../src/engine/markers/types.ts)
+      - Type: `Marker` - A design marker: a labeled, non-voxel annotatio...
+      - Type: `SerializedMarkerPosition`
   - **/palette**
     - [defaultPalette.ts](../src/engine/palette/defaultPalette.ts)
       - Variable: `DEFAULT_PALETTE` - Slightly desaturated "vintage retro" default pa...
@@ -554,6 +569,9 @@
     - [lineUtils.ts](../src/engine/tools/lineUtils.ts) - Bresenham line, inclusive of both endpoints.
       - Function: `bresenhamLine` - Bresenham line, inclusive of both endpoints.
       - Function: `snapToOrtho` - Snaps (u1,v1) so the vector from (u0,v0) lands ...
+    - [markerTool.test.ts](../src/engine/tools/markerTool.test.ts)
+    - [markerTool.ts](../src/engine/tools/markerTool.ts)
+      - Variable: `markerTool` - Marker tool: click an empty plane cell to drop ...
     - [maskTools.ts](../src/engine/tools/maskTools.ts)
       - Variable: `maskPaintTool` - Animate-mode analog of `paintTool`/`eraseTool`:...
       - Variable: `maskEraseTool`
@@ -593,6 +611,8 @@
     - Function: `createAnimationSlice`
   - [historySlice.ts](../src/store/historySlice.ts)
     - Function: `createHistorySlice`
+  - [markerSlice.ts](../src/store/markerSlice.ts)
+    - Function: `createMarkerSlice`
   - [modeSlice.ts](../src/store/modeSlice.ts)
     - Function: `createModeSlice` - The single top-level authoring-mode switch. Eve...
   - [moveActions.ts](../src/store/moveActions.ts)
@@ -630,6 +650,7 @@
     - Type: `ClipboardData`
     - Type: `ProjectSlice`
     - Type: `HistorySlice`
+    - Type: `ModelSnapshot` - One model-mode undo/redo snapshot: the voxel mo...
     - Type: `ObjectModeTarget` - The voxel/face last landed on via a 3D face-cli...
     - Type: `PlaneSlice`
     - Type: `ToolSlice`
@@ -648,6 +669,7 @@
     - Type: `AnimationSlice`
     - Type: `UiSlice` - Onboarding / chrome UI state (splash, keyboard-...
     - Type: `AnimSnapshot` - One Animate-mode undo/redo snapshot: animation ...
+    - Type: `MarkerSlice`
     - Type: `AppState`
   - [uiSlice.ts](../src/store/uiSlice.ts)
     - Function: `createUiSlice` - Onboarding / chrome UI state that isn't part of...

@@ -30,6 +30,9 @@ export const createMarkerSlice: Slice = (set, get) => ({
     }),
 
   renameMarker: (id, label) => {
+    // A pending float holds an open undo stroke — bake it first so this marker stroke brackets
+    // only the rename (same discipline as every other model mutation).
+    get().bakeFloatIfAny()
     get().beginStroke()
     set((state) => {
       const marker = state.markers.find((m) => m.id === id)
@@ -44,6 +47,7 @@ export const createMarkerSlice: Slice = (set, get) => ({
   },
 
   deleteMarker: (id) => {
+    get().bakeFloatIfAny()
     get().beginStroke()
     set((state) => {
       const idx = state.markers.findIndex((m) => m.id === id)

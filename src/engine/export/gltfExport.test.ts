@@ -193,8 +193,10 @@ describe('exportModelToGlb markers', () => {
     const tree = found.find((n) => n.extras?.voxpaint?.id === 'aaaaaaaa-0001')!
     expect(tree.extras?.voxpaint?.label).toBe('Tree')
     expect(tree.name).toContain('Tree')
-    // Cell [0,0,0] centers at +0.5; even extent applies no re-base.
-    expect(tree.translation?.map((v) => Math.round(v * 100) / 100)).toEqual([0.5, 0.5, 0.5])
+    // Cell [0,0,0] centers at +0.5; even extent applies no re-base. The exporter may emit
+    // the transform as TRS `translation` or a column-major `matrix` — read either.
+    const t = tree.translation ?? (tree.matrix ? [tree.matrix[12], tree.matrix[13], tree.matrix[14]] : undefined)
+    expect(t?.map((v) => Math.round(v * 100) / 100)).toEqual([0.5, 0.5, 0.5])
     // Marker nodes carry no mesh (empty locators).
     expect(json.meshes?.length ?? 0).toBeGreaterThan(0)
   })
