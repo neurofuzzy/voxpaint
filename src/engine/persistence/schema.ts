@@ -1,10 +1,11 @@
 import type { AnimationType, AnimationSpeed } from '@/engine/animation/types'
 import type { Axis, BBox, ChamferClassification, GridExtent, Orientation, VoxelScaleY } from '@/engine/grid/types'
+import type { SerializedMarkerPosition } from '@/engine/markers/types'
 import type { PaletteSlotRef, PaletteState } from '@/engine/palette/types'
 import type { BoxFace } from '@/engine/texture/types'
 import type { GltfExportAnchor } from '@/engine/export/gltfExport'
 
-export const CURRENT_SCHEMA_VERSION = 6 as const
+export const CURRENT_SCHEMA_VERSION = 7 as const
 
 export type ViewSettings = {
   ambientOcclusion: boolean
@@ -23,6 +24,8 @@ export type ViewSettings = {
   exportIncludeTextureMaps?: boolean
   /** GLTF export: bake ambient occlusion into an aoMap. Defaults true. */
   exportIncludeAOMaps?: boolean
+  /** GLTF export: emit design markers as empty nodes. Defaults true. */
+  exportIncludeMarkers?: boolean
 }
 
 export type ProjectMeta = {
@@ -124,7 +127,11 @@ export type VoxPaintProjectFileV2 = {
  *
  * v6: `meta.gridExtent` becomes required — the project's locked-in working-cube size, chosen at
  * creation (see engine/grid/types.ts `GridExtent`). Older files didn't have per-project sizing at
- * all (every project used the same fixed 16 extent), so the v5→v6 migration just stamps `16`. */
+ * all (every project used the same fixed 16 extent), so the v5→v6 migration just stamps `16`.
+ *
+ * v7: adds an optional `markers` array of labeled, non-voxel annotation points
+ * (`{id, label, x, y, z}` — see engine/markers/types.ts). Absent on older files, which load
+ * with no markers. */
 export type VoxPaintProjectFile = {
   schemaVersion: typeof CURRENT_SCHEMA_VERSION
   meta: ProjectMeta
@@ -139,4 +146,5 @@ export type VoxPaintProjectFile = {
   animations?: SerializedAnimLayer[]
   masks?: SerializedSliceMask[]
   pivots?: SerializedSlicePivot[]
+  markers?: SerializedMarkerPosition[]
 }

@@ -2,6 +2,8 @@ import * as THREE from 'three'
 import { GLTFExporter } from 'three/addons/exporters/GLTFExporter.js'
 import { viewOriginShift } from '@/engine/grid/GridStore'
 import type { Axis, VoxelModel, CellKey, GridExtent, VoxelScaleY } from '@/engine/grid/types'
+import type { Marker } from '@/engine/markers/types'
+import { markerNodeName, markerWorldCenter } from '@/engine/markers/markers'
 import type { PaletteState } from '@/engine/palette/types'
 import type { TextureModel } from '@/engine/texture/types'
 import { bakeAOToAtlas, makeSpecularNoiseTexture } from '@/engine/ao/bakeAO'
@@ -89,6 +91,13 @@ export type GltfExportOptions = {
    * exported vertices after every other bake step (overlay/AO/specular all run in unit-cube voxel
    * units), so the .glb matches the scaled 3D view — see `scaleGeometry.ts`. */
   voxelScaleY?: VoxelScaleY
+  /** Design markers to export as empty nodes (default: none). Each becomes one child `Group`
+   * under the export root with its label/id in `extras.voxpaint`, so downstream tools can
+   * compose external content at those points. Positions are cell centers in the same voxel
+   * units as the mesh vertices, inheriting the export scale/anchor via the shared root. */
+  markers?: Marker[]
+  /** Emit the `markers` as empty nodes (default true). Off skips them — the .glb carries voxels only. */
+  includeMarkers?: boolean
 }
 
 const hex6 = (colorKey: number) => colorKey.toString(16).padStart(6, '0')
@@ -461,6 +470,25 @@ export async function exportModelToGlb(
       root.position.set(-shift * scale, -shift * scale, -box.min.z * scale)
     } else {
       root.position.set(-shift * scale, -shift * scale, -shift * scale)
+    }
+  }
+
+  // Design markers — one empty node per marker, parented under root so each inherits the
+  // export scale/anchor transform above (local positions stay in pre-scale voxel units, exactly
+  // like the mesh vertices). Added AFTER the anchor block so marker positions never expand the
+  // measured voxel AABB: anchors stay voxel-pure (a landscaping marker off to the side must not
+  // recenter the model). The exporter serializes `userData` into the node's `extras`
+  // (GLTFExporter.serializeUserData), giving downstream tools a stable lookup: nodes whose
+  // `extras.voxpaint.kind === 'marker'`.
+  if (options.includeMarkers ?? true) {
+    const taken = new Set<string>()
+    for (const marker of options.markers ?? []) {
+      const node = new THREE.Group()
+      node.name = markerNodeName(marker, taken)
+      const [x, y, z] = markerWorldCenter(marker.position, voxelScaleY)
+      node.position.set(x, y, z)
+      node.userData = { voxpaint: { kind: 'marker', id: marker.id, label: marker.label } }
+      root.add(node)
     }
   }
 

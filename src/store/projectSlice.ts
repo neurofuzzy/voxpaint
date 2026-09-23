@@ -102,6 +102,12 @@ export const createProjectSlice: Slice = (set, get) => ({
       // Re-house the texture faces (center-crop on shrink, EMPTY-pad on grow).
       state.texture = resizeTextureModel(state.texture, prevExtent, extent)
 
+      // Markers are position-dependent too — drop any outside the new bounds.
+      state.markers = state.markers.filter((m) => withinWorkingBounds(m.position, extent))
+      if (state.selectedMarkerId && !state.markers.some((m) => m.id === state.selectedMarkerId)) {
+        state.selectedMarkerId = null
+      }
+
       // Position-dependent state can't survive a bounds change: clear histories, selections,
       // and pending floats (already baked above), prune animation slices outside the new range,
       // and clamp the construction plane back into it.
@@ -180,11 +186,14 @@ export const createProjectSlice: Slice = (set, get) => ({
       state.exportAnchor = 'center'
       state.exportIncludeTextureMaps = true
       state.exportIncludeAOMaps = true
+      state.exportIncludeMarkers = true
       state.animSettings = new Map()
       state.sliceMasks = new Map()
       state.slicePivots = new Map()
       state.animPast = []
       state.animFuture = []
+      state.markers = []
+      state.selectedMarkerId = null
       state.dirty = true
       // A stale plane offset from a larger project would start out of bounds — pull it back in.
       // (Axis/orientation carry over; only the offset is range-bound.)

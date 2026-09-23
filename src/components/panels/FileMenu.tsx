@@ -18,15 +18,15 @@ export function FileMenu() {
   const setStatusMessage = useAppStore((s) => s.setStatusMessage)
 
   function handleExport() {
-    const { model, palette, meta, texture, ambientOcclusion, noiseLevel, specularNoiseLevel, aoStrength, glassRoughnessLevel, exposure, exportScaleFactor, exportAnchor, exportAlignToObjectBounds, exportIncludeTextureMaps, exportIncludeAOMaps, animSettings, sliceMasks, slicePivots } = useAppStore.getState()
-    downloadProjectFile(serializeProject(model, palette, meta, texture, { ambientOcclusion, noiseLevel, specularNoiseLevel, aoStrength, glassRoughnessLevel, exposure, exportScaleFactor, exportAnchor, exportAlignToObjectBounds, exportIncludeTextureMaps, exportIncludeAOMaps }, animSettings, sliceMasks, slicePivots))
+    const { model, palette, meta, texture, ambientOcclusion, noiseLevel, specularNoiseLevel, aoStrength, glassRoughnessLevel, exposure, exportScaleFactor, exportAnchor, exportAlignToObjectBounds, exportIncludeTextureMaps, exportIncludeAOMaps, exportIncludeMarkers, animSettings, sliceMasks, slicePivots, markers } = useAppStore.getState()
+    downloadProjectFile(serializeProject(model, palette, meta, texture, { ambientOcclusion, noiseLevel, specularNoiseLevel, aoStrength, glassRoughnessLevel, exposure, exportScaleFactor, exportAnchor, exportAlignToObjectBounds, exportIncludeTextureMaps, exportIncludeAOMaps, exportIncludeMarkers }, animSettings, sliceMasks, slicePivots, markers))
     showToast('Project exported.')
   }
 
   async function handleImportFile(file: File) {
     try {
       const parsed = await readProjectFile(file)
-      const { model, palette, meta, texture, view, animSettings, sliceMasks, slicePivots } = deserializeProject(parsed)
+      const { model, palette, meta, texture, view, animSettings, sliceMasks, slicePivots, markers } = deserializeProject(parsed)
       // Same project-switch hygiene as newProject: abandon open strokes (a pending float belongs
       // to the old model) rather than baking them into the imported one.
       useAppStore.getState().cancelStroke()
@@ -67,11 +67,14 @@ export function FileMenu() {
         s.exportAlignToObjectBounds = view.exportAlignToObjectBounds ?? false
         s.exportIncludeTextureMaps = view.exportIncludeTextureMaps ?? true
         s.exportIncludeAOMaps = view.exportIncludeAOMaps ?? true
+        s.exportIncludeMarkers = view.exportIncludeMarkers ?? true
         s.animSettings = animSettings
         s.sliceMasks = sliceMasks
         s.slicePivots = slicePivots
         s.animPast = []
         s.animFuture = []
+        s.markers = markers
+        s.selectedMarkerId = null
       })
       showToast('Project imported.')
     } catch (err) {

@@ -1,6 +1,8 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { effectiveExtent } from '@/engine/grid/GridStore'
+import { effectiveExtent, withinWorkingBounds } from '@/engine/grid/GridStore'
 import { gridCoordFromPixel } from '@/engine/plane/constructionPlane'
+import { createMarker } from '@/engine/markers/markers'
+import type { Marker } from '@/engine/markers/types'
 import { displayViewCenter, toDisplayU, toDisplayV } from '@/engine/plane/planeDisplay'
 import { toNormalizedPointerEvent } from '@/engine/input/PointerInputController'
 import { animateToolMap, toolMap } from '@/engine/tools'
@@ -184,6 +186,8 @@ export function usePixelCanvasTools(canvasRef: React.RefObject<HTMLCanvasElement
   const floatOrigin = useAppStore((s) => s.floatOrigin)
   const clipboard = useAppStore((s) => s.clipboard)
   const activeTool = useAppStore((s) => s.activeTool)
+  const markers = useAppStore((s) => s.markers)
+  const selectedMarkerId = useAppStore((s) => s.selectedMarkerId)
   vScaleRef.current = vScaleForPlane(plane.axis, voxelScaleY)
 
   const activeToolRef = useRef(activeTool)
@@ -195,6 +199,40 @@ export function usePixelCanvasTools(canvasRef: React.RefObject<HTMLCanvasElement
 
   const ctx: ToolContext = {
     model, plane, gridExtent, activeVoxelKind, activePaletteSlot, selection, floatContent, floatOrigin, clipboard,
+    markers, selectedMarkerId,
+    // Live lookups/edits against the store (not the render-time snapshot above), so the marker
+    // tool sees its own writes mid-gesture (place-then-drag in one stroke).
+    markerAtCoord: (u, v) => {
+      const s = useAppStore.getState()
+      const [x, y, z] = gridCoordFromPixel(s.plane, u, v)
+      return s.markers.find((m) => m.position[0] === x && m.position[1] === y && m.position[2] === z) ?? null
+    },
+    addMarkerAtCoord: (u, v) => {
+      const s = useAppStore.getState()
+      const coord = gridCoordFromPixel(s.plane, u, v)
+      if (!withinWorkingBounds(coord, s.meta.gridExtent)) return null
+      const marker: Marker = createMarker(coord, s.markers.length)
+      useAppStore.setState((state) => {
+        state.markers.push(marker)
+        state.selectedMarkerId = marker.id
+        state.meta.modifiedAt = new Date().toISOString()
+        state.dirty = true
+      })
+      return marker
+    },
+    moveMarkerToCoord: (id, u, v) => {
+      const s = useAppStore.getState()
+      const coord = gridCoordFromPixel(s.plane, u, v)
+      if (!withinWorkingBounds(coord, s.meta.gridExtent)) return
+      useAppStore.setState((state) => {
+        const m = state.markers.find((m) => m.id === id)
+        if (!m) return
+        m.position = [coord[0], coord[1], coord[2]]
+        state.meta.modifiedAt = new Date().toISOString()
+        state.dirty = true
+      })
+    },
+    selectMarker: (id) => useAppStore.getState().selectMarker(id),
     paintCell: store.paintCell,
     eraseCell: store.eraseCell,
     paintMaterialCell: store.paintMaterialCell,
@@ -400,10 +438,15 @@ export function usePixelCanvasTools(canvasRef: React.RefObject<HTMLCanvasElement
         // A stationary right-click (no drag) erases the cell under the cursor — a quick-erase
         // shortcut on the paint/erase tools now that right-click-drag means "pan the camera."
         // The pivot tool (Animate mode only) reuses this same gesture to clear its slice's pivot.
+        // The marker tool reuses it to delete the marker under the cursor.
         const store = useAppStore.getState()
         const isAnimatePivot = store.mode === 'animate' && activeToolRef.current === 'pivot'
         if (!panDrag.hasMoved && isAnimatePivot) {
           ctxRef.current.clearPivotForCurrentSlice() // self-brackets its own undo stroke
+        } else if (!panDrag.hasMoved && activeToolRef.current === 'marker') {
+          const cell = pixelToCell(canvas, e.clientX, e.clientY, size, pan, zoom, ctxRef.current.plane, vScaleRef.current)
+          const target = ctxRef.current.markerAtCoord(cell[0], cell[1])
+          if (target) store.deleteMarker(target.id) // self-brackets its own undo stroke
         } else if (!panDrag.hasMoved && (activeToolRef.current === 'paint' || activeToolRef.current === 'erase')) {
           const cell = pixelToCell(canvas, e.clientX, e.clientY, size, pan, zoom, ctxRef.current.plane, vScaleRef.current)
           const c = ctxRef.current

@@ -27,6 +27,7 @@ export function shortcutGroups(mod: string): ShortcutGroup[] {
         { keys: ['K'], label: 'Fill' },
         { keys: ['C'], label: 'Clone' },
         { keys: ['V'], label: 'Move' },
+        { keys: ['D'], label: 'Marker' },
       ],
     },
     {

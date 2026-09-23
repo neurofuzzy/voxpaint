@@ -1,4 +1,5 @@
 import type { Axis, CellKey, ChamferCell, Coord, GridExtent, Orientation, VoxelModel, VoxelScaleY } from '@/engine/grid/types'
+import type { Marker } from '@/engine/markers/types'
 import type { GltfExportAnchor } from '@/engine/export/gltfExport'
 import type { EmissiveAnimMode, PaletteSlotRef, PaletteState } from '@/engine/palette/types'
 import type { ConstructionPlane } from '@/engine/plane/types'
@@ -7,7 +8,7 @@ import type { BoxFace, TextureModel } from '@/engine/texture/types'
 import type { TexelClip } from '@/engine/texture/texelOps'
 import type { AnimationSpeed, AnimationType, SliceAnimSettings, SliceKey } from '@/engine/animation/types'
 
-export type ToolId = 'paint' | 'erase' | 'eyedropper' | 'select' | 'fill' | 'clone' | 'move' | 'material' | 'pivot' | 'textureface'
+export type ToolId = 'paint' | 'erase' | 'eyedropper' | 'select' | 'fill' | 'clone' | 'move' | 'material' | 'pivot' | 'textureface' | 'marker'
 export type VoxelKind = 'cube' | 'ramp' | 'wedge' | 'thin'
 
 export type SelectionRegion = {
@@ -88,8 +89,8 @@ export type ProjectSlice = {
 }
 
 export type HistorySlice = {
-  past: VoxelModel[]
-  future: VoxelModel[]
+  past: ModelSnapshot[]
+  future: ModelSnapshot[]
   beginStroke: () => void
   commitStroke: () => void
   /** Abandons an open stroke without recording it — for project switches (new/import), where a
@@ -98,6 +99,13 @@ export type HistorySlice = {
   cancelStroke: () => void
   undo: () => void
   redo: () => void
+}
+
+/** One model-mode undo/redo snapshot: the voxel model plus the design markers travel together,
+ * so a marker edit and the voxel paint around it undo as one gesture. */
+export type ModelSnapshot = {
+  model: VoxelModel
+  markers: Marker[]
 }
 
 /** The voxel/face last landed on via a 3D face-click, while still eligible for a same-voxel
@@ -193,6 +201,9 @@ export type ViewSlice = {
   /** GLTF export: bake ambient occlusion into an aoMap (default true). Off skips the AO bake
    * (and any aoMap assignment) while leaving other texture maps untouched. */
   exportIncludeAOMaps: boolean
+  /** GLTF export: emit design markers as empty nodes with `extras.voxpaint` payloads
+   * (default true). Off exports voxels only. */
+  exportIncludeMarkers: boolean
   setFullscreen: (v: boolean) => void
   setEdit3D: (v: boolean) => void
   setHoverCell: (coord: Coord | null, chamferValid: boolean | null) => void
@@ -214,6 +225,7 @@ export type ViewSlice = {
   setExportDisableMeshOptimization: (v: boolean) => void
   setExportIncludeTextureMaps: (v: boolean) => void
   setExportIncludeAOMaps: (v: boolean) => void
+  setExportIncludeMarkers: (v: boolean) => void
 }
 
 export type PersistenceSlice = {
@@ -464,6 +476,24 @@ export type AnimSnapshot = {
   slicePivots: Map<SliceKey, CellKey>
 }
 
+export type MarkerSlice = {
+  /** Labeled, non-voxel annotation points (see engine/markers/types.ts). Undo travels with the
+   * voxel-model stroke (HistorySlice snapshots carry both), so there is no separate marker history. */
+  markers: Marker[]
+  /** Currently selected marker (2D/3D highlight + list-panel focus), or null. */
+  selectedMarkerId: string | null
+  /** Adds a marker at a grid cell. The caller brackets the gesture with beginStroke/commitStroke
+   * (the marker tool does this per drag; single-shot callers self-bracket — see rename/delete). */
+  addMarker: (coord: Coord) => void
+  /** Moves a marker to a grid cell (same bracketing contract as addMarker). */
+  moveMarker: (id: string, coord: Coord) => void
+  /** Renames a marker. Self-brackets its own undo stroke. */
+  renameMarker: (id: string, label: string) => void
+  /** Deletes a marker. Self-brackets its own undo stroke. */
+  deleteMarker: (id: string) => void
+  selectMarker: (id: string | null) => void
+}
+
 export type AppState = ProjectSlice &
   HistorySlice &
   PlaneSlice &
@@ -477,4 +507,5 @@ export type AppState = ProjectSlice &
   ModeSlice &
   TextureSlice &
   AnimationSlice &
+  MarkerSlice &
   UiSlice

@@ -20,7 +20,7 @@ describe('serialize with texture', () => {
     texture.faces.nx[100] = 1
 
     const file = serializeProject(model, DEFAULT_PALETTE, meta, texture)
-    expect(file.schemaVersion).toBe(6)
+    expect(file.schemaVersion).toBe(7)
     expect(file.texture?.faceSize).toBeGreaterThan(0)
 
     const restored = deserializeProject(file)
@@ -40,7 +40,7 @@ describe('v1 → current migration', () => {
       model: { bounds: null, colorCells: [], chamferCells: [] },
     }
     const migrated = migrateToCurrent(v1)
-    expect(migrated.schemaVersion).toBe(6)
+    expect(migrated.schemaVersion).toBe(7)
     expect(migrated.texture).toBeUndefined()
     expect(migrated.meta.gridExtent).toBe(16)
 
@@ -72,7 +72,7 @@ describe('v2 → v3 migration (blink/pulse → metal/glass)', () => {
       },
     }
     const migrated = migrateToCurrent(v2) as any
-    expect(migrated.schemaVersion).toBe(6)
+    expect(migrated.schemaVersion).toBe(7)
     // Palette reshaped: metal/glass present, blink/pulse gone; base/emissive preserved.
     expect(migrated.palette.metal).toHaveLength(4)
     expect(migrated.palette.glass).toHaveLength(4)
@@ -83,5 +83,46 @@ describe('v2 → v3 migration (blink/pulse → metal/glass)', () => {
     expect(migrated.model.colorCells[0].paletteSlot).toEqual({ kind: 'base', index: 2 })
     expect(migrated.model.colorCells[1].paletteSlot).toEqual({ kind: 'emissive', index: 3 })
     expect(migrated.model.colorCells[2].paletteSlot).toEqual({ kind: 'emissive', index: 1 })
+  })
+})
+
+describe('markers persistence (v7)', () => {
+  it('round-trips markers through serialize → deserialize', () => {
+    const model = emptyModel()
+    const texture = emptyTextureModel(meta.gridExtent)
+    const markers = [
+      { id: 'a', label: 'Tree', position: [1, 2, 3] as [number, number, number] },
+      { id: 'b', label: 'Pond', position: [-4, 0, 7] as [number, number, number] },
+    ]
+    const file = serializeProject(model, DEFAULT_PALETTE, meta, texture, undefined, undefined, undefined, undefined, markers)
+    expect(file.markers).toHaveLength(2)
+    const restored = deserializeProject(file)
+    expect(restored.markers).toEqual(markers)
+  })
+
+  it('drops out-of-bounds and duplicate markers on load', () => {
+    const model = emptyModel()
+    const texture = emptyTextureModel(meta.gridExtent)
+    const file = serializeProject(model, DEFAULT_PALETTE, meta, texture, undefined, undefined, undefined, undefined, [
+      { id: 'a', label: 'ok', position: [0, 0, 0] },
+    ])
+    file.markers!.push(
+      { id: 'far', label: 'oob', x: 99, y: 0, z: 0 },
+      { id: 'a', label: 'dupe', x: 1, y: 1, z: 1 },
+    )
+    const restored = deserializeProject(file)
+    expect(restored.markers.map((m) => m.id)).toEqual(['a'])
+  })
+
+  it('loads pre-marker files with no markers', () => {
+    const v6 = {
+      schemaVersion: 6,
+      meta,
+      palette: DEFAULT_PALETTE,
+      model: { bounds: null, colorCells: [], chamferCells: [] },
+    }
+    const migrated = migrateToCurrent(v6)
+    expect(migrated.schemaVersion).toBe(7)
+    expect(deserializeProject(migrated).markers).toEqual([])
   })
 })

@@ -1,4 +1,5 @@
 import type { GridExtent, VoxelModel } from '@/engine/grid/types'
+import type { Marker } from '@/engine/markers/types'
 import type { ConstructionPlane } from '@/engine/plane/types'
 import type { PaletteSlotRef } from '@/engine/palette/types'
 import type { NormalizedPointerEvent } from '@/engine/input/PointerInputController'
@@ -57,6 +58,19 @@ export interface ToolContext {
   beginStroke: () => void
   commitStroke: () => void
 
+  /** Design markers (label-only annotation points, not voxels). Live store-backed callbacks so
+   * the marker tool never reads a stale render-time snapshot after its own writes. */
+  markers: Marker[]
+  selectedMarkerId: string | null
+  /** Marker on the active plane slice at (u,v), or null. Reads live state. */
+  markerAtCoord: (u: number, v: number) => Marker | null
+  /** Adds a marker at (u,v)'s cell (bounds-checked, selects it). Returns the created marker, or
+   * null when out of bounds. Bracketed by the caller's beginStroke/commitStroke. */
+  addMarkerAtCoord: (u: number, v: number) => Marker | null
+  /** Moves a marker to (u,v)'s cell (bounds-checked, no-op when out of bounds or unknown id). */
+  moveMarkerToCoord: (id: string, u: number, v: number) => void
+  selectMarker: (id: string | null) => void
+
   // Transient UI-only preview state (drag-in-progress rendering), backed by React state in the
   // adapter hook but exposed here so tool modules can read/write it without knowing that.
   linePreview: { anchor: [number, number]; end: [number, number] } | null
@@ -83,6 +97,7 @@ export type ToolDragState =
   | { kind: 'clone'; last: [number, number] }
   | { kind: 'moveFloat'; startU: number; startV: number; originAtStart: FloatOrigin }
   | { kind: 'moveGrid'; startU: number; startV: number; lastU: number; lastV: number }
+  | { kind: 'marker'; id: string }
 
 export interface ToolHandler {
   onDown?(ctx: ToolContext, e: NormalizedPointerEvent): void

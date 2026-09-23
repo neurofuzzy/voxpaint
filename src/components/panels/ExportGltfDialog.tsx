@@ -22,12 +22,14 @@ export function ExportGltfDialog({ open, onOpenChange }: { open: boolean; onOpen
   const exportDisableMeshOptimization = useAppStore((s) => s.exportDisableMeshOptimization)
   const exportIncludeTextureMaps = useAppStore((s) => s.exportIncludeTextureMaps)
   const exportIncludeAOMaps = useAppStore((s) => s.exportIncludeAOMaps)
+  const exportIncludeMarkers = useAppStore((s) => s.exportIncludeMarkers)
   const setExportScaleFactor = useAppStore((s) => s.setExportScaleFactor)
   const setExportAnchor = useAppStore((s) => s.setExportAnchor)
   const setExportAlignToObjectBounds = useAppStore((s) => s.setExportAlignToObjectBounds)
   const setExportDisableMeshOptimization = useAppStore((s) => s.setExportDisableMeshOptimization)
   const setExportIncludeTextureMaps = useAppStore((s) => s.setExportIncludeTextureMaps)
   const setExportIncludeAOMaps = useAppStore((s) => s.setExportIncludeAOMaps)
+  const setExportIncludeMarkers = useAppStore((s) => s.setExportIncludeMarkers)
 
   useEffect(() => {
     if (open) setScaleInput(String(exportScaleFactor))
@@ -47,7 +49,7 @@ export function ExportGltfDialog({ open, onOpenChange }: { open: boolean; onOpen
 
   async function run() {
     const state = useAppStore.getState()
-    const { model, palette, meta, texture, noiseLevel, specularNoiseLevel, aoStrength, glassRoughnessLevel, animSettings, sliceMasks, slicePivots } = state
+    const { model, palette, meta, texture, noiseLevel, specularNoiseLevel, aoStrength, glassRoughnessLevel, animSettings, sliceMasks, slicePivots, markers } = state
     const { gridExtent } = meta
     const sf = state.exportScaleFactor
     const anchor = state.exportAnchor
@@ -73,6 +75,8 @@ export function ExportGltfDialog({ open, onOpenChange }: { open: boolean; onOpen
         optimizeMesh: !state.exportDisableMeshOptimization,
         includeTextureMaps: state.exportIncludeTextureMaps,
         voxelScaleY: meta.voxelScaleY,
+        markers,
+        includeMarkers: state.exportIncludeMarkers,
       }, animSettings, sliceMasks, slicePivots)
       downloadGlb(glb, normalizeProjectFilename(meta.name || 'voxpaint-model'))
       showToast('GLTF exported.')
@@ -160,6 +164,16 @@ export function ExportGltfDialog({ open, onOpenChange }: { open: boolean; onOpen
                 className="h-4 w-4 shrink-0 cursor-pointer accent-violet-500"
               />
               <span className="text-sm text-neutral-400">Include AO maps</span>
+            </label>
+
+            <label className="flex items-center gap-2.5 ml-[4.5rem] cursor-pointer select-none" title="Emit design markers as empty nodes (name + extras.voxpaint payload) for composing external content downstream">
+              <input
+                type="checkbox"
+                checked={exportIncludeMarkers}
+                onChange={(e) => setExportIncludeMarkers(e.target.checked)}
+                className="h-4 w-4 shrink-0 cursor-pointer accent-violet-500"
+              />
+              <span className="text-sm text-neutral-400">Include markers</span>
             </label>
 
             <label className="flex items-center gap-2.5 ml-[4.5rem] cursor-pointer select-none" title="Keep per-voxel topology for deforming in other apps">

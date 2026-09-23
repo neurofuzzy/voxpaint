@@ -88,6 +88,8 @@ export function PixelCanvas() {
   const slicePivots = useAppStore((s) => s.slicePivots)
   const gridExtent = useAppStore((s) => s.meta.gridExtent)
   const voxelScaleY = useAppStore((s) => s.meta.voxelScaleY)
+  const markers = useAppStore((s) => s.markers)
+  const selectedMarkerId = useAppStore((s) => s.selectedMarkerId)
   // V-axis display stretch for the active plane (Y voxel scale on X/Z planes, square on Y).
   const vScale = vScaleForPlane(plane.axis, voxelScaleY)
 
@@ -396,7 +398,42 @@ export function PixelCanvas() {
       }
       ctx.setLineDash([])
     }
-  }, [model, palette, plane, linePreview, selection, selectPreview, floatContent, floatOrigin, antPhase, size, pan, zoom, vScale, mode, sliceMasks, slicePivots, gridExtent])
+
+    // Design markers on the active slice — amber diamond pins with labels, drawn last so they
+    // sit above voxels, floats, and selection. Markers off this slice are skipped (they still
+    // show in the 3D view and the markers list).
+    const markerAxis = plane.axis === 'x' ? 0 : plane.axis === 'y' ? 1 : 2
+    ctx.textBaseline = 'bottom'
+    for (const m of markers) {
+      if (m.position[markerAxis] !== plane.offset) continue
+      const { u: mu, v: mv } = pixelFromGridCoord(plane, m.position)
+      const [sx, sy] = worldToScreen(toDisplayU(plane, mu), toDisplayV(plane, mv), size, pan, zoom, vScale)
+      const cx = sx + cellPx / 2
+      const cy = sy + cellH / 2
+      const r = Math.max(5, Math.min(cellPx, cellH) * 0.28)
+      const selected = m.id === selectedMarkerId
+      ctx.beginPath()
+      ctx.moveTo(cx, cy - r)
+      ctx.lineTo(cx + r * 0.7, cy)
+      ctx.lineTo(cx, cy + r)
+      ctx.lineTo(cx - r * 0.7, cy)
+      ctx.closePath()
+      ctx.fillStyle = '#fbbf24'
+      ctx.fill()
+      ctx.lineWidth = selected ? 2.5 : 1.5
+      ctx.strokeStyle = selected ? '#ffffff' : '#92400e'
+      ctx.stroke()
+      ctx.font = `${Math.max(10, cellPx * 0.32)}px ui-monospace, monospace`
+      const label = m.label
+      const tw = ctx.measureText(label).width
+      const lx = Math.min(Math.max(cx - tw / 2, 4), size.width - tw - 4)
+      const ly = cy - r - 3
+      ctx.fillStyle = 'rgba(0, 0, 0, 0.65)'
+      ctx.fillRect(lx - 3, ly - 12, tw + 6, 15)
+      ctx.fillStyle = selected ? '#ffffff' : '#fde68a'
+      ctx.fillText(label, lx, ly)
+    }
+  }, [model, palette, plane, linePreview, selection, selectPreview, floatContent, floatOrigin, antPhase, size, pan, zoom, vScale, mode, sliceMasks, slicePivots, gridExtent, markers, selectedMarkerId])
 
   useEffect(() => {
     draw()

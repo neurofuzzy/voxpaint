@@ -1,5 +1,6 @@
-import { decodeKey, emptyModel, encodeKey, recomputeBounds } from '@/engine/grid/GridStore'
+import { decodeKey, emptyModel, encodeKey, recomputeBounds, withinWorkingBounds } from '@/engine/grid/GridStore'
 import type { CellKey, GridExtent, VoxelModel } from '@/engine/grid/types'
+import type { Marker, SerializedMarkerPosition } from '@/engine/markers/types'
 import { DEFAULT_PALETTE } from '@/engine/palette/defaultPalette'
 import type { PaletteState } from '@/engine/palette/types'
 import type { BoxFace, TextureModel } from '@/engine/texture/types'
@@ -97,7 +98,29 @@ function deserializeSlicePivots(pivots: SerializedSlicePivot[]): Map<SliceKey, C
   return map
 }
 
-export function serializeProject(model: VoxelModel, palette: PaletteState, meta: ProjectMeta, texture: TextureModel, view?: ViewSettings, animSettings?: Map<SliceKey, SliceAnimSettings>, sliceMasks?: Map<SliceKey, Set<CellKey>>, slicePivots?: Map<SliceKey, CellKey>): VoxPaintProjectFile {
+function serializeMarkers(markers: Marker[]): SerializedMarkerPosition[] {
+  return markers.map((m) => ({ id: m.id, label: m.label, x: m.position[0], y: m.position[1], z: m.position[2] }))
+}
+
+function deserializeMarkers(entries: SerializedMarkerPosition[] | undefined, gridExtent: GridExtent): Marker[] {
+  if (!entries) return []
+  const out: Marker[] = []
+  const seen = new Set<string>()
+  for (const e of entries) {
+    if (typeof e?.id !== 'string' || typeof e?.label !== 'string') continue
+    if (!Number.isInteger(e.x) || !Number.isInteger(e.y) || !Number.isInteger(e.z)) continue
+    if (seen.has(e.id)) continue
+    seen.add(e.id)
+    const position: [number, number, number] = [e.x, e.y, e.z]
+    // Hand-edited or corrupt files could place markers outside the working cube — drop those
+    // rather than refusing to load (same spirit as the texture faceSize guard above).
+    if (!withinWorkingBounds(position, gridExtent)) continue
+    out.push({ id: e.id, label: e.label.slice(0, 120), position })
+  }
+  return out
+}
+
+export function serializeProject(model: VoxelModel, palette: PaletteState, meta: ProjectMeta, texture: TextureModel, view?: ViewSettings, animSettings?: Map<SliceKey, SliceAnimSettings>, sliceMasks?: Map<SliceKey, Set<CellKey>>, slicePivots?: Map<SliceKey, CellKey>, markers?: Marker[]): VoxPaintProjectFile {
   const colorCells = Array.from(model.color.entries()).map(([key, cell]) => {
     const [x, y, z] = decodeKey(key)
     return { x, y, z, paletteSlot: cell.paletteSlot }
@@ -116,10 +139,11 @@ export function serializeProject(model: VoxelModel, palette: PaletteState, meta:
     animations: animSettings ? serializeAnimations(animSettings) : undefined,
     masks: sliceMasks ? serializeSliceMasks(sliceMasks) : undefined,
     pivots: slicePivots ? serializeSlicePivots(slicePivots) : undefined,
+    markers: markers ? serializeMarkers(markers) : undefined,
   }
 }
 
-export function deserializeProject(file: VoxPaintProjectFile): { model: VoxelModel; palette: PaletteState; meta: ProjectMeta; texture: TextureModel; view: ViewSettings; animSettings: Map<SliceKey, SliceAnimSettings>; sliceMasks: Map<SliceKey, Set<CellKey>>; slicePivots: Map<SliceKey, CellKey> } {
+export function deserializeProject(file: VoxPaintProjectFile): { model: VoxelModel; palette: PaletteState; meta: ProjectMeta; texture: TextureModel; view: ViewSettings; animSettings: Map<SliceKey, SliceAnimSettings>; sliceMasks: Map<SliceKey, Set<CellKey>>; slicePivots: Map<SliceKey, CellKey>; markers: Marker[] } {
   const model = emptyModel()
   const color = new Map(model.color)
   const chamfer = new Map(model.chamfer)
@@ -137,7 +161,7 @@ export function deserializeProject(file: VoxPaintProjectFile): { model: VoxelMod
 
   const built: VoxelModel = { color, chamfer, bounds: file.model.bounds }
   const texture = file.texture ? deserializeTexture(file.texture, file.meta.gridExtent) : emptyTextureModel(file.meta.gridExtent)
-  const view: ViewSettings = { ambientOcclusion: false, noiseLevel: 0, specularNoiseLevel: 0, aoStrength: 1, glassRoughnessLevel: 0.3, exposure: 1, exportScaleFactor: 100, exportAnchor: 'center', exportAlignToObjectBounds: false, exportDisableMeshOptimization: false, exportIncludeTextureMaps: true, exportIncludeAOMaps: true, ...file.view }
+  const view: ViewSettings = { ambientOcclusion: false, noiseLevel: 0, specularNoiseLevel: 0, aoStrength: 1, glassRoughnessLevel: 0.3, exposure: 1, exportScaleFactor: 100, exportAnchor: 'center', exportAlignToObjectBounds: false, exportDisableMeshOptimization: false, exportIncludeTextureMaps: true, exportIncludeAOMaps: true, exportIncludeMarkers: true, ...file.view }
   const animSettings = file.animations ? deserializeAnimations(file.animations) : new Map()
   const sliceMasks = file.masks ? deserializeSliceMasks(file.masks) : new Map()
   const slicePivots = file.pivots ? deserializeSlicePivots(file.pivots) : new Map()
@@ -150,5 +174,6 @@ export function deserializeProject(file: VoxPaintProjectFile): { model: VoxelMod
   // looks exactly the same as it always did instead of visibly shifting on next load.
   // `voxelScaleY` is the same story one generation later: pre-scale files load as 1x (unit cubes).
   const meta: ProjectMeta = { ...file.meta, noiseSeed: file.meta.noiseSeed ?? 0, voxelScaleY: file.meta.voxelScaleY ?? 1 }
-  return { model: { ...built, bounds: recomputeBounds(built) }, palette, meta, texture, view, animSettings, sliceMasks, slicePivots }
+  const markers = deserializeMarkers(file.markers, meta.gridExtent)
+  return { model: { ...built, bounds: recomputeBounds(built) }, palette, meta, texture, view, animSettings, sliceMasks, slicePivots, markers }
 }

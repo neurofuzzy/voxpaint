@@ -49,6 +49,10 @@ MIGRATIONS[4] = (doc) => ({ ...doc, schemaVersion: 5 })
  * painted bounds and their texture's existing `faceSize` (16 × texelScale) exactly. */
 MIGRATIONS[5] = (doc) => ({ ...doc, schemaVersion: 6, meta: { ...doc.meta, gridExtent: doc.meta?.gridExtent ?? 16 } })
 
+/** v6 → v7: the `markers` field was added for labeled design markers. v6 projects simply get no
+ * markers (matching their pre-marker behavior — nothing annotated). */
+MIGRATIONS[6] = (doc) => ({ ...doc, schemaVersion: 7 })
+
 export class UnsupportedSchemaVersionError extends Error {
   constructor(foundVersion: unknown) {
     super(`This file is from a newer version of VoxPaint (schemaVersion=${String(foundVersion)}). Please update the app.`)

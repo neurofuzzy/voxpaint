@@ -12,6 +12,7 @@ const TOOL_KEYS: Record<string, ToolId> = {
   k: 'fill',
   c: 'clone',
   v: 'move',
+  d: 'marker',
 }
 
 /**
@@ -86,6 +87,7 @@ export function useKeyboardShortcuts(hoverCellRef?: React.RefObject<[number, num
       if (e.key === 'Escape') {
         bakeFloat()
         clearSelection()
+        if (!isTexture && !isAnimate) store.selectMarker(null)
         e.preventDefault()
         return
       }
@@ -118,6 +120,13 @@ export function useKeyboardShortcuts(hoverCellRef?: React.RefObject<[number, num
 
       if ((key === 'delete' || key === 'backspace') && selection) {
         deleteSelection()
+        e.preventDefault()
+        return
+      }
+
+      // Delete/Backspace with no voxel selection removes the selected design marker (if any).
+      if ((key === 'delete' || key === 'backspace') && !isTexture && !isAnimate && store.selectedMarkerId) {
+        store.deleteMarker(store.selectedMarkerId)
         e.preventDefault()
         return
       }

@@ -19,6 +19,7 @@ import { ConstructionPlaneGizmo } from './ConstructionPlaneGizmo'
 import { ConstructionPlaneVisual } from './ConstructionPlaneVisual'
 import { FloatGhostPreview } from './FloatGhostPreview'
 import { ExposureSlider } from './ExposureSlider'
+import { MarkersView } from './MarkersView'
 import { OptimizedMeshView } from './OptimizedMeshView'
 import { PivotGizmo } from './PivotGizmo'
 import { ProjectBoundsBox } from './ProjectBoundsBox'
@@ -323,6 +324,10 @@ function VoxelInteractionHandler({ managerRef, controlsRef }: {
 
       // Hover state only, except the material drag above — paint/erase/eyedropper movement never
       // applies, so those drags always orbit.
+      if (activeToolRef.current === 'marker') {
+        setStatusMessage(result ? 'Click to select this marker · click empty space to place a new one' : 'Click to place a marker')
+        return
+      }
       if (isBlocking()) {
         const tool = activeToolRef.current as BlockingTool
         setStatusMessage(result ? editHint(tool) : EDIT_ORBIT_HINT)
@@ -361,6 +366,29 @@ function VoxelInteractionHandler({ managerRef, controlsRef }: {
       if (isBlocking()) {
         if (e.button !== 0) return
         applyBlockingTap(e.clientX, e.clientY)
+        return
+      }
+
+      // Marker tool never sets the plane — taps select the marker on the hit cell, or drop a
+      // new one there (on the active slice when empty space was hit). One undo stroke per tap.
+      if (activeToolRef.current === 'marker') {
+        if (e.button !== 0) return
+        const store = useAppStore.getState()
+        const result = resolveFaceHit(e.clientX, e.clientY)
+        const coord: Coord | null = result
+          ? result.key.split(',').map(Number) as Coord
+          : resolveEmptyCell(e.clientX, e.clientY)
+        if (!coord) return
+        const existing = store.markers.find(
+          (m) => m.position[0] === coord[0] && m.position[1] === coord[1] && m.position[2] === coord[2],
+        )
+        if (existing) {
+          store.selectMarker(existing.id)
+          return
+        }
+        store.beginStroke()
+        store.addMarker(coord)
+        store.commitStroke()
         return
       }
 
@@ -442,6 +470,7 @@ export function Viewport3D() {
               <SelectionHighlight />
               <ConstructionPlaneGizmo />
               <PivotGizmo />
+              <MarkersView />
             </group>
             <VoxelInteractionHandler managerRef={managerRef} controlsRef={orbitControlsRef} />
           </>

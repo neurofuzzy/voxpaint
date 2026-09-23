@@ -66,7 +66,7 @@ function pillarVoxel(): VoxelModel {
 }
 
 interface GlbJson {
-  nodes?: Array<{ name?: string; translation?: [number, number, number]; matrix?: number[] }>
+  nodes?: Array<{ name?: string; translation?: [number, number, number]; matrix?: number[]; extras?: { voxpaint?: { kind?: string; id?: string; label?: string } } }>
   images?: unknown[]
   textures?: unknown[]
   samplers?: unknown[]
@@ -176,6 +176,44 @@ describe('exportModelToGlb includeTextureMaps', () => {  it('textured export wit
   it('untextured export without maps is likewise map-free', async () => {
     const glb = await exportModelToGlb(pillarVoxel(), DEFAULT_PALETTE, 16, undefined, { includeTextureMaps: false })
     expectMapFree(glbJson(glb))
+  })
+})
+
+describe('exportModelToGlb markers', () => {
+  const markers = [
+    { id: 'aaaaaaaa-0001', label: 'Tree', position: [0, 0, 0] as [number, number, number] },
+    { id: 'bbbbbbbb-0002', label: 'Pond', position: [2, 1, -1] as [number, number, number] },
+  ]
+
+  it('exports markers as empty nodes with extras payloads at cell centers', async () => {
+    const glb = await exportModelToGlb(pillarVoxel(), DEFAULT_PALETTE, 16, undefined, { markers, includeTextureMaps: false })
+    const json = glbJson(glb)
+    const found = (json.nodes ?? []).filter((n) => n.extras?.voxpaint?.kind === 'marker')
+    expect(found).toHaveLength(2)
+    const tree = found.find((n) => n.extras?.voxpaint?.id === 'aaaaaaaa-0001')!
+    expect(tree.extras?.voxpaint?.label).toBe('Tree')
+    expect(tree.name).toContain('Tree')
+    // Cell [0,0,0] centers at +0.5; even extent applies no re-base.
+    expect(tree.translation?.map((v) => Math.round(v * 100) / 100)).toEqual([0.5, 0.5, 0.5])
+    // Marker nodes carry no mesh (empty locators).
+    expect(json.meshes?.length ?? 0).toBeGreaterThan(0)
+  })
+
+  it('omits markers when includeMarkers is false', async () => {
+    const glb = await exportModelToGlb(pillarVoxel(), DEFAULT_PALETTE, 16, undefined, { markers, includeMarkers: false, includeTextureMaps: false })
+    const found = (glbJson(glb).nodes ?? []).filter((n) => n.extras?.voxpaint?.kind === 'marker')
+    expect(found).toEqual([])
+  })
+
+  it('keeps anchors voxel-pure when a marker sits far outside the model', async () => {
+    const far = [...markers, { id: 'cccccccc-0003', label: 'Far', position: [7, 7, 7] as [number, number, number] }]
+    const withMarkers = glbJson(
+      await exportModelToGlb(pillarVoxel(), DEFAULT_PALETTE, 16, undefined, { markers: far, anchor: 'bottom', includeTextureMaps: false }),
+    )
+    const without = glbJson(
+      await exportModelToGlb(pillarVoxel(), DEFAULT_PALETTE, 16, undefined, { anchor: 'bottom', includeTextureMaps: false }),
+    )
+    expect(rootTranslation(withMarkers)).toEqual(rootTranslation(without))
   })
 })
 
