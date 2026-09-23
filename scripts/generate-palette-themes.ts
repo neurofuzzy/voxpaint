@@ -47,6 +47,28 @@ const NAME_OVERRIDES: Record<string, string> = {
  */
 const CUSTOM_THEMES: PaletteTheme[] = [
   {
+    id: 'blbc',
+    name: 'BLBC',
+    palette: {
+      // Bright Lanes Big City landmark-markup palette: three colors and
+      // nothing else. base[0] tan = body, base[1] gray = plinth, base[2]
+      // red = roof; every other slot is black = unused. The game reads
+      // zones by (kind, index), never by hex. Openings are NOT paletted —
+      // windows and doors are texture overlay on body voxels: grayscale 7
+      // (#ffffff, full lighten) = window, 0 (#000000, full darken) = door.
+      base: [
+        '#c8b493', '#7e8287', '#b0555a', '#000000',
+        '#000000', '#000000', '#000000', '#000000',
+        '#000000', '#000000', '#000000', '#000000',
+        '#000000', '#000000', '#000000', '#000000',
+      ],
+      emissive: ['#000000', '#000000', '#000000', '#000000'],
+      metal: ['#000000', '#000000', '#000000', '#000000'],
+      glass: ['#000000', '#000000', '#000000', '#000000'],
+      emissiveAnim: ['none', 'none', 'none', 'none'],
+    },
+  },
+  {
     id: 'blackbody',
     name: 'Blackbody',
     palette: {
