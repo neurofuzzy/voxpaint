@@ -14,7 +14,7 @@ const TOOLS: Array<{ id: ToolId; label: string; icon: typeof Brush; hint: string
   { id: 'fill', label: 'Fill', icon: PaintBucket, hint: 'click to flood-fill connected cells · alt+click an existing voxel: fill in 3D' },
   { id: 'clone', label: 'Clone', icon: Copy, hint: 'alt+click to set a clone source, then drag to stamp' },
   { id: 'move', label: 'Move / Transform', icon: Move, hint: 'drag to shift the current slice' },
-  { id: 'marker', label: 'Marker', icon: MapPin, hint: 'click to place a labeled marker · drag to move · right-click: delete · Delete key removes the selected marker' },
+  { id: 'marker', label: 'Marker', icon: MapPin, hint: 'click empty space to place a marker · tap a marker to recolor it, tap again to delete · drag to move · right-click: delete' },
 ]
 
 /** Animate mode only supports masking which voxels of the current slice animate — paint/erase

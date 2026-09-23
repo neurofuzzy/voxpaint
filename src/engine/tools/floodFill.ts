@@ -14,6 +14,10 @@ function slotsEqual(a: PaletteSlotRef | undefined, b: PaletteSlotRef | undefined
  * chamfer fill is excluded). Bounded to the plane's displayed span and the model's 64^3 growth
  * cap. Returns the (u,v) cells to recolor; painting is left to the caller so it can run inside
  * one Immer producer/undo stroke.
+ *
+ * `within` optionally constrains traversal to an explicit mask (e.g. the active selection) —
+ * cells outside it are never visited, so the fill can't leak past the mask's own boundary even
+ * on a completely empty plane.
  */
 export function floodFillRegion(
   model: VoxelModel,
@@ -21,6 +25,7 @@ export function floodFillRegion(
   startU: number,
   startV: number,
   gridExtent: GridExtent,
+  within?: (u: number, v: number) => boolean,
 ): Array<[number, number]> {
   const half = gridExtent / 2
   const inSpan = (u: number, v: number) => u >= -half && u < half && v >= -half && v < half
@@ -37,6 +42,7 @@ export function floodFillRegion(
     if (visited.has(key)) continue
     visited.add(key)
     if (!inSpan(u, v)) continue
+    if (within && !within(u, v)) continue
     if (!slotsEqual(colorAt(u, v), target)) continue
 
     const coord = gridCoordFromPixel(plane, u, v)

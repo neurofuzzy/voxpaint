@@ -1,5 +1,6 @@
 import * as Tooltip from '@radix-ui/react-tooltip'
-import { FlipHorizontal, FlipVertical, RotateCcw, RotateCw, SquareDashed, Trash2 } from 'lucide-react'
+import { FlipHorizontal, FlipVertical, Layers, RotateCcw, RotateCw, SquareDashed, Trash2 } from 'lucide-react'
+import { showToast } from '@/components/ui/toastBus'
 import { useAppStore } from '@/store/useAppStore'
 import type { SelectionTransformKind } from '@/store/types'
 
@@ -13,12 +14,34 @@ type Action = {
   run?: (a: SelectionActions) => void
   /** Set on the destructive actions so they read differently from the transforms. */
   danger?: boolean
+  /** Voxel-model-only actions are hidden in Texture mode (no chamfer basis to re-face there). */
+  modelOnly?: boolean
 }
 
 type SelectionActions = {
   transformFloat: (kind: SelectionTransformKind) => void
   deleteContents: () => void
   clearSelection: () => void
+  faceSelection: () => { faced: number; skipped: number }
+  faceDir: string
+}
+
+const FACE_DIRS: Record<string, Record<number, string>> = {
+  x: { 1: 'east', '-1': 'west' },
+  y: { 1: 'up', '-1': 'down' },
+  z: { 1: 'south', '-1': 'north' },
+}
+
+function faceToast({ faced, skipped }: { faced: number; skipped: number }, dir: string): void {
+  if (faced === 0 && skipped === 0) {
+    showToast('Nothing to face — the selection holds no angled or thin voxels.')
+  } else if (faced === 0) {
+    showToast(`Already facing ${dir} — ${skipped} cell${skipped === 1 ? '' : 's'} needed no change or can't be faced.`)
+  } else if (skipped === 0) {
+    showToast(`Faced ${faced} voxel${faced === 1 ? '' : 's'} ${dir}.`)
+  } else {
+    showToast(`Faced ${faced} voxel${faced === 1 ? '' : 's'} ${dir} — ${skipped} left alone (corners or already faced).`)
+  }
 }
 
 const ACTIONS: Action[] = [
@@ -26,6 +49,14 @@ const ACTIONS: Action[] = [
   { id: 'rotate-ccw', label: 'Rotate CCW', icon: RotateCcw, hint: 'rotate the selection 90° counter-clockwise', transform: 'rotate-ccw' },
   { id: 'mirror-h', label: 'Flip Horizontal', icon: FlipHorizontal, hint: 'mirror the selection left-to-right', transform: 'mirror-h' },
   { id: 'mirror-v', label: 'Flip Vertical', icon: FlipVertical, hint: 'mirror the selection top-to-bottom', transform: 'mirror-v' },
+  {
+    id: 'face',
+    label: 'Face Selection',
+    icon: Layers,
+    hint: 're-face every ramp, wedge, thin, and unshaped voxel under the selection — through the full depth — onto the active construction plane, so pasted walls sample the right texture face',
+    run: (a) => faceToast(a.faceSelection(), a.faceDir),
+    modelOnly: true,
+  },
   {
     id: 'delete',
     label: 'Delete Contents',
@@ -58,18 +89,22 @@ export function SelectionPalette() {
   const isTexture = useAppStore((s) => s.mode === 'texture')
   const hasSelection = useAppStore((s) => (s.mode === 'texture' ? s.textureSelection : s.selection) !== null)
   const setStatusMessage = useAppStore((s) => s.setStatusMessage)
+  const plane = useAppStore((s) => s.plane)
 
   const transformFloat = useAppStore((s) => (isTexture ? s.textureTransformFloat : s.transformFloat))
   const deleteContents = useAppStore((s) => (isTexture ? s.textureDelete : s.deleteSelection))
   // Both setters bake any pending float first, so clearing never strands lifted content.
   const setSelection = useAppStore((s) => (isTexture ? s.setTextureSelection : s.setSelection))
+  const faceSelection = useAppStore((s) => s.faceSelection)
 
-  const actions: SelectionActions = { transformFloat, deleteContents, clearSelection: () => setSelection(null) }
+  const faceDir = FACE_DIRS[plane.axis]?.[plane.orientation] ?? plane.axis
+  const actions: SelectionActions = { transformFloat, deleteContents, clearSelection: () => setSelection(null), faceSelection, faceDir }
+  const visible = ACTIONS.filter((a) => !a.modelOnly || !isTexture)
 
   return (
     <Tooltip.Provider delayDuration={300}>
       <div className="flex items-center gap-1">
-        {ACTIONS.map(({ id, label, icon: Icon, hint, transform, run, danger }) => (
+        {visible.map(({ id, label, icon: Icon, hint, transform, run, danger }) => (
           <Tooltip.Root key={id}>
             <Tooltip.Trigger asChild>
               <button

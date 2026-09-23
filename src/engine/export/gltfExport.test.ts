@@ -5,6 +5,7 @@ import { DEFAULT_PALETTE } from '@/engine/palette/defaultPalette'
 import type { PaletteSlotRef } from '@/engine/palette/types'
 import type { TextureModel } from '@/engine/texture/types'
 import { emptyTextureModel } from '@/engine/texture/TextureStore'
+import { MARKER_COLORS } from '@/engine/markers/types'
 import { exportModelToGlb } from './gltfExport'
 
 // three's GLTFExporter rasterizes every texture image through a 2D canvas — also absent in
@@ -66,7 +67,7 @@ function pillarVoxel(): VoxelModel {
 }
 
 interface GlbJson {
-  nodes?: Array<{ name?: string; translation?: [number, number, number]; matrix?: number[]; extras?: { voxpaint?: { kind?: string; id?: string; label?: string } } }>
+  nodes?: Array<{ name?: string; translation?: [number, number, number]; matrix?: number[]; extras?: { voxpaint?: { kind?: string; id?: string; color?: string } } }>
   images?: unknown[]
   textures?: unknown[]
   samplers?: unknown[]
@@ -181,8 +182,8 @@ describe('exportModelToGlb includeTextureMaps', () => {  it('textured export wit
 
 describe('exportModelToGlb markers', () => {
   const markers = [
-    { id: 'aaaaaaaa-0001', label: 'Tree', position: [0, 0, 0] as [number, number, number] },
-    { id: 'bbbbbbbb-0002', label: 'Pond', position: [2, 1, -1] as [number, number, number] },
+    { id: 'aaaaaaaa-0001', color: 1, position: [0, 0, 0] as [number, number, number] },
+    { id: 'bbbbbbbb-0002', color: 3, position: [2, 1, -1] as [number, number, number] },
   ]
 
   it('exports markers as empty nodes with extras payloads at cell centers', async () => {
@@ -191,8 +192,8 @@ describe('exportModelToGlb markers', () => {
     const found = (json.nodes ?? []).filter((n) => n.extras?.voxpaint?.kind === 'marker')
     expect(found).toHaveLength(2)
     const tree = found.find((n) => n.extras?.voxpaint?.id === 'aaaaaaaa-0001')!
-    expect(tree.extras?.voxpaint?.label).toBe('Tree')
-    expect(tree.name).toContain('Tree')
+    expect(tree.extras?.voxpaint?.color).toBe(MARKER_COLORS[1])
+    expect(tree.name).toContain(MARKER_COLORS[1].replace('#', ''))
     // Cell [0,0,0] centers at +0.5; even extent applies no re-base. The exporter may emit
     // the transform as TRS `translation` or a column-major `matrix` — read either.
     const t = tree.translation ?? (tree.matrix ? [tree.matrix[12], tree.matrix[13], tree.matrix[14]] : undefined)
@@ -208,7 +209,7 @@ describe('exportModelToGlb markers', () => {
   })
 
   it('keeps anchors voxel-pure when a marker sits far outside the model', async () => {
-    const far = [...markers, { id: 'cccccccc-0003', label: 'Far', position: [7, 7, 7] as [number, number, number] }]
+    const far = [...markers, { id: 'cccccccc-0003', color: 0, position: [7, 7, 7] as [number, number, number] }]
     const withMarkers = glbJson(
       await exportModelToGlb(pillarVoxel(), DEFAULT_PALETTE, 16, undefined, { markers: far, anchor: 'bottom', includeTextureMaps: false }),
     )

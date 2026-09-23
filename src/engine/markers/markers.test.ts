@@ -1,10 +1,15 @@
 import { describe, expect, it } from 'vitest'
-import { createMarker, markerInBounds, markerNodeName, markerWorldCenter, sanitizeMarkerLabel } from './markers'
+import { MARKER_COLORS } from './types'
+import { createMarker, markerColorHex, markerInBounds, markerNodeName, markerWorldCenter } from './markers'
 
 describe('markers', () => {
-  it('creates sequential default labels', () => {
-    expect(createMarker([0, 0, 0], 0).label).toBe('Marker 1')
-    expect(createMarker([1, 2, 3], 2).label).toBe('Marker 3')
+  it('creates markers with the given color', () => {
+    expect(createMarker([0, 0, 0], 2).color).toBe(2)
+  })
+
+  it('resolves color hex with fallback', () => {
+    expect(markerColorHex(1)).toBe(MARKER_COLORS[1])
+    expect(markerColorHex(99)).toBe(MARKER_COLORS[0])
   })
 
   it('computes world center with Y scale', () => {
@@ -14,19 +19,17 @@ describe('markers', () => {
   })
 
   it('checks working bounds', () => {
-    expect(markerInBounds({ id: 'a', label: 'x', position: [0, 0, 0] }, 16)).toBe(true)
-    expect(markerInBounds({ id: 'a', label: 'x', position: [8, 0, 0] }, 16)).toBe(false)
+    expect(markerInBounds({ id: 'a', color: 0, position: [0, 0, 0] }, 16)).toBe(true)
+    expect(markerInBounds({ id: 'a', color: 0, position: [8, 0, 0] }, 16)).toBe(false)
   })
 
-  it('sanitizes labels and dedupes node names', () => {
-    expect(sanitizeMarkerLabel('tree oak 01!')).toBe('tree_oak_01')
-    expect(sanitizeMarkerLabel('!!!')).toBe('marker')
+  it('names nodes by color hex and dedupes', () => {
     const taken = new Set<string>()
-    const a = { id: 'aaaaaaaa-bbbb', label: 'Tree', position: [0, 0, 0] as [number, number, number] }
-    const b = { id: 'aaaaaaaa-cccc', label: 'Tree', position: [1, 0, 0] as [number, number, number] }
+    const a = { id: 'aaaaaaaa-bbbb', color: 1, position: [0, 0, 0] as [number, number, number] }
+    const b = { id: 'aaaaaaaa-cccc', color: 1, position: [1, 0, 0] as [number, number, number] }
     const na = markerNodeName(a, taken)
     const nb = markerNodeName(b, taken)
     expect(na).not.toBe(nb)
-    expect(na.startsWith('marker_Tree_')).toBe(true)
+    expect(na).toBe(`marker_${MARKER_COLORS[1].replace('#', '')}_aaaaaaaa`)
   })
 })

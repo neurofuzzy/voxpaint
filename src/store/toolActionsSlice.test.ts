@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it } from 'vitest'
 import { encodeKey } from '@/engine/grid/GridStore'
 import { gridCoordFromPixel } from '@/engine/plane/constructionPlane'
+import { rectRegion } from '@/engine/tools/selectionMask'
 import { useAppStore } from './useAppStore'
 
 const PLANE = { axis: 'z' as const, orientation: 1 as const, offset: 0 }
@@ -43,6 +44,30 @@ describe('floodFill (2D, edge-leak guard)', () => {
     const after = useAppStore.getState()
     expect(after.model.color.size).toBe(before)
     expect(after.past.length).toBe(0) // no undo stroke was even opened
+  })
+
+  it('fills an empty selection without needing painted bounds', () => {
+    const s = useAppStore.getState()
+    s.setActivePaletteSlot(SLOT_A)
+    // 4x4 selection on a completely empty plane — the old leak guard would reject this.
+    s.setSelection(rectRegion(-2, -2, 1, 1))
+    s.floodFill(0, 0)
+
+    const after = useAppStore.getState()
+    expect(after.model.color.size).toBe(16)
+    expect(after.model.color.get(keyFor(1, 1))?.paletteSlot).toEqual(SLOT_A)
+    expect(after.model.color.has(keyFor(2, 2))).toBe(false) // outside the selection
+    expect(after.past.length).toBe(1)
+  })
+
+  it('still leak-guards a click outside the selection', () => {
+    const s = useAppStore.getState()
+    s.setSelection(rectRegion(0, 0, 2, 2))
+    s.floodFill(5, 5) // outside the selection, empty plane -> would repaint everything
+
+    const after = useAppStore.getState()
+    expect(after.model.color.size).toBe(0)
+    expect(after.past.length).toBe(0)
   })
 })
 
@@ -147,5 +172,66 @@ describe('liftSelectionToFloat (deep alt-drag)', () => {
     const after = useAppStore.getState()
     expect(after.model.color.get(encodeKey(2, -1, 0))?.paletteSlot).toEqual(SLOT_A)
     expect(after.model.color.has(encodeKey(3, -1, 0))).toBe(false) // cleared by the empty cell
+  })
+})
+
+describe('faceSelection', () => {
+  beforeEach(() => {
+    useAppStore.getState().newProject('Test', 16)
+  })
+
+  it('re-faces a thin slab onto the active plane and ignores cubes', () => {
+    const s = useAppStore.getState()
+    s.setActivePaletteSlot(SLOT_A)
+    // Thin slab authored on the default z/1 plane, plus a plain cube beside it.
+    s.setActiveVoxelKind('thin')
+    s.beginStroke()
+    s.paintCell(0, 0)
+    s.commitStroke()
+    s.setActiveVoxelKind('cube')
+    s.beginStroke()
+    s.paintCell(1, 0)
+    s.commitStroke()
+
+    const thinBefore = useAppStore.getState().model.chamfer.get(keyFor(0, 0))!
+    expect(thinBefore.planeAxis).toBe('z')
+
+    // Face the selection west: the slab flips basis, the cube is untouched. The selection is
+    // drawn on the x-plane, where the slab ([0,-1,0]) and cube ([1,-1,0]) share footprint u=-1.
+    useAppStore.getState().setPlaneAxisOrientation('x', -1)
+    useAppStore.getState().setSelection(rectRegion(-1, 0, 0, 0))
+    const result = useAppStore.getState().faceSelection()
+    expect(result).toEqual({ faced: 1, skipped: 0 })
+
+    const after = useAppStore.getState()
+    const thin = after.model.chamfer.get(keyFor(0, 0))!
+    expect(thin.planeAxis).toBe('x')
+    expect(thin.planeOrientation).toBe(-1)
+    expect(thin.resolvedTo).toEqual({ shapeKind: 'thin', rotation: 0 })
+    expect(after.model.chamfer.has(keyFor(1, 0))).toBe(false) // cube gained no basis
+    expect(after.model.color.get(keyFor(1, 0))?.paletteSlot).toEqual(SLOT_A)
+
+    // Undo restores the original basis.
+    after.undo()
+    expect(useAppStore.getState().model.chamfer.get(keyFor(0, 0))?.planeAxis).toBe('z')
+  })
+
+  it('counts already-faced cells as skipped and no-ops cleanly', () => {
+    const s = useAppStore.getState()
+    s.setActiveVoxelKind('thin')
+    s.beginStroke()
+    s.paintCell(0, 0)
+    s.commitStroke()
+
+    const pastLen = useAppStore.getState().past.length
+    useAppStore.getState().setSelection(rectRegion(0, 0, 0, 0))
+    // Still on the authoring plane: nothing changes, no undo step recorded.
+    const result = useAppStore.getState().faceSelection()
+    expect(result).toEqual({ faced: 0, skipped: 1 })
+    expect(useAppStore.getState().past.length).toBe(pastLen)
+  })
+
+  it('returns zeros with no selection', () => {
+    expect(useAppStore.getState().faceSelection()).toEqual({ faced: 0, skipped: 0 })
   })
 })

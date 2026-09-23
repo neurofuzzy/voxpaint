@@ -1,6 +1,7 @@
 import { decodeKey, emptyModel, encodeKey, recomputeBounds, withinWorkingBounds } from '@/engine/grid/GridStore'
 import type { CellKey, GridExtent, VoxelModel } from '@/engine/grid/types'
 import type { Marker, SerializedMarkerPosition } from '@/engine/markers/types'
+import { MARKER_COLORS } from '@/engine/markers/types'
 import { DEFAULT_PALETTE } from '@/engine/palette/defaultPalette'
 import type { PaletteState } from '@/engine/palette/types'
 import type { BoxFace, TextureModel } from '@/engine/texture/types'
@@ -99,7 +100,7 @@ function deserializeSlicePivots(pivots: SerializedSlicePivot[]): Map<SliceKey, C
 }
 
 function serializeMarkers(markers: Marker[]): SerializedMarkerPosition[] {
-  return markers.map((m) => ({ id: m.id, label: m.label, x: m.position[0], y: m.position[1], z: m.position[2] }))
+  return markers.map((m) => ({ id: m.id, color: m.color, x: m.position[0], y: m.position[1], z: m.position[2] }))
 }
 
 function deserializeMarkers(entries: SerializedMarkerPosition[] | undefined, gridExtent: GridExtent): Marker[] {
@@ -107,7 +108,7 @@ function deserializeMarkers(entries: SerializedMarkerPosition[] | undefined, gri
   const out: Marker[] = []
   const seen = new Set<string>()
   for (const e of entries) {
-    if (typeof e?.id !== 'string' || typeof e?.label !== 'string') continue
+    if (typeof e?.id !== 'string') continue
     if (!Number.isInteger(e.x) || !Number.isInteger(e.y) || !Number.isInteger(e.z)) continue
     if (seen.has(e.id)) continue
     seen.add(e.id)
@@ -115,7 +116,9 @@ function deserializeMarkers(entries: SerializedMarkerPosition[] | undefined, gri
     // Hand-edited or corrupt files could place markers outside the working cube — drop those
     // rather than refusing to load (same spirit as the texture faceSize guard above).
     if (!withinWorkingBounds(position, gridExtent)) continue
-    out.push({ id: e.id, label: e.label.slice(0, 120), position })
+    // Clamp out-of-range color indices to the default instead of dropping the marker.
+    const color = Number.isInteger(e.color) && (e.color as number) >= 0 && (e.color as number) < MARKER_COLORS.length ? e.color : 1
+    out.push({ id: e.id, color, position })
   }
   return out
 }

@@ -1,6 +1,6 @@
 import { withinWorkingBounds } from '@/engine/grid/GridStore'
 import type { Coord, GridExtent, VoxelScaleY } from '@/engine/grid/types'
-import type { Marker } from './types'
+import { MARKER_COLORS, type Marker, type MarkerColor } from './types'
 
 let markerCounter = 0
 
@@ -13,17 +13,18 @@ function newMarkerId(): string {
   }
 }
 
-/**
- * Creates a marker at a grid cell. The label defaults to `Marker N` where N
- * is one more than the existing marker count (caller passes it in so this
- * stays pure and unit-testable).
- */
-export function createMarker(position: Coord, existingCount: number, label?: string): Marker {
+/** Creates a marker at a grid cell with the given color index. */
+export function createMarker(position: Coord, color: MarkerColor): Marker {
   return {
     id: newMarkerId(),
-    label: label ?? `Marker ${existingCount + 1}`,
+    color,
     position: [...position] as Coord,
   }
+}
+
+/** Resolves a marker's color index to its hex string, falling back to the first color. */
+export function markerColorHex(color: MarkerColor): string {
+  return MARKER_COLORS[color] ?? MARKER_COLORS[0]
 }
 
 /** World-space center of a marker's cell, in the same unit-cube voxel units the export meshes use. */
@@ -36,18 +37,12 @@ export function markerInBounds(marker: Marker, extent: GridExtent): boolean {
   return withinWorkingBounds(marker.position, extent)
 }
 
-/** Strips a label down to glTF-node-safe characters; falls back to "marker". */
-export function sanitizeMarkerLabel(label: string): string {
-  const cleaned = label.replace(/[^A-Za-z0-9_-]+/g, '_').replace(/^_+|_+$/g, '')
-  return (cleaned || 'marker').slice(0, 64)
-}
-
 /**
- * Unique, human-readable glTF node name for a marker. Deduped against
- * `taken` (already-emitted names) with a numeric suffix.
+ * Unique glTF node name for a marker: color hex + id prefix, so downstream tools can also
+ * distinguish markers by name alone. Deduped against `taken` with a numeric suffix.
  */
 export function markerNodeName(marker: Marker, taken: Set<string>): string {
-  const base = `marker_${sanitizeMarkerLabel(marker.label)}_${marker.id.slice(0, 8)}`
+  const base = `marker_${markerColorHex(marker.color).replace('#', '')}_${marker.id.slice(0, 8)}`
   let name = base
   let n = 2
   while (taken.has(name)) {

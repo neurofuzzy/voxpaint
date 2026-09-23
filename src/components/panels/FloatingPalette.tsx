@@ -1,4 +1,5 @@
 import { useAppStore } from '@/store/useAppStore'
+import { MARKER_COLORS } from '@/engine/markers/types'
 import type { PaletteSlotKind } from '@/engine/palette/types'
 import { GRAYSCALE } from '@/engine/texture/types'
 import { AnimationPalette } from './AnimationPalette'
@@ -92,6 +93,33 @@ function GrayscalePalette() {
   )
 }
 
+/** Marker-tool palette: the fixed marker color set new markers are placed with. Separate
+ * from the voxel color palette — markers are composition annotations, not paint. */
+function MarkerPalette() {
+  const activeMarkerColor = useAppStore((s) => s.activeMarkerColor)
+  const setActiveMarkerColor = useAppStore((s) => s.setActiveMarkerColor)
+  return (
+    <div className="flex items-center gap-1.5">
+      {MARKER_COLORS.map((hex, index) => {
+        const active = activeMarkerColor === index
+        return (
+          <button
+            key={index}
+            aria-label={`marker color ${index + 1}`}
+            title={`Marker color ${index + 1}`}
+            onClick={() => setActiveMarkerColor(index)}
+            className={
+              `${SWATCH} rounded-full ring-2 transition-transform hover:scale-110 ` +
+              (active ? 'scale-125 ring-white shadow-lg' : 'ring-white/20')
+            }
+            style={{ backgroundColor: hex }}
+          />
+        )
+      })}
+    </div>
+  )
+}
+
 export function FloatingPalette() {
   const palette = useAppStore((s) => s.palette)
   const mode = useAppStore((s) => s.mode)
@@ -114,6 +142,8 @@ export function FloatingPalette() {
         <GrayscalePalette />
       ) : mode === 'animate' ? (
         <AnimationPalette />
+      ) : activeTool === 'marker' ? (
+        <MarkerPalette />
       ) : (
       <>
       <PaletteThemeMenu />

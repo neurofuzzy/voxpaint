@@ -5,7 +5,7 @@ import type { PaletteSlotRef, PaletteState } from '@/engine/palette/types'
 import type { BoxFace } from '@/engine/texture/types'
 import type { GltfExportAnchor } from '@/engine/export/gltfExport'
 
-export const CURRENT_SCHEMA_VERSION = 7 as const
+export const CURRENT_SCHEMA_VERSION = 8 as const
 
 export type ViewSettings = {
   ambientOcclusion: boolean
@@ -131,7 +131,11 @@ export type VoxPaintProjectFileV2 = {
  *
  * v7: adds an optional `markers` array of labeled, non-voxel annotation points
  * (`{id, label, x, y, z}` — see engine/markers/types.ts). Absent on older files, which load
- * with no markers. */
+ * with no markers.
+ *
+ * v8: markers switch from freeform labels to a fixed color set (`{id, color, x, y, z}`, where
+ * `color` indexes `MARKER_COLORS`). The v7→v8 migration keeps positions/ids and resets every
+ * marker to the default color — labels can't map onto colors. */
 export type VoxPaintProjectFile = {
   schemaVersion: typeof CURRENT_SCHEMA_VERSION
   meta: ProjectMeta

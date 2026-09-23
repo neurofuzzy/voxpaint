@@ -278,7 +278,9 @@ export type SelectionTransformKind = 'rotate' | 'rotate-ccw' | 'mirror-h' | 'mir
 
 export type ToolActionsSlice = {
   /** Flood fill (color layer only, spec §2) starting at plane-space (u,v). One undo stroke.
-   * No-op if the region leaks across all 4 edges of the plane's span (see `fillLeaksToEdges`). */
+   * No-op if the region leaks across all 4 edges of the plane's span (see `fillLeaksToEdges`) —
+   * unless (u,v) lands inside the active selection, which bounds the fill to its own mask (no
+   * painted enclosure needed) and skips the leak guard. */
   floodFill: (u: number, v: number) => void
   /** 6-connected flood fill through the full 3D model (not just the current plane), color layer
    * only. No-op unless (u,v) lands on an already-occupied voxel. One undo stroke. */
@@ -288,6 +290,13 @@ export type ToolActionsSlice = {
   copySelection: () => void
   cutSelection: () => void
   deleteSelection: () => void
+  /** Re-faces every chamfer cell under the selection onto the active construction plane's basis
+   * (ramps/wedges via exact-solid dual rebase, thin slabs and unresolved cells via basis update;
+   * convex/concave corners and inexpressible slopes are left alone). The 2D mask is projected
+   * through the full depth along the plane normal, so one shot faces a whole pasted wall. Plain
+   * cubes need no facing and are ignored. One undo stroke. Returns faced/skipped chamfer-cell
+   * counts for the caller to report (the toast lives in SelectionPalette, not the store). */
+  faceSelection: () => { faced: number; skipped: number }
   /** Pastes the clipboard as a new floating selection at (u,v) — does not commit to the model.
    * Content copied off a different construction plane is re-expressed for the active one first
    * (see `transformClipboardToPlane`), so it pastes with the destination plane's orientation. */
@@ -477,21 +486,26 @@ export type AnimSnapshot = {
 }
 
 export type MarkerSlice = {
-  /** Labeled, non-voxel annotation points (see engine/markers/types.ts). Undo travels with the
+  /** Color-coded, non-voxel annotation points (see engine/markers/types.ts). Undo travels with the
    * voxel-model stroke (HistorySlice snapshots carry both), so there is no separate marker history. */
   markers: Marker[]
   /** Currently selected marker (2D/3D highlight + list-panel focus), or null. */
   selectedMarkerId: string | null
-  /** Adds a marker at a grid cell. The caller brackets the gesture with beginStroke/commitStroke
-   * (the marker tool does this per drag; single-shot callers self-bracket — see rename/delete). */
+  /** Color index (into MARKER_COLORS) new markers are placed with. Pure view pref — never
+   * persisted, never dirties, never undoable (like the active palette slot). */
+  activeMarkerColor: number
+  /** Adds a marker at a grid cell with the active color. The caller brackets the gesture with
+   * beginStroke/commitStroke (the marker tool does this per drag; single-shot callers
+   * self-bracket — see setMarkerColor/deleteMarker). */
   addMarker: (coord: Coord) => void
   /** Moves a marker to a grid cell (same bracketing contract as addMarker). */
   moveMarker: (id: string, coord: Coord) => void
-  /** Renames a marker. Self-brackets its own undo stroke. */
-  renameMarker: (id: string, label: string) => void
+  /** Recolors a marker. Self-brackets its own undo stroke. */
+  setMarkerColor: (id: string, color: number) => void
   /** Deletes a marker. Self-brackets its own undo stroke. */
   deleteMarker: (id: string) => void
   selectMarker: (id: string | null) => void
+  setActiveMarkerColor: (color: number) => void
 }
 
 export type AppState = ProjectSlice &

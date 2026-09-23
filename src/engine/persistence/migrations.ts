@@ -53,6 +53,18 @@ MIGRATIONS[5] = (doc) => ({ ...doc, schemaVersion: 6, meta: { ...doc.meta, gridE
  * markers (matching their pre-marker behavior — nothing annotated). */
 MIGRATIONS[6] = (doc) => ({ ...doc, schemaVersion: 7 })
 
+/** v7 → v8: markers switch from freeform labels to a fixed color set. Positions and ids carry
+ * over; every marker takes the default color since labels can't map onto colors. */
+MIGRATIONS[7] = (doc) => ({
+  ...doc,
+  schemaVersion: 8,
+  markers: Array.isArray(doc.markers)
+    ? doc.markers
+      .filter((m: any) => typeof m?.id === 'string' && Number.isInteger(m?.x) && Number.isInteger(m?.y) && Number.isInteger(m?.z))
+      .map((m: any) => ({ id: m.id, color: 1, x: m.x, y: m.y, z: m.z }))
+    : undefined,
+})
+
 export class UnsupportedSchemaVersionError extends Error {
   constructor(foundVersion: unknown) {
     super(`This file is from a newer version of VoxPaint (schemaVersion=${String(foundVersion)}). Please update the app.`)

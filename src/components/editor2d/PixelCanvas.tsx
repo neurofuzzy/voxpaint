@@ -3,6 +3,7 @@ import { decodeKey, encodeKey } from '@/engine/grid/GridStore'
 import { gridCoordFromPixel, pixelFromGridCoord } from '@/engine/plane/constructionPlane'
 import { displayViewCenter, toDisplayGridlineU, toDisplayGridlineV, toDisplayU, toDisplayV } from '@/engine/plane/planeDisplay'
 import { resolveSlotColor, shadeColor } from '@/engine/palette/palette'
+import { markerColorHex } from '@/engine/markers/markers'
 import { forEachSelectedCell, traceSelectionOutline } from '@/engine/tools/selectionMask'
 import { encodeSliceKey } from '@/engine/animation/animationLayers'
 import { useAppStore } from '@/store/useAppStore'
@@ -399,11 +400,10 @@ export function PixelCanvas() {
       ctx.setLineDash([])
     }
 
-    // Design markers on the active slice — amber diamond pins with labels, drawn last so they
+    // Design markers on the active slice — colored diamond pins, drawn last so they
     // sit above voxels, floats, and selection. Markers off this slice are skipped (they still
     // show in the 3D view and the markers list).
     const markerAxis = plane.axis === 'x' ? 0 : plane.axis === 'y' ? 1 : 2
-    ctx.textBaseline = 'bottom'
     for (const m of markers) {
       if (m.position[markerAxis] !== plane.offset) continue
       const { u: mu, v: mv } = pixelFromGridCoord(plane, m.position)
@@ -418,20 +418,11 @@ export function PixelCanvas() {
       ctx.lineTo(cx, cy + r)
       ctx.lineTo(cx - r * 0.7, cy)
       ctx.closePath()
-      ctx.fillStyle = '#fbbf24'
+      ctx.fillStyle = markerColorHex(m.color)
       ctx.fill()
       ctx.lineWidth = selected ? 2.5 : 1.5
-      ctx.strokeStyle = selected ? '#ffffff' : '#92400e'
+      ctx.strokeStyle = selected ? '#ffffff' : 'rgba(0, 0, 0, 0.55)'
       ctx.stroke()
-      ctx.font = `${Math.max(10, cellPx * 0.32)}px ui-monospace, monospace`
-      const label = m.label
-      const tw = ctx.measureText(label).width
-      const lx = Math.min(Math.max(cx - tw / 2, 4), size.width - tw - 4)
-      const ly = cy - r - 3
-      ctx.fillStyle = 'rgba(0, 0, 0, 0.65)'
-      ctx.fillRect(lx - 3, ly - 12, tw + 6, 15)
-      ctx.fillStyle = selected ? '#ffffff' : '#fde68a'
-      ctx.fillText(label, lx, ly)
     }
   }, [model, palette, plane, linePreview, selection, selectPreview, floatContent, floatOrigin, antPhase, size, pan, zoom, vScale, mode, sliceMasks, slicePivots, gridExtent, markers, selectedMarkerId])
 

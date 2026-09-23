@@ -1,5 +1,7 @@
 import { useState } from 'react'
-import { Crosshair, Trash2 } from 'lucide-react'
+import { ChevronDown, Crosshair, MapPin, Trash2 } from 'lucide-react'
+import { markerColorHex } from '@/engine/markers/markers'
+import { MARKER_COLORS } from '@/engine/markers/types'
 import { axisIndex } from '@/engine/plane/planeGeometry'
 import { useAppStore } from '@/store/useAppStore'
 
@@ -7,18 +9,13 @@ function MarkerRow({ id }: { id: string }) {
   const marker = useAppStore((s) => s.markers.find((m) => m.id === id))
   const selectedMarkerId = useAppStore((s) => s.selectedMarkerId)
   const selectMarker = useAppStore((s) => s.selectMarker)
-  const renameMarker = useAppStore((s) => s.renameMarker)
+  const setMarkerColor = useAppStore((s) => s.setMarkerColor)
   const deleteMarker = useAppStore((s) => s.deleteMarker)
   const setStatusMessage = useAppStore((s) => s.setStatusMessage)
-  const [draft, setDraft] = useState<string | null>(null)
 
   if (!marker) return null
   const selected = marker.id === selectedMarkerId
-
-  const commit = () => {
-    if (draft !== null && draft.trim() && draft.trim() !== marker.label) renameMarker(marker.id, draft)
-    setDraft(null)
-  }
+  const hex = markerColorHex(marker.color)
 
   const focusSlice = () => {
     const s = useAppStore.getState()
@@ -26,25 +23,26 @@ function MarkerRow({ id }: { id: string }) {
     s.selectMarker(marker.id)
   }
 
+  // Clicking the swatch cycles to the next marker color (one undo step per click).
+  const cycleColor = () => {
+    setMarkerColor(marker.id, (marker.color + 1) % MARKER_COLORS.length)
+  }
+
   return (
     <div
-      className={`flex items-center gap-1.5 rounded-md px-1.5 py-1 ${selected ? 'bg-amber-500/15' : 'hover:bg-neutral-800'}`}
+      className={`flex items-center gap-1.5 rounded-md px-1.5 py-1 ${selected ? 'bg-white/10' : 'hover:bg-neutral-800'}`}
       onClick={() => selectMarker(marker.id)}
     >
-      <span className="h-2 w-2 shrink-0 rotate-45 bg-amber-400" />
-      <input
-        value={draft ?? marker.label}
-        onChange={(e) => setDraft(e.target.value)}
-        onBlur={commit}
-        onKeyDown={(e) => {
-          if (e.key === 'Enter') (e.target as HTMLInputElement).blur()
-          if (e.key === 'Escape') setDraft(null)
-        }}
-        onClick={(e) => e.stopPropagation()}
-        aria-label="Marker label"
-        className="min-w-0 flex-1 bg-transparent text-xs text-neutral-200 focus:outline-none focus:ring-1 focus:ring-amber-500/60 rounded px-0.5"
+      <button
+        onClick={(e) => { e.stopPropagation(); cycleColor() }}
+        aria-label="Cycle marker color"
+        title="Click to cycle this marker's color"
+        onPointerEnter={() => setStatusMessage('Click to cycle this marker’s color')}
+        onPointerLeave={() => setStatusMessage(null)}
+        className="h-3.5 w-3.5 shrink-0 rounded-full ring-2 ring-white/20 transition-transform hover:scale-110"
+        style={{ backgroundColor: hex }}
       />
-      <span className="shrink-0 font-mono text-[10px] tabular-nums text-neutral-500">
+      <span className="min-w-0 flex-1 font-mono text-[10px] tabular-nums text-neutral-400">
         {marker.position[0]},{marker.position[1]},{marker.position[2]}
       </span>
       <button
@@ -73,21 +71,49 @@ function MarkerRow({ id }: { id: string }) {
 
 /**
  * Floating markers list pinned to the top-left of the 2D editor (the top-right belongs to
- * PlaneControlsOverlay). Model mode only; visible while the marker tool is active or markers
- * exist. Rename inline, jump the construction plane to a marker's slice, or delete.
+ * PlaneControlsOverlay). Model mode + marker tool only. Recolor (click the swatch to cycle),
+ * jump the construction plane to a marker's slice, or delete. Collapsible like the viewport's
+ * SettingsPalette: an icon button when minimized, a ChevronDown minimize in the header when open.
  */
 export function MarkersPanel() {
   const mode = useAppStore((s) => s.mode)
   const activeTool = useAppStore((s) => s.activeTool)
   const markers = useAppStore((s) => s.markers)
+  const [minimized, setMinimized] = useState(false)
 
-  if (mode !== 'model') return null
-  if (activeTool !== 'marker' && markers.length === 0) return null
+  if (mode !== 'model' || activeTool !== 'marker') return null
+
+  if (minimized) {
+    return (
+      <div className="absolute left-3 top-3 z-40">
+        <button
+          onClick={() => setMinimized(false)}
+          title="Markers"
+          className="flex h-8 w-8 items-center justify-center rounded-xl border border-neutral-800
+            bg-neutral-900/80 text-neutral-400 shadow-2xl backdrop-blur-lg hover:text-neutral-200"
+        >
+          <MapPin size={16} />
+        </button>
+      </div>
+    )
+  }
 
   return (
-    <div className="absolute left-3 top-3 z-40 w-56 rounded-xl border border-neutral-800 bg-neutral-900/80 p-1.5 shadow-2xl backdrop-blur-lg">
-      <div className="px-1.5 pb-1 pt-0.5 text-[11px] font-medium uppercase tracking-wide text-neutral-500">
-        Markers ({markers.length})
+    <div
+      className="absolute left-3 top-3 z-40 w-56 rounded-xl border border-neutral-800 bg-neutral-900/80 p-1.5 shadow-2xl backdrop-blur-lg"
+      onPointerDown={(e) => e.stopPropagation()}
+    >
+      <div className="flex items-center justify-between px-1.5 pb-1 pt-0.5">
+        <span className="text-[11px] font-medium uppercase tracking-wide text-neutral-500 select-none">
+          Markers ({markers.length})
+        </span>
+        <button
+          onClick={() => setMinimized(true)}
+          title="Minimize"
+          className="flex h-5 w-5 items-center justify-center rounded text-neutral-500 hover:text-neutral-200"
+        >
+          <ChevronDown size={14} />
+        </button>
       </div>
       {markers.length === 0 ? (
         <div className="px-1.5 pb-1 text-xs text-neutral-500">Click the canvas to place a marker.</div>

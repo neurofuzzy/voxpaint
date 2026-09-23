@@ -200,6 +200,7 @@ export function usePixelCanvasTools(canvasRef: React.RefObject<HTMLCanvasElement
   const ctx: ToolContext = {
     model, plane, gridExtent, activeVoxelKind, activePaletteSlot, selection, floatContent, floatOrigin, clipboard,
     markers, selectedMarkerId,
+    activeMarkerColor: useAppStore((s) => s.activeMarkerColor),
     // Live lookups/edits against the store (not the render-time snapshot above), so the marker
     // tool sees its own writes mid-gesture (place-then-drag in one stroke).
     markerAtCoord: (u, v) => {
@@ -211,7 +212,7 @@ export function usePixelCanvasTools(canvasRef: React.RefObject<HTMLCanvasElement
       const s = useAppStore.getState()
       const coord = gridCoordFromPixel(s.plane, u, v)
       if (!withinWorkingBounds(coord, s.meta.gridExtent)) return null
-      const marker: Marker = createMarker(coord, s.markers.length)
+      const marker: Marker = createMarker(coord, s.activeMarkerColor)
       useAppStore.setState((state) => {
         state.markers.push(marker)
         state.selectedMarkerId = marker.id
@@ -228,6 +229,27 @@ export function usePixelCanvasTools(canvasRef: React.RefObject<HTMLCanvasElement
         const m = state.markers.find((m) => m.id === id)
         if (!m) return
         m.position = [coord[0], coord[1], coord[2]]
+        state.meta.modifiedAt = new Date().toISOString()
+        state.dirty = true
+      })
+    },
+    // Direct mutations bracketed by the tool's own beginStroke/commitStroke (unlike the
+    // store's self-bracketing setMarkerColor/deleteMarker, which would nest strokes).
+    recolorMarker: (id, color) => {
+      useAppStore.setState((state) => {
+        const m = state.markers.find((m) => m.id === id)
+        if (!m || m.color === color) return
+        m.color = color
+        state.meta.modifiedAt = new Date().toISOString()
+        state.dirty = true
+      })
+    },
+    removeMarker: (id) => {
+      useAppStore.setState((state) => {
+        const idx = state.markers.findIndex((m) => m.id === id)
+        if (idx === -1) return
+        state.markers.splice(idx, 1)
+        if (state.selectedMarkerId === id) state.selectedMarkerId = null
         state.meta.modifiedAt = new Date().toISOString()
         state.dirty = true
       })

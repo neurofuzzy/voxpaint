@@ -369,8 +369,9 @@ function VoxelInteractionHandler({ managerRef, controlsRef }: {
         return
       }
 
-      // Marker tool never sets the plane — taps select the marker on the hit cell, or drop a
-      // new one there (on the active slice when empty space was hit). One undo stroke per tap.
+      // Marker tool never sets the plane — taps drop a new marker on the hit cell (on the
+      // active slice when empty space was hit), recolor a different-colored marker to the
+      // active color, or delete a same-colored one. One undo stroke per tap.
       if (activeToolRef.current === 'marker') {
         if (e.button !== 0) return
         const store = useAppStore.getState()
@@ -384,6 +385,10 @@ function VoxelInteractionHandler({ managerRef, controlsRef }: {
         )
         if (existing) {
           store.selectMarker(existing.id)
+          // Self-bracketing actions are safe here — no stroke is open (unlike the 2D tool,
+          // which mutates inside its own stroke).
+          if (existing.color !== store.activeMarkerColor) store.setMarkerColor(existing.id, store.activeMarkerColor)
+          else store.deleteMarker(existing.id)
           return
         }
         store.bakeFloatIfAny()

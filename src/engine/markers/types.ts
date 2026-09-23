@@ -1,21 +1,31 @@
 import type { Coord } from '@/engine/grid/types'
 
 /**
- * A design marker: a labeled, non-voxel annotation point at a grid cell.
+ * The fixed marker color set. Markers deliberately don't use the voxel color palette — they
+ * are composition annotations ("put another GLB here"), not paint, so they get their own
+ * small, highly-distinguishable set. Stored on the marker as an index into this array.
+ */
+export const MARKER_COLORS = ['#f87171', '#fbbf24', '#4ade80', '#60a5fa', '#e879f9'] as const
+
+/** Index into `MARKER_COLORS`. */
+export type MarkerColor = number
+
+/**
+ * A design marker: a colored, non-voxel annotation point at a grid cell.
  * Markers are never part of the voxel model (no bounds, mesh, texture, or
  * animation participation) — they exist so downstream tools can compose
- * external content ("put another GLB here") at labeled points.
+ * external content ("put another GLB here") at color-coded points.
  */
 export type Marker = {
   id: string
-  label: string
+  color: MarkerColor
   /** Grid cell the marker sits on. Render/export position is the cell center. */
   position: Coord
 }
 
 export type SerializedMarkerPosition = {
   id: string
-  label: string
+  color: MarkerColor
   x: number
   y: number
   z: number

@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it } from 'vitest'
+import { rectRegion } from '@/engine/tools/selectionMask'
 import { getTexel } from '@/engine/texture/TextureStore'
 import { EMPTY, faceSizeFor } from '@/engine/texture/types'
 import { useAppStore } from './useAppStore'
@@ -69,5 +70,22 @@ describe('textureSlice', () => {
     // texturePast[0] is the baseline captured before the FIRST paint — still fully empty.
     expect(getTexel(snapshot, 'pz', 5, 5, faceSize)).toBe(EMPTY)
     expect(getTexel(snapshot, 'pz', 2, 2, faceSize)).toBe(EMPTY)
+  })
+
+  it('fills an empty selection without needing painted bounds', () => {
+    const s = useAppStore.getState()
+    // 3x3 selection on a fully unpainted face.
+    s.setTextureSelection(rectRegion(2, 2, 4, 4))
+    s.floodFillTexel(3, 3)
+
+    const after = useAppStore.getState()
+    for (let v = 2; v <= 4; v++) {
+      for (let u = 2; u <= 4; u++) {
+        expect(getTexel(after.texture, 'pz', u, v, faceSize)).toBe(2)
+      }
+    }
+    expect(getTexel(after.texture, 'pz', 0, 0, faceSize)).toBe(EMPTY)
+    expect(getTexel(after.texture, 'pz', 5, 5, faceSize)).toBe(EMPTY)
+    expect(after.texturePast.length).toBe(1)
   })
 })

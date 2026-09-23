@@ -1,14 +1,14 @@
+import { markerColorHex } from '@/engine/markers/markers'
 import { useAppStore } from '@/store/useAppStore'
 
-const MARKER_COLOR = '#fbbf24' // amber-400 — distinct from voxel, selection-cyan, and pivot-violet
 const MARKER_SELECTED = '#ffffff'
 
 /**
  * 3D view of design markers: one small octahedron per marker at its cell center, parented under
  * the Y-scale group (like every other working-volume content) so positions stay in unit-cube
- * grid coordinates. Click selects; hover names the marker in the status bar. Labels live in the
- * 2D canvas overlay and the markers list panel — no drei `<Html>` here (see Compass.tsx for why
- * `<Html>` content is avoided inside the Canvas).
+ * grid coordinates. Each renders in its own marker color. Click selects; hover shows the
+ * marker's color and position in the status bar. The markers list panel handles recoloring —
+ * no drei `<Html>` here (see Compass.tsx for why `<Html>` content is avoided inside the Canvas).
  */
 export function MarkersView() {
   const markers = useAppStore((s) => s.markers)
@@ -22,6 +22,7 @@ export function MarkersView() {
     <group>
       {markers.map((m) => {
         const selected = m.id === selectedMarkerId
+        const hex = markerColorHex(m.color)
         return (
           <mesh
             key={m.id}
@@ -32,12 +33,12 @@ export function MarkersView() {
             }}
             onPointerOver={(e) => {
               e.stopPropagation()
-              setStatusMessage(`Marker: ${m.label} (${m.position[0]}, ${m.position[1]}, ${m.position[2]})`)
+              setStatusMessage(`Marker ${hex} (${m.position[0]}, ${m.position[1]}, ${m.position[2]})`)
             }}
             onPointerOut={() => setStatusMessage(null)}
           >
             <octahedronGeometry args={[selected ? 0.34 : 0.26]} />
-            <meshBasicMaterial color={selected ? MARKER_SELECTED : MARKER_COLOR} depthTest={false} transparent opacity={0.95} />
+            <meshBasicMaterial color={selected ? MARKER_SELECTED : hex} />
           </mesh>
         )
       })}

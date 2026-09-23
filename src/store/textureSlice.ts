@@ -122,9 +122,14 @@ export const createTextureSlice: Slice = (set, get) => {
       const face = get().activeBoxFace
       if (!face) return
       const faceSize = faceSizeFor(get().meta.gridExtent)
-      let cells = floodFillFace(get().texture.faces[face], u, v, faceSize)
+      // A click inside the active selection bounds traversal to the mask itself, so an empty
+      // face needs no painted enclosure (and the fill avoids traversing the whole face).
       const sel = get().textureSelection
-      if (sel) cells = cells.filter(([cu, cv]) => isCellSelected(sel, cu, cv))
+      const inSelection = !!sel && isCellSelected(sel, u, v)
+      let cells = inSelection
+        ? floodFillFace(get().texture.faces[face], u, v, faceSize, (cu, cv) => isCellSelected(sel, cu, cv))
+        : floodFillFace(get().texture.faces[face], u, v, faceSize)
+      if (!inSelection && sel) cells = cells.filter(([cu, cv]) => isCellSelected(sel, cu, cv))
       if (cells.length === 0) return
       get().textureBeginStroke()
       const gray = get().activeGrayIndex

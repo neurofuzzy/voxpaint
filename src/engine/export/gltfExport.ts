@@ -3,7 +3,7 @@ import { GLTFExporter } from 'three/addons/exporters/GLTFExporter.js'
 import { viewOriginShift } from '@/engine/grid/GridStore'
 import type { Axis, VoxelModel, CellKey, GridExtent, VoxelScaleY } from '@/engine/grid/types'
 import type { Marker } from '@/engine/markers/types'
-import { markerNodeName, markerWorldCenter } from '@/engine/markers/markers'
+import { markerColorHex, markerNodeName, markerWorldCenter } from '@/engine/markers/markers'
 import type { PaletteState } from '@/engine/palette/types'
 import type { TextureModel } from '@/engine/texture/types'
 import { bakeAOToAtlas, makeSpecularNoiseTexture } from '@/engine/ao/bakeAO'
@@ -479,7 +479,7 @@ export async function exportModelToGlb(
   // measured voxel AABB: anchors stay voxel-pure (a landscaping marker off to the side must not
   // recenter the model). The exporter serializes `userData` into the node's `extras`
   // (GLTFExporter.serializeUserData), giving downstream tools a stable lookup: nodes whose
-  // `extras.voxpaint.kind === 'marker'`.
+  // `extras.voxpaint.kind === 'marker'`, with the marker color as a hex string.
   if (options.includeMarkers ?? true) {
     const taken = new Set<string>()
     for (const marker of options.markers ?? []) {
@@ -487,7 +487,7 @@ export async function exportModelToGlb(
       node.name = markerNodeName(marker, taken)
       const [x, y, z] = markerWorldCenter(marker.position, voxelScaleY)
       node.position.set(x, y, z)
-      node.userData = { voxpaint: { kind: 'marker', id: marker.id, label: marker.label } }
+      node.userData = { voxpaint: { kind: 'marker', id: marker.id, color: markerColorHex(marker.color) } }
       root.add(node)
     }
   }
