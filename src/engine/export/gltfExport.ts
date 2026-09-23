@@ -1,6 +1,7 @@
 import * as THREE from 'three'
 import { GLTFExporter } from 'three/addons/exporters/GLTFExporter.js'
 import { viewOriginShift } from '@/engine/grid/GridStore'
+import { outwardNormal } from '@/engine/plane/planeGeometry'
 import type { Axis, VoxelModel, CellKey, GridExtent, VoxelScaleY } from '@/engine/grid/types'
 import type { Marker } from '@/engine/markers/types'
 import { markerColorHex, markerNodeName, markerWorldCenter } from '@/engine/markers/markers'
@@ -477,17 +478,30 @@ export async function exportModelToGlb(
   // export scale/anchor transform above (local positions stay in pre-scale voxel units, exactly
   // like the mesh vertices). Added AFTER the anchor block so marker positions never expand the
   // measured voxel AABB: anchors stay voxel-pure (a landscaping marker off to the side must not
-  // recenter the model). The exporter serializes `userData` into the node's `extras`
+  // recenter the model). The node is rotated so its local +Z points along the marker's draw-time
+  // outward normal, meaning content composed onto the node downstream faces away from the drawn
+  // surface. The exporter serializes `userData` into the node's `extras`
   // (GLTFExporter.serializeUserData), giving downstream tools a stable lookup: nodes whose
-  // `extras.voxpaint.kind === 'marker'`, with the marker color as a hex string.
+  // `extras.voxpaint.kind === 'marker'`, carrying color hex plus the draw-time basis.
   if (options.includeMarkers ?? true) {
     const taken = new Set<string>()
+    const forward = new THREE.Vector3(0, 0, 1)
     for (const marker of options.markers ?? []) {
       const node = new THREE.Group()
       node.name = markerNodeName(marker, taken)
       const [x, y, z] = markerWorldCenter(marker.position, voxelScaleY)
       node.position.set(x, y, z)
-      node.userData = { voxpaint: { kind: 'marker', id: marker.id, color: markerColorHex(marker.color) } }
+      const outward = outwardNormal(marker.planeAxis, marker.planeOrientation)
+      node.quaternion.setFromUnitVectors(forward, new THREE.Vector3(outward[0], outward[1], outward[2]))
+      node.userData = {
+        voxpaint: {
+          kind: 'marker',
+          id: marker.id,
+          color: markerColorHex(marker.color),
+          axis: marker.planeAxis,
+          orientation: marker.planeOrientation,
+        },
+      }
       root.add(node)
     }
   }

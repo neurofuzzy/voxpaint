@@ -1,4 +1,4 @@
-import { markerColorHex } from '@/engine/markers/markers'
+import { markerColorHex, markerDirectionWord } from '@/engine/markers/markers'
 import { useAppStore } from '@/store/useAppStore'
 
 const MARKER_SELECTED = '#ffffff'
@@ -33,7 +33,7 @@ export function MarkersView() {
             }}
             onPointerOver={(e) => {
               e.stopPropagation()
-              setStatusMessage(`Marker ${hex} (${m.position[0]}, ${m.position[1]}, ${m.position[2]})`)
+              setStatusMessage(`Marker ${hex} facing ${markerDirectionWord(m.planeAxis, m.planeOrientation)} (${m.position[0]}, ${m.position[1]}, ${m.position[2]})`)
             }}
             onPointerOut={() => setStatusMessage(null)}
           >

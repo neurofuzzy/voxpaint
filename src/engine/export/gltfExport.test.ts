@@ -67,7 +67,7 @@ function pillarVoxel(): VoxelModel {
 }
 
 interface GlbJson {
-  nodes?: Array<{ name?: string; translation?: [number, number, number]; matrix?: number[]; extras?: { voxpaint?: { kind?: string; id?: string; color?: string } } }>
+  nodes?: Array<{ name?: string; translation?: [number, number, number]; matrix?: number[]; rotation?: [number, number, number, number]; extras?: { voxpaint?: { kind?: string; id?: string; color?: string; axis?: string; orientation?: number } } }>
   images?: unknown[]
   textures?: unknown[]
   samplers?: unknown[]
@@ -101,6 +101,12 @@ function rootTranslation(json: GlbJson): [number, number, number] {
   if (node!.translation) return node!.translation
   if (node!.matrix) return [node!.matrix[12], node!.matrix[13], node!.matrix[14]]
   return [0, 0, 0]
+}
+
+/** Local +Z rotated by a glTF (x, y, z, w) quaternion — the node's facing direction. */
+function quatRotateZ(q: [number, number, number, number]): [number, number, number] {
+  const [x, y, z, w] = q
+  return [2 * (x * z + w * y), 2 * (y * z - w * x), 1 - 2 * (x * x + y * y)]
 }
 
 describe('exportModelToGlb odd-extent centering', () => {
@@ -182,8 +188,8 @@ describe('exportModelToGlb includeTextureMaps', () => {  it('textured export wit
 
 describe('exportModelToGlb markers', () => {
   const markers = [
-    { id: 'aaaaaaaa-0001', color: 1, position: [0, 0, 0] as [number, number, number] },
-    { id: 'bbbbbbbb-0002', color: 3, position: [2, 1, -1] as [number, number, number] },
+    { id: 'aaaaaaaa-0001', color: 1, position: [0, 0, 0] as [number, number, number], planeAxis: 'x' as const, planeOrientation: -1 as const },
+    { id: 'bbbbbbbb-0002', color: 3, position: [2, 1, -1] as [number, number, number], planeAxis: 'y' as const, planeOrientation: 1 as const },
   ]
 
   it('exports markers as empty nodes with extras payloads at cell centers', async () => {
@@ -193,11 +199,21 @@ describe('exportModelToGlb markers', () => {
     expect(found).toHaveLength(2)
     const tree = found.find((n) => n.extras?.voxpaint?.id === 'aaaaaaaa-0001')!
     expect(tree.extras?.voxpaint?.color).toBe(MARKER_COLORS[1])
+    expect(tree.extras?.voxpaint?.axis).toBe('x')
+    expect(tree.extras?.voxpaint?.orientation).toBe(-1)
     expect(tree.name).toContain(MARKER_COLORS[1].replace('#', ''))
+    expect(tree.name).toContain('west')
     // Cell [0,0,0] centers at +0.5; even extent applies no re-base. The exporter may emit
     // the transform as TRS `translation` or a column-major `matrix` — read either.
     const t = tree.translation ?? (tree.matrix ? [tree.matrix[12], tree.matrix[13], tree.matrix[14]] : undefined)
     expect(t?.map((v) => Math.round(v * 100) / 100)).toEqual([0.5, 0.5, 0.5])
+    // The west-facing marker's local +Z must point along its outward normal (-X). Read it
+    // from TRS `rotation` (quaternion-rotated +Z) or from a column-major `matrix` (third
+    // column), whichever the exporter emitted.
+    const plusZ = tree.rotation
+      ? quatRotateZ(tree.rotation)
+      : tree.matrix ? [tree.matrix[8], tree.matrix[9], tree.matrix[10]] : undefined
+    expect(plusZ?.map((v) => Math.round(v * 100) / 100)).toEqual([-1, 0, 0])
     // Marker nodes carry no mesh (empty locators).
     expect(json.meshes?.length ?? 0).toBeGreaterThan(0)
   })
@@ -209,7 +225,7 @@ describe('exportModelToGlb markers', () => {
   })
 
   it('keeps anchors voxel-pure when a marker sits far outside the model', async () => {
-    const far = [...markers, { id: 'cccccccc-0003', color: 0, position: [7, 7, 7] as [number, number, number] }]
+    const far = [...markers, { id: 'cccccccc-0003', color: 0, position: [7, 7, 7] as [number, number, number], planeAxis: 'y' as const, planeOrientation: 1 as const }]
     const withMarkers = glbJson(
       await exportModelToGlb(pillarVoxel(), DEFAULT_PALETTE, 16, undefined, { markers: far, anchor: 'bottom', includeTextureMaps: false }),
     )

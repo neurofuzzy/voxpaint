@@ -5,7 +5,7 @@ import type { PaletteSlotRef, PaletteState } from '@/engine/palette/types'
 import type { BoxFace } from '@/engine/texture/types'
 import type { GltfExportAnchor } from '@/engine/export/gltfExport'
 
-export const CURRENT_SCHEMA_VERSION = 8 as const
+export const CURRENT_SCHEMA_VERSION = 9 as const
 
 export type ViewSettings = {
   ambientOcclusion: boolean
@@ -135,7 +135,11 @@ export type VoxPaintProjectFileV2 = {
  *
  * v8: markers switch from freeform labels to a fixed color set (`{id, color, x, y, z}`, where
  * `color` indexes `MARKER_COLORS`). The v7→v8 migration keeps positions/ids and resets every
- * marker to the default color — labels can't map onto colors. */
+ * marker to the default color — labels can't map onto colors.
+ *
+ * v9: markers gain their draw-time construction-plane basis (`planeAxis`/`planeOrientation`),
+ * which drives the export node orientation. The v8→v9 migration faces every existing marker
+ * up — no facing was recorded before, and up is the neutral default. */
 export type VoxPaintProjectFile = {
   schemaVersion: typeof CURRENT_SCHEMA_VERSION
   meta: ProjectMeta

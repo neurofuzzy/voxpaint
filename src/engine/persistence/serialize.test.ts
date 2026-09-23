@@ -20,7 +20,7 @@ describe('serialize with texture', () => {
     texture.faces.nx[100] = 1
 
     const file = serializeProject(model, DEFAULT_PALETTE, meta, texture)
-    expect(file.schemaVersion).toBe(8)
+    expect(file.schemaVersion).toBe(9)
     expect(file.texture?.faceSize).toBeGreaterThan(0)
 
     const restored = deserializeProject(file)
@@ -40,7 +40,7 @@ describe('v1 → current migration', () => {
       model: { bounds: null, colorCells: [], chamferCells: [] },
     }
     const migrated = migrateToCurrent(v1)
-    expect(migrated.schemaVersion).toBe(8)
+    expect(migrated.schemaVersion).toBe(9)
     expect(migrated.texture).toBeUndefined()
     expect(migrated.meta.gridExtent).toBe(16)
 
@@ -72,7 +72,7 @@ describe('v2 → v3 migration (blink/pulse → metal/glass)', () => {
       },
     }
     const migrated = migrateToCurrent(v2) as any
-    expect(migrated.schemaVersion).toBe(8)
+    expect(migrated.schemaVersion).toBe(9)
     // Palette reshaped: metal/glass present, blink/pulse gone; base/emissive preserved.
     expect(migrated.palette.metal).toHaveLength(4)
     expect(migrated.palette.glass).toHaveLength(4)
@@ -86,13 +86,13 @@ describe('v2 → v3 migration (blink/pulse → metal/glass)', () => {
   })
 })
 
-describe('markers persistence (v8)', () => {
+describe('markers persistence (v9)', () => {
   it('round-trips markers through serialize → deserialize', () => {
     const model = emptyModel()
     const texture = emptyTextureModel(meta.gridExtent)
     const markers = [
-      { id: 'a', color: 2, position: [1, 2, 3] as [number, number, number] },
-      { id: 'b', color: 0, position: [-4, 0, 7] as [number, number, number] },
+      { id: 'a', color: 2, position: [1, 2, 3] as [number, number, number], planeAxis: 'x' as const, planeOrientation: -1 as const },
+      { id: 'b', color: 0, position: [-4, 0, 7] as [number, number, number], planeAxis: 'y' as const, planeOrientation: 1 as const },
     ]
     const file = serializeProject(model, DEFAULT_PALETTE, meta, texture, undefined, undefined, undefined, undefined, markers)
     expect(file.markers).toHaveLength(2)
@@ -100,20 +100,22 @@ describe('markers persistence (v8)', () => {
     expect(restored.markers).toEqual(markers)
   })
 
-  it('drops out-of-bounds and duplicate markers on load, clamps bad colors', () => {
+  it('drops out-of-bounds and duplicate markers on load, clamps bad colors and facings', () => {
     const model = emptyModel()
     const texture = emptyTextureModel(meta.gridExtent)
     const file = serializeProject(model, DEFAULT_PALETTE, meta, texture, undefined, undefined, undefined, undefined, [
-      { id: 'a', color: 2, position: [0, 0, 0] },
+      { id: 'a', color: 2, position: [0, 0, 0], planeAxis: 'z' as const, planeOrientation: 1 as const },
     ])
     file.markers!.push(
-      { id: 'far', color: 0, x: 99, y: 0, z: 0 },
-      { id: 'a', color: 0, x: 1, y: 1, z: 1 },
-      { id: 'bad', color: 99, x: 1, y: 1, z: 1 },
+      { id: 'far', color: 0, x: 99, y: 0, z: 0, planeAxis: 'y', planeOrientation: 1 },
+      { id: 'a', color: 0, x: 1, y: 1, z: 1, planeAxis: 'y', planeOrientation: 1 },
+      // Hand-corrupt facing: falls back to up rather than dropping the marker.
+      { id: 'bad', color: 99, x: 1, y: 1, z: 1, planeAxis: 'w', planeOrientation: 0 } as any,
     )
     const restored = deserializeProject(file)
     expect(restored.markers.map((m) => m.id)).toEqual(['a', 'bad'])
     expect(restored.markers.find((m) => m.id === 'bad')?.color).toBe(1)
+    expect(restored.markers.find((m) => m.id === 'bad')).toMatchObject({ planeAxis: 'y', planeOrientation: 1 })
   })
 
   it('loads pre-marker files with no markers', () => {
@@ -124,7 +126,7 @@ describe('markers persistence (v8)', () => {
       model: { bounds: null, colorCells: [], chamferCells: [] },
     }
     const migrated = migrateToCurrent(v6)
-    expect(migrated.schemaVersion).toBe(8)
+    expect(migrated.schemaVersion).toBe(9)
     expect(deserializeProject(migrated).markers).toEqual([])
   })
 
@@ -140,14 +142,29 @@ describe('markers persistence (v8)', () => {
       ],
     }
     const migrated = migrateToCurrent(v7)
-    expect(migrated.schemaVersion).toBe(8)
+    expect(migrated.schemaVersion).toBe(9)
     expect(migrated.markers).toEqual([
-      { id: 'a', color: 1, x: 1, y: 2, z: 3 },
-      { id: 'nope', color: 1, x: 99, y: 0, z: 0 },
+      { id: 'a', color: 1, x: 1, y: 2, z: 3, planeAxis: 'y', planeOrientation: 1 },
+      { id: 'nope', color: 1, x: 99, y: 0, z: 0, planeAxis: 'y', planeOrientation: 1 },
     ])
     // Out-of-bounds markers are dropped at deserialize time, as usual.
     expect(deserializeProject(migrated).markers).toEqual([
-      { id: 'a', color: 1, position: [1, 2, 3] },
+      { id: 'a', color: 1, position: [1, 2, 3], planeAxis: 'y', planeOrientation: 1 },
+    ])
+  })
+
+  it('migrates v8 color markers to face up, keeping everything else', () => {
+    const v8 = {
+      schemaVersion: 8,
+      meta,
+      palette: DEFAULT_PALETTE,
+      model: { bounds: null, colorCells: [], chamferCells: [] },
+      markers: [{ id: 'a', color: 3, x: 1, y: 2, z: 3 }],
+    }
+    const migrated = migrateToCurrent(v8)
+    expect(migrated.schemaVersion).toBe(9)
+    expect(deserializeProject(migrated).markers).toEqual([
+      { id: 'a', color: 3, position: [1, 2, 3], planeAxis: 'y', planeOrientation: 1 },
     ])
   })
 })

@@ -212,7 +212,7 @@ export function usePixelCanvasTools(canvasRef: React.RefObject<HTMLCanvasElement
       const s = useAppStore.getState()
       const coord = gridCoordFromPixel(s.plane, u, v)
       if (!withinWorkingBounds(coord, s.meta.gridExtent)) return null
-      const marker: Marker = createMarker(coord, s.activeMarkerColor)
+      const marker: Marker = createMarker(coord, s.activeMarkerColor, s.plane.axis, s.plane.orientation)
       useAppStore.setState((state) => {
         state.markers.push(marker)
         state.selectedMarkerId = marker.id

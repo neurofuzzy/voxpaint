@@ -498,10 +498,12 @@ export type MarkerSlice = {
   /** Color index (into MARKER_COLORS) new markers are placed with. Pure view pref — never
    * persisted, never dirties, never undoable (like the active palette slot). */
   activeMarkerColor: number
-  /** Adds a marker at a grid cell with the active color. The caller brackets the gesture with
+  /** Adds a marker at a grid cell with the active color, capturing the active construction
+   * plane's basis as its facing (or the explicit `basis` override, used by 3D face taps to
+   * capture the hit face instead). The caller brackets the gesture with
    * beginStroke/commitStroke (the marker tool does this per drag; single-shot callers
    * self-bracket — see setMarkerColor/deleteMarker). */
-  addMarker: (coord: Coord) => void
+  addMarker: (coord: Coord, basis?: { axis: Axis; orientation: Orientation }) => void
   /** Moves a marker to a grid cell (same bracketing contract as addMarker). */
   moveMarker: (id: string, coord: Coord) => void
   /** Recolors a marker. Self-brackets its own undo stroke. */

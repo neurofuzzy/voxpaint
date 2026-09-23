@@ -25,7 +25,7 @@ function makeCtx(): ToolContext & {
       const [x, y, z] = gridCoordFromPixel(plane, u, v)
       if (Math.abs(x) > 8 || Math.abs(y) > 8 || Math.abs(z) > 8) return null
       counter += 1
-      const m: Marker = { id: `m${counter}`, color: 1, position: [x, y, z] }
+      const m: Marker = { id: `m${counter}`, color: 1, position: [x, y, z], planeAxis: 'y', planeOrientation: 1 }
       live.push(m)
       return m
     },

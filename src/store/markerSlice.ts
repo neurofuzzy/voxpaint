@@ -15,10 +15,12 @@ export const createMarkerSlice: Slice = (set, get) => ({
   selectedMarkerId: null,
   activeMarkerColor: 1,
 
-  addMarker: (coord) =>
+  addMarker: (coord, basis) =>
     set((state) => {
       if (!withinWorkingBounds(coord, state.meta.gridExtent)) return
-      const marker = createMarker(coord, state.activeMarkerColor)
+      const axis = basis?.axis ?? state.plane.axis
+      const orientation = basis?.orientation ?? state.plane.orientation
+      const marker = createMarker(coord, state.activeMarkerColor, axis, orientation)
       state.markers.push(marker)
       state.selectedMarkerId = marker.id
       state.meta.modifiedAt = new Date().toISOString()

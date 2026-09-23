@@ -100,7 +100,15 @@ function deserializeSlicePivots(pivots: SerializedSlicePivot[]): Map<SliceKey, C
 }
 
 function serializeMarkers(markers: Marker[]): SerializedMarkerPosition[] {
-  return markers.map((m) => ({ id: m.id, color: m.color, x: m.position[0], y: m.position[1], z: m.position[2] }))
+  return markers.map((m) => ({
+    id: m.id,
+    color: m.color,
+    x: m.position[0],
+    y: m.position[1],
+    z: m.position[2],
+    planeAxis: m.planeAxis,
+    planeOrientation: m.planeOrientation,
+  }))
 }
 
 function deserializeMarkers(entries: SerializedMarkerPosition[] | undefined, gridExtent: GridExtent): Marker[] {
@@ -118,7 +126,10 @@ function deserializeMarkers(entries: SerializedMarkerPosition[] | undefined, gri
     if (!withinWorkingBounds(position, gridExtent)) continue
     // Clamp out-of-range color indices to the default instead of dropping the marker.
     const color = Number.isInteger(e.color) && (e.color as number) >= 0 && (e.color as number) < MARKER_COLORS.length ? e.color : 1
-    out.push({ id: e.id, color, position })
+    // Unknown facing falls back to up rather than dropping the marker.
+    const planeAxis = e.planeAxis === 'x' || e.planeAxis === 'y' || e.planeAxis === 'z' ? e.planeAxis : 'y'
+    const planeOrientation = e.planeOrientation === 1 || e.planeOrientation === -1 ? e.planeOrientation : 1
+    out.push({ id: e.id, color, position, planeAxis, planeOrientation })
   }
   return out
 }

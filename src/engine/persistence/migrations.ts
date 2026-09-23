@@ -65,6 +65,16 @@ MIGRATIONS[7] = (doc) => ({
     : undefined,
 })
 
+/** v8 → v9: markers gain their draw-time plane basis. Nothing recorded one before, so every
+ * existing marker faces up (the neutral default); positions/ids/colors carry over untouched. */
+MIGRATIONS[8] = (doc) => ({
+  ...doc,
+  schemaVersion: 9,
+  markers: Array.isArray(doc.markers)
+    ? doc.markers.map((m: any) => ({ ...m, planeAxis: 'y', planeOrientation: 1 }))
+    : undefined,
+})
+
 export class UnsupportedSchemaVersionError extends Error {
   constructor(foundVersion: unknown) {
     super(`This file is from a newer version of VoxPaint (schemaVersion=${String(foundVersion)}). Please update the app.`)

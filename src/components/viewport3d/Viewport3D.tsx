@@ -393,7 +393,8 @@ function VoxelInteractionHandler({ managerRef, controlsRef }: {
         }
         store.bakeFloatIfAny()
         store.beginStroke()
-        store.addMarker(coord)
+        // Face hits capture the hit face's basis; empty-space taps fall back to the active plane.
+        store.addMarker(coord, result ? { axis: result.plane.axis, orientation: result.plane.orientation } : undefined)
         store.commitStroke()
         return
       }

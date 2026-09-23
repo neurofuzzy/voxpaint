@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { ChevronDown, Crosshair, MapPin, Trash2 } from 'lucide-react'
-import { markerColorHex } from '@/engine/markers/markers'
+import { markerColorHex, markerDirectionWord } from '@/engine/markers/markers'
 import { MARKER_COLORS } from '@/engine/markers/types'
 import { axisIndex } from '@/engine/plane/planeGeometry'
 import { useAppStore } from '@/store/useAppStore'
@@ -43,7 +43,7 @@ function MarkerRow({ id }: { id: string }) {
         style={{ backgroundColor: hex }}
       />
       <span className="min-w-0 flex-1 font-mono text-[10px] tabular-nums text-neutral-400">
-        {marker.position[0]},{marker.position[1]},{marker.position[2]}
+        {markerDirectionWord(marker.planeAxis, marker.planeOrientation)} · {marker.position[0]},{marker.position[1]},{marker.position[2]}
       </span>
       <button
         onClick={(e) => { e.stopPropagation(); focusSlice() }}
