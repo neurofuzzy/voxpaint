@@ -3,7 +3,7 @@ import type { CellKey, GridExtent, VoxelModel } from '@/engine/grid/types'
 import type { PaletteState } from '@/engine/palette/types'
 import type { SliceKey } from '@/engine/animation/types'
 import type { ColorGroupGeometry, SliceGroupGeometry, TagForTexturedFace, TexturedGroupsResult, UVForTexturedTag, VertexUV } from '@/engine/instancing/voxelMeshBuilder'
-import { buildTexturedShellGeometry, buildTexturedShellGeometryByColor, buildTexturedShellGeometryByColorMerged, buildTexturedShellGeometryBySliceColor } from '@/engine/instancing/voxelMeshBuilder'
+import { buildShellGeometryByFacePredicate, buildTexturedShellGeometry, buildTexturedShellGeometryByColor, buildTexturedShellGeometryByColorMerged, buildTexturedShellGeometryBySliceColor } from '@/engine/instancing/voxelMeshBuilder'
 import { atlasUVFor, boxFaceForCell, worldToTexel } from './boxMapping'
 import type { BoxFace } from './types'
 
@@ -29,6 +29,10 @@ export function buildTexturedGeometry(model: VoxelModel, palette: PaletteState, 
 /** Box-mapped shell geometry split per (color, emissive class) for GLTF export. */
 export function buildTexturedGeometryByColor(model: VoxelModel, palette: PaletteState, gridExtent: GridExtent): ColorGroupGeometry[] {
   return buildTexturedShellGeometryByColor(model, palette, uvForExtent(gridExtent))
+}
+
+export function buildTexturedFaceHighlightGeometry(model: VoxelModel, palette: PaletteState, face: BoxFace): THREE.BufferGeometry {
+  return buildShellGeometryByFacePredicate(model, palette, (chamfer, normal) => boxFaceForCell(chamfer, [normal.x, normal.y, normal.z]) === face)
 }
 
 /**

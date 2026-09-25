@@ -163,6 +163,7 @@ export type ViewSlice = {
   hoveredFace: HoveredFace | null
   /** 3D preview: render the mesh as wireframe (applies to both the instanced and optimized views). */
   wireframe: boolean
+  textureFaceMap: boolean
   /** 3D preview: apply coplanar-face merge on top of the CSG shell for maximum triangle reduction. */
   optimizedMesh: boolean
   /** 3D preview: apply baked ambient occlusion (only visible in the optimized-mesh PBR view). */
@@ -209,6 +210,7 @@ export type ViewSlice = {
   setHoverCell: (coord: Coord | null, chamferValid: boolean | null) => void
   setHoveredFace: (face: HoveredFace | null) => void
   setWireframe: (v: boolean) => void
+  setTextureFaceMap: (v: boolean) => void
   setOptimizedMesh: (v: boolean) => void
   setAmbientOcclusion: (v: boolean) => void
   setNoiseLevel: (v: number) => void

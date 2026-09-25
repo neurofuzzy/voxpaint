@@ -27,6 +27,7 @@ import { SelectionHighlight } from './SelectionHighlight'
 import { SceneEnvironment } from './SceneEnvironment'
 import { SceneLighting } from './SceneLighting'
 import { TexturedModelView } from './TexturedModelView'
+import { TextureFaceHighlight } from './TextureFaceHighlight'
 import { ViewOptionsOverlay } from './ViewOptionsOverlay'
 import { VoxelFaceHighlight } from './VoxelFaceHighlight'
 import { SettingsPalette } from './SettingsPalette'
@@ -461,6 +462,7 @@ export function Viewport3D() {
         {textureMode ? (
           <group scale={[1, voxelScaleY, 1]}>
             <TexturedModelView />
+            <TextureFaceHighlight />
             <BoundingBoxFaceSelector />
           </group>
         ) : (

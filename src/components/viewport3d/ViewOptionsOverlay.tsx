@@ -1,4 +1,4 @@
-import { Boxes, FlipHorizontal, Grid3x3, Sun, Video } from 'lucide-react'
+import { Boxes, FlipHorizontal, Grid3x3, SquareArrowOutDownLeft, Sun, Video } from 'lucide-react'
 import type { Axis } from '@/engine/grid/types'
 import { useAppStore } from '@/store/useAppStore'
 
@@ -32,8 +32,8 @@ function ToggleButton({ on, onClick, label, children, onPointerEnter, onPointerL
 
 /**
  * Frosted overlay pinned to the top-right of the 3D preview. Two clusters, divider-separated:
- * construction-plane controls (cycle axis, flip orientation) and view toggles (Wireframe, Optimized
- * mesh). Viewport Orbit/3D-Edit mode lives top-left next to the compass (`ViewportModeToggle`).
+ * construction-plane controls (cycle axis, flip orientation) and view toggles (Wireframe, Texture
+ * face map, Optimized mesh). Viewport Orbit/3D-Edit mode lives top-left next to the compass (`ViewportModeToggle`).
  * `stopPropagation` keeps clicks/drags off the OrbitControls underneath.
  */
 export function ViewOptionsOverlay({ onResetCamera, showExposure, onToggleExposure }: {
@@ -42,10 +42,13 @@ export function ViewOptionsOverlay({ onResetCamera, showExposure, onToggleExposu
   onToggleExposure: () => void
 }) {
   const plane = useAppStore((s) => s.plane)
+  const mode = useAppStore((s) => s.mode)
   const setPlaneAxisOrientation = useAppStore((s) => s.setPlaneAxisOrientation)
   const wireframe = useAppStore((s) => s.wireframe)
+  const textureFaceMap = useAppStore((s) => s.textureFaceMap)
   const optimizedMesh = useAppStore((s) => s.optimizedMesh)
   const setWireframe = useAppStore((s) => s.setWireframe)
+  const setTextureFaceMap = useAppStore((s) => s.setTextureFaceMap)
   const setOptimizedMesh = useAppStore((s) => s.setOptimizedMesh)
   const setStatusMessage = useAppStore((s) => s.setStatusMessage)
 
@@ -91,6 +94,17 @@ export function ViewOptionsOverlay({ onResetCamera, showExposure, onToggleExposu
       >
         <Grid3x3 size={16} />
       </ToggleButton>
+      {mode === 'texture' && (
+        <ToggleButton
+          on={textureFaceMap}
+          onClick={() => setTextureFaceMap(!textureFaceMap)}
+          label="Texture face map"
+          onPointerEnter={() => setStatusMessage('Highlight voxel faces mapped to the active texture face')}
+          onPointerLeave={() => setStatusMessage(null)}
+        >
+          <SquareArrowOutDownLeft size={16} />
+        </ToggleButton>
+      )}
       <ToggleButton
         on={optimizedMesh}
         onClick={() => setOptimizedMesh(!optimizedMesh)}
