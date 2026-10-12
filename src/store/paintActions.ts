@@ -142,6 +142,65 @@ function applyMaterialCell(state: AppState, coord: Coord, slot: PaletteSlotRef):
 }
 
 export const createPaintActionsSlice: Slice = (set, get) => ({
+  correctChamferStroke: () => {
+    // Outside an open stroke there is nothing stroke-local to correct (both tracking sets are
+    // only non-null between beginStroke/commitStroke).
+    if (!freshChamferKeys && !pendingWedgeKeys) return
+    let changed = false
+    set((state) => {
+      if (freshChamferKeys) {
+        for (const freshKey of freshChamferKeys) {
+          const cell = state.model.chamfer.get(freshKey)
+          if (!cell) continue
+          // Each cell carries its own authoring basis, so multi-plane strokes correct every
+          // cell in its own frame (not just the currently active plane).
+          const coord = decodeKey(freshKey)
+          const cellPlane: ConstructionPlane = {
+            axis: cell.planeAxis,
+            orientation: cell.planeOrientation,
+            offset: coord[axisIndex(cell.planeAxis)],
+          }
+          const { u: fu, v: fv } = pixelFromGridCoord(cellPlane, coord)
+          const rt = classify(sampleNeighbors(state.model, cellPlane, fu, fv))
+          // Overwrite even when already resolved: a mid-stroke verdict read partial neighbors
+          // (this stroke's own later paints completed them). Still-null stays null.
+          if (JSON.stringify(cell.resolvedTo) !== JSON.stringify(rt)) {
+            cell.resolvedTo = rt
+            changed = true
+          }
+        }
+      }
+      if (pendingWedgeKeys) {
+        for (const pendingKey of pendingWedgeKeys) {
+          const cell = state.model.chamfer.get(pendingKey)
+          if (!cell) {
+            pendingWedgeKeys.delete(pendingKey)
+            continue
+          }
+          const coord = decodeKey(pendingKey)
+          const cellPlane: ConstructionPlane = {
+            axis: cell.planeAxis,
+            orientation: cell.planeOrientation,
+            offset: coord[axisIndex(cell.planeAxis)],
+          }
+          const { u: pu, v: pv } = pixelFromGridCoord(cellPlane, coord)
+          const rt = classify(sampleNeighbors(state.model, cellPlane, pu, pv))
+          // Wedges only upgrade: an unresolved fallback takes its true corner once the stroke
+          // completes it, but a locked-in wedge never flips (freeze + click-to-rotate intact).
+          if (rt?.shapeKind === 'convex') {
+            cell.resolvedTo = { shapeKind: 'wedge', rotation: rt.rotation }
+            pendingWedgeKeys.delete(pendingKey)
+            changed = true
+          }
+        }
+      }
+      if (changed) {
+        state.meta.modifiedAt = new Date().toISOString()
+        state.dirty = true
+      }
+    })
+  },
+
   paintCell: (u: number, v: number) => {
     get().bakeFloatIfAny()
     const { plane, activeVoxelKind, activePaletteSlot, selection, meta } = get()
@@ -226,6 +285,17 @@ export const createPaintActionsSlice: Slice = (set, get) => ({
       const key = encodeKey(...coord)
       const cell = state.model.chamfer.get(key)
       const kind = cell?.resolvedTo?.shapeKind
+      // Thin slabs flip orientation on their own axis: the centered slab is mirror-symmetric,
+      // so the solid is identical and only the sampled texture face switches. A cross-axis
+      // facing would rotate the slab (a geometry edit) and is refused.
+      if (kind === 'thin') {
+        if (cell!.planeAxis !== plane.axis || cell!.planeOrientation === plane.orientation) return
+        cell!.planeOrientation = plane.orientation
+        state.meta.modifiedAt = new Date().toISOString()
+        state.dirty = true
+        changed = true
+        return
+      }
       // Ramps and wedges are congruent prisms — both rebase onto a ramp basis reproducing the
       // exact solid (a wedge source converts shapeKind, since its dual is always a ramp).
       if (kind !== 'ramp' && kind !== 'wedge') return

@@ -250,4 +250,6 @@ export const textureToolMap: Record<ToolId, TextureToolHandler> = {
   material: {},
   // Texture-face rebases voxel chamfer bases, meaningless on texel grids — harmless no-op here.
   textureface: {},
+  // Markers annotate voxel-grid cells, meaningless on texel grids — harmless no-op here.
+  marker: {},
 }

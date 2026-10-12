@@ -408,6 +408,21 @@ export function buildOptimizedVoxelGroupsBySlice(
   return { groups, rawTriangles, optimizedTriangles }
 }
 
+function geometryFromFaces(faces: Face[]): THREE.BufferGeometry {
+  const positions: number[] = []
+  const normals: number[] = []
+  for (const f of faces) {
+    for (const v of [f.a, f.b, f.c]) {
+      positions.push(v.x, v.y, v.z)
+      normals.push(f.normal.x, f.normal.y, f.normal.z)
+    }
+  }
+  const geometry = new THREE.BufferGeometry()
+  geometry.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3))
+  geometry.setAttribute('normal', new THREE.Float32BufferAttribute(normals, 3))
+  return geometry
+}
+
 /**
  * Like `geometryFromFaces` but for the box-map texture path: carries per-vertex `color` (RGB, for the
  * shade/multiply material) **and** a `uv` attribute from the injected generator. The coplanar-merge
@@ -444,6 +459,15 @@ function geometryFromFacesUV(faces: Face[], uvFor: VertexUV): THREE.BufferGeomet
 export function buildTexturedShellGeometry(model: VoxelModel, palette: PaletteState, uvFor: VertexUV): THREE.BufferGeometry {
   const { faces } = buildShellFaces(model, palette)
   return geometryFromFacesUV(faces, uvFor)
+}
+
+export function buildShellGeometryByFacePredicate(
+  model: VoxelModel,
+  palette: PaletteState,
+  predicate: (chamfer: ChamferCell | undefined, normal: THREE.Vector3) => boolean,
+): THREE.BufferGeometry {
+  const { faces } = buildShellFaces(model, palette)
+  return geometryFromFaces(faces.filter((f) => predicate(f.chamfer, f.normal)))
 }
 
 /** Per-(color, material class) split of the textured shell, for GLTF export — each group carries UVs

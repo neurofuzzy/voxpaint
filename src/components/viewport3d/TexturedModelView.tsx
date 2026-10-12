@@ -27,6 +27,7 @@ export function TexturedModelView() {
   const ambientOcclusion = useAppStore((s) => s.ambientOcclusion)
   const noiseLevel = useAppStore((s) => s.noiseLevel)
   const specularNoiseLevel = useAppStore((s) => s.specularNoiseLevel)
+  const noiseScale = useAppStore((s) => s.noiseScale)
   const aoStrength = useAppStore((s) => s.aoStrength)
   const gridExtent = useAppStore((s) => s.meta.gridExtent)
   const noiseSeed = useAppStore((s) => s.meta.noiseSeed)
@@ -44,7 +45,7 @@ export function TexturedModelView() {
     model,
     geometries,
     false,
-    { ambientOcclusion, noiseLevel, specularNoiseLevel, aoStrength, noiseSeed },
+    { ambientOcclusion, noiseLevel, specularNoiseLevel, aoStrength, noiseSeed, noiseScale },
   )
 
   const blend = useMemo(() => buildBlendAtlas(texture, gridExtent), [texture, gridExtent])

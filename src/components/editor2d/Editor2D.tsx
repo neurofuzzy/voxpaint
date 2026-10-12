@@ -1,5 +1,6 @@
 import { useRef } from 'react'
 import { FloatingPalette } from '@/components/panels/FloatingPalette'
+import { MarkersPanel } from '@/components/panels/MarkersPanel'
 import { usePlaneLayerScroll } from '@/components/usePlaneLayerScroll'
 import { useAppStore } from '@/store/useAppStore'
 import { PixelCanvas } from './PixelCanvas'
@@ -29,6 +30,7 @@ export function Editor2D() {
           <>
             <PixelCanvas />
             <PlaneControlsOverlay />
+            <MarkersPanel />
           </>
         )}
         <FloatingPalette />

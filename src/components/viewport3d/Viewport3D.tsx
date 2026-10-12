@@ -19,6 +19,7 @@ import { ConstructionPlaneGizmo } from './ConstructionPlaneGizmo'
 import { ConstructionPlaneVisual } from './ConstructionPlaneVisual'
 import { FloatGhostPreview } from './FloatGhostPreview'
 import { ExposureSlider } from './ExposureSlider'
+import { MarkersView } from './MarkersView'
 import { OptimizedMeshView } from './OptimizedMeshView'
 import { PivotGizmo } from './PivotGizmo'
 import { ProjectBoundsBox } from './ProjectBoundsBox'
@@ -26,6 +27,7 @@ import { SelectionHighlight } from './SelectionHighlight'
 import { SceneEnvironment } from './SceneEnvironment'
 import { SceneLighting } from './SceneLighting'
 import { TexturedModelView } from './TexturedModelView'
+import { TextureFaceHighlight } from './TextureFaceHighlight'
 import { ViewOptionsOverlay } from './ViewOptionsOverlay'
 import { VoxelFaceHighlight } from './VoxelFaceHighlight'
 import { SettingsPalette } from './SettingsPalette'
@@ -323,6 +325,10 @@ function VoxelInteractionHandler({ managerRef, controlsRef }: {
 
       // Hover state only, except the material drag above — paint/erase/eyedropper movement never
       // applies, so those drags always orbit.
+      if (activeToolRef.current === 'marker') {
+        setStatusMessage(result ? 'Click to select this marker · click empty space to place a new one' : 'Click to place a marker')
+        return
+      }
       if (isBlocking()) {
         const tool = activeToolRef.current as BlockingTool
         setStatusMessage(result ? editHint(tool) : EDIT_ORBIT_HINT)
@@ -361,6 +367,36 @@ function VoxelInteractionHandler({ managerRef, controlsRef }: {
       if (isBlocking()) {
         if (e.button !== 0) return
         applyBlockingTap(e.clientX, e.clientY)
+        return
+      }
+
+      // Marker tool never sets the plane — taps drop a new marker on the hit cell (on the
+      // active slice when empty space was hit), recolor a different-colored marker to the
+      // active color, or delete a same-colored one. One undo stroke per tap.
+      if (activeToolRef.current === 'marker') {
+        if (e.button !== 0) return
+        const store = useAppStore.getState()
+        const result = resolveFaceHit(e.clientX, e.clientY)
+        const coord: Coord | null = result
+          ? result.key.split(',').map(Number) as Coord
+          : resolveEmptyCell(e.clientX, e.clientY)
+        if (!coord) return
+        const existing = store.markers.find(
+          (m) => m.position[0] === coord[0] && m.position[1] === coord[1] && m.position[2] === coord[2],
+        )
+        if (existing) {
+          store.selectMarker(existing.id)
+          // Self-bracketing actions are safe here — no stroke is open (unlike the 2D tool,
+          // which mutates inside its own stroke).
+          if (existing.color !== store.activeMarkerColor) store.setMarkerColor(existing.id, store.activeMarkerColor)
+          else store.deleteMarker(existing.id)
+          return
+        }
+        store.bakeFloatIfAny()
+        store.beginStroke()
+        // Face hits capture the hit face's basis; empty-space taps fall back to the active plane.
+        store.addMarker(coord, result ? { axis: result.plane.axis, orientation: result.plane.orientation } : undefined)
+        store.commitStroke()
         return
       }
 
@@ -426,6 +462,7 @@ export function Viewport3D() {
         {textureMode ? (
           <group scale={[1, voxelScaleY, 1]}>
             <TexturedModelView />
+            <TextureFaceHighlight />
             <BoundingBoxFaceSelector />
           </group>
         ) : (
@@ -442,6 +479,7 @@ export function Viewport3D() {
               <SelectionHighlight />
               <ConstructionPlaneGizmo />
               <PivotGizmo />
+              <MarkersView />
             </group>
             <VoxelInteractionHandler managerRef={managerRef} controlsRef={orbitControlsRef} />
           </>

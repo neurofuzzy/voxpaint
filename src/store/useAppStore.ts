@@ -3,6 +3,7 @@ import { create } from 'zustand'
 import { immer } from 'zustand/middleware/immer'
 import { createAnimationSlice } from './animationSlice'
 import { createHistorySlice } from './historySlice'
+import { createMarkerSlice } from './markerSlice'
 import { createModeSlice } from './modeSlice'
 import { createPaintActionsSlice } from './paintActions'
 import { createPersistenceSlice } from './persistenceSlice'
@@ -34,6 +35,7 @@ export const useAppStore = create<AppState>()(
     ...createModeSlice(...a),
     ...createTextureSlice(...a),
     ...createAnimationSlice(...a),
+    ...createMarkerSlice(...a),
     ...createUiSlice(...a),
   })),
 )

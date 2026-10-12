@@ -1,4 +1,5 @@
 import type { GridExtent, VoxelModel } from '@/engine/grid/types'
+import type { Marker } from '@/engine/markers/types'
 import type { ConstructionPlane } from '@/engine/plane/types'
 import type { PaletteSlotRef } from '@/engine/palette/types'
 import type { NormalizedPointerEvent } from '@/engine/input/PointerInputController'
@@ -56,6 +57,29 @@ export interface ToolContext {
   bakeFloatIfAny: () => void
   beginStroke: () => void
   commitStroke: () => void
+  /** End-of-stroke bevel correction (see `PaintActionsSlice.correctChamferStroke`) — runs inside
+   * the open stroke, before `commitStroke`. No-op outside a stroke or for non-bevel content. */
+  correctChamferStroke: () => void
+
+  /** Design markers (color-coded annotation points, not voxels). Live store-backed callbacks so
+   * the marker tool never reads a stale render-time snapshot after its own writes. */
+  markers: Marker[]
+  selectedMarkerId: string | null
+  /** Color index new markers are placed with (and taps recolor to). */
+  activeMarkerColor: number
+  /** Marker on the active plane slice at (u,v), or null. Reads live state. */
+  markerAtCoord: (u: number, v: number) => Marker | null
+  /** Adds a marker at (u,v)'s cell (bounds-checked, selects it). Returns the created marker, or
+   * null when out of bounds. Bracketed by the caller's beginStroke/commitStroke. */
+  addMarkerAtCoord: (u: number, v: number) => Marker | null
+  /** Moves a marker to (u,v)'s cell (bounds-checked, no-op when out of bounds or unknown id).
+   * Bracketed by the caller's beginStroke/commitStroke. */
+  moveMarkerToCoord: (id: string, u: number, v: number) => void
+  /** Recolors a marker (no-op on unknown id). Bracketed by the caller's beginStroke/commitStroke. */
+  recolorMarker: (id: string, color: number) => void
+  /** Deletes a marker (no-op on unknown id). Bracketed by the caller's beginStroke/commitStroke. */
+  removeMarker: (id: string) => void
+  selectMarker: (id: string | null) => void
 
   // Transient UI-only preview state (drag-in-progress rendering), backed by React state in the
   // adapter hook but exposed here so tool modules can read/write it without knowing that.
@@ -83,6 +107,11 @@ export type ToolDragState =
   | { kind: 'clone'; last: [number, number] }
   | { kind: 'moveFloat'; startU: number; startV: number; originAtStart: FloatOrigin }
   | { kind: 'moveGrid'; startU: number; startV: number; lastU: number; lastV: number }
+  | { kind: 'marker'; id: string }
+  /** Marker tap candidate: pointer went down on an existing marker but hasn't dragged off it
+   * yet. A release here resolves to recolor-or-delete; leaving the start cell converts to a
+   * `marker` move drag instead. */
+  | { kind: 'marker-pending'; id: string; startU: number; startV: number }
 
 export interface ToolHandler {
   onDown?(ctx: ToolContext, e: NormalizedPointerEvent): void

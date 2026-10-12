@@ -41,6 +41,14 @@ export function generateNoiseSeed(): number {
 }
 
 /**
+ * Grain cell size in atlas texels, clamped to the supported 1/2/4 set: 1 hashes every texel
+ * individually, 2/4 hash one value per 2×2 / 4×4 block (nearest-quantized, never blurred).
+ */
+function blockScale(noiseScale: number): 1 | 2 | 4 {
+  return noiseScale >= 4 ? 4 : noiseScale >= 2 ? 2 : 1
+}
+
+/**
  * Fills an RGBA texture of the given size with specular-colour noise whose R, G and B channels are
  * all set to `1 − specularNoiseLevel × hash(worldPos)` so the noise uniformly darkens the specular
  * reflection in a per-pixel decorrelated pattern from the AO grain.
@@ -49,6 +57,7 @@ export function makeSpecularNoiseTexture(
   atlas: UnwrappedAtlas,
   level: number,
   seed = 0,
+  noiseScale: number = 1,
 ): {
   metalness: { data: Uint8ClampedArray; width: number; height: number }
   roughness: { data: Uint8ClampedArray; width: number; height: number }
@@ -64,6 +73,7 @@ export function makeSpecularNoiseTexture(
     baseColor: { data: b, width: atlas.size, height: atlas.size },
   }
 
+  const bs = blockScale(noiseScale)
   for (const rect of atlas.rects) {
     for (let ty = PADDING; ty < rect.texHeight - PADDING; ty++) {
       for (let tx = PADDING; tx < rect.texWidth - PADDING; tx++) {
@@ -72,7 +82,12 @@ export function makeSpecularNoiseTexture(
         const wx = rect.normal.x * rect.depthCoord + rect.tangent1.x * u + rect.tangent2.x * v
         const wy = rect.normal.y * rect.depthCoord + rect.tangent1.y * u + rect.tangent2.y * v
         const wz = rect.normal.z * rect.depthCoord + rect.tangent1.z * u + rect.tangent2.z * v
-        const n = specularHash(wx, wy, wz, seed)
+        const n = specularHash(
+          Math.floor((wx * TEXELS_PER_UNIT) / bs),
+          Math.floor((wy * TEXELS_PER_UNIT) / bs),
+          Math.floor((wz * TEXELS_PER_UNIT) / bs),
+          seed,
+        )
         const rust = Math.max(0, Math.min(1, level * n))
         const idx = ((rect.atlasY + ty) * atlas.size + (rect.atlasX + tx)) * 4
 
@@ -182,6 +197,7 @@ export function bakeAOToAtlas(
   aoStrength = 1,
   excludeKeys?: Set<CellKey>,
   seed = 0,
+  noiseScale: number = 1,
 ): {
   data: Uint8ClampedArray
   width: number
@@ -196,6 +212,7 @@ export function bakeAOToAtlas(
 
   const { grid, gx, gy, gz, min: occMin } = occ
   const dirs = hemisphereDirs()
+  const bs = blockScale(noiseScale)
 
   for (const rect of atlas.rects) {
     const { normal, tangent1: t1, tangent2: t2 } = rect
@@ -250,7 +267,16 @@ export function bakeAOToAtlas(
 
         const ao = totalOcclusion / dirs.length
         const shaded = 1 - aoStrength * ao
-        const noiseVal = noiseLevel > 0 ? hashNoise(wx, wy, wz, seed) : 0
+        // Quantized grain: texels inside the same bs×bs block hash the same block indices, so
+        // the grain reads as chunky cells rather than per-texel static (nearest, never blurred).
+        const noiseVal = noiseLevel > 0
+          ? hashNoise(
+            Math.floor((wx * TEXELS_PER_UNIT) / bs),
+            Math.floor((wy * TEXELS_PER_UNIT) / bs),
+            Math.floor((wz * TEXELS_PER_UNIT) / bs),
+            seed,
+          )
+          : 0
         const noised = Math.max(0, Math.min(1, shaded - noiseLevel * noiseVal))
         const value = Math.round(noised * 255)
 

@@ -2,6 +2,8 @@ import { beforeEach, describe, expect, it } from 'vitest'
 import { encodeKey } from '@/engine/grid/GridStore'
 import type { Coord } from '@/engine/grid/types'
 import { gridCoordFromPixel, pixelFromGridCoord } from '@/engine/plane/constructionPlane'
+import { paintTool } from '@/engine/tools/paintTool'
+import type { ToolContext, ToolDragState } from '@/engine/tools/types'
 import { useAppStore } from './useAppStore'
 
 const PLANE = { axis: 'z' as const, orientation: 1 as const, offset: 0 }
@@ -82,6 +84,73 @@ describe('paintCell wedge handling', () => {
 
     const after = useAppStore.getState()
     expect(after.model.chamfer.get(keyFor(5, 5))!.resolvedTo).toEqual({ shapeKind: 'wedge', rotation: resolvedRotation })
+  })
+})
+
+/** End-of-drag bevel correction (`correctChamferStroke`, run by the paint tool's onUp before
+ * the stroke commits): cells that resolved mid-drag against incomplete neighbors re-resolve
+ * against the finished stroke — one undo step, no need to paint over the same spots again. */
+describe('bevel drag correction on release', () => {
+  const evt = (u: number, v: number) => ({ u, v, button: 0, buttons: 1, shiftKey: false, altKey: false, metaKey: false, pointerId: 1 })
+
+  /** Minimal paint-tool context backed by the real store (drag + release flow, not bare writes). */
+  function storeCtx(): ToolContext {
+    const s = useAppStore.getState()
+    let linePreview: { anchor: [number, number]; end: [number, number] } | null = null
+    return {
+      paintCell: s.paintCell,
+      bakeFloatIfAny: s.bakeFloatIfAny,
+      beginStroke: s.beginStroke,
+      commitStroke: s.commitStroke,
+      correctChamferStroke: s.correctChamferStroke,
+      get linePreview() { return linePreview },
+      setLinePreview: (v: { anchor: [number, number]; end: [number, number] } | null) => { linePreview = v },
+      drag: { current: { kind: 'idle' } as ToolDragState },
+    } as unknown as ToolContext
+  }
+
+  beforeEach(() => {
+    const s = useAppStore.getState()
+    s.newProject('Test', 16)
+    s.setActiveVoxelKind('ramp')
+    s.setPlaneAxisOrientation('z', 1)
+    s.setPlaneOffset(0)
+    s.setSelection(null)
+  })
+
+  it('re-resolves a mid-drag convex cell to a ramp once its third side lands', () => {
+    // Drag order W -> N -> C -> E: when C lands it sees W+N (convex), then E completes three
+    // sides (ramp, open S) — but C is already frozen, so only the release pass can fix it.
+    const ctx = storeCtx()
+    const pastBefore = useAppStore.getState().past.length
+    paintTool.onDown!(ctx, evt(4, 5))
+    paintTool.onMove!(ctx, evt(5, 4))
+    paintTool.onMove!(ctx, evt(5, 5))
+    expect(useAppStore.getState().model.chamfer.get(keyFor(5, 5))!.resolvedTo).toEqual({
+      shapeKind: 'convex',
+      rotation: 1,
+    })
+    paintTool.onMove!(ctx, evt(6, 5))
+    paintTool.onUp!(ctx, evt(6, 5))
+
+    expect(useAppStore.getState().model.chamfer.get(keyFor(5, 5))!.resolvedTo).toEqual({
+      shapeKind: 'ramp',
+      rotation: 1,
+    })
+    // The correction landed inside the same stroke, not as its own undo step.
+    expect(useAppStore.getState().past.length).toBe(pastBefore + 1)
+  })
+
+  it('leaves still-unresolvable cells unresolved instead of forcing a shape', () => {
+    const ctx = storeCtx()
+    paintTool.onDown!(ctx, evt(4, 5))
+    paintTool.onMove!(ctx, evt(6, 5)) // gap at (5,5): endpoints see one neighbor each
+    paintTool.onUp!(ctx, evt(6, 5))
+
+    // Bresenham fills (5,5) too, bridging the gap — every cell sees opposite-side pairs or
+    // single neighbors, none of which is a defined shape.
+    expect(useAppStore.getState().model.chamfer.get(keyFor(4, 5))!.resolvedTo).toBeNull()
+    expect(useAppStore.getState().model.chamfer.get(keyFor(6, 5))!.resolvedTo).toBeNull()
   })
 })
 

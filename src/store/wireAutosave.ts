@@ -9,7 +9,7 @@ export function restoreAutosave(): void {
   try {
     const file = loadAutosave()
     if (!file) return
-    const { model, palette, meta, texture, view, animSettings, sliceMasks, slicePivots } = deserializeProject(file)
+    const { model, palette, meta, texture, view, animSettings, sliceMasks, slicePivots, markers } = deserializeProject(file)
     useAppStore.getState().setModel(model)
     useAppStore.getState().setPalette(palette)
     useAppStore.getState().setTexture(texture)
@@ -18,6 +18,7 @@ export function restoreAutosave(): void {
       state.ambientOcclusion = view.ambientOcclusion ?? false
       state.noiseLevel = view.noiseLevel ?? 0
       state.specularNoiseLevel = view.specularNoiseLevel ?? 0
+      state.noiseScale = view.noiseScale === 2 || view.noiseScale === 4 ? view.noiseScale : 1
       state.aoStrength = view.aoStrength ?? 1
       state.glassRoughnessLevel = view.glassRoughnessLevel ?? 0.3
       state.exposure = view.exposure ?? 1
@@ -28,6 +29,8 @@ export function restoreAutosave(): void {
       state.animSettings = animSettings
       state.sliceMasks = sliceMasks
       state.slicePivots = slicePivots
+      state.markers = markers
+      state.selectedMarkerId = null
     })
   } catch (err) {
     console.error('Failed to restore autosave', err)
@@ -42,10 +45,11 @@ const flush = debounce(() => {
       state.palette,
       state.meta,
       state.texture,
-      { ambientOcclusion: state.ambientOcclusion, noiseLevel: state.noiseLevel, specularNoiseLevel: state.specularNoiseLevel, aoStrength: state.aoStrength, glassRoughnessLevel: state.glassRoughnessLevel, exposure: state.exposure, exportScaleFactor: state.exportScaleFactor, exportAnchor: state.exportAnchor, exportAlignToObjectBounds: state.exportAlignToObjectBounds, exportDisableMeshOptimization: state.exportDisableMeshOptimization },
+      { ambientOcclusion: state.ambientOcclusion, noiseLevel: state.noiseLevel, specularNoiseLevel: state.specularNoiseLevel, noiseScale: state.noiseScale, aoStrength: state.aoStrength, glassRoughnessLevel: state.glassRoughnessLevel, exposure: state.exposure, exportScaleFactor: state.exportScaleFactor, exportAnchor: state.exportAnchor, exportAlignToObjectBounds: state.exportAlignToObjectBounds, exportDisableMeshOptimization: state.exportDisableMeshOptimization, exportIncludeTextureMaps: state.exportIncludeTextureMaps, exportIncludeAOMaps: state.exportIncludeAOMaps, exportIncludeMarkers: state.exportIncludeMarkers },
       state.animSettings,
       state.sliceMasks,
       state.slicePivots,
+      state.markers,
     )
     saveAutosave(file)
     state.markSaved(new Date().toISOString())
@@ -59,6 +63,7 @@ export function wireAutosave(): () => void {
   return useAppStore.subscribe((state, prevState) => {
     if (state.dirty && state.dirty !== prevState.dirty) flush()
     else if (state.model !== prevState.model && state.dirty) flush()
+    else if (state.markers !== prevState.markers && state.dirty) flush()
     else if (state.texture !== prevState.texture && state.dirty) flush()
     else if (state.animSettings !== prevState.animSettings && state.dirty) flush()
     else if (state.sliceMasks !== prevState.sliceMasks && state.dirty) flush()

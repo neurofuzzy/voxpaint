@@ -5,6 +5,7 @@ import { DEFAULT_PALETTE } from '@/engine/palette/defaultPalette'
 import type { PaletteSlotRef } from '@/engine/palette/types'
 import type { TextureModel } from '@/engine/texture/types'
 import { emptyTextureModel } from '@/engine/texture/TextureStore'
+import { MARKER_COLORS } from '@/engine/markers/types'
 import { exportModelToGlb } from './gltfExport'
 
 // three's GLTFExporter rasterizes every texture image through a 2D canvas — also absent in
@@ -66,7 +67,7 @@ function pillarVoxel(): VoxelModel {
 }
 
 interface GlbJson {
-  nodes?: Array<{ name?: string; translation?: [number, number, number]; matrix?: number[] }>
+  nodes?: Array<{ name?: string; translation?: [number, number, number]; matrix?: number[]; rotation?: [number, number, number, number]; extras?: { voxpaint?: { kind?: string; id?: string; color?: string; axis?: string; orientation?: number } } }>
   images?: unknown[]
   textures?: unknown[]
   samplers?: unknown[]
@@ -100,6 +101,12 @@ function rootTranslation(json: GlbJson): [number, number, number] {
   if (node!.translation) return node!.translation
   if (node!.matrix) return [node!.matrix[12], node!.matrix[13], node!.matrix[14]]
   return [0, 0, 0]
+}
+
+/** Local +Z rotated by a glTF (x, y, z, w) quaternion — the node's facing direction. */
+function quatRotateZ(q: [number, number, number, number]): [number, number, number] {
+  const [x, y, z, w] = q
+  return [2 * (x * z + w * y), 2 * (y * z - w * x), 1 - 2 * (x * x + y * y)]
 }
 
 describe('exportModelToGlb odd-extent centering', () => {
@@ -179,6 +186,56 @@ describe('exportModelToGlb includeTextureMaps', () => {  it('textured export wit
   })
 })
 
+describe('exportModelToGlb markers', () => {
+  const markers = [
+    { id: 'aaaaaaaa-0001', color: 1, position: [0, 0, 0] as [number, number, number], planeAxis: 'x' as const, planeOrientation: -1 as const },
+    { id: 'bbbbbbbb-0002', color: 3, position: [2, 1, -1] as [number, number, number], planeAxis: 'y' as const, planeOrientation: 1 as const },
+  ]
+
+  it('exports markers as empty nodes with extras payloads at cell centers', async () => {
+    const glb = await exportModelToGlb(pillarVoxel(), DEFAULT_PALETTE, 16, undefined, { markers, includeTextureMaps: false })
+    const json = glbJson(glb)
+    const found = (json.nodes ?? []).filter((n) => n.extras?.voxpaint?.kind === 'marker')
+    expect(found).toHaveLength(2)
+    const tree = found.find((n) => n.extras?.voxpaint?.id === 'aaaaaaaa-0001')!
+    expect(tree.extras?.voxpaint?.color).toBe(MARKER_COLORS[1])
+    expect(tree.extras?.voxpaint?.axis).toBe('x')
+    expect(tree.extras?.voxpaint?.orientation).toBe(-1)
+    expect(tree.name).toContain(MARKER_COLORS[1].replace('#', ''))
+    expect(tree.name).toContain('west')
+    // Cell [0,0,0] centers at +0.5; even extent applies no re-base. The exporter may emit
+    // the transform as TRS `translation` or a column-major `matrix` — read either.
+    const t = tree.translation ?? (tree.matrix ? [tree.matrix[12], tree.matrix[13], tree.matrix[14]] : undefined)
+    expect(t?.map((v) => Math.round(v * 100) / 100)).toEqual([0.5, 0.5, 0.5])
+    // The west-facing marker's local +Z must point along its outward normal (-X). Read it
+    // from TRS `rotation` (quaternion-rotated +Z) or from a column-major `matrix` (third
+    // column), whichever the exporter emitted.
+    const plusZ = tree.rotation
+      ? quatRotateZ(tree.rotation)
+      : tree.matrix ? [tree.matrix[8], tree.matrix[9], tree.matrix[10]] : undefined
+    expect(plusZ?.map((v) => Math.round(v * 100) / 100)).toEqual([-1, 0, 0])
+    // Marker nodes carry no mesh (empty locators).
+    expect(json.meshes?.length ?? 0).toBeGreaterThan(0)
+  })
+
+  it('omits markers when includeMarkers is false', async () => {
+    const glb = await exportModelToGlb(pillarVoxel(), DEFAULT_PALETTE, 16, undefined, { markers, includeMarkers: false, includeTextureMaps: false })
+    const found = (glbJson(glb).nodes ?? []).filter((n) => n.extras?.voxpaint?.kind === 'marker')
+    expect(found).toEqual([])
+  })
+
+  it('keeps anchors voxel-pure when a marker sits far outside the model', async () => {
+    const far = [...markers, { id: 'cccccccc-0003', color: 0, position: [7, 7, 7] as [number, number, number], planeAxis: 'y' as const, planeOrientation: 1 as const }]
+    const withMarkers = glbJson(
+      await exportModelToGlb(pillarVoxel(), DEFAULT_PALETTE, 16, undefined, { markers: far, anchor: 'bottom', includeTextureMaps: false }),
+    )
+    const without = glbJson(
+      await exportModelToGlb(pillarVoxel(), DEFAULT_PALETTE, 16, undefined, { anchor: 'bottom', includeTextureMaps: false }),
+    )
+    expect(rootTranslation(withMarkers)).toEqual(rootTranslation(without))
+  })
+})
+
 /** Total POSITION vertices across every exported mesh primitive. */
 function positionVertexCount(json: GlbJson): number {
   let total = 0
@@ -215,6 +272,32 @@ describe('exportModelToGlb textured mesh optimization', () => {  it('merges copl
 function materialsWithOcclusion(json: GlbJson): string[] {
   return (json.materials ?? []).filter((m) => m.occlusionTexture !== undefined).map((m) => m.name ?? '')
 }
+
+describe('exportModelToGlb noise without AO', () => {
+  it('still emits the noise-carrying occlusionTexture when ambientOcclusion is off but noiseLevel > 0', async () => {
+    const json = glbJson(
+      await exportModelToGlb(pillarVoxel(), DEFAULT_PALETTE, 16, undefined, {
+        includeTextureMaps: true,
+        ambientOcclusion: false,
+        noiseLevel: 0.5,
+      }),
+    )
+    // The grain lives inside the AO atlas: dropping the map would drop the noise the preview
+    // shows, so it must export even with AO off (matching usePreviewAOMaps).
+    expect(materialsWithOcclusion(json).length).toBeGreaterThan(0)
+  })
+
+  it('omits occlusionTexture when both ambientOcclusion is off and noiseLevel is 0', async () => {
+    const json = glbJson(
+      await exportModelToGlb(pillarVoxel(), DEFAULT_PALETTE, 16, undefined, {
+        includeTextureMaps: true,
+        ambientOcclusion: false,
+        noiseLevel: 0,
+      }),
+    )
+    expect(materialsWithOcclusion(json)).toEqual([])
+  })
+})
 
 describe('exportModelToGlb AO map exclusion', () => {
   it('emits occlusionTexture with ambientOcclusion on and omits it when off (maps otherwise intact)', async () => {

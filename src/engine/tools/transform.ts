@@ -1,5 +1,6 @@
-import type { ChamferCell, ChamferClassification, Rotation } from '@/engine/grid/types'
-import type { ClipboardData } from '@/store/types'
+import type { Axis, ChamferClassification, Rotation } from '@/engine/grid/types'
+import { mirrorChamferCell, rotateChamferCell } from '@/engine/chamfer/chamferTransform'
+import type { ClipboardCell, ClipboardData } from '@/store/types'
 
 /**
  * Chamfer rotations are numbered in the plane's **logical** u/v frame (N = -v, E = +u, S = +v,
@@ -45,18 +46,23 @@ export function rotateClassification90(c: ChamferClassification, direction: 'cw'
   return { shapeKind: c.shapeKind, rotation: ((c.rotation + (direction === 'cw' ? 1 : 3)) % 4) as Rotation }
 }
 
-function mapChamfer(chamfer: ChamferCell, map: (c: ChamferClassification) => ChamferClassification): ChamferCell {
-  return {
-    planeAxis: chamfer.planeAxis,
-    planeOrientation: chamfer.planeOrientation,
-    resolvedTo: chamfer.resolvedTo ? map(chamfer.resolvedTo) : null,
-  }
+/**
+ * The plane a float's du/dv live in: the recorded source plane (kept current by
+ * `transformClipboardToPlane` on every paste), falling back to the cell's own axis for sourceless
+ * content — which reduces to the legacy in-frame renumber for that cell.
+ */
+function rotationPlaneFor(clipboard: ClipboardData, cell: ClipboardCell): Axis {
+  return clipboard.copyPlaneAxis ?? cell.chamfer?.planeAxis ?? 'z'
 }
 
 /**
  * Rotates clipboard content 90° around its own bounding box (width/height swap).
  * `originU`/`originV` are deliberately dropped — they describe a box whose extents just swapped,
  * so transformed content tracks its position via `floatOrigin` instead (see ClipboardData).
+ *
+ * Chamfers map through their exact rotated solid (`rotateChamferCell`): same-plane bevels
+ * renumber in place, while bevels baked on another axis re-base onto whichever axis their solid
+ * turns into.
  */
 export function rotateClipboard90(clipboard: ClipboardData, direction: 'cw' | 'ccw' = 'cw'): ClipboardData {
   const { width, height } = clipboard
@@ -70,12 +76,15 @@ export function rotateClipboard90(clipboard: ClipboardData, direction: 'cw' | 'c
       ...cell,
       du: cw ? height - 1 - cell.dv : cell.dv,
       dv: cw ? cell.du : width - 1 - cell.du,
-      chamfer: cell.chamfer ? mapChamfer(cell.chamfer, (c) => rotateClassification90(c, direction)) : undefined,
+      chamfer: cell.chamfer ? rotateChamferCell(cell.chamfer, rotationPlaneFor(clipboard, cell), direction) : undefined,
     })),
   }
 }
 
-/** Mirrors clipboard content across its own bounding box. `originU`/`originV` dropped, as above. */
+/**
+ * Mirrors clipboard content across its own bounding box. `originU`/`originV` dropped, as above.
+ * Chamfers map through their exact mirrored solid (`mirrorChamferCell`) — see rotateClipboard90.
+ */
 export function mirrorClipboard(clipboard: ClipboardData, axis: 'horizontal' | 'vertical'): ClipboardData {
   const { width, height } = clipboard
   const mirrorU = axis === 'horizontal'
@@ -88,7 +97,7 @@ export function mirrorClipboard(clipboard: ClipboardData, axis: 'horizontal' | '
       ...cell,
       du: mirrorU ? width - 1 - cell.du : cell.du,
       dv: mirrorU ? cell.dv : height - 1 - cell.dv,
-      chamfer: cell.chamfer ? mapChamfer(cell.chamfer, (c) => mirrorClassification(c, mirrorU, !mirrorU)) : undefined,
+      chamfer: cell.chamfer ? mirrorChamferCell(cell.chamfer, rotationPlaneFor(clipboard, cell), mirrorU, !mirrorU) : undefined,
     })),
   }
 }

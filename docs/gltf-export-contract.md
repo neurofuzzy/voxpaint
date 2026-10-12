@@ -1,5 +1,7 @@
 # VoxPaint glTF Export Contract
 
+See also `marker-export-contract.md` — the companion contract for design markers (composition locators) in the same export.
+
 ## Purpose
 
 This document specifies exactly which **glTF 2.0 features** are present in `.glb` files exported by VoxPaint, so that a consuming engine's importer knows precisely what to support — rather than implementing the entire glTF spec.
@@ -150,5 +152,6 @@ This contract should be **revisited whenever**:
 - Extension support changes (new KHR extensions added, or old ones removed).
 - Emissive animation behavior changes (`EMISSIVE_ANIM_CYCLE_SECONDS`, interpolation modes, channel paths, off-color behavior).
 - Animation interpolation modes change in `src/engine/animation/animationGLTF.ts`.
+- Marker export surface changes — see `marker-export-contract.md` (payload, naming, orientation).
 
 Mirror the upkeep expectation stated in `docs/ARCHITECTURE.md`'s opening section.

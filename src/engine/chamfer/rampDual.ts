@@ -23,7 +23,8 @@ import { outwardNormal } from '@/engine/plane/planeGeometry'
 
 // Occupied local-prefab corners of a rotation-0 ramp: the full base quad (z=-0.5) plus the top
 // edge on the west (u=-0.5) side — the knife edge is east. Same corner order as chamferGeometry.
-const RAMP_LOCAL_CORNERS: Coord[] = [
+// Exported for chamferTransform.ts's cross-basis solid matching (single source of truth).
+export const RAMP_LOCAL_CORNERS: Coord[] = [
   [0.5, -0.5, -0.5], // b0 NE base
   [0.5, 0.5, -0.5], // b1 SE base
   [-0.5, 0.5, -0.5], // b2 SW base
@@ -34,7 +35,8 @@ const RAMP_LOCAL_CORNERS: Coord[] = [
 
 // Occupied local-prefab corners of a rotation-0 wedge: every corner except the NE vertical edge
 // (base b0 + top t0) — the diagonal cut removes that column entirely, top and bottom.
-const WEDGE_LOCAL_CORNERS: Coord[] = [
+// Exported for chamferTransform.ts (see RAMP_LOCAL_CORNERS).
+export const WEDGE_LOCAL_CORNERS: Coord[] = [
   [0.5, 0.5, -0.5], // b1 SE base
   [-0.5, 0.5, -0.5], // b2 SW base
   [-0.5, -0.5, -0.5], // b3 NW base
@@ -43,8 +45,9 @@ const WEDGE_LOCAL_CORNERS: Coord[] = [
   [-0.5, -0.5, 0.5], // t3 NW top
 ]
 
-/** Plain rotation about the prefab's own up (outward) axis — matches THREE's `rotateZ`. */
-function rotateLocal([u, v, w]: Coord, rotation: Rotation): Coord {
+/** Plain rotation about the prefab's own up (outward) axis — matches THREE's `rotateZ`.
+ * Exported for chamferTransform.ts (same convention must place every shape, not just prisms). */
+export function rotateLocal([u, v, w]: Coord, rotation: Rotation): Coord {
   switch (rotation) {
     case 0:
       return [u, v, w]

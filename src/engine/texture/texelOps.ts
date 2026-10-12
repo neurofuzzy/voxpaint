@@ -18,8 +18,9 @@ export type TexelClip = {
 }
 
 /** 4-connected flood fill over a face, matching the grayscale index at the seed. Returns the texel
- * coordinates to recolor; the caller applies them (so it can run inside one undo stroke). */
-export function floodFillFace(arr: Uint8Array, startU: number, startV: number, faceSize: number): Array<[number, number]> {
+ * coordinates to recolor; the caller applies them (so it can run inside one undo stroke).
+ * `within` optionally constrains traversal to an explicit mask (e.g. the active selection). */
+export function floodFillFace(arr: Uint8Array, startU: number, startV: number, faceSize: number, within?: (u: number, v: number) => boolean): Array<[number, number]> {
   if (!withinFace(startU, startV, faceSize)) return []
   const target = arr[texelIndex(startU, startV, faceSize)]
   const visited = new Uint8Array(faceSize * faceSize)
@@ -28,6 +29,7 @@ export function floodFillFace(arr: Uint8Array, startU: number, startV: number, f
   while (stack.length > 0) {
     const [u, v] = stack.pop()!
     if (!withinFace(u, v, faceSize)) continue
+    if (within && !within(u, v)) continue
     const i = texelIndex(u, v, faceSize)
     if (visited[i]) continue
     visited[i] = 1

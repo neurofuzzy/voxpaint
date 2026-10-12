@@ -1,10 +1,11 @@
 import type { StateCreator } from 'zustand'
 import { encodeKey, expandBounds, withinWorkingBounds } from '@/engine/grid/GridStore'
 import { gridCoordFromPixel } from '@/engine/plane/constructionPlane'
+import { rebaseChamferCell } from '@/engine/chamfer/faceBasis'
 import { fillLeaksToEdges, floodFillRegion, floodFillRegion3D } from '@/engine/tools/floodFill'
 import { applyClipboardAt, clearRegion, copyRegionToClipboard, transformClipboardToPlane } from '@/engine/tools/clipboard'
 import { mirrorClipboard, rotateClipboard90 } from '@/engine/tools/transform'
-import { isCellSelected, mirrorRegion, rotateRegion90 } from '@/engine/tools/selectionMask'
+import { forEachSelectedCell, isCellSelected, mirrorRegion, rotateRegion90 } from '@/engine/tools/selectionMask'
 import type { AppState, ToolActionsSlice } from './types'
 
 type Slice = StateCreator<AppState, [['zustand/immer', never]], [], ToolActionsSlice>
@@ -17,12 +18,20 @@ export const createToolActionsSlice: Slice = (set, get) => ({
   floodFill: (u, v) => {
     get().bakeFloatIfAny()
     const { model, plane, activePaletteSlot, selection, meta } = get()
-    let cells = floodFillRegion(model, plane, u, v, meta.gridExtent)
-    // A region that reaches all 4 edges of the plane almost certainly leaked through a gap rather
-    // than being deliberately enclosed — reject it outright rather than repaint the whole plane.
-    if (fillLeaksToEdges(cells, meta.gridExtent)) return
-    // An active selection clips the fill to its mask.
-    if (selection) cells = cells.filter(([cu, cv]) => isCellSelected(selection, cu, cv))
+    // A click inside the active selection treats the selection mask itself as the bound:
+    // traversal never leaves the mask, so no painted enclosure is needed and the edge-leak
+    // guard (which would reject the fill on an empty plane) is skipped.
+    const inSelection = !!selection && isCellSelected(selection, u, v)
+    let cells = inSelection
+      ? floodFillRegion(model, plane, u, v, meta.gridExtent, (cu, cv) => isCellSelected(selection, cu, cv))
+      : floodFillRegion(model, plane, u, v, meta.gridExtent)
+    if (!inSelection) {
+      // A region that reaches all 4 edges of the plane almost certainly leaked through a gap rather
+      // than being deliberately enclosed — reject it outright rather than repaint the whole plane.
+      if (fillLeaksToEdges(cells, meta.gridExtent)) return
+      // An active selection clips the fill to its mask.
+      if (selection) cells = cells.filter(([cu, cv]) => isCellSelected(selection, cu, cv))
+    }
     if (cells.length === 0) return
     get().beginStroke()
     set((state) => {
@@ -122,6 +131,33 @@ export const createToolActionsSlice: Slice = (set, get) => ({
       state.dirty = true
     })
     get().commitStroke()
+  },
+
+  faceSelection: () => {
+    get().bakeFloatIfAny()
+    const { selection } = get()
+    if (!selection) return { faced: 0, skipped: 0 }
+    let faced = 0
+    let skipped = 0
+    get().beginStroke()
+    set((state) => {
+      // Only cells on the active slice: the selection mask lives in the active plane's frame,
+      // so anything off-slice is outside what's actually selected.
+      forEachSelectedCell(selection, (u, v) => {
+        const coord = gridCoordFromPixel(state.plane, u, v)
+        const cell = state.model.chamfer.get(encodeKey(...coord))
+        // Plain cubes sample texture by face normal — never mis-faced, silently ignored.
+        if (!cell) return
+        if (rebaseChamferCell(cell, state.plane.axis, state.plane.orientation)) faced++
+        else skipped++
+      })
+      if (faced > 0) {
+        state.meta.modifiedAt = new Date().toISOString()
+        state.dirty = true
+      }
+    })
+    get().commitStroke()
+    return { faced, skipped }
   },
 
   pasteClipboardInPlace: () => {

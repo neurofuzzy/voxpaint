@@ -1,6 +1,9 @@
 import { RefreshCw } from 'lucide-react'
 import { useEffect, useState } from 'react'
+import type { NoiseScale } from '@/store/types'
 import { useAppStore } from '@/store/useAppStore'
+
+const NOISE_SCALES: NoiseScale[] = [1, 2, 4]
 
 /** Texture-mode settings: baked noise (AO texture grain) and metal specular noise. */
 export function TextureSettings() {
@@ -8,6 +11,8 @@ export function TextureSettings() {
   const setNoiseLevel = useAppStore((s) => s.setNoiseLevel)
   const specularNoiseLevel = useAppStore((s) => s.specularNoiseLevel)
   const setSpecularNoiseLevel = useAppStore((s) => s.setSpecularNoiseLevel)
+  const noiseScale = useAppStore((s) => s.noiseScale)
+  const setNoiseScale = useAppStore((s) => s.setNoiseScale)
   const randomizeNoiseSeed = useAppStore((s) => s.randomizeNoiseSeed)
 
   const [noiseChecked, setNoiseChecked] = useState(noiseLevel > 0)
@@ -83,6 +88,33 @@ export function TextureSettings() {
         <span className="w-8 text-right font-mono text-[11px] tabular-nums text-neutral-400">
           {Math.round(specularNoiseLevel * 100)}%
         </span>
+      </div>
+      <div className="flex items-center gap-2">
+        <div className="w-3.5" />
+        <span className="text-xs font-medium text-neutral-400 select-none w-12">
+          Scale
+        </span>
+        <div
+          role="group"
+          aria-label="Noise grain size"
+          title="Grain cell size in texture texels — chunkier quantized blocks, never blurred"
+          className="flex gap-1"
+        >
+          {NOISE_SCALES.map((s) => (
+            <button
+              key={s}
+              onClick={() => setNoiseScale(s)}
+              aria-pressed={noiseScale === s}
+              className={`rounded-md px-2 py-0.5 text-[11px] font-medium tabular-nums ${
+                noiseScale === s
+                  ? 'bg-violet-600 text-white'
+                  : 'bg-neutral-800 text-neutral-400 hover:text-neutral-200'
+              }`}
+            >
+              {s}x
+            </button>
+          ))}
+        </div>
       </div>
       <button
         onClick={randomizeNoiseSeed}

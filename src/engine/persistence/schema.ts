@@ -1,15 +1,18 @@
 import type { AnimationType, AnimationSpeed } from '@/engine/animation/types'
 import type { Axis, BBox, ChamferClassification, GridExtent, Orientation, VoxelScaleY } from '@/engine/grid/types'
+import type { SerializedMarkerPosition } from '@/engine/markers/types'
 import type { PaletteSlotRef, PaletteState } from '@/engine/palette/types'
 import type { BoxFace } from '@/engine/texture/types'
 import type { GltfExportAnchor } from '@/engine/export/gltfExport'
 
-export const CURRENT_SCHEMA_VERSION = 6 as const
+export const CURRENT_SCHEMA_VERSION = 9 as const
 
 export type ViewSettings = {
   ambientOcclusion: boolean
   noiseLevel: number
   specularNoiseLevel: number
+  /** Baked-grain cell size (1/2/4 atlas texels). Absent on older files, defaulting to 1. */
+  noiseScale?: number
   aoStrength: number
   glassRoughnessLevel: number
   exposure: number
@@ -23,6 +26,8 @@ export type ViewSettings = {
   exportIncludeTextureMaps?: boolean
   /** GLTF export: bake ambient occlusion into an aoMap. Defaults true. */
   exportIncludeAOMaps?: boolean
+  /** GLTF export: emit design markers as empty nodes. Defaults true. */
+  exportIncludeMarkers?: boolean
 }
 
 export type ProjectMeta = {
@@ -124,7 +129,19 @@ export type VoxPaintProjectFileV2 = {
  *
  * v6: `meta.gridExtent` becomes required — the project's locked-in working-cube size, chosen at
  * creation (see engine/grid/types.ts `GridExtent`). Older files didn't have per-project sizing at
- * all (every project used the same fixed 16 extent), so the v5→v6 migration just stamps `16`. */
+ * all (every project used the same fixed 16 extent), so the v5→v6 migration just stamps `16`.
+ *
+ * v7: adds an optional `markers` array of labeled, non-voxel annotation points
+ * (`{id, label, x, y, z}` — see engine/markers/types.ts). Absent on older files, which load
+ * with no markers.
+ *
+ * v8: markers switch from freeform labels to a fixed color set (`{id, color, x, y, z}`, where
+ * `color` indexes `MARKER_COLORS`). The v7→v8 migration keeps positions/ids and resets every
+ * marker to the default color — labels can't map onto colors.
+ *
+ * v9: markers gain their draw-time construction-plane basis (`planeAxis`/`planeOrientation`),
+ * which drives the export node orientation. The v8→v9 migration faces every existing marker
+ * up — no facing was recorded before, and up is the neutral default. */
 export type VoxPaintProjectFile = {
   schemaVersion: typeof CURRENT_SCHEMA_VERSION
   meta: ProjectMeta
@@ -139,4 +156,5 @@ export type VoxPaintProjectFile = {
   animations?: SerializedAnimLayer[]
   masks?: SerializedSliceMask[]
   pivots?: SerializedSlicePivot[]
+  markers?: SerializedMarkerPosition[]
 }
