@@ -2,6 +2,7 @@ import { useEffect, useMemo } from 'react'
 import * as THREE from 'three'
 import { useFrame } from '@react-three/fiber'
 import { buildBlendAtlas } from '@/engine/texture/boxMapping'
+import { TEXEL_SCALE } from '@/engine/texture/types'
 import { bakeOverlayTexturesByColor } from '@/engine/texture/overlay'
 import { buildTexturedGeometryByColorMerged } from '@/engine/texture/texturedGeometry'
 import { hasTextureContent } from '@/engine/texture/TextureStore'
@@ -48,6 +49,7 @@ export function OptimizedMeshView() {
   const aoStrength = useAppStore((s) => s.aoStrength)
   const glassRoughnessLevel = useAppStore((s) => s.glassRoughnessLevel)
   const gridExtent = useAppStore((s) => s.meta.gridExtent)
+  const texelScale = useAppStore((s) => s.meta.texelScale ?? TEXEL_SCALE)
   const noiseSeed = useAppStore((s) => s.meta.noiseSeed)
 
   const setMeshTriangles = useAppStore((s) => s.setMeshTriangles)
@@ -56,11 +58,11 @@ export function OptimizedMeshView() {
 
   const built = useMemo(() => {
     if (textured) {
-      const merged = buildTexturedGeometryByColorMerged(model, palette, gridExtent, optimizedMesh)
+      const merged = buildTexturedGeometryByColorMerged(model, palette, gridExtent, optimizedMesh, texelScale)
       return { groups: merged.groups, rawTriangles: merged.rawTriangles, optimizedTriangles: merged.optimizedTriangles }
     }
     return buildOptimizedVoxelGroups(model, palette, optimizedMesh)
-  }, [model, palette, optimizedMesh, textured, gridExtent])
+  }, [model, palette, optimizedMesh, textured, gridExtent, texelScale])
 
   // Emissive materials skip AO/noise baking entirely (a glowing surface shouldn't be shadowed or
   // dirtied) — excluded here so the unwrap atlas never allocates space for them; they still act as
@@ -80,7 +82,7 @@ export function OptimizedMeshView() {
   // Painted texture bakes to an overlay map (color × blend), one per distinct colour, reused by
   // the plain-untextured branch too (where it's simply empty — buildPreviewMaterial then falls
   // back to solid colour).
-  const blend = useMemo(() => (textured ? buildBlendAtlas(texture, gridExtent) : null), [textured, texture, gridExtent])
+  const blend = useMemo(() => (textured ? buildBlendAtlas(texture, gridExtent, texelScale) : null), [textured, texture, gridExtent, texelScale])
   const overlayByColor = useMemo(
     () => (blend ? bakeOverlayTexturesByColor(built.groups.map((g) => g.colorKey), blend) : null),
     [built.groups, blend],

@@ -3,7 +3,7 @@ import { defaultAnimationSettings, encodeSliceKey } from '@/engine/animation/ani
 import { encodeKey } from '@/engine/grid/GridStore'
 import type { PaletteSlotRef } from '@/engine/palette/types'
 import type { Coord } from '@/engine/grid/types'
-import type { BoxFace } from '@/engine/texture/types'
+import type { BoxFace, TexelScale } from '@/engine/texture/types'
 import { cloneTextureModel, texelIndex } from '@/engine/texture/TextureStore'
 import { EMPTY, faceSizeFor } from '@/engine/texture/types'
 import { useAppStore } from './useAppStore'
@@ -97,5 +97,63 @@ describe('updateProjectSettings', () => {
     const after = useAppStore.getState()
     expect(after.model.color.size).toBe(0)
     expect(after.texture.faces.px.length).toBe(faceSizeFor(8) ** 2)
+  })
+})
+
+describe('setTexelScale', () => {
+  beforeEach(() => {
+    useAppStore.getState().newProject('Test', 16)
+  })
+
+  function paintTexelsAtScale(face: BoxFace, faceSize: number, ...writes: Array<readonly [number, number, number]>) {
+    const s = useAppStore.getState()
+    s.textureBeginStroke()
+    const next = cloneTextureModel(s.texture)
+    for (const [tu, tv, value] of writes) next.faces[face][texelIndex(tu, tv, faceSize)] = value
+    s.setTexture(next)
+    s.textureCommitStroke()
+  }
+
+  it('downscales faces, keeps voxel history, and clears texture history/selection', () => {
+    paintVoxels([0, 0, 0])
+    // Dst (0,0) at scale 1 center-samples src (2,2) at scale 4.
+    paintTexelsAtScale('px', faceSizeFor(16, 4), [2, 2, 3])
+    useAppStore.getState().setTextureSelection({ originU: 0, originV: 0, width: 1, height: 1, mask: new Uint8Array([1]) })
+    expect(useAppStore.getState().texturePast.length).toBe(1)
+
+    useAppStore.getState().setTexelScale(1)
+
+    const after = useAppStore.getState()
+    expect(after.meta.texelScale).toBe(1)
+    expect(after.texture.faces.px.length).toBe(faceSizeFor(16, 1) ** 2)
+    expect(after.texture.faces.px[texelIndex(0, 0, faceSizeFor(16, 1))]).toBe(3)
+    // Voxels and their undo history survive; texture-side state is reset for the new size.
+    expect(after.model.color.size).toBe(1)
+    expect(after.past.length).toBe(1)
+    expect(after.texturePast).toEqual([])
+    expect(after.textureSelection).toBeNull()
+    expect(after.textureFloat).toBeNull()
+  })
+
+  it('upscales into quantized blocks and round-trips values back down', () => {
+    paintTexelsAtScale('px', faceSizeFor(16, 4), [2, 2, 3])
+    useAppStore.getState().setTexelScale(1)
+    // (2,2)@4 -> (0,0)@1; back up it fills block 0..3.
+    useAppStore.getState().setTexelScale(4)
+    const after = useAppStore.getState()
+    expect(after.texture.faces.px.length).toBe(faceSizeFor(16, 4) ** 2)
+    expect(after.texture.faces.px[texelIndex(0, 0, faceSizeFor(16, 4))]).toBe(3)
+    expect(after.texture.faces.px[texelIndex(3, 3, faceSizeFor(16, 4))]).toBe(3)
+    expect(after.texture.faces.px[texelIndex(4, 4, faceSizeFor(16, 4))]).toBe(EMPTY)
+  })
+
+  it('no-ops when the scale is unchanged and sanitizes garbage to full detail', () => {
+    paintVoxels([0, 0, 0])
+    useAppStore.getState().setTexelScale(4)
+    expect(useAppStore.getState().meta.texelScale).toBe(4)
+    expect(useAppStore.getState().past.length).toBe(1)
+
+    useAppStore.getState().setTexelScale(7 as unknown as TexelScale)
+    expect(useAppStore.getState().meta.texelScale).toBe(4)
   })
 })

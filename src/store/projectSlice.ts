@@ -12,7 +12,9 @@ import {
   MAX_GRID_EXTENT,
 } from '@/engine/grid/GridStore'
 import { DEFAULT_PALETTE } from '@/engine/palette/defaultPalette'
-import { emptyTextureModel, resizeTextureModel } from '@/engine/texture/TextureStore'
+import { TEXEL_SCALE } from '@/engine/texture/types'
+import { emptyTextureModel, normalizeTexelScale, resampleTextureModel, resizeTextureModel } from '@/engine/texture/TextureStore'
+import type { TexelScale } from '@/engine/texture/types'
 import type { AppState, ProjectSlice } from './types'
 
 type Slice = StateCreator<AppState, [['zustand/immer', never]], [], ProjectSlice>
@@ -32,6 +34,7 @@ export const createProjectSlice: Slice = (set, get) => ({
     gridExtent: DEFAULT_GRID_EXTENT,
     noiseSeed: generateNoiseSeed(),
     voxelScaleY: 1,
+    texelScale: TEXEL_SCALE,
   },
 
   setModel: (model) =>
@@ -75,6 +78,26 @@ export const createProjectSlice: Slice = (set, get) => ({
       state.dirty = true
     }),
 
+  setTexelScale: (scale: TexelScale) => {
+    const next = normalizeTexelScale(scale)
+    get().textureBakeFloatIfAny()
+    const prev = normalizeTexelScale(get().meta.texelScale ?? TEXEL_SCALE)
+    if (next === prev) return
+    set((state) => {
+      state.texture = resampleTextureModel(state.texture, state.meta.gridExtent, prev, next)
+      state.meta.texelScale = next
+      // Old-sized snapshots, selections, and floats can't survive the re-housing (same hygiene
+      // a grid resize applies) — the voxel model itself is untouched, so its history stays.
+      state.texturePast = []
+      state.textureFuture = []
+      state.textureSelection = null
+      state.textureFloat = null
+      state.textureFloatOrigin = null
+      state.meta.modifiedAt = new Date().toISOString()
+      state.dirty = true
+    })
+  },
+
   updateProjectSettings: (name, gridExtent) => {
     // Bake any pending floats first so in-bounds work lands in the model before the resize clips.
     get().bakeFloatIfAny()
@@ -100,7 +123,7 @@ export const createProjectSlice: Slice = (set, get) => ({
       state.meta.gridExtent = extent
 
       // Re-house the texture faces (center-crop on shrink, EMPTY-pad on grow).
-      state.texture = resizeTextureModel(state.texture, prevExtent, extent)
+      state.texture = resizeTextureModel(state.texture, prevExtent, extent, normalizeTexelScale(state.meta.texelScale ?? TEXEL_SCALE))
 
       // Markers are position-dependent too — drop any outside the new bounds.
       state.markers = state.markers.filter((m) => withinWorkingBounds(m.position, extent))
@@ -168,6 +191,7 @@ export const createProjectSlice: Slice = (set, get) => ({
         gridExtent: extent,
         noiseSeed: generateNoiseSeed(),
         voxelScaleY: 1,
+        texelScale: TEXEL_SCALE,
       }
       state.past = []
       state.future = []

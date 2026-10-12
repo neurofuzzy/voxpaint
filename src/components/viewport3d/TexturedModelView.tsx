@@ -2,6 +2,7 @@ import { useEffect, useMemo } from 'react'
 import * as THREE from 'three'
 import { useFrame } from '@react-three/fiber'
 import { buildBlendAtlas } from '@/engine/texture/boxMapping'
+import { TEXEL_SCALE } from '@/engine/texture/types'
 import { bakeOverlayTexturesByColor } from '@/engine/texture/overlay'
 import { buildTexturedGeometryByColor } from '@/engine/texture/texturedGeometry'
 import { buildPreviewMaterial, tickEmissiveAnimation } from '@/engine/instancing/previewMaterial'
@@ -31,8 +32,9 @@ export function TexturedModelView() {
   const aoStrength = useAppStore((s) => s.aoStrength)
   const gridExtent = useAppStore((s) => s.meta.gridExtent)
   const noiseSeed = useAppStore((s) => s.meta.noiseSeed)
+  const texelScale = useAppStore((s) => s.meta.texelScale ?? TEXEL_SCALE)
 
-  const groups = useMemo(() => buildTexturedGeometryByColor(model, palette, gridExtent), [model, palette, gridExtent])
+  const groups = useMemo(() => buildTexturedGeometryByColor(model, palette, gridExtent, texelScale), [model, palette, gridExtent, texelScale])
   useEffect(() => () => { for (const g of groups) g.geometry.dispose() }, [groups])
 
   // Emissive materials skip AO/noise baking entirely (see OptimizedMeshView) — excluded from the
@@ -48,7 +50,7 @@ export function TexturedModelView() {
     { ambientOcclusion, noiseLevel, specularNoiseLevel, aoStrength, noiseSeed, noiseScale },
   )
 
-  const blend = useMemo(() => buildBlendAtlas(texture, gridExtent), [texture, gridExtent])
+  const blend = useMemo(() => buildBlendAtlas(texture, gridExtent, texelScale), [texture, gridExtent, texelScale])
 
   const overlayByColor = useMemo(
     () => bakeOverlayTexturesByColor(groups.map((g) => g.colorKey), blend),

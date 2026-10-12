@@ -27,16 +27,23 @@ export function boxFaceOf(axis: Axis, orientation: Orientation): BoxFace {
   return orientation === 1 ? 'pz' : 'nz'
 }
 
-/** Texels per voxel along each axis — the texture map is 4× the voxel resolution (each texel =
- * 0.25 voxel). */
+/** Texels per voxel along each axis — the default texture map is 4× the voxel resolution
+ * (each texel = 0.25 voxel). Projects may override this per-project (`ProjectMeta.texelScale`
+ * 1/2/4); this constant is the default and the fallback for anything that doesn't take a scale. */
 export const TEXEL_SCALE = 4
 
+/** Per-project texels-per-voxel override (1 = chunky 1-texel-per-voxel grains, 2 = half detail,
+ * 4 = full detail, the default). Stored on `ProjectMeta`, locked in the same sense as
+ * `gridExtent` (changing it resamples the faces — see `resampleTextureModel`). */
+export type TexelScale = 1 | 2 | 4
+
 /** Texels along one edge of a single box face for a given project = its (even) effective grid ×
- * texel scale (e.g. 64 at the 16³ "Medium" size). Each face is `faceSizeFor(gridExtent)²` texels.
- * Uses `effectiveExtent` so an odd project textures its full even grid — keeping face size even and
- * the atlas aligned, exactly as it always has for even sizes. */
-export function faceSizeFor(gridExtent: GridExtent): number {
-  return effectiveExtent(gridExtent) * TEXEL_SCALE
+ * texel scale (e.g. 64 at the 16³ "Medium" size with the default scale 4). Each face is
+ * `faceSizeFor(gridExtent, texelScale)²` texels. Uses `effectiveExtent` so an odd project
+ * textures its full even grid — keeping face size even and the atlas aligned, exactly as it
+ * always has for even sizes. */
+export function faceSizeFor(gridExtent: GridExtent, texelScale: number = TEXEL_SCALE): number {
+  return effectiveExtent(gridExtent) * texelScale
 }
 
 /** Half the (even) working volume in world units — the in-plane world coordinate range a face
