@@ -5,14 +5,14 @@ import { EMPTY, TEXEL_SCALE, faceSizeFor } from '@/engine/texture/types'
 import { cloneTextureModel, emptyTextureModel, normalizeTexelScale, texelIndex, withinFace } from '@/engine/texture/TextureStore'
 import { applyClipAt, clearRegion, copyRegion, floodFillFace, mirrorClip, rotateClip90 } from '@/engine/texture/texelOps'
 import { isCellSelected, mirrorRegion, rotateRegion90 } from '@/engine/tools/selectionMask'
-import type { AppState, TextureSlice } from './types'
+import type { AppState, TextureHistoryEntry, TextureSlice } from './types'
 
 type Slice = StateCreator<AppState, [['zustand/immer', never]], [], TextureSlice>
 
 const MAX_TEXTURE_HISTORY = 100
 
 // Transient (not observable state, not Immer-drafted), mirroring historySlice/moveActions.
-let textureBaseline: TextureModel | null = null
+let textureBaseline: TextureHistoryEntry | null = null
 let textureMoveGesture: { face: BoxFace; base: Uint8Array } | null = null
 
 const now = () => new Date().toISOString()
@@ -80,12 +80,22 @@ export const createTextureSlice: Slice = (set, get) => {
     setActiveGrayIndex: (index) => set((state) => { state.activeGrayIndex = index }),
 
     // --- separate undo/redo history --------------------------------------------------------------
-    textureBeginStroke: () => { textureBaseline = get().texture },
+    // Entries carry the texel scale the faces were painted at, so undoing across a scale change
+    // restores matching faces + scale together (never old-sized faces under a new scale).
+    textureBeginStroke: () => {
+      textureBaseline = {
+        texture: get().texture,
+        texelScale: normalizeTexelScale(get().meta.texelScale ?? TEXEL_SCALE),
+      }
+    },
 
     textureCommitStroke: () => {
       const baseline = textureBaseline
       textureBaseline = null
-      if (!baseline || baseline === get().texture) return
+      if (!baseline) return
+      const current = get().texture
+      const currentScale = normalizeTexelScale(get().meta.texelScale ?? TEXEL_SCALE)
+      if (baseline.texture === current && baseline.texelScale === currentScale) return
       set((state) => {
         state.texturePast.push(baseline)
         if (state.texturePast.length > MAX_TEXTURE_HISTORY) state.texturePast.shift()
@@ -99,22 +109,40 @@ export const createTextureSlice: Slice = (set, get) => {
 
     textureUndo: () => {
       get().textureBakeFloatIfAny()
+      const currentScale = normalizeTexelScale(get().meta.texelScale ?? TEXEL_SCALE)
+      const current: TextureHistoryEntry = { texture: get().texture, texelScale: currentScale }
       set((state) => {
         const prev = state.texturePast.pop()
         if (!prev) return
-        state.textureFuture.unshift(state.texture as TextureModel)
-        state.texture = prev
+        state.textureFuture.unshift(current)
+        state.texture = prev.texture
+        state.meta.texelScale = prev.texelScale
+        // Masks/origins are texel-indexed for one size — drop them when crossing scales rather
+        // than clipping paint through a stale mask (the float itself was baked above).
+        if (prev.texelScale !== current.texelScale) {
+          state.textureSelection = null
+          state.textureFloat = null
+          state.textureFloatOrigin = null
+        }
         state.dirty = true
       })
     },
 
     textureRedo: () => {
       get().textureBakeFloatIfAny()
+      const currentScale = normalizeTexelScale(get().meta.texelScale ?? TEXEL_SCALE)
+      const current: TextureHistoryEntry = { texture: get().texture, texelScale: currentScale }
       set((state) => {
         const next = state.textureFuture.shift()
         if (!next) return
-        state.texturePast.push(state.texture as TextureModel)
-        state.texture = next
+        state.texturePast.push(current)
+        state.texture = next.texture
+        state.meta.texelScale = next.texelScale
+        if (next.texelScale !== current.texelScale) {
+          state.textureSelection = null
+          state.textureFloat = null
+          state.textureFloatOrigin = null
+        }
         state.dirty = true
       })
     },

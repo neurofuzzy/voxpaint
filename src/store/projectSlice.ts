@@ -83,19 +83,21 @@ export const createProjectSlice: Slice = (set, get) => ({
     get().textureBakeFloatIfAny()
     const prev = normalizeTexelScale(get().meta.texelScale ?? TEXEL_SCALE)
     if (next === prev) return
+    // Bracketed as one texture-undo step (the baseline carries the old faces + old scale), so
+    // the change is undoable — redo included. The voxel model itself is untouched, so its
+    // history stays.
+    get().textureBeginStroke()
     set((state) => {
       state.texture = resampleTextureModel(state.texture, state.meta.gridExtent, prev, next)
       state.meta.texelScale = next
-      // Old-sized snapshots, selections, and floats can't survive the re-housing (same hygiene
-      // a grid resize applies) — the voxel model itself is untouched, so its history stays.
-      state.texturePast = []
-      state.textureFuture = []
+      // Masks/origins are texel-indexed for one size — drop them rather than clip through them.
       state.textureSelection = null
       state.textureFloat = null
       state.textureFloatOrigin = null
       state.meta.modifiedAt = new Date().toISOString()
       state.dirty = true
     })
+    get().textureCommitStroke()
   },
 
   updateProjectSettings: (name, gridExtent) => {

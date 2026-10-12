@@ -26,8 +26,8 @@ const TEXEL_OPTIONS: TexelScale[] = [1, 2, 4]
  * outside the new bounds (warned with an exact count, and reported on save) and center-crops the
  * texture faces, and any resize clears undo history. The voxel-height scale (flat/cubic/tall) is
  * freely changeable — it touches no grid or texture data, only how tall cells render and export.
- * Texture detail resamples the painted faces with nearest-neighbor (quantized, never blurred);
- * lowering it on a painted texture loses fine detail, and clears texture undo history.
+ * Texture detail resamples the painted faces with nearest-neighbor (quantized, never blurred)
+ * as one texture-undo step; lowering it on a painted texture loses fine detail.
  */
 export function ProjectSettingsDialog({ open, onOpenChange }: { open: boolean; onOpenChange: (v: boolean) => void }) {
   const currentName = useAppStore((s) => s.meta.name)
@@ -196,8 +196,8 @@ export function ProjectSettingsDialog({ open, onOpenChange }: { open: boolean; o
             )}
             {detailLoss && (
               <p className="rounded-md border border-amber-700/50 bg-amber-950/40 px-3 py-2 text-xs text-amber-300">
-                Lowering texture detail resamples the painted faces — fine detail will be lost and
-                texture undo history cleared. This can't be undone.
+                Lowering texture detail resamples the painted faces — fine detail will be lost.
+                Undo restores the previous scale and paint.
               </p>
             )}
             {doomed > 0 && (
