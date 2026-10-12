@@ -55,6 +55,8 @@ export type GltfExportOptions = {
   ambientOcclusion?: boolean
   /** Intensity of monochromatic noise baked into the AO texture (0–1, default 0 = no noise). */
   noiseLevel?: number
+  /** Grain cell size for the noise bakes in atlas texels (1/2/4, default 1 = per-texel). */
+  noiseScale?: number
   /** Intensity of specular-colour noise on metal materials (0–1, default 0 = off). */
   specularNoiseLevel?: number
   /** AO strength multiplier (1.0–5.0, default 1.0). */
@@ -256,22 +258,29 @@ export async function exportModelToGlb(
     const aoGroups = groups.filter((g) => g.materialClass !== 'emissive')
     // AO maps are independently excludable (`options.ambientOcclusion`); specular-noise maps
     // still bake when requested even with AO off (they share the unwrap atlas, not the AO bake).
+    // The monochromatic noise grain lives inside the AO atlas, so it must bake whenever
+    // `noiseLevel > 0` even with AO off — matching the live preview (`usePreviewAOMaps`), which
+    // shows noise with AO off. Otherwise the export silently drops the noise the preview shows.
     const wantAO = includeTextureMaps && !!options.ambientOcclusion && aoGroups.length > 0
+    const wantNoise = includeTextureMaps && (options.noiseLevel ?? 0) > 0 && aoGroups.length > 0
     const specularLevel = options.specularNoiseLevel ?? 0
-    if (includeTextureMaps && (wantAO || specularLevel > 0) && aoGroups.length > 0) {
+    if (includeTextureMaps && (wantAO || wantNoise || specularLevel > 0) && aoGroups.length > 0) {
       const unwrapped = unwrapGeometries(aoGroups.map((g) => g.geometry))
       for (let i = 0; i < aoGroups.length; i++) {
         aoGroups[i].geometry.setAttribute('uv1', new THREE.Float32BufferAttribute(unwrapped.uv1Arrays[i], 2))
       }
-      if (wantAO) {
-        const baked = bakeAOToAtlas(model, unwrapped.atlas, options.noiseLevel ?? 0, options.aoStrength ?? 1, animatedKeys, options.noiseSeed ?? 0)
+      if (wantAO || wantNoise) {
+        // Preview parity: with AO off but noise on, the bake still runs (strength 1, as in the
+        // preview) so the grain exports instead of vanishing.
+        const effectiveAo = options.ambientOcclusion ? (options.aoStrength ?? 1) : 1
+        const baked = bakeAOToAtlas(model, unwrapped.atlas, options.noiseLevel ?? 0, effectiveAo, animatedKeys, options.noiseSeed ?? 0, options.noiseScale ?? 1)
         aoTex = aoMapTexture(baked.data, baked.width, baked.height)
         textures.push(aoTex)
       }
 
       const sl = specularLevel
       if (sl > 0) {
-        const spec = makeSpecularNoiseTexture(unwrapped.atlas, sl, options.noiseSeed ?? 0)
+        const spec = makeSpecularNoiseTexture(unwrapped.atlas, sl, options.noiseSeed ?? 0, options.noiseScale ?? 1)
         metalTex = noiseMapTexture(spec.metalness.data, spec.metalness.width, spec.metalness.height)
         roughTex = noiseMapTexture(spec.roughness.data, spec.roughness.width, spec.roughness.height)
         colorTex = noiseMapTexture(spec.baseColor.data, spec.baseColor.width, spec.baseColor.height)
@@ -371,23 +380,26 @@ export async function exportModelToGlb(
     // See the textured path above: emissive materials skip AO/noise entirely.
     const aoGroups = groups.filter((g) => g.materialClass !== 'emissive')
     const wantAO = includeTextureMaps && !!options.ambientOcclusion && aoGroups.length > 0
+    const wantNoise = includeTextureMaps && (options.noiseLevel ?? 0) > 0 && aoGroups.length > 0
     const specularLevel = options.specularNoiseLevel ?? 0
-    if (includeTextureMaps && (wantAO || specularLevel > 0) && aoGroups.length > 0) {
+    if (includeTextureMaps && (wantAO || wantNoise || specularLevel > 0) && aoGroups.length > 0) {
       const unwrapped = unwrapGeometries(aoGroups.map((g) => g.geometry))
       for (let i = 0; i < aoGroups.length; i++) {
         const uv1 = new THREE.Float32BufferAttribute(unwrapped.uv1Arrays[i], 2)
         aoGroups[i].geometry.setAttribute('uv1', uv1)
         aoGroups[i].geometry.setAttribute('uv', uv1)
       }
-      if (wantAO) {
-        const baked = bakeAOToAtlas(model, unwrapped.atlas, options.noiseLevel ?? 0, options.aoStrength ?? 1, animatedKeys, options.noiseSeed ?? 0)
+      if (wantAO || wantNoise) {
+        // Preview parity — see the textured path above: noise must bake even with AO off.
+        const effectiveAo = options.ambientOcclusion ? (options.aoStrength ?? 1) : 1
+        const baked = bakeAOToAtlas(model, unwrapped.atlas, options.noiseLevel ?? 0, effectiveAo, animatedKeys, options.noiseSeed ?? 0, options.noiseScale ?? 1)
         aoTex = aoMapTexture(baked.data, baked.width, baked.height)
         textures.push(aoTex)
       }
 
       const sl = specularLevel
       if (sl > 0) {
-        const spec = makeSpecularNoiseTexture(unwrapped.atlas, sl, options.noiseSeed ?? 0)
+        const spec = makeSpecularNoiseTexture(unwrapped.atlas, sl, options.noiseSeed ?? 0, options.noiseScale ?? 1)
         metalTex = noiseMapTexture(spec.metalness.data, spec.metalness.width, spec.metalness.height)
         roughTex = noiseMapTexture(spec.roughness.data, spec.roughness.width, spec.roughness.height)
         colorTex = noiseMapTexture(spec.baseColor.data, spec.baseColor.width, spec.baseColor.height)

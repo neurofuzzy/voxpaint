@@ -1,8 +1,9 @@
 import type { StateCreator } from 'zustand'
 import type { ChamferCell, ColorCell, Coord } from '@/engine/grid/types'
-import { decodeKey, encodeKey, recomputeBounds, withinWorkingBounds } from '@/engine/grid/GridStore'
+import { decodeKey, effectiveExtent, encodeKey, recomputeBounds, withinWorkingBounds } from '@/engine/grid/GridStore'
 import { planeLogicalBasis } from '@/engine/plane/constructionPlane'
 import { axisIndex } from '@/engine/plane/planeGeometry'
+import { rectRegion } from '@/engine/tools/selectionMask'
 import type { AppState, MoveActionsSlice } from './types'
 
 type Slice = StateCreator<AppState, [['zustand/immer', never]], [], MoveActionsSlice>
@@ -87,5 +88,22 @@ export const createMoveActionsSlice: Slice = (set, get) => ({
     if (!gesture) return
     gesture = null
     get().commitStroke()
+  },
+
+  transformWholeModel: (kind) => {
+    // Model mode only — the voxel selection/float stack doesn't exist in Texture mode.
+    if (get().mode !== 'model') return
+    // A select-all + deep-lift + transform + bake, as one gesture: the full-span window covers
+    // every cell, the deep lift carries all depths, the float transform renumbers chamfers in
+    // the plane frame, and the bake lands back in place (rotation about the grid origin). One
+    // undo stroke (lift opens, bake commits); the working selection is cleared afterwards so
+    // later paints aren't clipped to it.
+    get().bakeFloatIfAny()
+    const half = effectiveExtent(get().meta.gridExtent) / 2
+    get().setSelection(rectRegion(-half, -half, half - 1, half - 1))
+    get().liftSelectionToFloat(true)
+    get().transformFloat(kind)
+    get().bakeFloatIfAny()
+    get().setSelection(null)
   },
 })

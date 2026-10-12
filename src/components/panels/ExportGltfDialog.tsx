@@ -65,6 +65,7 @@ export function ExportGltfDialog({ open, onOpenChange }: { open: boolean; onOpen
       const glb = await exportModelToGlb(model, palette, gridExtent, texture, {
         ambientOcclusion: state.exportIncludeAOMaps,
         noiseLevel,
+        noiseScale: state.noiseScale,
         specularNoiseLevel,
         aoStrength,
         glassRoughnessLevel,

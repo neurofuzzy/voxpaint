@@ -3,6 +3,7 @@ import { MARKER_COLORS } from '@/engine/markers/types'
 import type { PaletteSlotKind } from '@/engine/palette/types'
 import { GRAYSCALE } from '@/engine/texture/types'
 import { AnimationPalette } from './AnimationPalette'
+import { MovePalette } from './MovePalette'
 import { PaletteThemeMenu } from './PaletteThemeMenu'
 import { SelectionPalette } from './SelectionPalette'
 
@@ -34,9 +35,10 @@ function Swatch({ kind, index, hex }: { kind: PaletteSlotKind; index: number; he
       title={`${kind} ${index + 1}`}
       onClick={() => {
         setActivePaletteSlot({ kind, index })
-        // Picking a color drops into paint — except for the material tool, which consumes palette
-        // slots itself and must keep focus so sweeping the palette doesn't kick the user out.
-        if (activeTool !== 'material') setActiveTool('paint')
+        // Picking a color drops into paint — except for tools that consume palette slots
+        // themselves (material repaints, fill floods): they must keep focus so sweeping the
+        // palette for a fill color doesn't kick the user back out to the pencil.
+        if (activeTool !== 'material' && activeTool !== 'fill') setActiveTool('paint')
       }}
       // A `border` clips separately from the rounded gradient background, and the two curves'
       // anti-aliasing don't quite line up — leaves a stray sliver of the gradient's edge color
@@ -64,6 +66,7 @@ function Swatch({ kind, index, hex }: { kind: PaletteSlotKind; index: number; he
  * `activeGrayIndex`. */
 function GrayscalePalette() {
   const activeGrayIndex = useAppStore((s) => s.activeGrayIndex)
+  const activeTool = useAppStore((s) => s.activeTool)
   const setActiveGrayIndex = useAppStore((s) => s.setActiveGrayIndex)
   const setActiveTool = useAppStore((s) => s.setActiveTool)
   return (
@@ -78,7 +81,9 @@ function GrayscalePalette() {
               aria-label={`gray ${index}`}
               onClick={() => {
                 setActiveGrayIndex(index)
-                setActiveTool('paint')
+                // Same fill exemption as the voxel Swatch above: picking a gray for a flood
+                // must not kick the texture fill tool back out to paint.
+                if (activeTool !== 'fill') setActiveTool('paint')
               }}
               className={
                 `${SWATCH} rounded-full ring-2 transition-transform hover:scale-110 ` +
@@ -128,6 +133,10 @@ export function FloatingPalette() {
   // The Select tool takes over the pill with the selection's own subtools — there's nothing to
   // pick a color for while selecting. Animate mode is exempt: it has no selection to act on.
   const showSelectionTools = activeTool === 'select' && mode !== 'animate'
+  // The Move tool likewise never paints: the pill hosts whole-model rotate/flip instead of
+  // colors. Model mode only — in Texture mode Move still translates texels, which takes no color
+  // either, but whole-model voxel transforms don't apply there, so the gray palette stays.
+  const showMoveTools = activeTool === 'move' && mode === 'model'
 
   return (
     <div
@@ -138,6 +147,8 @@ export function FloatingPalette() {
     >
       {showSelectionTools ? (
         <SelectionPalette />
+      ) : showMoveTools ? (
+        <MovePalette />
       ) : mode === 'texture' ? (
         <GrayscalePalette />
       ) : mode === 'animate' ? (

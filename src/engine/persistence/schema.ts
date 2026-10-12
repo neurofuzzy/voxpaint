@@ -11,6 +11,8 @@ export type ViewSettings = {
   ambientOcclusion: boolean
   noiseLevel: number
   specularNoiseLevel: number
+  /** Baked-grain cell size (1/2/4 atlas texels). Absent on older files, defaulting to 1. */
+  noiseScale?: number
   aoStrength: number
   glassRoughnessLevel: number
   exposure: number

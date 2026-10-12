@@ -280,6 +280,7 @@ export function usePixelCanvasTools(canvasRef: React.RefObject<HTMLCanvasElement
     bakeFloatIfAny: store.bakeFloatIfAny,
     beginStroke: store.beginStroke,
     commitStroke: store.commitStroke,
+    correctChamferStroke: store.correctChamferStroke,
     linePreview,
     setLinePreview,
     selectPreview,

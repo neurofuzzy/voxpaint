@@ -18,8 +18,8 @@ export function FileMenu() {
   const setStatusMessage = useAppStore((s) => s.setStatusMessage)
 
   function handleExport() {
-    const { model, palette, meta, texture, ambientOcclusion, noiseLevel, specularNoiseLevel, aoStrength, glassRoughnessLevel, exposure, exportScaleFactor, exportAnchor, exportAlignToObjectBounds, exportIncludeTextureMaps, exportIncludeAOMaps, exportIncludeMarkers, animSettings, sliceMasks, slicePivots, markers } = useAppStore.getState()
-    downloadProjectFile(serializeProject(model, palette, meta, texture, { ambientOcclusion, noiseLevel, specularNoiseLevel, aoStrength, glassRoughnessLevel, exposure, exportScaleFactor, exportAnchor, exportAlignToObjectBounds, exportIncludeTextureMaps, exportIncludeAOMaps, exportIncludeMarkers }, animSettings, sliceMasks, slicePivots, markers))
+    const { model, palette, meta, texture, ambientOcclusion, noiseLevel, specularNoiseLevel, noiseScale, aoStrength, glassRoughnessLevel, exposure, exportScaleFactor, exportAnchor, exportAlignToObjectBounds, exportIncludeTextureMaps, exportIncludeAOMaps, exportIncludeMarkers, animSettings, sliceMasks, slicePivots, markers } = useAppStore.getState()
+    downloadProjectFile(serializeProject(model, palette, meta, texture, { ambientOcclusion, noiseLevel, specularNoiseLevel, noiseScale, aoStrength, glassRoughnessLevel, exposure, exportScaleFactor, exportAnchor, exportAlignToObjectBounds, exportIncludeTextureMaps, exportIncludeAOMaps, exportIncludeMarkers }, animSettings, sliceMasks, slicePivots, markers))
     showToast('Project exported.')
   }
 
@@ -59,6 +59,7 @@ export function FileMenu() {
         s.ambientOcclusion = view.ambientOcclusion ?? false
         s.noiseLevel = view.noiseLevel ?? 0
         s.specularNoiseLevel = view.specularNoiseLevel ?? 0
+        s.noiseScale = view.noiseScale === 2 || view.noiseScale === 4 ? view.noiseScale : 1
         s.aoStrength = view.aoStrength ?? 1
         s.glassRoughnessLevel = view.glassRoughnessLevel ?? 0.3
         s.exposure = view.exposure ?? 1

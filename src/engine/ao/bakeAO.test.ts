@@ -3,8 +3,8 @@ import { emptyModel, encodeKey, recomputeBounds } from '@/engine/grid/GridStore'
 import type { VoxelModel } from '@/engine/grid/types'
 import { DEFAULT_PALETTE } from '@/engine/palette/defaultPalette'
 import { buildOptimizedVoxelGroups } from '@/engine/instancing/voxelMeshBuilder'
-import { unwrapGeometries } from './uvUnwrap'
-import { bakeAOToAtlas } from './bakeAO'
+import { unwrapGeometries, type UnwrappedAtlas } from './uvUnwrap'
+import { bakeAOToAtlas, makeSpecularNoiseTexture } from './bakeAO'
 
 function bakeForModel(model: VoxelModel): { data: Uint8ClampedArray; width: number; height: number } {
   const { groups } = buildOptimizedVoxelGroups(model, DEFAULT_PALETTE)
@@ -57,5 +57,89 @@ describe('bakeAOToAtlas', () => {
       expect(data[i]).toBeGreaterThanOrEqual(0)
       expect(data[i]).toBeLessThanOrEqual(255)
     }
+  })
+})
+
+/** Mirrors bakeAO's PADDING: rect texels with tx/ty inside [PADDING, texSize - PADDING) hold baked
+ * values, the one-texel rim stays at the 255 fill. */
+const PADDING = 1
+
+function atlasForModel(model: VoxelModel): UnwrappedAtlas {
+  const { groups } = buildOptimizedVoxelGroups(model, DEFAULT_PALETTE)
+  return unwrapGeometries(groups.map((g) => g.geometry)).atlas
+}
+
+/** R-channel values of every interior (non-padding) texel, grouped by rect-relative bs×bs block.
+ * Voxel vertices sit on integer coordinates, so world-texel block boundaries align with
+ * rect-relative bs multiples and every block in the map is a full bs×bs square. */
+function interiorBlocks(atlas: UnwrappedAtlas, data: Uint8ClampedArray, size: number, bs: number): Map<string, number[]> {
+  const blocks = new Map<string, number[]>()
+  for (const rect of atlas.rects) {
+    for (let ty = PADDING; ty < rect.texHeight - PADDING; ty++) {
+      for (let tx = PADDING; tx < rect.texWidth - PADDING; tx++) {
+        const key = `${rect.atlasX},${rect.atlasY},${Math.floor((tx - PADDING) / bs)},${Math.floor((ty - PADDING) / bs)}`
+        const value = data[((rect.atlasY + ty) * size + (rect.atlasX + tx)) * 4]
+        const arr = blocks.get(key)
+        if (arr) arr.push(value)
+        else blocks.set(key, [value])
+      }
+    }
+  }
+  return blocks
+}
+
+describe('noiseScale quantization', () => {
+  // aoStrength 0 isolates the grain: shaded is flat 1 everywhere, so every interior texel reads
+  // round((1 − hash) × 255) — pure noise, no occlusion shading to blur block edges.
+  const model = modelFrom([[0, 0, 0]])
+
+  it('bakes 2x2 constant blocks at scale 2 (nearest, not blurred)', () => {
+    const atlas = atlasForModel(model)
+    const { data, width } = bakeAOToAtlas(model, atlas, 1, 0, undefined, 7, 2)
+    const blocks = interiorBlocks(atlas, data, width, 2)
+    expect(blocks.size).toBeGreaterThan(1)
+    for (const values of blocks.values()) {
+      expect(new Set(values).size).toBe(1)
+    }
+    // The grain still varies block to block.
+    expect(new Set([...blocks.values()].map((v) => v[0])).size).toBeGreaterThan(1)
+  })
+
+  it('bakes 4x4 constant blocks at scale 4', () => {
+    const atlas = atlasForModel(model)
+    const { data, width } = bakeAOToAtlas(model, atlas, 1, 0, undefined, 7, 4)
+    const blocks = interiorBlocks(atlas, data, width, 4)
+    expect(blocks.size).toBeGreaterThan(1)
+    for (const values of blocks.values()) {
+      expect(new Set(values).size).toBe(1)
+    }
+    expect(new Set([...blocks.values()].map((v) => v[0])).size).toBeGreaterThan(1)
+  })
+
+  it('keeps per-texel grain at scale 1 (adjacent texels differ)', () => {
+    const atlas = atlasForModel(model)
+    const { data, width } = bakeAOToAtlas(model, atlas, 1, 0, undefined, 7, 1)
+    let differingAdjacentPairs = 0
+    for (const rect of atlas.rects) {
+      for (let ty = PADDING; ty < rect.texHeight - PADDING; ty++) {
+        for (let tx = PADDING; tx < rect.texWidth - PADDING - 1; tx++) {
+          const a = data[((rect.atlasY + ty) * width + (rect.atlasX + tx)) * 4]
+          const b = data[((rect.atlasY + ty) * width + (rect.atlasX + tx + 1)) * 4]
+          if (a !== b) differingAdjacentPairs++
+        }
+      }
+    }
+    expect(differingAdjacentPairs).toBeGreaterThan(0)
+  })
+
+  it('quantizes the specular metal grain the same way', () => {
+    const atlas = atlasForModel(model)
+    const spec = makeSpecularNoiseTexture(atlas, 1, 7, 2)
+    const blocks = interiorBlocks(atlas, spec.metalness.data, spec.metalness.width, 2)
+    expect(blocks.size).toBeGreaterThan(1)
+    for (const values of blocks.values()) {
+      expect(new Set(values).size).toBe(1)
+    }
+    expect(new Set([...blocks.values()].map((v) => v[0])).size).toBeGreaterThan(1)
   })
 })

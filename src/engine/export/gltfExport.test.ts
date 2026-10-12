@@ -273,6 +273,32 @@ function materialsWithOcclusion(json: GlbJson): string[] {
   return (json.materials ?? []).filter((m) => m.occlusionTexture !== undefined).map((m) => m.name ?? '')
 }
 
+describe('exportModelToGlb noise without AO', () => {
+  it('still emits the noise-carrying occlusionTexture when ambientOcclusion is off but noiseLevel > 0', async () => {
+    const json = glbJson(
+      await exportModelToGlb(pillarVoxel(), DEFAULT_PALETTE, 16, undefined, {
+        includeTextureMaps: true,
+        ambientOcclusion: false,
+        noiseLevel: 0.5,
+      }),
+    )
+    // The grain lives inside the AO atlas: dropping the map would drop the noise the preview
+    // shows, so it must export even with AO off (matching usePreviewAOMaps).
+    expect(materialsWithOcclusion(json).length).toBeGreaterThan(0)
+  })
+
+  it('omits occlusionTexture when both ambientOcclusion is off and noiseLevel is 0', async () => {
+    const json = glbJson(
+      await exportModelToGlb(pillarVoxel(), DEFAULT_PALETTE, 16, undefined, {
+        includeTextureMaps: true,
+        ambientOcclusion: false,
+        noiseLevel: 0,
+      }),
+    )
+    expect(materialsWithOcclusion(json)).toEqual([])
+  })
+})
+
 describe('exportModelToGlb AO map exclusion', () => {
   it('emits occlusionTexture with ambientOcclusion on and omits it when off (maps otherwise intact)', async () => {
     const withAO = glbJson(

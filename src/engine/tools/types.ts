@@ -57,6 +57,9 @@ export interface ToolContext {
   bakeFloatIfAny: () => void
   beginStroke: () => void
   commitStroke: () => void
+  /** End-of-stroke bevel correction (see `PaintActionsSlice.correctChamferStroke`) — runs inside
+   * the open stroke, before `commitStroke`. No-op outside a stroke or for non-bevel content. */
+  correctChamferStroke: () => void
 
   /** Design markers (color-coded annotation points, not voxels). Live store-backed callbacks so
    * the marker tool never reads a stale render-time snapshot after its own writes. */

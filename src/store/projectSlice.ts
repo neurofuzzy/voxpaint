@@ -181,6 +181,7 @@ export const createProjectSlice: Slice = (set, get) => ({
       state.activeBoxFace = null
       state.noiseLevel = 0
       state.specularNoiseLevel = 0
+      state.noiseScale = 1
       state.aoStrength = 1
       state.exportScaleFactor = 100
       state.exportAnchor = 'center'

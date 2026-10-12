@@ -40,6 +40,7 @@ export function shortcutGroups(mod: string): ShortcutGroup[] {
     {
       title: 'Selection & clipboard',
       shortcuts: [
+        { keys: [mod, 'A'], label: 'Select all' },
         { keys: [mod, 'C'], label: 'Copy selection' },
         { keys: [mod, 'X'], label: 'Cut selection' },
         { keys: [mod, 'V'], label: 'Paste in place' },

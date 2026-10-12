@@ -152,6 +152,10 @@ export type SelectionSlice = {
  * commits the plane to whichever face is current at click time (see handleVoxelFaceClick). */
 export type HoveredFace = { cellKey: CellKey; axis: Axis; orientation: Orientation }
 
+/** Baked-grain cell size in atlas texels, shared by the AO noise and the metal specular noise:
+ * 1 = per-texel grain, 2/4 = chunkier 2×2 / 4×4 quantized blocks (nearest, never blurred). */
+export type NoiseScale = 1 | 2 | 4
+
 export type ViewSlice = {
   fullscreen: boolean
   /** 3D Edit mode: clicks/drags in the viewport dispatch the active paint/erase/eyedropper tool
@@ -172,6 +176,8 @@ export type ViewSlice = {
   noiseLevel: number
   /** 3D preview: intensity of specular noise on metal materials (0–1, default 0 = off). */
   specularNoiseLevel: number
+  /** 3D preview + export: grain cell size for both noise bakes (default 1 = per-texel). */
+  noiseScale: NoiseScale
   /** 3D preview: roughness level for glass materials (0–1, default 0.3 = slightly frosted). */
   glassRoughnessLevel: number
   /** Last-known triangle counts from the optimized-mesh builder for the header stats line. */
@@ -215,6 +221,7 @@ export type ViewSlice = {
   setAmbientOcclusion: (v: boolean) => void
   setNoiseLevel: (v: number) => void
   setSpecularNoiseLevel: (v: number) => void
+  setNoiseScale: (v: NoiseScale) => void
   setGlassRoughnessLevel: (v: number) => void
   setMeshTriangles: (v: { optimized: number; raw: number } | null) => void
   setExposure: (v: number) => void
@@ -246,6 +253,17 @@ export type PaintActionsSlice = {
    * (auto-resolved from neighbors). Returns false if out of bounds.
    */
   paintCell: (u: number, v: number) => boolean
+  /**
+   * End-of-stroke correction pass for bevel (ramp) cells painted since `beginStroke()`: re-runs
+   * neighbor classification against the stroke's final color layer and overwrites each
+   * same-stroke cell's `resolvedTo` — including cells that already resolved mid-stroke against
+   * incomplete neighbors (e.g. a corner that read as convex, then gained a third side and is
+   * really a ramp). Must run inside the open stroke (before `commitStroke()`) so the fix lands
+   * in the same undo step. Still-unresolvable cells keep `resolvedTo: null`. Pending (fallback)
+   * wedges only ever upgrade null → resolved, never overwrite — their freeze + click-to-rotate
+   * contract is untouched. No-op outside an open stroke.
+   */
+  correctChamferStroke: () => void
   /** Erases both color and chamfer layers at a cell. */
   eraseCell: (coord: Coord) => void
   /**
@@ -335,6 +353,10 @@ export type MoveActionsSlice = {
   updateMove: (du: number, dv: number) => void
   /** Ends the Move drag and commits the undo stroke. */
   endMove: () => void
+  /** Rotates/mirrors the entire model in the active plane's frame (about the grid origin) as one
+   * undo step, leaving no selection behind. Model mode only. Chamfer shapes ride along renumbered
+   * exactly like a select-all + transform + bake would — markers are untouched. */
+  transformWholeModel: (kind: SelectionTransformKind) => void
 }
 
 /** The top-level authoring mode. `model` = voxel modeling (the original app); `animate` = per-slice

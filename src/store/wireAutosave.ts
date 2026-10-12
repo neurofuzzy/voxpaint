@@ -18,6 +18,7 @@ export function restoreAutosave(): void {
       state.ambientOcclusion = view.ambientOcclusion ?? false
       state.noiseLevel = view.noiseLevel ?? 0
       state.specularNoiseLevel = view.specularNoiseLevel ?? 0
+      state.noiseScale = view.noiseScale === 2 || view.noiseScale === 4 ? view.noiseScale : 1
       state.aoStrength = view.aoStrength ?? 1
       state.glassRoughnessLevel = view.glassRoughnessLevel ?? 0.3
       state.exposure = view.exposure ?? 1
@@ -44,7 +45,7 @@ const flush = debounce(() => {
       state.palette,
       state.meta,
       state.texture,
-      { ambientOcclusion: state.ambientOcclusion, noiseLevel: state.noiseLevel, specularNoiseLevel: state.specularNoiseLevel, aoStrength: state.aoStrength, glassRoughnessLevel: state.glassRoughnessLevel, exposure: state.exposure, exportScaleFactor: state.exportScaleFactor, exportAnchor: state.exportAnchor, exportAlignToObjectBounds: state.exportAlignToObjectBounds, exportDisableMeshOptimization: state.exportDisableMeshOptimization, exportIncludeTextureMaps: state.exportIncludeTextureMaps, exportIncludeAOMaps: state.exportIncludeAOMaps, exportIncludeMarkers: state.exportIncludeMarkers },
+      { ambientOcclusion: state.ambientOcclusion, noiseLevel: state.noiseLevel, specularNoiseLevel: state.specularNoiseLevel, noiseScale: state.noiseScale, aoStrength: state.aoStrength, glassRoughnessLevel: state.glassRoughnessLevel, exposure: state.exposure, exportScaleFactor: state.exportScaleFactor, exportAnchor: state.exportAnchor, exportAlignToObjectBounds: state.exportAlignToObjectBounds, exportDisableMeshOptimization: state.exportDisableMeshOptimization, exportIncludeTextureMaps: state.exportIncludeTextureMaps, exportIncludeAOMaps: state.exportIncludeAOMaps, exportIncludeMarkers: state.exportIncludeMarkers },
       state.animSettings,
       state.sliceMasks,
       state.slicePivots,
