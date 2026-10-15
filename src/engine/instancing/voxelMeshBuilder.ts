@@ -170,15 +170,104 @@ function emitChamfer(faces: Face[], base: THREE.BufferGeometry, matrix: THREE.Ma
   }
 }
 
+/** Per-cell facts the CSG path's voxel-level interior cull needs (see `deleteHiddenBoxFaces`). */
+interface CellKindInfo {
+  opaque: boolean
+  fullCube: boolean
+  /** `${materialClass}:${colorKey}` identity — faces are only culled against a *different* group. */
+  matColorKey: string
+}
+
+/** Neighbour offsets in `BoxGeometry` face order (+x, -x, +y, -y, +z, -z) — order itself unused. */
+const BOX_FACE_DIRS: Coord[] = [
+  [1, 0, 0],
+  [-1, 0, 0],
+  [0, 1, 0],
+  [0, -1, 0],
+  [0, 0, 1],
+  [0, 0, -1],
+]
+
+/**
+ * Deletes the faces of an untranslated unit `BoxGeometry` that abut an occupied, opaque,
+ * full-cube neighbour cell in the same animation slice belonging to a *different*
+ * (materialClass, colorKey) group — both sides of such an interface are inside the combined
+ * solid and never seen, so the neighbour deletes its own touching face by the same rule and the
+ * coincident pair never reaches the CSG groups (which are per-material and could otherwise never
+ * cancel it — e.g. an emissive block directly under a matte cap exporting coincident
+ * opposite-normal quads that z-fight in some engines).
+ *
+ * Only cross-group faces are culled here: same-group interfaces are left for the CSG boolean
+ * union, which must keep seeing closed solids to behave exactly as before. Deliberately
+ * conservative otherwise: no-op for glass cells and for faces abutting glass, resolved-chamfer
+ * (partially-filled cube: part of the face may show through the cut), or empty cells. Mutates
+ * the geometry's index in place; groups are cleared since face ranges change (single-material
+ * output never reads them). Face matching reads the normal attribute, so it is independent of
+ * `BoxGeometry`'s face ordering.
+ */
+function deleteHiddenBoxFaces(
+  geom: THREE.BufferGeometry,
+  coord: Coord,
+  selfKey: CellKey,
+  selfSlice: SliceKey,
+  kindByKey: Map<CellKey, CellKindInfo>,
+  sliceOf: (key: CellKey) => SliceKey,
+): void {
+  const self = kindByKey.get(selfKey)
+  if (!self?.opaque || !self.fullCube) return
+  const hidden = new Set<string>()
+  for (const [dx, dy, dz] of BOX_FACE_DIRS) {
+    const neighbourKey = encodeKey(coord[0] + dx, coord[1] + dy, coord[2] + dz)
+    const neighbour = kindByKey.get(neighbourKey)
+    if (!neighbour?.opaque || !neighbour.fullCube) continue
+    // Same-group interfaces are the CSG union's job (it must keep seeing closed solids);
+    // faces between different animation nodes stay — the cells move apart at runtime.
+    if (neighbour.matColorKey === self.matColorKey && sliceOf(neighbourKey) === selfSlice) continue
+    if (sliceOf(neighbourKey) !== selfSlice) continue
+    hidden.add(`${dx},${dy},${dz}`)
+  }
+  if (hidden.size === 0) return
+  const index = geom.getIndex()!
+  const normal = geom.getAttribute('normal') as THREE.BufferAttribute
+  const n = new THREE.Vector3()
+  const keep: number[] = []
+  for (let t = 0; t < index.count / 3; t++) {
+    n.fromBufferAttribute(normal, index.getX(t * 3))
+    if (hidden.has(`${Math.round(n.x)},${Math.round(n.y)},${Math.round(n.z)}`)) continue
+    keep.push(index.getX(t * 3), index.getX(t * 3 + 1), index.getX(t * 3 + 2))
+  }
+  geom.setIndex(keep)
+  geom.clearGroups()
+}
+
+/** Per-cell opacity + full-cube facts for `deleteHiddenBoxFaces`, derived from paint state. */
+function buildCellKindMap(model: VoxelModel, palette: PaletteState): Map<CellKey, CellKindInfo> {
+  const kindByKey = new Map<CellKey, CellKindInfo>()
+  const color = new THREE.Color()
+  for (const key of model.color.keys()) {
+    const slot = model.color.get(key)!.paletteSlot
+    const materialClass = materialClassFor(slot.kind)
+    kindByKey.set(key, {
+      opaque: materialClass !== 'glass',
+      fullCube: !model.chamfer.get(key)?.resolvedTo,
+      matColorKey: `${materialClass}:${color.set(resolveSlotColor(palette, slot)).getHex()}`,
+    })
+  }
+  return kindByKey
+}
+
 /**
  * Shell pass: drop back-to-back interior face pairs. Two faces with the same (order-independent)
  * quantized vertex-triple and opposing normals are the touching sides of two adjacent voxels. Culling:
- * - **Same material class:** both faces are dropped — a same-material interface is genuinely hidden.
+ * - **Both sides opaque** (matte/emissive/metal, same or different class): both faces are dropped —
+ *   the interface sits inside the combined solid and is never seen. Each material's mesh keeps a
+ *   hidden hole at the interface; the holes coincide, so nothing shows from outside. (Keeping both
+ *   sides instead leaves coincident opposite-normal quads that z-fight in some engines — e.g. an
+ *   emissive lamp block directly under a matte cap.)
  * - **Glass against a different material:** only the **glass** face is dropped, keeping the opaque
  *   neighbour's face. This avoids the glass surface z-fighting the coincident solid face behind it,
  *   while the solid face stays visible through the transmission.
- * - **Two different opaque classes** (e.g. matte↔metal): both kept — the interface is inside the solid
- *   model, never seen, so there's nothing to z-fight and different classes live in different meshes.
+ * - **Glass against glass:** both dropped (same-class rule).
  * Boundary faces (against empty space) and non-coincident faces are always kept.
  *
  * When `nodeAssignment` is given (animated export), a pair spanning two *different* animation nodes
@@ -206,8 +295,12 @@ export function removeInteriorFaces(faces: Face[], nodeAssignment?: Map<CellKey,
     if (faces[i].materialClass === faces[j].materialClass) {
       removed.add(i) // same material → both sides hidden
       removed.add(j)
+    } else if (faces[i].materialClass !== 'glass' && faces[j].materialClass !== 'glass') {
+      removed.add(i) // different opaque classes (e.g. matte↔emissive) → both sides hidden
+      removed.add(j)
     } else {
-      // Different classes: drop only a glass face (it would z-fight the solid face behind it).
+      // Glass against a different class: drop only the glass face (it would z-fight the solid
+      // face behind it, while the solid face stays visible through the transmission).
       if (faces[i].materialClass === 'glass') removed.add(i)
       if (faces[j].materialClass === 'glass') removed.add(j)
     }
@@ -283,9 +376,11 @@ export interface OptimizedVoxelGroups {
 
 /**
  * Build per-voxel solid geometry grouped by (materialClass, colorKey), then CSG-union each group.
- * CSG boolean union naturally discards interior faces between adjacent same-colour voxels and
- * never creates false edge-bridges between disconnected components. Adjacent voxels of different
- * colours keep their shared interface faces (they live in separate CSG groups).
+ * CSG boolean union naturally discards interior faces between adjacent same-group voxels and
+ * never creates false edge-bridges between disconnected components. Exactly-coincident
+ * back-to-back interface faces between adjacent *opaque* groups are then culled on both sides
+ * (see `cullCoincidentOpaqueInterfaces` in `meshOptimizer.ts`) — the interface is inside the
+ * combined solid. Glass-involved interfaces keep the solid side (glass side only is dropped).
  *
  * Returns one `ColorGroupGeometry` per (materialClass, colorKey) pair — the consumer creates one
  * solid-colour PBR material per group. No vertex colours are needed.
@@ -295,6 +390,8 @@ export function buildOptimizedVoxelGroups(model: VoxelModel, palette: PaletteSta
   const color = new THREE.Color()
   const matrix = new THREE.Matrix4()
   let rawTriangles = 0
+  const kindByKey = buildCellKindMap(model, palette)
+  const noSlice = () => ''
 
   for (const key of model.color.keys()) {
     const coord = decodeKey(key)
@@ -317,12 +414,13 @@ export function buildOptimizedVoxelGroups(model: VoxelModel, palette: PaletteSta
       geom = base.clone()
       chamferInstanceMatrix(coord, chamfer.planeAxis, chamfer.planeOrientation, chamfer.resolvedTo.rotation, matrix)
       geom.applyMatrix4(matrix)
+      rawTriangles += triangleCount(geom)
     } else {
       geom = new THREE.BoxGeometry(1, 1, 1)
+      rawTriangles += triangleCount(geom)
+      deleteHiddenBoxFaces(geom, coord, key, '', kindByKey, noSlice)
       geom.translate(coord[0] + 0.5, coord[1] + 0.5, coord[2] + 0.5)
     }
-
-    rawTriangles += triangleCount(geom)
     group.geometries.push(geom)
   }
 
@@ -367,6 +465,8 @@ export function buildOptimizedVoxelGroupsBySlice(
   const color = new THREE.Color()
   const matrix = new THREE.Matrix4()
   let rawTriangles = 0
+  const kindByKey = buildCellKindMap(model, palette)
+  const sliceOf = (key: CellKey): SliceKey => nodeAssignment.get(key) ?? ''
 
   for (const key of model.color.keys()) {
     const coord = decodeKey(key)
@@ -391,12 +491,13 @@ export function buildOptimizedVoxelGroupsBySlice(
       geom = base.clone()
       chamferInstanceMatrix(coord, chamfer.planeAxis, chamfer.planeOrientation, chamfer.resolvedTo.rotation, matrix)
       geom.applyMatrix4(matrix)
+      rawTriangles += triangleCount(geom)
     } else {
       geom = new THREE.BoxGeometry(1, 1, 1)
+      rawTriangles += triangleCount(geom)
+      deleteHiddenBoxFaces(geom, coord, key, sliceKey, kindByKey, sliceOf)
       geom.translate(coord[0] + 0.5, coord[1] + 0.5, coord[2] + 0.5)
     }
-
-    rawTriangles += triangleCount(geom)
     group.geometries.push(geom)
   }
 

@@ -24,12 +24,18 @@ interface Tri {
 /**
  * CSG-based mesh optimizer. Groups per-voxel closed (watertight) solid geometries by
  * (materialClass, colorKey), then binary-tree-unions each group through ThreeBSP. The CSG
- * boolean union naturally discards interior faces between adjacent same-colour voxels while
+ * boolean union naturally discards interior faces between adjacent same-group voxels while
  * preserving disconnected components without accidental edge-sharing bridges.
  *
- * Because colour separation happens *before* unioning, adjacent voxels of different colours
- * keep their shared interface faces. Each result group carries a single `colorKey` and
- * `materialClass` — the consumer creates one solid-colour material (no vertex colors needed).
+ * Because colour separation happens *before* unioning, the union alone can't see interfaces
+ * between different groups — so after unioning, `cullCoincidentOpaqueInterfaces` drops
+ * exactly-coincident back-to-back triangles shared by two *opaque* (non-glass) groups (both
+ * sides: the interface is inside the combined solid). Glass-involved interfaces are left alone
+ * here — the glass side is handled by `removeOccludedGlassFaces` instead, which keeps the
+ * solid neighbour's face visible through the transmission.
+ *
+ * Each result group carries a single `colorKey` and `materialClass` — the consumer creates one
+ * solid-colour material (no vertex colors needed).
  */
 
 export interface VoxelGroup {
@@ -72,9 +78,10 @@ function unionAll(bsps: ThreeBSP[]): ThreeBSP | null {
 
 /**
  * For each `VoxelGroup`, transform every solid geometry into a ThreeBSP tree, binary-tree-union
- * them into a single watertight surface, run a coplanar-face merge pass to reduce triangle count,
- * and convert the result back to BufferGeometry. Each output entry carries the group's `colorKey`
- * and `materialClass` — the caller applies a solid-colour material (no vertex colors).
+ * them into a single watertight surface, cull coincident opaque interfaces shared with other
+ * groups (see `cullCoincidentOpaqueInterfaces`), run a coplanar-face merge pass to reduce triangle
+ * count, and convert the result back to BufferGeometry. Each output entry carries the group's
+ * `colorKey` and `materialClass` — the caller applies a solid-colour material (no vertex colors).
  *
  * `isOccupied`, when given, additionally strips any **glass** group's faces that back onto an
  * occupied grid cell (see `removeOccludedGlassFaces`) — right after the CSG union, before the
@@ -85,7 +92,7 @@ export function optimizeGroupsByCSG<T extends VoxelGroup>(
   mergeCoplanar = true,
   isOccupied?: (x: number, y: number, z: number) => boolean,
 ): (ColorGroupGeometry & Omit<T, keyof VoxelGroup>)[] {
-  const results: (ColorGroupGeometry & Omit<T, keyof VoxelGroup>)[] = []
+  const postUnion: { group: T; geometry: THREE.BufferGeometry }[] = []
 
   for (const group of groups) {
     if (group.geometries.length === 0) continue
@@ -103,16 +110,25 @@ export function optimizeGroupsByCSG<T extends VoxelGroup>(
         csgGeom.dispose()
         csgGeom = culled
       }
-      const optimized = mergeCoplanar ? mergeCoplanarFaces(csgGeom) : csgGeom
-      if (mergeCoplanar) csgGeom.dispose()
-      const { geometries: _geometries, colorKey, materialClass, ...rest } = group
-      results.push({
-        colorKey,
-        materialClass,
-        geometry: optimized,
-        ...rest,
-      } as ColorGroupGeometry & Omit<T, keyof VoxelGroup>)
+      postUnion.push({ group, geometry: csgGeom })
     }
+  }
+
+  // Cross-group interior cull while triangles still correspond ~1:1 to per-voxel faces (the
+  // coplanar merge below re-triangulates them into multi-cell polygons that no longer match).
+  cullCoincidentOpaqueInterfaces(postUnion)
+
+  const results: (ColorGroupGeometry & Omit<T, keyof VoxelGroup>)[] = []
+  for (const { group, geometry } of postUnion) {
+    const optimized = mergeCoplanar ? mergeCoplanarFaces(geometry) : geometry
+    if (mergeCoplanar) geometry.dispose()
+    const { geometries: _geometries, colorKey, materialClass, ...rest } = group
+    results.push({
+      colorKey,
+      materialClass,
+      geometry: optimized,
+      ...rest,
+    } as ColorGroupGeometry & Omit<T, keyof VoxelGroup>)
   }
 
   return results
@@ -178,6 +194,110 @@ export function removeOccludedGlassFaces(
   out.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3))
   out.setAttribute('normal', new THREE.Float32BufferAttribute(normals, 3))
   return out
+}
+
+/**
+ * Cross-group interior-face cull for the CSG path. After each group's own union, an interface
+ * between two adjacent voxels of different (materialClass, colorKey) groups survives as a pair
+ * of exactly-coincident, back-to-back triangles — one in each group's geometry. Same
+ * order-independent quantized vertex-triple, opposing normals: the touching sides of the two
+ * voxels. When both sides are opaque (non-glass) both triangles are dropped — the interface is
+ * inside the combined solid and never seen. Each group's mesh keeps a hidden hole there; the
+ * holes coincide, so nothing shows from outside. (Leaving both sides in used to export
+ * coincident opposite-normal quads — e.g. an emissive block under a matte cap — that z-fight
+ * in some engines.)
+ *
+ * Deliberately conservative, mirroring `removeInteriorFaces`:
+ * - Glass-involved pairs are skipped — the glass side is owned by `removeOccludedGlassFaces`
+ *   (which runs before this), and the solid neighbour's face must stay visible through it.
+ * - Pairs spanning different animation `sliceKey`s are skipped — those cells move apart
+ *   independently at runtime, so the face between them is real, not hidden.
+ * - Only exactly-coincident pairs (precisely 2 triangles sharing one triple, from different
+ *   groups) are culled. Partial chamfer overlaps never match, so exposed remainders survive.
+ */
+function cullCoincidentOpaqueInterfaces(entries: { group: VoxelGroup; geometry: THREE.BufferGeometry }[]): void {
+  if (entries.length < 2) return
+
+  interface TriRef {
+    entry: number
+    tri: number
+    nx: number
+    ny: number
+    nz: number
+  }
+
+  const byKey = new Map<string, TriRef[]>()
+  const v = new THREE.Vector3()
+  const n = new THREE.Vector3()
+  entries.forEach(({ geometry }, entry) => {
+    const pos = geometry.getAttribute('position') as THREE.BufferAttribute | undefined
+    const nrm = geometry.getAttribute('normal') as THREE.BufferAttribute | undefined
+    if (!pos || !nrm) return
+    const keys: string[] = new Array(pos.count)
+    for (let i = 0; i < pos.count; i++) {
+      v.fromBufferAttribute(pos, i)
+      keys[i] = vertexKey(v)
+    }
+    for (let t = 0; t < pos.count / 3; t++) {
+      const key = [keys[t * 3], keys[t * 3 + 1], keys[t * 3 + 2]].sort().join('|')
+      n.fromBufferAttribute(nrm, t * 3)
+      const len = n.length() || 1
+      const arr = byKey.get(key)
+      const ref: TriRef = { entry, tri: t, nx: n.x / len, ny: n.y / len, nz: n.z / len }
+      if (arr) arr.push(ref)
+      else byKey.set(key, [ref])
+    }
+  })
+
+  const sliceOf = (group: VoxelGroup): string =>
+    ((group as unknown as { sliceKey?: unknown }).sliceKey as string | undefined) ?? ''
+
+  const condemned = new Map<number, Set<number>>()
+  const mark = (entry: number, tri: number) => {
+    let set = condemned.get(entry)
+    if (!set) {
+      set = new Set<number>()
+      condemned.set(entry, set)
+    }
+    set.add(tri)
+  }
+
+  for (const refs of byKey.values()) {
+    if (refs.length !== 2) continue
+    const [a, b] = refs
+    if (a.entry === b.entry) continue // within-group coincidence is the union's own job
+    const groupA = entries[a.entry].group
+    const groupB = entries[b.entry].group
+    if (groupA.materialClass === 'glass' || groupB.materialClass === 'glass') continue
+    if (sliceOf(groupA) !== sliceOf(groupB)) continue // separate animation nodes
+    if (a.nx * b.nx + a.ny * b.ny + a.nz * b.nz >= -0.9) continue // not back-to-back
+    mark(a.entry, a.tri)
+    mark(b.entry, b.tri)
+  }
+
+  if (condemned.size === 0) return
+
+  for (const [entry, tris] of condemned) {
+    const geometry = entries[entry].geometry
+    const pos = geometry.getAttribute('position') as THREE.BufferAttribute
+    const nrm = geometry.getAttribute('normal') as THREE.BufferAttribute
+    const positions: number[] = []
+    const normals: number[] = []
+    for (let t = 0; t < pos.count / 3; t++) {
+      if (tris.has(t)) continue
+      for (let k = 0; k < 3; k++) {
+        v.fromBufferAttribute(pos, t * 3 + k)
+        positions.push(v.x, v.y, v.z)
+        n.fromBufferAttribute(nrm, t * 3 + k)
+        normals.push(n.x, n.y, n.z)
+      }
+    }
+    const out = new THREE.BufferGeometry()
+    out.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3))
+    out.setAttribute('normal', new THREE.Float32BufferAttribute(normals, 3))
+    geometry.dispose()
+    entries[entry].geometry = out
+  }
 }
 
 // ── Coplanar-face merge (post-CSG triangle reduction) ─────────────────────
