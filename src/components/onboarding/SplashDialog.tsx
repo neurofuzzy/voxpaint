@@ -2,6 +2,7 @@ import * as Dialog from '@radix-ui/react-dialog'
 import { Sparkles } from 'lucide-react'
 import { useEffect, useState } from 'react'
 import logoUrl from '@/assets/logo.svg'
+import { isIPad } from '@/engine/input/isIPad'
 import { useAppStore } from '@/store/useAppStore'
 
 /**
@@ -32,7 +33,7 @@ export function SplashDialog() {
   }
 
   return (
-    <Dialog.Root open={open} onOpenChange={(v) => { if (!v) skip() }}>
+    <Dialog.Root open={open} onOpenChange={(v) => { if (!v) skip() }} modal={!isIPad() /* non-modal on iPad: modal Radix overlays swallow Apple Pencil taps */}>
       <Dialog.Portal>
         <Dialog.Overlay className="fixed inset-0 z-50 bg-black/70 backdrop-blur-sm" />
         <Dialog.Content

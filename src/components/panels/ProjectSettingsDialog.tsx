@@ -3,6 +3,7 @@ import { Settings } from 'lucide-react'
 import { useEffect, useState } from 'react'
 import { countCellsOutsideBounds } from '@/engine/grid/GridStore'
 import type { GridExtent, VoxelScaleY } from '@/engine/grid/types'
+import { isIPad } from '@/engine/input/isIPad'
 import { useAppStore } from '@/store/useAppStore'
 import { showToast } from '@/components/ui/toastBus'
 import { ProjectSizePicker } from './ProjectSizePicker'
@@ -74,7 +75,7 @@ export function ProjectSettingsDialog({ open, onOpenChange }: { open: boolean; o
   }
 
   return (
-    <Dialog.Root open={open} onOpenChange={onOpenChange}>
+    <Dialog.Root open={open} onOpenChange={onOpenChange} modal={!isIPad() /* non-modal on iPad: modal Radix overlays swallow Apple Pencil taps */}>
       <Dialog.Portal>
         <Dialog.Overlay className="fixed inset-0 z-50 bg-black/60 backdrop-blur-sm" />
         <Dialog.Content

@@ -4,6 +4,7 @@ import { useRef, useState } from 'react'
 import { readProjectFile, downloadProjectFile } from '@/engine/persistence/projectFile'
 import { deserializeProject, serializeProject } from '@/engine/persistence/serialize'
 import { clampPlaneOffset } from '@/engine/grid/GridStore'
+import { isIPad } from '@/engine/input/isIPad'
 import { useAppStore } from '@/store/useAppStore'
 import { showToast } from '@/components/ui/toastBus'
 import { ExportGltfDialog } from './ExportGltfDialog'
@@ -85,7 +86,7 @@ export function FileMenu() {
 
   return (
     <>
-    <DropdownMenu.Root>
+    <DropdownMenu.Root modal={!isIPad() /* non-modal on iPad: modal Radix overlays swallow Apple Pencil taps */}>
       <DropdownMenu.Trigger asChild>
         <button
           className="flex items-center gap-1 rounded-md px-2.5 py-1.5 text-sm text-neutral-300 hover:bg-neutral-800"

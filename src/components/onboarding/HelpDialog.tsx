@@ -1,5 +1,6 @@
 import * as Dialog from '@radix-ui/react-dialog'
 import { Keyboard, Sparkles } from 'lucide-react'
+import { isIPad } from '@/engine/input/isIPad'
 import { useAppStore } from '@/store/useAppStore'
 import { modKey, shortcutGroups } from './shortcuts'
 
@@ -24,7 +25,7 @@ export function HelpDialog() {
   const groups = shortcutGroups(modKey())
 
   return (
-    <Dialog.Root open={open} onOpenChange={(v) => { if (!v) closeHelp() }}>
+    <Dialog.Root open={open} onOpenChange={(v) => { if (!v) closeHelp() }} modal={!isIPad() /* non-modal on iPad: modal Radix overlays swallow Apple Pencil taps */}>
       <Dialog.Portal>
         <Dialog.Overlay className="fixed inset-0 z-50 bg-black/60 backdrop-blur-sm" />
         <Dialog.Content
