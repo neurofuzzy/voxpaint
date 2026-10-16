@@ -44,6 +44,10 @@ export type ProjectMeta = {
    * 2 = tall). Freely editable — unlike `gridExtent` it touches no grid/texture data, only how
    * tall cells render and export. See engine/grid/types.ts `VoxelScaleY`. */
   voxelScaleY: VoxelScaleY
+  /** Texels per voxel along each axis (1/2/4, default 4). Changing it resamples the box-map
+   * faces (see `resampleTextureModel`) — unlike `voxelScaleY` it touches texture data, but the
+   * voxel model is unaffected. Absent on older files, defaulting to 4. */
+  texelScale?: number
 }
 
 export type SerializedColorCell = { x: number; y: number; z: number; paletteSlot: PaletteSlotRef }

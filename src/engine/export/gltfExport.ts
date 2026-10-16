@@ -6,6 +6,7 @@ import type { Axis, VoxelModel, CellKey, GridExtent, VoxelScaleY } from '@/engin
 import type { Marker } from '@/engine/markers/types'
 import { markerColorHex, markerNodeName, markerWorldCenter } from '@/engine/markers/markers'
 import type { PaletteState } from '@/engine/palette/types'
+import { TEXEL_SCALE } from '@/engine/texture/types'
 import type { TextureModel } from '@/engine/texture/types'
 import { bakeAOToAtlas, makeSpecularNoiseTexture } from '@/engine/ao/bakeAO'
 import { unwrapGeometries } from '@/engine/ao/uvUnwrap'
@@ -79,6 +80,9 @@ export type GltfExportOptions = {
    * from every other project's at the same voxel coordinates (default 0 = unseeded). Pass
    * `meta.noiseSeed`. */
   noiseSeed?: number
+  /** Texels per voxel of the box-map faces (1/2/4, default 4 = full detail). Pass
+   * `meta.texelScale` so UVs sample the project's own face resolution. */
+  texelScale?: number
   /** Merge coplanar faces on the PBR (untextured) path (default true). Set false to keep the raw
    * per-voxel surface triangulation — the CSG union still welds cells and drops hidden interior
    * faces, but the exposed surface stays subdivided per voxel so downstream tools can deform the
@@ -240,10 +244,11 @@ export async function exportModelToGlb(
     // Textured overlay path — one baked-texture material per colour (and per animation slice, if any).
     // Glass + KHR_materials_volume + baseColorTexture breaks Mac Preview / Blender;
     // for glass we emit a solid-colour material (no baked map, no unused TEXCOORD_0).
+    const texelScale = options.texelScale ?? TEXEL_SCALE
     const groups: Array<{ geometry: THREE.BufferGeometry; colorKey: number; materialClass: MaterialClass; sliceKey?: string }> =
       hasAnimations && nodeAssignment
-        ? buildTexturedGeometryBySlice(model, palette, nodeAssignment, gridExtent)
-        : buildTexturedGeometryByColorMerged(model, palette, gridExtent, options.optimizeMesh ?? true).groups.map((g) => ({ ...g, sliceKey: undefined }))
+        ? buildTexturedGeometryBySlice(model, palette, nodeAssignment, gridExtent, texelScale)
+        : buildTexturedGeometryByColorMerged(model, palette, gridExtent, options.optimizeMesh ?? true, texelScale).groups.map((g) => ({ ...g, sliceKey: undefined }))
     for (const { geometry } of groups) geometries.push(geometry)
     if (!includeTextureMaps) stripUVs(groups)
 
@@ -289,7 +294,7 @@ export async function exportModelToGlb(
       }
     }
 
-    const blend = includeTextureMaps ? buildBlendAtlas(texture!, gridExtent) : null
+    const blend = includeTextureMaps ? buildBlendAtlas(texture!, gridExtent, texelScale) : null
     // Y-scale bakes after the AO/unwrap work above (unit-cube voxel units) and before meshes —
     // anchors below then operate on true scaled extents.
     bakeScaleY(groups)

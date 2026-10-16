@@ -5,7 +5,7 @@ import type { PaletteState } from '@/engine/palette/types'
 import { axisIndex } from '@/engine/plane/planeGeometry'
 import { worldToTexel } from './boxMapping'
 import { texelIndex, withinFace } from './TextureStore'
-import { BOX_FACE_AXIS, faceSizeFor } from './types'
+import { BOX_FACE_AXIS, faceSizeFor, TEXEL_SCALE } from './types'
 import type { BoxFace } from './types'
 
 /** Darkens/desaturates a `#rrggbb` by multiplying each channel by `f` (clamped). */
@@ -30,8 +30,8 @@ const DIM_FRONT = 0.62
  * the guide lines up exactly with where paint lands on the model. Returns `faceSize²` hex strings,
  * `null` where the model doesn't cover.
  */
-export function projectModelToFace(model: VoxelModel, palette: PaletteState, face: BoxFace, gridExtent: GridExtent): (string | null)[] {
-  const faceSize = faceSizeFor(gridExtent)
+export function projectModelToFace(model: VoxelModel, palette: PaletteState, face: BoxFace, gridExtent: GridExtent, texelScale: number = TEXEL_SCALE): (string | null)[] {
+  const faceSize = faceSizeFor(gridExtent, texelScale)
   const out = new Array<string | null>(faceSize * faceSize).fill(null)
   if (!model.bounds || model.color.size === 0) return out
 
@@ -44,9 +44,9 @@ export function projectModelToFace(model: VoxelModel, palette: PaletteState, fac
 
   for (const [key, cell] of model.color) {
     const c = decodeKey(key)
-    // A voxel spans one cell = TEXEL_SCALE texels; its two in-plane corners bound its texel block.
-    const [u0, v0] = worldToTexel(face, c[0], c[1], c[2], gridExtent)
-    const [u1, v1] = worldToTexel(face, c[0] + 1, c[1] + 1, c[2] + 1, gridExtent)
+    // A voxel spans one cell = texelScale texels; its two in-plane corners bound its texel block.
+    const [u0, v0] = worldToTexel(face, c[0], c[1], c[2], gridExtent, texelScale)
+    const [u1, v1] = worldToTexel(face, c[0] + 1, c[1] + 1, c[2] + 1, gridExtent, texelScale)
     const tuMin = Math.round(Math.min(u0, u1))
     const tuMax = Math.round(Math.max(u0, u1))
     const tvMin = Math.round(Math.min(v0, v1))

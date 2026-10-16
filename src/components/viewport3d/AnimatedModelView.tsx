@@ -3,6 +3,7 @@ import * as THREE from 'three'
 import { useFrame } from '@react-three/fiber'
 import type { Axis } from '@/engine/grid/types'
 import { buildAnimatedSliceMeshes } from '@/engine/animation/animatedPreviewBuild'
+import { TEXEL_SCALE } from '@/engine/texture/types'
 import { isActiveAnimation, updateAnimatedGroupTransform } from '@/engine/animation/animationLayers'
 import type { SliceKey } from '@/engine/animation/types'
 import { tickEmissiveAnimation } from '@/engine/instancing/previewMaterial'
@@ -24,13 +25,14 @@ export function AnimatedModelView() {
   const texture = useAppStore((s) => s.texture)
   const glassRoughnessLevel = useAppStore((s) => s.glassRoughnessLevel)
   const gridExtent = useAppStore((s) => s.meta.gridExtent)
+  const texelScale = useAppStore((s) => s.meta.texelScale ?? TEXEL_SCALE)
 
   const animGroupRefs = useRef<Map<SliceKey, AnimGroup>>(new Map())
   const rootGroup = useMemo(() => new THREE.Group(), [])
 
   const built = useMemo(
-    () => buildAnimatedSliceMeshes(model, palette, animSettings, sliceMasks, texture, gridExtent, glassRoughnessLevel, slicePivots),
-    [model, palette, animSettings, sliceMasks, texture, gridExtent, glassRoughnessLevel, slicePivots],
+    () => buildAnimatedSliceMeshes(model, palette, animSettings, sliceMasks, texture, gridExtent, glassRoughnessLevel, slicePivots, texelScale),
+    [model, palette, animSettings, sliceMasks, texture, gridExtent, glassRoughnessLevel, slicePivots, texelScale],
   )
 
   // Build the scene graph imperatively — one Group per slice, with mesh children added directly.
