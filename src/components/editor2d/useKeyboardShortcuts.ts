@@ -1,7 +1,7 @@
 import { useEffect } from 'react'
 import { effectiveExtent } from '@/engine/grid/GridStore'
 import { rectRegion } from '@/engine/tools/selectionMask'
-import { faceSizeFor } from '@/engine/texture/types'
+import { faceSizeFor, TEXEL_SCALE } from '@/engine/texture/types'
 import { useAppStore } from '@/store/useAppStore'
 import type { ToolId } from '@/store/types'
 
@@ -75,7 +75,7 @@ export function useKeyboardShortcuts(hoverCellRef?: React.RefObject<[number, num
           // effective grid, symmetric about the origin), the whole face in Texture mode.
           // setSelection bakes any pending float first, like every other selection change.
           if (isTexture) {
-            const faceSize = faceSizeFor(store.meta.gridExtent)
+            const faceSize = faceSizeFor(store.meta.gridExtent, store.meta.texelScale ?? TEXEL_SCALE)
             store.setTextureSelection(rectRegion(0, 0, faceSize - 1, faceSize - 1))
           } else {
             const half = effectiveExtent(store.meta.gridExtent) / 2

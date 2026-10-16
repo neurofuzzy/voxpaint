@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { forEachSelectedCell, traceSelectionOutline } from '@/engine/tools/selectionMask'
 import { projectModelToFace } from '@/engine/texture/projection'
 import { getTexel, texelIndex } from '@/engine/texture/TextureStore'
-import { BOX_FACE_AXIS, EMPTY, faceSizeFor, GRAYSCALE } from '@/engine/texture/types'
+import { BOX_FACE_AXIS, EMPTY, faceSizeFor, GRAYSCALE, TEXEL_SCALE } from '@/engine/texture/types'
 import { useAppStore } from '@/store/useAppStore'
 import { TEXEL_BASE_PX, texWorldToScreen } from './textureCanvasConstants'
 import { vScaleForPlane } from './cameraTransform'
@@ -34,7 +34,8 @@ export function TextureCanvas() {
   const onionSkin = useAppStore((s) => s.onionSkin)
   const gridExtent = useAppStore((s) => s.meta.gridExtent)
   const voxelScaleY = useAppStore((s) => s.meta.voxelScaleY)
-  const faceSize = faceSizeFor(gridExtent)
+  const texelScale = useAppStore((s) => s.meta.texelScale ?? TEXEL_SCALE)
+  const faceSize = faceSizeFor(gridExtent, texelScale)
   const texHalf = faceSize / 2
   // V-axis display stretch for the active face (Y voxel scale on faces whose v runs along Y,
   // square on ±Y faces) — texels stay square in data, only their display stretches.
@@ -45,8 +46,8 @@ export function TextureCanvas() {
   // Model silhouette projected onto the active face — a paint-alignment guide behind the texels.
   // Recomputed only when the model/palette/face changes (not while painting), so strokes stay fast.
   const projection = useMemo(
-    () => (activeBoxFace ? projectModelToFace(model, palette, activeBoxFace, gridExtent) : null),
-    [model, palette, activeBoxFace, gridExtent],
+    () => (activeBoxFace ? projectModelToFace(model, palette, activeBoxFace, gridExtent, texelScale) : null),
+    [model, palette, activeBoxFace, gridExtent, texelScale],
   )
 
   const [antPhase, setAntPhase] = useState(0)

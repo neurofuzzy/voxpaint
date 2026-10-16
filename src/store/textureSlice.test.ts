@@ -68,8 +68,8 @@ describe('textureSlice', () => {
     s.textureCommitStroke()
 
     // texturePast[0] is the baseline captured before the FIRST paint — still fully empty.
-    expect(getTexel(snapshot, 'pz', 5, 5, faceSize)).toBe(EMPTY)
-    expect(getTexel(snapshot, 'pz', 2, 2, faceSize)).toBe(EMPTY)
+    expect(getTexel(snapshot.texture, 'pz', 5, 5, faceSize)).toBe(EMPTY)
+    expect(getTexel(snapshot.texture, 'pz', 2, 2, faceSize)).toBe(EMPTY)
   })
 
   it('fills an empty selection without needing painted bounds', () => {

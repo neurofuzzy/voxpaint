@@ -4,7 +4,7 @@ import type { GltfExportAnchor } from '@/engine/export/gltfExport'
 import type { EmissiveAnimMode, PaletteSlotRef, PaletteState } from '@/engine/palette/types'
 import type { ConstructionPlane } from '@/engine/plane/types'
 import type { ProjectMeta } from '@/engine/persistence/schema'
-import type { BoxFace, TextureModel } from '@/engine/texture/types'
+import type { BoxFace, TexelScale, TextureModel } from '@/engine/texture/types'
 import type { TexelClip } from '@/engine/texture/texelOps'
 import type { AnimationSpeed, AnimationType, SliceAnimSettings, SliceKey } from '@/engine/animation/types'
 
@@ -76,6 +76,11 @@ export type ProjectSlice = {
    * touches no grid/texture data and clears no history — the grid stays integer and only
    * presentation (3D scene, 2D X/Z-plane views, baked exports) stretches. */
   setVoxelScaleY: (k: VoxelScaleY) => void
+  /** Sets the project-level texels-per-voxel scale (1/2/4, Project Settings). Resamples the
+   * box-map faces with nearest-neighbor (quantized, never blurred) as one texture-undo step, and
+   * clears the texel selection and pending floats — the voxel model and its history are untouched.
+   * No-op when the scale is unchanged. */
+  setTexelScale: (scale: TexelScale) => void
   /** Renames the project and/or resizes its working cube (Project Settings dialog). Growing keeps
    * everything; shrinking deletes voxels outside the new bounds (the caller warns first via
    * `countCellsOutsideBounds`) and center-crops/pads the texture faces. A resize also clears all
@@ -384,6 +389,13 @@ export type ModeSlice = {
   setMode: (mode: EditorMode) => void
 }
 
+/** One texture undo/redo snapshot: the faces plus the texel scale they were painted at, so a
+ * scale change itself is undoable and every entry always matches its faces' buffer sizes. */
+export type TextureHistoryEntry = {
+  texture: TextureModel
+  texelScale: TexelScale
+}
+
 /**
  * Texture authoring state — a fully parallel stack to the voxel one (its own model, selection/float/
  * clipboard, and **independent** undo/redo history), so texturing never touches voxel history and
@@ -396,9 +408,9 @@ export type TextureSlice = {
   /** Active grayscale index (0..4) the texture brush writes. */
   activeGrayIndex: number
 
-  /** Separate undo/redo stacks — whole-`TextureModel` snapshots, one per completed gesture. */
-  texturePast: TextureModel[]
-  textureFuture: TextureModel[]
+  /** Separate undo/redo stacks — snapshots, one per completed gesture (paint strokes and scale changes). */
+  texturePast: TextureHistoryEntry[]
+  textureFuture: TextureHistoryEntry[]
 
   /** Texel selection/float/clipboard, mirroring the voxel selection subsystem on a flat grid. */
   textureSelection: SelectionRegion | null

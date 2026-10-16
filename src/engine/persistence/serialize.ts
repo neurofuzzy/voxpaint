@@ -6,7 +6,7 @@ import { DEFAULT_PALETTE } from '@/engine/palette/defaultPalette'
 import type { PaletteState } from '@/engine/palette/types'
 import type { BoxFace, TextureModel } from '@/engine/texture/types'
 import { BOX_FACES, faceSizeFor, TEXEL_SCALE } from '@/engine/texture/types'
-import { emptyTextureModel } from '@/engine/texture/TextureStore'
+import { emptyTextureModel, normalizeTexelScale } from '@/engine/texture/TextureStore'
 import type { SliceAnimSettings, SliceKey } from '@/engine/animation/types'
 import { encodeSliceKey } from '@/engine/animation/animationLayers'
 import { CURRENT_SCHEMA_VERSION, type ProjectMeta, type SerializedAnimLayer, type SerializedSliceMask, type SerializedSlicePivot, type SerializedTexture, type ViewSettings, type VoxPaintProjectFile } from './schema'
@@ -24,18 +24,19 @@ function base64ToU8(b64: string): Uint8Array {
   return a
 }
 
-function serializeTexture(texture: TextureModel, gridExtent: GridExtent): SerializedTexture {
+function serializeTexture(texture: TextureModel, gridExtent: GridExtent, texelScale: number): SerializedTexture {
   const faces = {} as Record<BoxFace, string>
   for (const face of BOX_FACES) faces[face] = u8ToBase64(texture.faces[face])
-  return { texelScale: TEXEL_SCALE, faceSize: faceSizeFor(gridExtent), faces }
+  return { texelScale, faceSize: faceSizeFor(gridExtent, texelScale), faces }
 }
 
-function deserializeTexture(s: SerializedTexture, gridExtent: GridExtent): TextureModel {
+function deserializeTexture(s: SerializedTexture, gridExtent: GridExtent, texelScale: number): TextureModel {
   // Guard against an incompatible face size (shouldn't happen — faceSize is derived from the
-  // project's own locked-in gridExtent — but a hand-edited or corrupt file could still mismatch)
-  // — rather than remap texels, fall back to an empty texture so the project still loads.
-  if (s.faceSize !== faceSizeFor(gridExtent)) return emptyTextureModel(gridExtent)
-  const texture = emptyTextureModel(gridExtent)
+  // project's own locked-in gridExtent + texelScale — but a hand-edited or corrupt file could
+  // still mismatch) — rather than remap texels, fall back to an empty texture so the project
+  // still loads.
+  if (s.faceSize !== faceSizeFor(gridExtent, texelScale)) return emptyTextureModel(gridExtent, texelScale)
+  const texture = emptyTextureModel(gridExtent, texelScale)
   for (const face of BOX_FACES) {
     const arr = base64ToU8(s.faces[face] ?? '')
     if (arr.length === texture.faces[face].length) texture.faces[face] = arr
@@ -148,7 +149,7 @@ export function serializeProject(model: VoxelModel, palette: PaletteState, meta:
     meta,
     palette,
     model: { bounds: model.bounds, colorCells, chamferCells },
-    texture: serializeTexture(texture, meta.gridExtent),
+    texture: serializeTexture(texture, meta.gridExtent, normalizeTexelScale(meta.texelScale ?? TEXEL_SCALE)),
     view,
     animations: animSettings ? serializeAnimations(animSettings) : undefined,
     masks: sliceMasks ? serializeSliceMasks(sliceMasks) : undefined,
@@ -174,7 +175,16 @@ export function deserializeProject(file: VoxPaintProjectFile): { model: VoxelMod
   }
 
   const built: VoxelModel = { color, chamfer, bounds: file.model.bounds }
-  const texture = file.texture ? deserializeTexture(file.texture, file.meta.gridExtent) : emptyTextureModel(file.meta.gridExtent)
+  // `noiseSeed` post-dates `ProjectMeta` being otherwise fully required. Default to 0 (the
+  // hash functions' unseeded behavior) rather than a fresh random seed, so an old project's noise
+  // looks exactly the same as it always did instead of visibly shifting on next load.
+  // `voxelScaleY` is the same story one generation later: pre-scale files load as 1x (unit cubes).
+  // `texelScale` one generation after that: pre-scale files load at full detail (4). The merged
+  // meta must exist before the texture (whose face size derives from gridExtent + texelScale).
+  const meta: ProjectMeta = { ...file.meta, noiseSeed: file.meta.noiseSeed ?? 0, voxelScaleY: file.meta.voxelScaleY ?? 1, texelScale: normalizeTexelScale(file.meta.texelScale ?? TEXEL_SCALE) }
+  const texture = file.texture
+    ? deserializeTexture(file.texture, meta.gridExtent, meta.texelScale!)
+    : emptyTextureModel(meta.gridExtent, meta.texelScale!)
   const view: ViewSettings = { ambientOcclusion: false, noiseLevel: 0, specularNoiseLevel: 0, noiseScale: 1, aoStrength: 1, glassRoughnessLevel: 0.3, exposure: 1, exportScaleFactor: 100, exportAnchor: 'center', exportAlignToObjectBounds: false, exportDisableMeshOptimization: false, exportIncludeTextureMaps: true, exportIncludeAOMaps: true, exportIncludeMarkers: true, ...file.view }
   const animSettings = file.animations ? deserializeAnimations(file.animations) : new Map()
   const sliceMasks = file.masks ? deserializeSliceMasks(file.masks) : new Map()
@@ -183,11 +193,6 @@ export function deserializeProject(file: VoxPaintProjectFile): { model: VoxelMod
   // palette shape — older files simply don't have it, so default-merge rather than bump the schema
   // (same treatment `exportAlignToObjectBounds` got for `view`).
   const palette: PaletteState = { ...DEFAULT_PALETTE, ...file.palette }
-  // `noiseSeed` likewise post-dates `ProjectMeta` being otherwise fully required. Default to 0 (the
-  // hash functions' unseeded behavior) rather than a fresh random seed, so an old project's noise
-  // looks exactly the same as it always did instead of visibly shifting on next load.
-  // `voxelScaleY` is the same story one generation later: pre-scale files load as 1x (unit cubes).
-  const meta: ProjectMeta = { ...file.meta, noiseSeed: file.meta.noiseSeed ?? 0, voxelScaleY: file.meta.voxelScaleY ?? 1 }
   const markers = deserializeMarkers(file.markers, meta.gridExtent)
   return { model: { ...built, bounds: recomputeBounds(built) }, palette, meta, texture, view, animSettings, sliceMasks, slicePivots, markers }
 }

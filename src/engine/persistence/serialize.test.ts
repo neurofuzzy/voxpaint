@@ -31,6 +31,35 @@ describe('serialize with texture', () => {
   })
 })
 
+describe('serialize with a scaled texture', () => {
+  it('round-trips texelScale 1 faces and records the scale', () => {
+    const scaledMeta: ProjectMeta = { ...meta, texelScale: 1 }
+    const scaledSize = faceSizeFor(scaledMeta.gridExtent, 1)
+    const texture = emptyTextureModel(scaledMeta.gridExtent, 1)
+    texture.faces.px[0] = 6
+
+    const file = serializeProject(emptyModel(), DEFAULT_PALETTE, scaledMeta, texture)
+    expect(file.texture?.texelScale).toBe(1)
+    expect(file.texture?.faceSize).toBe(scaledSize)
+
+    const restored = deserializeProject(file)
+    expect(restored.meta.texelScale).toBe(1)
+    expect(restored.texture.faces.px.length).toBe(scaledSize * scaledSize)
+    expect(getTexel(restored.texture, 'px', 0, 0, scaledSize)).toBe(6)
+  })
+
+  it('loads pre-scale files at full detail', () => {
+    const texture = emptyTextureModel(meta.gridExtent)
+    texture.faces.px[0] = 2
+    const file = serializeProject(emptyModel(), DEFAULT_PALETTE, meta, texture)
+    // The shared test meta carries no texelScale (like an old file) — serializes as 4.
+    expect(file.texture?.texelScale).toBe(4)
+    const restored = deserializeProject(file)
+    expect(restored.meta.texelScale).toBe(4)
+    expect(getTexel(restored.texture, 'px', 0, 0, faceSize)).toBe(2)
+  })
+})
+
 describe('v1 → current migration', () => {
   it('migrates to the current schema version and loads with an empty texture', () => {
     const v1: VoxPaintProjectFileV1 = {

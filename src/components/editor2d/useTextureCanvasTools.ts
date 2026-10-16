@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import { toNormalizedPointerEvent } from '@/engine/input/PointerInputController'
 import { textureToolMap } from '@/engine/texture/textureTools'
 import type { TextureToolContext, TextureDragState } from '@/engine/texture/textureTools'
-import { faceSizeFor } from '@/engine/texture/types'
+import { faceSizeFor, TEXEL_SCALE } from '@/engine/texture/types'
 import { useAppStore } from '@/store/useAppStore'
 import type { SelectionRegion } from '@/store/types'
 import type { CanvasPan, CanvasSize } from './cameraTransform'
@@ -52,7 +52,10 @@ export function useTextureCanvasTools(canvasRef: React.RefObject<HTMLCanvasEleme
   const [pan, setPan] = useState<CanvasPan>({ x: 0, y: 0 })
   // Seed from the current project's extent so a face opens framed the same at any size (mirrors the
   // voxel canvas). The initializer reads the live store value to avoid a first-frame flash at zoom 1.
-  const [zoom, setZoom] = useState(() => defaultTexZoomForExtent(useAppStore.getState().meta.gridExtent))
+  const [zoom, setZoom] = useState(() => {
+    const m = useAppStore.getState().meta
+    return defaultTexZoomForExtent(m.gridExtent, 1, m.texelScale ?? TEXEL_SCALE)
+  })
   const sizeRef = useRef(size)
   sizeRef.current = size
   const panRef = useRef(pan)
@@ -61,21 +64,23 @@ export function useTextureCanvasTools(canvasRef: React.RefObject<HTMLCanvasEleme
   zoomRef.current = zoom
   const gridExtent = useAppStore((s) => s.meta.gridExtent)
   const voxelScaleY = useAppStore((s) => s.meta.voxelScaleY)
-  const faceSize = faceSizeFor(gridExtent)
+  const texelScale = useAppStore((s) => s.meta.texelScale ?? TEXEL_SCALE)
+  const faceSize = faceSizeFor(gridExtent, texelScale)
   const texHalf = faceSize / 2
   const texHalfRef = useRef(texHalf)
   texHalfRef.current = texHalf
 
-  // Re-frame on a project switch to a different size: reset to the size-appropriate default zoom and
-  // recenter. Extent is locked per project, so this only fires on switch, never mid-edit.
+  // Re-frame on a project switch to a different size (or texel scale): reset to the
+  // size-appropriate default zoom and recenter. Extent/scale are locked per project except via
+  // Project Settings, so this only fires on switch or an explicit settings change, never mid-edit.
   // A voxel-height change re-frames the same way (explicit user action via Project Settings).
   useEffect(() => {
     const s = useAppStore.getState()
     const face = s.activeBoxFace
     const vs = face ? vScaleForPlane(BOX_FACE_AXIS[face].axis, s.meta.voxelScaleY) : 1
-    setZoom(defaultTexZoomForExtent(s.meta.gridExtent, vs))
+    setZoom(defaultTexZoomForExtent(s.meta.gridExtent, vs, s.meta.texelScale ?? TEXEL_SCALE))
     setPan({ x: 0, y: 0 })
-  }, [gridExtent, voxelScaleY])
+  }, [gridExtent, voxelScaleY, texelScale])
 
   const [linePreview, setLinePreview] = useState<{ anchor: [number, number]; end: [number, number] } | null>(null)
   const [selectPreview, setSelectPreview] = useState<SelectionRegion | null>(null)
