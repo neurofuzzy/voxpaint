@@ -109,6 +109,15 @@ function applyPaintCell(
       planeOrientation: plane.orientation,
       resolvedTo: { shapeKind: 'thin', rotation: 0 },
     })
+  } else if (kind === 'half') {
+    // A half slab is the flush (outward-half) sibling of the centered thin slab: same fixed
+    // entry, but the authoring orientation picks the side — flipping it would move the slab (a
+    // geometry edit), so rebase tools refuse halves. No sampling, no rotation, never resolves.
+    state.model.chamfer.set(key, {
+      planeAxis: plane.axis,
+      planeOrientation: plane.orientation,
+      resolvedTo: { shapeKind: 'half', rotation: 0 },
+    })
   } else {
     state.model.chamfer.delete(key)
   }

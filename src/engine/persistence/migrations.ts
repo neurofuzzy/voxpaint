@@ -75,6 +75,11 @@ MIGRATIONS[8] = (doc) => ({
     : undefined,
 })
 
+/** v9 → v10: the `half` chamfer shape is introduced (flush half-slab). No reshape — pre-v10
+ * files simply contain no halves. The stamp itself is the point: older app versions reject v10
+ * files with "please update" instead of crashing on an unknown shape in the render pools. */
+MIGRATIONS[9] = (doc) => ({ ...doc, schemaVersion: 10 })
+
 export class UnsupportedSchemaVersionError extends Error {
   constructor(foundVersion: unknown) {
     super(`This file is from a newer version of VoxPaint (schemaVersion=${String(foundVersion)}). Please update the app.`)

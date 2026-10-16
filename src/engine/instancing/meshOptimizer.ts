@@ -199,25 +199,49 @@ export function removeOccludedGlassFaces(
 /**
  * Cross-group interior-face cull for the CSG path. After each group's own union, an interface
  * between two adjacent voxels of different (materialClass, colorKey) groups survives as a pair
- * of exactly-coincident, back-to-back triangles — one in each group's geometry. Same
- * order-independent quantized vertex-triple, opposing normals: the touching sides of the two
- * voxels. When both sides are opaque (non-glass) both triangles are dropped — the interface is
+ * of exactly-coincident, back-to-back interface patches — one in each group's geometry. When
+ * both sides are opaque (non-glass) the patch is dropped on both sides — the interface is
  * inside the combined solid and never seen. Each group's mesh keeps a hidden hole there; the
  * holes coincide, so nothing shows from outside. (Leaving both sides in used to export
  * coincident opposite-normal quads — e.g. an emissive block under a matte cap — that z-fight
  * in some engines.)
+ *
+ * Matching is quad-aware, not just triangle-aware: `BoxGeometry` triangulates opposite faces on
+ * opposite diagonals, so the two sides of one interface almost never share identical
+ * vertex-triples. Triangles are therefore first paired back into quads *within* each group
+ * (coplanar, same-facing, sharing an edge — longest shared edge first, which re-pairs each
+ * quad along its diagonal), and quads match across groups by corner set. Unpaired leftover
+ * triangles still match by exact triple. This runs strictly *after* the unions on the groups'
+ * own closed-solid geometry — faces are never deleted pre-union, which the BSP boolean
+ * requires to stay watertight.
  *
  * Deliberately conservative, mirroring `removeInteriorFaces`:
  * - Glass-involved pairs are skipped — the glass side is owned by `removeOccludedGlassFaces`
  *   (which runs before this), and the solid neighbour's face must stay visible through it.
  * - Pairs spanning different animation `sliceKey`s are skipped — those cells move apart
  *   independently at runtime, so the face between them is real, not hidden.
- * - Only exactly-coincident pairs (precisely 2 triangles sharing one triple, from different
- *   groups) are culled. Partial chamfer overlaps never match, so exposed remainders survive.
+ * - Only exactly-coincident patches (same quantized corners, back-to-back normals, precisely
+ *   one patch per side) are culled. Partial chamfer overlaps never match, so exposed
+ *   remainders survive.
  */
 function cullCoincidentOpaqueInterfaces(entries: { group: VoxelGroup; geometry: THREE.BufferGeometry }[]): void {
   if (entries.length < 2) return
 
+  interface TriInfo {
+    entry: number
+    tri: number
+    keys: [string, string, string]
+    pts: [THREE.Vector3, THREE.Vector3, THREE.Vector3]
+    n: THREE.Vector3
+    plane: THREE.Plane
+    paired: boolean
+  }
+  interface QuadInfo {
+    entry: number
+    tris: [number, number]
+    key: string
+    n: THREE.Vector3
+  }
   interface TriRef {
     entry: number
     tri: number
@@ -226,31 +250,46 @@ function cullCoincidentOpaqueInterfaces(entries: { group: VoxelGroup; geometry: 
     nz: number
   }
 
-  const byKey = new Map<string, TriRef[]>()
   const v = new THREE.Vector3()
   const n = new THREE.Vector3()
-  entries.forEach(({ geometry }, entry) => {
+  const perEntry: TriInfo[][] = entries.map(({ geometry }, entry) => {
+    const list: TriInfo[] = []
     const pos = geometry.getAttribute('position') as THREE.BufferAttribute | undefined
     const nrm = geometry.getAttribute('normal') as THREE.BufferAttribute | undefined
-    if (!pos || !nrm) return
-    const keys: string[] = new Array(pos.count)
-    for (let i = 0; i < pos.count; i++) {
-      v.fromBufferAttribute(pos, i)
-      keys[i] = vertexKey(v)
-    }
+    if (!pos || !nrm) return list
     for (let t = 0; t < pos.count / 3; t++) {
-      const key = [keys[t * 3], keys[t * 3 + 1], keys[t * 3 + 2]].sort().join('|')
+      const pts = [0, 1, 2].map((k) => new THREE.Vector3().fromBufferAttribute(pos, t * 3 + k)) as [
+        THREE.Vector3,
+        THREE.Vector3,
+        THREE.Vector3,
+      ]
       n.fromBufferAttribute(nrm, t * 3)
       const len = n.length() || 1
-      const arr = byKey.get(key)
-      const ref: TriRef = { entry, tri: t, nx: n.x / len, ny: n.y / len, nz: n.z / len }
-      if (arr) arr.push(ref)
-      else byKey.set(key, [ref])
+      const nn = new THREE.Vector3(n.x / len, n.y / len, n.z / len)
+      list.push({
+        entry,
+        tri: t,
+        keys: [vertexKey(pts[0]), vertexKey(pts[1]), vertexKey(pts[2])],
+        pts,
+        n: nn,
+        plane: new THREE.Plane().setFromNormalAndCoplanarPoint(nn, pts[0]),
+        paired: false,
+      })
     }
+    return list
   })
 
   const sliceOf = (group: VoxelGroup): string =>
     ((group as unknown as { sliceKey?: unknown }).sliceKey as string | undefined) ?? ''
+
+  /** True when two entries may share a culled interface (both opaque, same animation node). */
+  const eligiblePair = (aEntry: number, bEntry: number): boolean => {
+    if (aEntry === bEntry) return false // within-group coincidence is the union's own job
+    const groupA = entries[aEntry].group
+    const groupB = entries[bEntry].group
+    if (groupA.materialClass === 'glass' || groupB.materialClass === 'glass') return false
+    return sliceOf(groupA) === sliceOf(groupB)
+  }
 
   const condemned = new Map<number, Set<number>>()
   const mark = (entry: number, tri: number) => {
@@ -262,14 +301,85 @@ function cullCoincidentOpaqueInterfaces(entries: { group: VoxelGroup; geometry: 
     set.add(tri)
   }
 
-  for (const refs of byKey.values()) {
+  // ── Quad pairing within each entry (longest shared edge first) ────────────
+  const quads: QuadInfo[] = []
+  perEntry.forEach((list) => {
+    const byEdge = new Map<string, number[]>()
+    list.forEach((tri, idx) => {
+      for (let e = 0; e < 3; e++) {
+        const ek = edgeKey(tri.pts[e], tri.pts[(e + 1) % 3])
+        const arr = byEdge.get(ek)
+        if (arr) arr.push(idx)
+        else byEdge.set(ek, [idx])
+      }
+    })
+    interface Cand {
+      a: number
+      b: number
+      len: number
+    }
+    const cands: Cand[] = []
+    for (const idxs of byEdge.values()) {
+      if (idxs.length !== 2) continue
+      const [ia, ib] = idxs
+      const ta = list[ia]
+      const tb = list[ib]
+      if (ta.n.dot(tb.n) <= NORMAL_THRESHOLD) continue
+      if (Math.abs(ta.plane.distanceToPoint(tb.pts[0])) > COPLANAR_THRESHOLD) continue
+      const shared = ta.keys.filter((k) => tb.keys.includes(k))
+      if (shared.length !== 2) continue
+      const pa = ta.pts[ta.keys.indexOf(shared[0])]
+      const pb = ta.pts[ta.keys.indexOf(shared[1])]
+      cands.push({ a: ia, b: ib, len: pa.distanceToSquared(pb) })
+    }
+    // Longest shared edge first: re-pairs each quad along its diagonal (the longest edge
+    // of either triangle) rather than across quad boundaries.
+    cands.sort((x, y) => y.len - x.len)
+    for (const c of cands) {
+      const ta = list[c.a]
+      const tb = list[c.b]
+      if (ta.paired || tb.paired) continue
+      const corners = [...new Set([...ta.keys, ...tb.keys])].sort()
+      if (corners.length !== 4) continue
+      ta.paired = tb.paired = true
+      quads.push({ entry: ta.entry, tris: [ta.tri, tb.tri], key: corners.join('|'), n: ta.n })
+    }
+  })
+
+  // ── Cross-group quad matching ─────────────────────────────────────────────
+  const quadsByKey = new Map<string, QuadInfo[]>()
+  for (const q of quads) {
+    const arr = quadsByKey.get(q.key)
+    if (arr) arr.push(q)
+    else quadsByKey.set(q.key, [q])
+  }
+  for (const group of quadsByKey.values()) {
+    if (group.length !== 2) continue
+    const [a, b] = group
+    if (!eligiblePair(a.entry, b.entry)) continue
+    if (a.n.dot(b.n) >= -0.9) continue // not back-to-back
+    mark(a.entry, a.tris[0])
+    mark(a.entry, a.tris[1])
+    mark(b.entry, b.tris[0])
+    mark(b.entry, b.tris[1])
+  }
+
+  // ── Exact-triple matching for unpaired leftovers ──────────────────────────
+  const singlesByKey = new Map<string, TriRef[]>()
+  for (const list of perEntry) {
+    for (const tri of list) {
+      if (tri.paired) continue
+      const key = [...tri.keys].sort().join('|')
+      const arr = singlesByKey.get(key)
+      const ref: TriRef = { entry: tri.entry, tri: tri.tri, nx: tri.n.x, ny: tri.n.y, nz: tri.n.z }
+      if (arr) arr.push(ref)
+      else singlesByKey.set(key, [ref])
+    }
+  }
+  for (const refs of singlesByKey.values()) {
     if (refs.length !== 2) continue
     const [a, b] = refs
-    if (a.entry === b.entry) continue // within-group coincidence is the union's own job
-    const groupA = entries[a.entry].group
-    const groupB = entries[b.entry].group
-    if (groupA.materialClass === 'glass' || groupB.materialClass === 'glass') continue
-    if (sliceOf(groupA) !== sliceOf(groupB)) continue // separate animation nodes
+    if (!eligiblePair(a.entry, b.entry)) continue
     if (a.nx * b.nx + a.ny * b.ny + a.nz * b.nz >= -0.9) continue // not back-to-back
     mark(a.entry, a.tri)
     mark(b.entry, b.tri)

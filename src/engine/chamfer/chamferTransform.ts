@@ -18,8 +18,10 @@ import { RAMP_LOCAL_CORNERS, WEDGE_LOCAL_CORNERS, rotateLocal } from './rampDual
  * and the result is looked up among the same shape's (axis, orientation, rotation) candidates.
  * Same-axis cells always resolve back onto their own basis with the legacy renumbering, so the
  * previously-working case is behavior-identical — only cross-axis cells change (from wrong to
- * right). Unresolved cells and thin slabs (whose corners don't pin a solid — the slab is centered)
- * only get their authoring basis moved, never a shape.
+ * right). Unresolved cells and slabs (thin's centered slab and half's flush slab — neither's
+ * corners pin a solid on their own) only get their authoring basis moved, never a shape. For
+ * half that basis move is still exact: the slab is fully determined by its outward normal, which
+ * the tracked basis carries along.
  */
 
 // Occupied local-prefab corners of a rotation-0 convex corner: the full base quad plus the single
@@ -44,7 +46,7 @@ const CONCAVE_LOCAL_CORNERS: Coord[] = [
   [-0.5, -0.5, 0.5], // t3 NW top
 ]
 
-const SHAPE_CORNERS: Record<Exclude<ChamferShapeKind, 'thin'>, Coord[]> = {
+const SHAPE_CORNERS: Record<Exclude<ChamferShapeKind, 'thin' | 'half'>, Coord[]> = {
   ramp: RAMP_LOCAL_CORNERS,
   wedge: WEDGE_LOCAL_CORNERS,
   convex: CONVEX_LOCAL_CORNERS,
@@ -53,7 +55,7 @@ const SHAPE_CORNERS: Record<Exclude<ChamferShapeKind, 'thin'>, Coord[]> = {
 
 /** World-space (cell-relative, translation-free) occupied corners. Pure geometry truth, memoized. */
 const cornersMemo = new Map<string, Coord[]>()
-function solidCorners(shape: Exclude<ChamferShapeKind, 'thin'>, axis: Axis, orientation: Orientation, rotation: Rotation): Coord[] {
+function solidCorners(shape: Exclude<ChamferShapeKind, 'thin' | 'half'>, axis: Axis, orientation: Orientation, rotation: Rotation): Coord[] {
   const key = `${shape}|${axis}|${orientation}|${rotation}`
   const hit = cornersMemo.get(key)
   if (hit) return hit
@@ -125,7 +127,7 @@ function trackedBasis(cell: ChamferCell, T: RigidMap): [Axis, Orientation] {
  * Maps one chamfer cell through a rigid motion: resolved shapes are looked up by transformed
  * solid on the tracked basis (same-axis cells land back on their own basis with the legacy
  * renumbering; cross-axis bevels re-base onto whichever axis their solid turns into), while
- * unresolved cells and thin slabs only ride their basis along. The tracked basis always carries
+ * unresolved cells and slabs only ride their basis along. The tracked basis always carries
  * the same normal the rotated solid does, and the in-plane frame difference is a whole number
  * of quarter-turns — so exactly one of the four rotations matches. The defensive fallback (no
  * candidate matches — geometry truth changed under us) keeps the cell frozen rather than
@@ -134,7 +136,7 @@ function trackedBasis(cell: ChamferCell, T: RigidMap): [Axis, Orientation] {
 function applyMotion(cell: ChamferCell, T: RigidMap): ChamferCell {
   const resolved = cell.resolvedTo
   const [ax, o] = trackedBasis(cell, T)
-  if (!resolved || resolved.shapeKind === 'thin') {
+  if (!resolved || resolved.shapeKind === 'thin' || resolved.shapeKind === 'half') {
     return { planeAxis: ax, planeOrientation: o, resolvedTo: resolved ? { ...resolved } : null }
   }
 

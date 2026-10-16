@@ -9,7 +9,7 @@ import type { TexelClip } from '@/engine/texture/texelOps'
 import type { AnimationSpeed, AnimationType, SliceAnimSettings, SliceKey } from '@/engine/animation/types'
 
 export type ToolId = 'paint' | 'erase' | 'eyedropper' | 'select' | 'fill' | 'clone' | 'move' | 'material' | 'pivot' | 'textureface' | 'marker'
-export type VoxelKind = 'cube' | 'ramp' | 'wedge' | 'thin'
+export type VoxelKind = 'cube' | 'ramp' | 'wedge' | 'thin' | 'half'
 
 export type SelectionRegion = {
   originU: number
@@ -82,6 +82,12 @@ export type ProjectSlice = {
    * undo/redo history, selections, and pending floats, drops animation slices outside the new
    * bounds, and clamps the construction-plane offset into range. Rename-only calls just rename. */
   updateProjectSettings: (name: string, gridExtent: GridExtent) => void
+  /** Doubles the working cube (`gridExtent` → twice the even working grid) and scales every
+   * voxel to its exact 2×2×2 block — cubes octuplicate, bevels decompose into exact staircases,
+   * thin slabs become back-to-back half-slab columns, texture/markers/animation remap along.
+   * Not undoable (snapshots can't span an extent change): clears all histories, selections, and
+   * floats, and doubles the construction-plane offset. No-op past the 64-cell cap. */
+  rescaleProject: () => void
   /** Re-rolls `meta.noiseSeed`, changing the baked noise/specular grain's pattern without touching
    * the model — for when the current project's noise happened to land on an unflattering roll. */
   randomizeNoiseSeed: () => void

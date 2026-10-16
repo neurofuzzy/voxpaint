@@ -1,5 +1,6 @@
 import type { GridExtent } from '@/engine/grid/types'
 import { effectiveExtent } from '@/engine/grid/GridStore'
+import { texelCenterToWorld, worldToTexel } from './boxMapping'
 import type { BoxFace, TextureModel } from './types'
 import { BOX_FACES, EMPTY, TEXEL_SCALE, faceSizeFor } from './types'
 
@@ -49,6 +50,39 @@ export function resizeTextureModel(texture: TextureModel, oldExtent: GridExtent,
         const su = tu - shift
         if (su < 0 || su >= oldFaceSize) continue
         dst[tv * newFaceSize + tu] = src[sv * oldFaceSize + su]
+      }
+    }
+    faces[face] = dst
+  }
+  return { faces }
+}
+
+/**
+ * Doubles a texture's six faces for a 2x project rescale, preserving paint glued to the voxels:
+ * each new texel samples the old texel under half its world position (the model doubles about
+ * the origin, so new-world `w` shows what old-world `w/2` showed). Nearest-neighbor, so
+ * grayscale indices (and `EMPTY` holes) duplicate into exact 2×2 blocks on even grids; on odd
+ * grids the same world-anchored math keeps everything centered. Used by rescale; the voxel
+ * model itself is decomposed separately. All coordinates stay on exact binary fractions
+ * (halves/quarters), so the `Math.floor` boundaries below never wobble — no epsilon.
+ */
+export function rescaleTextureModel2x(texture: TextureModel, oldExtent: GridExtent, newExtent: GridExtent): TextureModel {
+  const newFaceSize = faceSizeFor(newExtent)
+  const faces = {} as Record<BoxFace, Uint8Array>
+  for (const face of BOX_FACES) {
+    const src = texture.faces[face]
+    const dst = new Uint8Array(newFaceSize * newFaceSize)
+    dst.fill(EMPTY)
+    for (let tv = 0; tv < newFaceSize; tv++) {
+      for (let tu = 0; tu < newFaceSize; tu++) {
+        // World center of the new texel (depth coordinate is irrelevant — worldToTexel only
+        // reads the in-plane components), halved back into the old model's frame.
+        const [x, y, z] = texelCenterToWorld(face, tu, tv, 0, newExtent)
+        const [su, sv] = worldToTexel(face, x / 2, y / 2, z / 2, oldExtent)
+        const ou = Math.floor(su)
+        const ov = Math.floor(sv)
+        if (!withinFace(ou, ov, faceSizeFor(oldExtent))) continue
+        dst[tv * newFaceSize + tu] = src[texelIndex(ou, ov, faceSizeFor(oldExtent))]
       }
     }
     faces[face] = dst

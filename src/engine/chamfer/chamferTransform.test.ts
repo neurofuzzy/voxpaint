@@ -6,7 +6,7 @@ import { mirrorChamferCell, rotateChamferCell } from './chamferTransform'
 const AXES: Axis[] = ['x', 'y', 'z']
 const ORIENTATIONS: Orientation[] = [1, -1]
 const ROTATIONS: Rotation[] = [0, 1, 2, 3]
-const SHAPES: ChamferShapeKind[] = ['ramp', 'convex', 'concave', 'wedge', 'thin']
+const SHAPES: ChamferShapeKind[] = ['ramp', 'convex', 'concave', 'wedge', 'thin', 'half']
 
 function cell(axis: Axis, orientation: Orientation, shape: ChamferShapeKind, rotation: Rotation): ChamferCell {
   return { planeAxis: axis, planeOrientation: orientation, resolvedTo: { shapeKind: shape, rotation } }
@@ -112,6 +112,21 @@ describe('chamferTransform cross-axis mapping', () => {
       planeAxis: 'x',
       planeOrientation: -1,
       resolvedTo: { shapeKind: 'thin', rotation: 0 },
+    })
+  })
+
+  it('swings half slabs onto the turned normal exactly like thin slabs', () => {
+    // The flush slab is fully determined by its outward normal, so the tracked basis carries it
+    // exactly — same ride-along as thin, verified here for a cross-axis turn.
+    expect(mirrorChamferCell(cell('x', 1, 'half', 0), 'z', true, false)).toEqual({
+      planeAxis: 'x',
+      planeOrientation: -1,
+      resolvedTo: { shapeKind: 'half', rotation: 0 },
+    })
+    expect(rotateChamferCell(cell('x', 1, 'half', 0), 'z', 'cw')).toEqual({
+      planeAxis: 'y',
+      planeOrientation: -1,
+      resolvedTo: { shapeKind: 'half', rotation: 0 },
     })
   })
 })

@@ -306,3 +306,45 @@ describe('material paint', () => {
     expect(after.model.color.get(keyFor(5, 5))?.paletteSlot).toEqual(SLOT_B)
   })
 })
+
+describe('paintCell half-slab handling', () => {
+  beforeEach(() => {
+    const s = useAppStore.getState()
+    s.newProject('Test', 16)
+    s.setActiveVoxelKind('half')
+    s.setPlaneAxisOrientation('z', 1)
+    s.setPlaneOffset(0)
+  })
+
+  it('paints a fixed flush half slab recording the active plane basis', () => {
+    const s = useAppStore.getState()
+    s.beginStroke()
+    expect(s.paintCell(4, 4)).toBe(true)
+    s.commitStroke()
+
+    const after = useAppStore.getState()
+    expect(after.model.color.size).toBe(1)
+    expect(after.model.chamfer.get(keyFor(4, 4))).toEqual({
+      planeAxis: 'z',
+      planeOrientation: 1,
+      resolvedTo: { shapeKind: 'half', rotation: 0 },
+    })
+  })
+
+  it('re-painting with cube clears the half entry', () => {
+    const s = useAppStore.getState()
+    s.beginStroke()
+    expect(s.paintCell(4, 4)).toBe(true)
+    s.commitStroke()
+
+    useAppStore.getState().setActiveVoxelKind('cube')
+    const s2 = useAppStore.getState()
+    s2.beginStroke()
+    expect(s2.paintCell(4, 4)).toBe(true)
+    s2.commitStroke()
+
+    const after = useAppStore.getState()
+    expect(after.model.color.size).toBe(1)
+    expect(after.model.chamfer.has(keyFor(4, 4))).toBe(false)
+  })
+})
