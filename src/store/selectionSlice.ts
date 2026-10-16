@@ -16,6 +16,7 @@ export const createSelectionSlice: Slice = (set, get) => ({
   // never re-triggers this guard against itself.
   setSelection: (region) => {
     get().bakeFloatIfAny()
+    get().clearStatusAlert()
     set((state) => { state.selection = region })
   },
   setClipboard: (clipboard) => set((state) => { state.clipboard = clipboard }),

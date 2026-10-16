@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import type { Axis, ChamferCell, ChamferShapeKind, Orientation, Rotation } from '@/engine/grid/types'
 import { mirrorClassification, rotateClassification90 } from '@/engine/tools/transform'
-import { mirrorChamferCell, rotateChamferCell } from './chamferTransform'
+import { mirrorChamferCell, rotateChamferCell, spinSlabAboutLocalY } from './chamferTransform'
 
 const AXES: Axis[] = ['x', 'y', 'z']
 const ORIENTATIONS: Orientation[] = [1, -1]
@@ -128,5 +128,71 @@ describe('chamferTransform cross-axis mapping', () => {
       planeOrientation: -1,
       resolvedTo: { shapeKind: 'half', rotation: 0 },
     })
+  })
+})
+
+describe('spinSlabAboutLocalY (slab click-to-rotate)', () => {
+  it('swings a z-faced half slab through −z → +x → +z → −x, one 90° step per click', () => {
+    // Hand-derived: z-plane v is (0,−1,0); +90° about it sends the normal N → V × N.
+    // (0,0,−1) → (1,0,0) → (0,0,1) → (−1,0,0) → (0,0,−1).
+    const bases: [Axis, Orientation][] = [
+      ['z', -1],
+      ['x', 1],
+      ['z', 1],
+      ['x', -1],
+    ]
+    let c = cell('z', -1, 'half', 0)
+    for (const [axis, orientation] of bases.slice(1).concat([bases[0]])) {
+      c = spinSlabAboutLocalY(c)
+      expect(c.planeAxis).toBe(axis)
+      expect(c.planeOrientation).toBe(orientation)
+      expect(c.resolvedTo).toEqual({ shapeKind: 'half', rotation: 0 })
+    }
+  })
+
+  it('four spins return every x/z-faced thin/half slab to its start', () => {
+    // x/z bases share the world −y local v axis, so the facing cycles in place through four
+    // distinct facings (two world axes, both signs) and back.
+    for (const shape of ['thin', 'half'] as const) {
+      for (const axis of ['x', 'z'] as const) {
+        for (const o of ORIENTATIONS) {
+          let c = cell(axis, o, shape, 0)
+          const seen = new Set<string>()
+          for (let i = 0; i < 4; i++) {
+            c = spinSlabAboutLocalY(c)
+            // Every step moves the facing (never a no-op) while keeping shape and rotation.
+            expect(c.resolvedTo).toEqual({ shapeKind: shape, rotation: 0 })
+            seen.add(`${c.planeAxis},${c.planeOrientation}`)
+          }
+          expect(c).toEqual(cell(axis, o, shape, 0))
+          expect(seen.size).toBe(4)
+        }
+      }
+    }
+  })
+
+  it('a y-faced slab tips onto the x/z cycle on first spin, then cycles there', () => {
+    // The y basis's local v is a world z axis, so the first spin leaves the y axis for x —
+    // after that the facing stays in the x/z 4-cycle (the paint-time V is not stored on the
+    // cell, so the original y facing is not recoverable by spinning — repaint it instead).
+    for (const shape of ['thin', 'half'] as const) {
+      for (const o of ORIENTATIONS) {
+        const first = spinSlabAboutLocalY(cell('y', o, shape, 0))
+        expect(first.planeAxis).toBe('x')
+        expect(first.resolvedTo).toEqual({ shapeKind: shape, rotation: 0 })
+        let c = first
+        for (let i = 0; i < 4; i++) c = spinSlabAboutLocalY(c)
+        expect(c).toEqual(first)
+      }
+    }
+  })
+
+  it('leaves non-slab cells untouched', () => {
+    const wedge = cell('z', 1, 'wedge', 2)
+    expect(spinSlabAboutLocalY(wedge)).toBe(wedge)
+    const ramp = cell('x', -1, 'ramp', 1)
+    expect(spinSlabAboutLocalY(ramp)).toBe(ramp)
+    const unresolved: ChamferCell = { planeAxis: 'y', planeOrientation: 1, resolvedTo: null }
+    expect(spinSlabAboutLocalY(unresolved)).toBe(unresolved)
   })
 })

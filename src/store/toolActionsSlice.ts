@@ -28,9 +28,19 @@ export const createToolActionsSlice: Slice = (set, get) => ({
     if (!inSelection) {
       // A region that reaches all 4 edges of the plane almost certainly leaked through a gap rather
       // than being deliberately enclosed — reject it outright rather than repaint the whole plane.
-      if (fillLeaksToEdges(cells, meta.gridExtent)) return
-      // An active selection clips the fill to its mask.
-      if (selection) cells = cells.filter(([cu, cv]) => isCellSelected(selection, cu, cv))
+      if (fillLeaksToEdges(cells, meta.gridExtent)) {
+        if (selection) get().flashSelectionBlocked()
+        return
+      }
+      // An active selection clips the fill to its mask: a click outside it that filters down to
+      // nothing was blocked by the selection, not by an empty region — say so in the footer.
+      if (selection) {
+        cells = cells.filter(([cu, cv]) => isCellSelected(selection, cu, cv))
+        if (cells.length === 0) {
+          get().flashSelectionBlocked()
+          return
+        }
+      }
     }
     if (cells.length === 0) return
     get().beginStroke()

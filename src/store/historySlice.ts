@@ -19,6 +19,8 @@ export const createHistorySlice: Slice = (set, get) => ({
   beginStroke: () => {
     strokeBaseline = { model: get().model, markers: get().markers }
     beginFreshChamferTracking()
+    // A new gesture supersedes any selection-blocked alert (a rejected op re-flashes it).
+    get().clearStatusAlert()
   },
 
   commitStroke: () => {

@@ -167,3 +167,37 @@ export function rotateChamferCell(cell: ChamferCell, planeAxis: Axis, direction:
 export function mirrorChamferCell(cell: ChamferCell, planeAxis: Axis, mirrorU: boolean, mirrorV: boolean): ChamferCell {
   return applyMotion(cell, planeMotion(planeAxis, { kind: 'mirror', mirrorU, mirrorV }))
 }
+
+/**
+ * Spins a thin/half slab 90° about the V axis it was painted on — the click-to-rotate escape
+ * hatch for slabs, mirroring the wedge's manual rotation. The outward normal swings through
+ * the cell's own authoring frame (object axis, not the world or active-plane frame): x/z-faced
+ * slabs cycle W → U → -W → -U and back in four clicks. A slab solid is fully determined by its
+ * outward normal, so only the authoring basis moves; shapeKind/rotation are preserved.
+ * Non-slab cells (including unresolved ones) are returned untouched.
+ *
+ * Note the y-faced transient: the y basis's V is a world z axis, so the first spin of a
+ * y-faced slab tips it onto the x/z cycle, which it then follows (the paint-time V is not
+ * stored on the cell, so the original y facing is not recoverable by spinning — repaint it
+ * on the y plane instead).
+ */
+export function spinSlabAboutLocalY(cell: ChamferCell): ChamferCell {
+  const resolved = cell.resolvedTo
+  if (!resolved || (resolved.shapeKind !== 'thin' && resolved.shapeKind !== 'half')) return cell
+  const { vDir: V } = planeLogicalBasis(cell.planeAxis)
+  const N = outwardNormal(cell.planeAxis, cell.planeOrientation)
+  // +90° about the cell's own +V (right-hand rule): N → V × N. All three are signed unit
+  // axes, so this is exact integer arithmetic — the image is always a world axis.
+  const imaged: Coord = [
+    V[1] * N[2] - V[2] * N[1],
+    V[2] * N[0] - V[0] * N[2],
+    V[0] * N[1] - V[1] * N[0],
+  ]
+  const j = imaged[0] !== 0 ? 0 : imaged[1] !== 0 ? 1 : imaged[2] !== 0 ? 2 : -1
+  if (j === -1) return cell // V ∥ N — impossible for a plane frame; freeze rather than corrupt.
+  return {
+    planeAxis: ALL_AXES[j],
+    planeOrientation: (imaged[j] > 0 ? 1 : -1) as Orientation,
+    resolvedTo: { ...resolved },
+  }
+}

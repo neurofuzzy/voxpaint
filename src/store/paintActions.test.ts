@@ -316,17 +316,20 @@ describe('paintCell half-slab handling', () => {
     s.setPlaneOffset(0)
   })
 
-  it('paints a fixed flush half slab recording the active plane basis', () => {
+  it('paints a recessed flush half slab: void toward the painter', () => {
     const s = useAppStore.getState()
     s.beginStroke()
     expect(s.paintCell(4, 4)).toBe(true)
     s.commitStroke()
 
+    // Painted on the z/1 plane (viewer on +z): the orientation negates so the void faces
+    // the viewer and the voxel reads recessed next to full neighbors — never a flush
+    // face hiding an internal pocket.
     const after = useAppStore.getState()
     expect(after.model.color.size).toBe(1)
     expect(after.model.chamfer.get(keyFor(4, 4))).toEqual({
       planeAxis: 'z',
-      planeOrientation: 1,
+      planeOrientation: -1,
       resolvedTo: { shapeKind: 'half', rotation: 0 },
     })
   })
@@ -346,5 +349,119 @@ describe('paintCell half-slab handling', () => {
     const after = useAppStore.getState()
     expect(after.model.color.size).toBe(1)
     expect(after.model.chamfer.has(keyFor(4, 4))).toBe(false)
+  })
+
+  it('re-clicking a half slab spins its facing 90° per click, cycling back after four', () => {
+    const s = useAppStore.getState()
+    s.beginStroke()
+    expect(s.paintCell(4, 4)).toBe(true)
+    s.commitStroke()
+
+    // Recessed paint on z/1 starts at (z,−1); each re-click spins 90° about the paint-time V.
+    const expected: [string, number][] = [
+      ['x', 1],
+      ['z', 1],
+      ['x', -1],
+      ['z', -1],
+    ]
+    for (const [axis, orientation] of expected) {
+      useAppStore.getState().beginStroke()
+      expect(useAppStore.getState().paintCell(4, 4)).toBe(true)
+      useAppStore.getState().commitStroke()
+      expect(useAppStore.getState().model.chamfer.get(keyFor(4, 4))).toEqual({
+        planeAxis: axis,
+        planeOrientation: orientation,
+        resolvedTo: { shapeKind: 'half', rotation: 0 },
+      })
+    }
+  })
+
+  it('re-applying a half slab within the same stroke does not spin it', () => {
+    const s = useAppStore.getState()
+    s.beginStroke()
+    expect(s.paintCell(4, 4)).toBe(true)
+    // Drag interpolation re-applies visited cells (Bresenham includes both endpoints) —
+    // the stroke's own anchor must not rotate on revisit.
+    expect(s.paintCell(4, 4)).toBe(true)
+    s.commitStroke()
+
+    expect(useAppStore.getState().model.chamfer.get(keyFor(4, 4))).toEqual({
+      planeAxis: 'z',
+      planeOrientation: -1,
+      resolvedTo: { shapeKind: 'half', rotation: 0 },
+    })
+  })
+
+  it('painting half over thin (and thin over half) re-bases instead of spinning', () => {
+    const s = useAppStore.getState()
+    s.beginStroke()
+    expect(s.paintCell(4, 4)).toBe(true)
+    s.commitStroke()
+
+    // Switch to thin: overwrite with the plane basis, not spin.
+    useAppStore.getState().setActiveVoxelKind('thin')
+    useAppStore.getState().beginStroke()
+    expect(useAppStore.getState().paintCell(4, 4)).toBe(true)
+    useAppStore.getState().commitStroke()
+    expect(useAppStore.getState().model.chamfer.get(keyFor(4, 4))).toEqual({
+      planeAxis: 'z',
+      planeOrientation: 1,
+      resolvedTo: { shapeKind: 'thin', rotation: 0 },
+    })
+
+    // Thin re-click spins thin; switching back to half re-bases recessed.
+    useAppStore.getState().beginStroke()
+    expect(useAppStore.getState().paintCell(4, 4)).toBe(true)
+    useAppStore.getState().commitStroke()
+    expect(useAppStore.getState().model.chamfer.get(keyFor(4, 4))?.planeAxis).toBe('x')
+
+    useAppStore.getState().setActiveVoxelKind('half')
+    useAppStore.getState().beginStroke()
+    expect(useAppStore.getState().paintCell(4, 4)).toBe(true)
+    useAppStore.getState().commitStroke()
+    expect(useAppStore.getState().model.chamfer.get(keyFor(4, 4))).toEqual({
+      planeAxis: 'z',
+      planeOrientation: -1,
+      resolvedTo: { shapeKind: 'half', rotation: 0 },
+    })
+  })
+})
+
+describe('paintCell thin-slab click-to-rotate', () => {
+  beforeEach(() => {
+    const s = useAppStore.getState()
+    s.newProject('Test', 16)
+    s.setActiveVoxelKind('thin')
+    s.setPlaneAxisOrientation('z', 1)
+    s.setPlaneOffset(0)
+  })
+
+  it('re-clicking a thin slab spins its facing 90° per click, cycling back after four', () => {
+    const s = useAppStore.getState()
+    s.beginStroke()
+    expect(s.paintCell(4, 4)).toBe(true)
+    s.commitStroke()
+    expect(useAppStore.getState().model.chamfer.get(keyFor(4, 4))).toEqual({
+      planeAxis: 'z',
+      planeOrientation: 1,
+      resolvedTo: { shapeKind: 'thin', rotation: 0 },
+    })
+
+    const expected: [string, number][] = [
+      ['x', -1],
+      ['z', -1],
+      ['x', 1],
+      ['z', 1],
+    ]
+    for (const [axis, orientation] of expected) {
+      useAppStore.getState().beginStroke()
+      expect(useAppStore.getState().paintCell(4, 4)).toBe(true)
+      useAppStore.getState().commitStroke()
+      expect(useAppStore.getState().model.chamfer.get(keyFor(4, 4))).toEqual({
+        planeAxis: axis,
+        planeOrientation: orientation,
+        resolvedTo: { shapeKind: 'thin', rotation: 0 },
+      })
+    }
   })
 })

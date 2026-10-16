@@ -197,6 +197,11 @@ export type ViewSlice = {
   /** Dynamic status message shown in the footer's center area. Components set this on hover to
    * show contextual info; cleared on pointer leave. Falls back to the active tool hint when null. */
   statusMessage: string | null
+  /** Transient red alert in the footer, shown when a 2D edit is rejected by the selection clip
+   * (painting outside the active selection). Takes precedence over `statusMessage` while set.
+   * `key` retriggers the blink animation on repeat offenses. Auto-clears after a few seconds,
+   * on the next stroke, or on selection change. */
+  statusAlert: { message: string; key: number } | null
   /** Texture mode: show the 3D model silhouette as a ghosted guide behind the texel grid. */
   onionSkin: boolean
   /** GLTF export: scale factor as a percentage (1–1000, default 100). */
@@ -233,6 +238,10 @@ export type ViewSlice = {
   setExposure: (v: number) => void
   setAoStrength: (v: number) => void
   setStatusMessage: (msg: string | null) => void
+  /** Flashes the selection-blocked alert (Esc hint). Call when a 2D edit hits the selection clip. */
+  flashSelectionBlocked: () => void
+  /** Dismisses the selection-blocked alert early (new stroke, selection change). */
+  clearStatusAlert: () => void
   setOnionSkin: (v: boolean) => void
   setExportScaleFactor: (v: number) => void
   setExportAnchor: (v: GltfExportAnchor) => void
