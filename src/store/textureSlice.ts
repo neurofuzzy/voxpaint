@@ -50,14 +50,19 @@ export const createTextureSlice: Slice = (set, get) => {
     const arr = next.faces[face]
     const sel = get().textureSelection
     let changed = false
+    let selectionSkipped = false
     for (const [u, v, value] of writes) {
       if (!withinFace(u, v, faceSize)) continue
-      if (sel && !isCellSelected(sel, u, v)) continue
+      if (sel && !isCellSelected(sel, u, v)) {
+        selectionSkipped = true
+        continue
+      }
       const i = texelIndex(u, v, faceSize)
       if (arr[i] === value) continue
       arr[i] = value
       changed = true
     }
+    if (!changed && sel && selectionSkipped) get().flashSelectionBlocked()
     if (changed) commit(next)
     return changed
   }
@@ -87,6 +92,7 @@ export const createTextureSlice: Slice = (set, get) => {
         texture: get().texture,
         texelScale: normalizeTexelScale(get().meta.texelScale ?? TEXEL_SCALE),
       }
+      get().clearStatusAlert()
     },
 
     textureCommitStroke: () => {
@@ -164,7 +170,10 @@ export const createTextureSlice: Slice = (set, get) => {
         ? floodFillFace(get().texture.faces[face], u, v, faceSize, (cu, cv) => isCellSelected(sel, cu, cv))
         : floodFillFace(get().texture.faces[face], u, v, faceSize)
       if (!inSelection && sel) cells = cells.filter(([cu, cv]) => isCellSelected(sel, cu, cv))
-      if (cells.length === 0) return
+      if (cells.length === 0) {
+        if (sel && !inSelection) get().flashSelectionBlocked()
+        return
+      }
       get().textureBeginStroke()
       const gray = get().activeGrayIndex
       const next = cloneTextureModel(get().texture, face)
@@ -221,6 +230,7 @@ export const createTextureSlice: Slice = (set, get) => {
     // --- selection / float / clipboard ----------------------------------------------------------
     setTextureSelection: (region) => {
       get().textureBakeFloatIfAny()
+      get().clearStatusAlert()
       set((state) => { state.textureSelection = region })
     },
 

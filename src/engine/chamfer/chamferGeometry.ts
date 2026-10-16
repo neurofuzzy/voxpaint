@@ -70,6 +70,21 @@ export function thinGeometry(): THREE.BufferGeometry {
 }
 
 /**
+ * Model G — half slab: a full-footprint box that is half-thickness (0.5) along the outward (z)
+ * axis, flush with the outward face (`z ∈ [0, 0.5]`) rather than centered like the thin slab.
+ * The authoring orientation picks the side (flipping `planeOrientation` moves the slab to the
+ * other half — a geometry edit, so rebase tools refuse halves). Rotation is always 0; like
+ * `thinGeometry` it is returned non-indexed for `voxelMeshBuilder`'s triangle-soup loop. Created
+ * by project rescale (a doubled centered thin slab straddles the new layer boundary) and by the
+ * half paint kind — never by the chamfer resolver.
+ */
+export function halfGeometry(): THREE.BufferGeometry {
+  const geometry = new THREE.BoxGeometry(1, 1, 0.5).toNonIndexed()
+  geometry.translate(0, 0, 0.25)
+  return geometry
+}
+
+/**
  * Mirror a chamfer geometry across the v axis (negate local y) with winding reversed so faces stay
  * outward-wound. Paired with the proper-rotation matrix chamferInstanceMatrix produces for reflected
  * planes, this renders the identical shape in the identical place but with det=+1 (so lighting is

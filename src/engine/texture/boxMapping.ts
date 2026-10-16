@@ -35,9 +35,19 @@ export const FACE_ATLAS_CELL: Record<BoxFace, { col: number; row: number }> = {
  * sloped faces have diagonal normals), so **every face of a chamfer cell uses the axis the chamfer
  * was authored in** (`planeAxis`/`planeOrientation`). Plain cube faces use their own axis-aligned
  * normal's dominant axis + sign.
+ *
+ * Half slabs are the exception to the authoring rule: recessed paint stores the solid-side basis
+ * (void faces the painter), so the viewer-visible broad face points opposite the authoring
+ * outward normal — the page flips to what a full voxel's (or thin slab's) viewer-facing face
+ * samples. Rebase refuses halves, so this page is never user-set; it must be right automatically.
  */
 export function boxFaceForCell(chamfer: ChamferCell | undefined, normal: Coord): BoxFace {
-  if (chamfer) return boxFaceOf(chamfer.planeAxis, chamfer.planeOrientation)
+  if (chamfer) {
+    if (chamfer.resolvedTo?.shapeKind === 'half') {
+      return boxFaceOf(chamfer.planeAxis, chamfer.planeOrientation === 1 ? -1 : 1)
+    }
+    return boxFaceOf(chamfer.planeAxis, chamfer.planeOrientation)
+  }
   let axis: Axis = 'x'
   let maxAbs = -Infinity
   for (const a of ALL_AXES) {

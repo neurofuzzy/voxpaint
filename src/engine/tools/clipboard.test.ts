@@ -22,7 +22,7 @@ const convex = (rotation: Rotation): ChamferClassification => ({ shapeKind: 'con
 
 describe('mirrorClassification', () => {
   it('is an involution for every kind and rotation', () => {
-    const kinds = ['ramp', 'convex', 'concave', 'wedge', 'thin'] as const
+    const kinds = ['ramp', 'convex', 'concave', 'wedge', 'thin', 'half'] as const
     for (const shapeKind of kinds) {
       for (const rotation of [0, 1, 2, 3] as const) {
         for (const [mu, mv] of [
@@ -39,6 +39,11 @@ describe('mirrorClassification', () => {
 
   it('leaves the rotationally symmetric thin slab alone', () => {
     expect(mirrorClassification({ shapeKind: 'thin', rotation: 0 }, true, true)).toEqual({ shapeKind: 'thin', rotation: 0 })
+  })
+
+  it('leaves the flush half slab alone', () => {
+    expect(mirrorClassification({ shapeKind: 'half', rotation: 0 }, true, true)).toEqual({ shapeKind: 'half', rotation: 0 })
+    expect(mirrorClassification({ shapeKind: 'half', rotation: 0 }, true, false)).toEqual({ shapeKind: 'half', rotation: 0 })
   })
 
   it('mirrors a ramp in u by swapping its open side E<->W', () => {

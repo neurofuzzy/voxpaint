@@ -20,7 +20,7 @@ describe('serialize with texture', () => {
     texture.faces.nx[100] = 1
 
     const file = serializeProject(model, DEFAULT_PALETTE, meta, texture)
-    expect(file.schemaVersion).toBe(9)
+    expect(file.schemaVersion).toBe(10)
     expect(file.texture?.faceSize).toBeGreaterThan(0)
 
     const restored = deserializeProject(file)
@@ -69,7 +69,7 @@ describe('v1 → current migration', () => {
       model: { bounds: null, colorCells: [], chamferCells: [] },
     }
     const migrated = migrateToCurrent(v1)
-    expect(migrated.schemaVersion).toBe(9)
+    expect(migrated.schemaVersion).toBe(10)
     expect(migrated.texture).toBeUndefined()
     expect(migrated.meta.gridExtent).toBe(16)
 
@@ -101,7 +101,7 @@ describe('v2 → v3 migration (blink/pulse → metal/glass)', () => {
       },
     }
     const migrated = migrateToCurrent(v2) as any
-    expect(migrated.schemaVersion).toBe(9)
+    expect(migrated.schemaVersion).toBe(10)
     // Palette reshaped: metal/glass present, blink/pulse gone; base/emissive preserved.
     expect(migrated.palette.metal).toHaveLength(4)
     expect(migrated.palette.glass).toHaveLength(4)
@@ -155,7 +155,7 @@ describe('markers persistence (v9)', () => {
       model: { bounds: null, colorCells: [], chamferCells: [] },
     }
     const migrated = migrateToCurrent(v6)
-    expect(migrated.schemaVersion).toBe(9)
+    expect(migrated.schemaVersion).toBe(10)
     expect(deserializeProject(migrated).markers).toEqual([])
   })
 
@@ -171,7 +171,7 @@ describe('markers persistence (v9)', () => {
       ],
     }
     const migrated = migrateToCurrent(v7)
-    expect(migrated.schemaVersion).toBe(9)
+    expect(migrated.schemaVersion).toBe(10)
     expect(migrated.markers).toEqual([
       { id: 'a', color: 1, x: 1, y: 2, z: 3, planeAxis: 'y', planeOrientation: 1 },
       { id: 'nope', color: 1, x: 99, y: 0, z: 0, planeAxis: 'y', planeOrientation: 1 },
@@ -191,9 +191,41 @@ describe('markers persistence (v9)', () => {
       markers: [{ id: 'a', color: 3, x: 1, y: 2, z: 3 }],
     }
     const migrated = migrateToCurrent(v8)
-    expect(migrated.schemaVersion).toBe(9)
+    expect(migrated.schemaVersion).toBe(10)
     expect(deserializeProject(migrated).markers).toEqual([
       { id: 'a', color: 3, position: [1, 2, 3], planeAxis: 'y', planeOrientation: 1 },
     ])
+  })
+})
+
+describe('half slabs persistence (v10)', () => {
+  it('round-trips half cells through serialize → deserialize', () => {
+    const model = emptyModel()
+    model.color.set(encodeKey(0, 0, 0), { paletteSlot: { kind: 'base', index: 3 } })
+    model.chamfer.set(encodeKey(0, 0, 0), {
+      planeAxis: 'z',
+      planeOrientation: -1,
+      resolvedTo: { shapeKind: 'half', rotation: 0 },
+    })
+    const texture = emptyTextureModel(meta.gridExtent)
+    const file = serializeProject(model, DEFAULT_PALETTE, meta, texture)
+    const restored = deserializeProject(file)
+    expect(restored.model.chamfer.get(encodeKey(0, 0, 0))).toEqual({
+      planeAxis: 'z',
+      planeOrientation: -1,
+      resolvedTo: { shapeKind: 'half', rotation: 0 },
+    })
+  })
+
+  it('migrates v9 files untouched, stamping v10', () => {
+    const v9 = {
+      schemaVersion: 9,
+      meta,
+      palette: DEFAULT_PALETTE,
+      model: { bounds: null, colorCells: [], chamferCells: [] },
+    }
+    const migrated = migrateToCurrent(v9)
+    expect(migrated.schemaVersion).toBe(10)
+    expect(deserializeProject(migrated).model.color.size).toBe(0)
   })
 })

@@ -56,6 +56,20 @@ describe('boxFaceForCell', () => {
     expect(boxFaceForCell({ ...chamfer, planeOrientation: -1 }, [0, 0, 1])).toBe('nx')
   })
 
+  it('flips the page for half slabs, whose stored basis is the solid (non-viewer) side', () => {
+    // Recessed paint on z/1 stores (z,−1) with the void toward +z: the viewer-facing broad
+    // face must sample 'pz', exactly like a thin slab or full voxel facing +z.
+    const recessed: ChamferCell = { planeAxis: 'z', planeOrientation: -1, resolvedTo: { shapeKind: 'half', rotation: 0 } }
+    expect(boxFaceForCell(recessed, [0, 0, 1])).toBe('pz')
+    expect(boxFaceForCell(recessed, [0, 0, -1])).toBe('pz')
+    // The void-side page follows the void: an outward (z,1) half samples 'nz'.
+    const proud: ChamferCell = { planeAxis: 'z', planeOrientation: 1, resolvedTo: { shapeKind: 'half', rotation: 0 } }
+    expect(boxFaceForCell(proud, [0, 0, 1])).toBe('nz')
+    // Other shapes are untouched by the flip.
+    const thin: ChamferCell = { planeAxis: 'z', planeOrientation: -1, resolvedTo: { shapeKind: 'thin', rotation: 0 } }
+    expect(boxFaceForCell(thin, [0, 0, 1])).toBe('nz')
+  })
+
   it('uses the dominant signed normal axis for plain cube faces', () => {
     expect(boxFaceForCell(undefined, [1, 0, 0])).toBe('px')
     expect(boxFaceForCell(undefined, [-1, 0, 0])).toBe('nx')

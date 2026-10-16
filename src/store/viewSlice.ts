@@ -4,6 +4,17 @@ import type { AppState, ViewSlice } from './types'
 
 type Slice = StateCreator<AppState, [['zustand/immer', never]], [], ViewSlice>
 
+/** Footer copy for selection-clip rejects — Esc clears the selection (see useKeyboardShortcuts). */
+export const SELECTION_BLOCKED_MESSAGE = 'Outside the selection — press Esc to clear it'
+
+/** How long the alert lingers after the last offense before auto-clearing. */
+const ALERT_TTL_MS = 2600
+
+// Transient, not part of observable state — the pending auto-clear timer plus a monotonic key
+// so repeat offenses retrigger the blink animation (BottomBar keys the message span on it).
+let alertTimer: ReturnType<typeof setTimeout> | null = null
+let alertKey = 0
+
 export const createViewSlice: Slice = (set) => ({
   fullscreen: false,
   edit3D: false,
@@ -22,6 +33,7 @@ export const createViewSlice: Slice = (set) => ({
   aoStrength: 1,
   exposure: 1,
   statusMessage: null,
+  statusAlert: null,
   onionSkin: true,
   exportScaleFactor: 100,
   exportAnchor: 'center',
@@ -51,6 +63,24 @@ export const createViewSlice: Slice = (set) => ({
     }),
   setHoveredFace: (face) => set((state) => { state.hoveredFace = face }),
   setStatusMessage: (msg) => set((state) => { state.statusMessage = msg }),
+  flashSelectionBlocked: () => {
+    if (alertTimer) clearTimeout(alertTimer)
+    alertKey += 1
+    const key = alertKey
+    set((state) => { state.statusAlert = { message: SELECTION_BLOCKED_MESSAGE, key } })
+    alertTimer = setTimeout(() => {
+      alertTimer = null
+      // Only clear our own generation — a newer flash re-arms the timer for itself.
+      set((state) => { if (state.statusAlert?.key === key) state.statusAlert = null })
+    }, ALERT_TTL_MS)
+  },
+  clearStatusAlert: () => {
+    if (alertTimer) {
+      clearTimeout(alertTimer)
+      alertTimer = null
+    }
+    set((state) => { state.statusAlert = null })
+  },
   setOnionSkin: (v) => set((state) => { state.onionSkin = v }),
   setExportScaleFactor: (v) => set((state) => { state.exportScaleFactor = v; state.dirty = true }),
   setExportAnchor: (v) => set((state) => { state.exportAnchor = v; state.dirty = true }),

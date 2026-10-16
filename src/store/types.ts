@@ -9,7 +9,7 @@ import type { TexelClip } from '@/engine/texture/texelOps'
 import type { AnimationSpeed, AnimationType, SliceAnimSettings, SliceKey } from '@/engine/animation/types'
 
 export type ToolId = 'paint' | 'erase' | 'eyedropper' | 'select' | 'fill' | 'clone' | 'move' | 'material' | 'pivot' | 'textureface' | 'marker'
-export type VoxelKind = 'cube' | 'ramp' | 'wedge' | 'thin'
+export type VoxelKind = 'cube' | 'ramp' | 'wedge' | 'thin' | 'half'
 
 export type SelectionRegion = {
   originU: number
@@ -87,6 +87,12 @@ export type ProjectSlice = {
    * undo/redo history, selections, and pending floats, drops animation slices outside the new
    * bounds, and clamps the construction-plane offset into range. Rename-only calls just rename. */
   updateProjectSettings: (name: string, gridExtent: GridExtent) => void
+  /** Doubles the working cube (`gridExtent` → twice the even working grid) and scales every
+   * voxel to its exact 2×2×2 block — cubes octuplicate, bevels decompose into exact staircases,
+   * thin slabs become back-to-back half-slab columns, texture/markers/animation remap along.
+   * Not undoable (snapshots can't span an extent change): clears all histories, selections, and
+   * floats, and doubles the construction-plane offset. No-op past the 64-cell cap. */
+  rescaleProject: () => void
   /** Re-rolls `meta.noiseSeed`, changing the baked noise/specular grain's pattern without touching
    * the model — for when the current project's noise happened to land on an unflattering roll. */
   randomizeNoiseSeed: () => void
@@ -196,6 +202,11 @@ export type ViewSlice = {
   /** Dynamic status message shown in the footer's center area. Components set this on hover to
    * show contextual info; cleared on pointer leave. Falls back to the active tool hint when null. */
   statusMessage: string | null
+  /** Transient red alert in the footer, shown when a 2D edit is rejected by the selection clip
+   * (painting outside the active selection). Takes precedence over `statusMessage` while set.
+   * `key` retriggers the blink animation on repeat offenses. Auto-clears after a few seconds,
+   * on the next stroke, or on selection change. */
+  statusAlert: { message: string; key: number } | null
   /** Texture mode: show the 3D model silhouette as a ghosted guide behind the texel grid. */
   onionSkin: boolean
   /** GLTF export: scale factor as a percentage (1–1000, default 100). */
@@ -232,6 +243,10 @@ export type ViewSlice = {
   setExposure: (v: number) => void
   setAoStrength: (v: number) => void
   setStatusMessage: (msg: string | null) => void
+  /** Flashes the selection-blocked alert (Esc hint). Call when a 2D edit hits the selection clip. */
+  flashSelectionBlocked: () => void
+  /** Dismisses the selection-blocked alert early (new stroke, selection change). */
+  clearStatusAlert: () => void
   setOnionSkin: (v: boolean) => void
   setExportScaleFactor: (v: number) => void
   setExportAnchor: (v: GltfExportAnchor) => void

@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import * as THREE from 'three'
-import { concaveCornerGeometry, convexCornerGeometry, mirrorVGeometry, rampGeometry, unitCubeGeometry, wedgeGeometry } from './chamferGeometry'
+import { concaveCornerGeometry, convexCornerGeometry, halfGeometry, mirrorVGeometry, rampGeometry, unitCubeGeometry, wedgeGeometry } from './chamferGeometry'
 
 type Vec = [number, number, number]
 
@@ -221,8 +221,7 @@ describe('chamfer geometry — v-mirrored variants (reflected-plane pools)', () 
   })
 })
 
-describe('chamfer geometry — baked rotation', () => {
-  it('rotation is a plain rotation about the origin: 4 quarter-turns returns to the canonical mesh', () => {
+describe('chamfer geometry — baked rotation', () => {  it('rotation is a plain rotation about the origin: 4 quarter-turns returns to the canonical mesh', () => {
     const base = rampGeometry(0).getAttribute('position').array
     // A full turn (four 90° steps) is applied as rotation param 4 ≡ 0 via rotateZ; verify the
     // canonical mesh footprint bounds are rotation-invariant for each quarter turn.
@@ -246,5 +245,39 @@ describe('chamfer geometry — baked rotation', () => {
     expect(topKeys).toContain('-0.5,-0.5') // NW top present
     expect(topKeys).not.toContain('0.5,0.5') // SE knife
     expect(topKeys).not.toContain('-0.5,0.5') // SW knife
+  })
+})
+
+describe('chamfer geometry — half slab (Model G)', () => {
+  it('is a full-footprint box flush with the outward face (z in [0, 0.5])', () => {
+    const g = halfGeometry()
+    g.computeBoundingBox()
+    const { min, max } = g.boundingBox!
+    expect([round(min.x), round(min.y), round(min.z)]).toEqual([-0.5, -0.5, 0])
+    expect([round(max.x), round(max.y), round(max.z)]).toEqual([0.5, 0.5, 0.5])
+  })
+
+  it('has 12 triangles (a full box) with outward windings', () => {
+    const g = halfGeometry()
+    expect(triangles(g).length).toBe(12)
+    const inside: Vec = [0, 0, 0.25]
+    for (const tri of triangles(g)) {
+      const normal = cross(sub(tri[1], tri[0]), sub(tri[2], tri[0]))
+      expect(dot(normal, sub(centroid(tri), inside)), `triangle ${JSON.stringify(tri)}`).toBeGreaterThan(0)
+    }
+  })
+
+  it('mirrorVGeometry(half) keeps the flush-outward solid with outward windings', () => {
+    const m = mirrorVGeometry(halfGeometry())
+    expect(triangles(m).length).toBe(12)
+    m.computeBoundingBox()
+    const { min, max } = m.boundingBox!
+    expect([round(min.x), round(min.y), round(min.z)]).toEqual([-0.5, -0.5, 0])
+    expect([round(max.x), round(max.y), round(max.z)]).toEqual([0.5, 0.5, 0.5])
+    const inside: Vec = [0, 0, 0.25]
+    for (const tri of triangles(m)) {
+      const normal = cross(sub(tri[1], tri[0]), sub(tri[2], tri[0]))
+      expect(dot(normal, sub(centroid(tri), inside)), `triangle ${JSON.stringify(tri)}`).toBeGreaterThan(0)
+    }
   })
 })

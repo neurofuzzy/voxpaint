@@ -80,11 +80,13 @@ export class InstancingManager {
       concave: 256,
       wedge: 256,
       thin: 256,
+      half: 256,
       rampM: 256,
       convexM: 256,
       concaveM: 256,
       wedgeM: 256,
       thinM: 256,
+      halfM: 256,
     }
     this.meshes = {} as Record<PoolId, THREE.InstancedMesh>
     this.wireframeMeshes = {} as Record<PoolId, THREE.InstancedMesh>

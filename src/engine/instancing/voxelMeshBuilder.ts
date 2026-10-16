@@ -1,7 +1,7 @@
 import * as THREE from 'three'
 import { decodeKey, encodeKey } from '@/engine/grid/GridStore'
 import type { CellKey, ChamferCell, Coord, VoxelModel } from '@/engine/grid/types'
-import { concaveCornerGeometry, convexCornerGeometry, mirrorVGeometry, rampGeometry, thinGeometry, wedgeGeometry } from '@/engine/chamfer/chamferGeometry'
+import { concaveCornerGeometry, convexCornerGeometry, halfGeometry, mirrorVGeometry, rampGeometry, thinGeometry, wedgeGeometry } from '@/engine/chamfer/chamferGeometry'
 import { materialClassFor, resolveSlotColor, type MaterialClass } from '@/engine/palette/palette'
 import type { PaletteState } from '@/engine/palette/types'
 import type { SliceKey } from '@/engine/animation/types'
@@ -65,17 +65,20 @@ const CHAMFER_BASE: Record<string, THREE.BufferGeometry> = (() => {
   const concave = concaveCornerGeometry(0)
   const wedge = wedgeGeometry(0)
   const thin = thinGeometry()
+  const half = halfGeometry()
   return {
     ramp,
     convex,
     concave,
     wedge,
     thin,
+    half,
     rampM: mirrorVGeometry(ramp),
     convexM: mirrorVGeometry(convex),
     concaveM: mirrorVGeometry(concave),
     wedgeM: mirrorVGeometry(wedge),
     thinM: mirrorVGeometry(thin),
+    halfM: mirrorVGeometry(half),
   }
 })()
 
@@ -173,12 +176,15 @@ function emitChamfer(faces: Face[], base: THREE.BufferGeometry, matrix: THREE.Ma
 /**
  * Shell pass: drop back-to-back interior face pairs. Two faces with the same (order-independent)
  * quantized vertex-triple and opposing normals are the touching sides of two adjacent voxels. Culling:
- * - **Same material class:** both faces are dropped — a same-material interface is genuinely hidden.
+ * - **Both sides opaque** (matte/emissive/metal, same or different class): both faces are dropped —
+ *   the interface sits inside the combined solid and is never seen. Each material's mesh keeps a
+ *   hidden hole at the interface; the holes coincide, so nothing shows from outside. (Keeping both
+ *   sides instead leaves coincident opposite-normal quads that z-fight in some engines — e.g. an
+ *   emissive lamp block directly under a matte cap.)
  * - **Glass against a different material:** only the **glass** face is dropped, keeping the opaque
  *   neighbour's face. This avoids the glass surface z-fighting the coincident solid face behind it,
  *   while the solid face stays visible through the transmission.
- * - **Two different opaque classes** (e.g. matte↔metal): both kept — the interface is inside the solid
- *   model, never seen, so there's nothing to z-fight and different classes live in different meshes.
+ * - **Glass against glass:** both dropped (same-class rule).
  * Boundary faces (against empty space) and non-coincident faces are always kept.
  *
  * When `nodeAssignment` is given (animated export), a pair spanning two *different* animation nodes
@@ -206,8 +212,12 @@ export function removeInteriorFaces(faces: Face[], nodeAssignment?: Map<CellKey,
     if (faces[i].materialClass === faces[j].materialClass) {
       removed.add(i) // same material → both sides hidden
       removed.add(j)
+    } else if (faces[i].materialClass !== 'glass' && faces[j].materialClass !== 'glass') {
+      removed.add(i) // different opaque classes (e.g. matte↔emissive) → both sides hidden
+      removed.add(j)
     } else {
-      // Different classes: drop only a glass face (it would z-fight the solid face behind it).
+      // Glass against a different class: drop only the glass face (it would z-fight the solid
+      // face behind it, while the solid face stays visible through the transmission).
       if (faces[i].materialClass === 'glass') removed.add(i)
       if (faces[j].materialClass === 'glass') removed.add(j)
     }
@@ -283,9 +293,11 @@ export interface OptimizedVoxelGroups {
 
 /**
  * Build per-voxel solid geometry grouped by (materialClass, colorKey), then CSG-union each group.
- * CSG boolean union naturally discards interior faces between adjacent same-colour voxels and
- * never creates false edge-bridges between disconnected components. Adjacent voxels of different
- * colours keep their shared interface faces (they live in separate CSG groups).
+ * CSG boolean union naturally discards interior faces between adjacent same-group voxels and
+ * never creates false edge-bridges between disconnected components. Exactly-coincident
+ * back-to-back interface faces between adjacent *opaque* groups are then culled on both sides
+ * (see `cullCoincidentOpaqueInterfaces` in `meshOptimizer.ts`) — the interface is inside the
+ * combined solid. Glass-involved interfaces keep the solid side (glass side only is dropped).
  *
  * Returns one `ColorGroupGeometry` per (materialClass, colorKey) pair — the consumer creates one
  * solid-colour PBR material per group. No vertex colours are needed.

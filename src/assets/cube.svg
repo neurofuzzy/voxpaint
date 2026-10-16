@@ -1,0 +1,8 @@
+<svg viewBox="0 0 111 128" xmlns="http://www.w3.org/2000/svg">
+  <!-- Cube voxel-kind toolbar icon. Edit freely — the toolbar picks up changes. -->
+  <g transform="matrix(1,0,0,1,-277.128,-512)">
+    <path d="M332.554,512L387.979,544L332.554,576L277.128,544L332.554,512Z" fill="rgb(235,235,235)" />
+    <path d="M387.979,544L387.979,608L332.554,640L332.554,576L387.979,544Z" fill="rgb(142,141,141)" />
+    <path d="M332.554,576L332.554,640L277.128,608L277.128,544L332.554,576Z" fill="rgb(201,201,201)" />
+  </g>
+</svg>

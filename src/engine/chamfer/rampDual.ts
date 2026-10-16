@@ -11,8 +11,8 @@ import { outwardNormal } from '@/engine/plane/planeGeometry'
  * Ramps and wedges are congruent solids — both unit right-triangular prisms of volume 1/2, one
  * with its triangle in the u-w plane (extruded along v), the other in the u-v plane (extruded
  * along w) — so a wedge's dual on another basis is a *ramp* (and the search below discovers the
- * pairing instead of hand-tabling it). Corner volumes (convex/concave) and slabs (thin) are not
- * prisms congruent to these and have no exact dual, so they always yield null.
+ * pairing instead of hand-tabling it). Corner volumes (convex/concave) and slabs (thin/half)
+ * are not prisms congruent to these and have no exact dual, so they always yield null.
  *
  * Mirror-invariance: on reflected planes (+X/+Z/-Y) rendering pairs a v-mirrored geometry with a
  * negated-V/negated-rotation matrix (`chamferInstanceMatrix`), and those two mirrors cancel

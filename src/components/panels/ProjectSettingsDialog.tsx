@@ -6,6 +6,7 @@ import type { GridExtent, VoxelScaleY } from '@/engine/grid/types'
 import { faceSizeFor, TEXEL_SCALE } from '@/engine/texture/types'
 import type { TexelScale } from '@/engine/texture/types'
 import { hasTextureContent, normalizeTexelScale } from '@/engine/texture/TextureStore'
+import { isIPad } from '@/engine/input/isIPad'
 import { useAppStore } from '@/store/useAppStore'
 import { showToast } from '@/components/ui/toastBus'
 import { ProjectSizePicker } from './ProjectSizePicker'
@@ -89,7 +90,7 @@ export function ProjectSettingsDialog({ open, onOpenChange }: { open: boolean; o
   }
 
   return (
-    <Dialog.Root open={open} onOpenChange={onOpenChange}>
+    <Dialog.Root open={open} onOpenChange={onOpenChange} modal={!isIPad() /* non-modal on iPad: modal Radix overlays swallow Apple Pencil taps */}>
       <Dialog.Portal>
         <Dialog.Overlay className="fixed inset-0 z-50 bg-black/60 backdrop-blur-sm" />
         <Dialog.Content
