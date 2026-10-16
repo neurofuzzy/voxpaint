@@ -4,6 +4,7 @@ import { useEffect, useState } from 'react'
 import type { GltfExportAnchor } from '@/engine/export/gltfExport'
 import { downloadGlb, exportModelToGlb } from '@/engine/export/gltfExport'
 import { isIPad } from '@/engine/input/isIPad'
+import { TEXEL_SCALE } from '@/engine/texture/types'
 import { normalizeProjectFilename } from '@/engine/persistence/projectFile'
 import { useAppStore } from '@/store/useAppStore'
 import { showToast } from '@/components/ui/toastBus'
@@ -75,6 +76,7 @@ export function ExportGltfDialog({ open, onOpenChange }: { open: boolean; onOpen
         alignToObjectBounds,
         noiseSeed: meta.noiseSeed,
         optimizeMesh: !state.exportDisableMeshOptimization,
+        texelScale: state.meta.texelScale ?? TEXEL_SCALE,
         includeTextureMaps: state.exportIncludeTextureMaps,
         voxelScaleY: meta.voxelScaleY,
         markers,

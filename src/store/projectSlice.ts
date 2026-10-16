@@ -15,7 +15,9 @@ import {
 import { RESCALE_FACTOR, rescaleCoord, rescaleTargetExtent, rescaleVoxelModel } from '@/engine/grid/rescale'
 import { axisIndex } from '@/engine/plane/planeGeometry'
 import { DEFAULT_PALETTE } from '@/engine/palette/defaultPalette'
-import { emptyTextureModel, rescaleTextureModel2x, resizeTextureModel } from '@/engine/texture/TextureStore'
+import { TEXEL_SCALE } from '@/engine/texture/types'
+import { emptyTextureModel, normalizeTexelScale, resampleTextureModel, rescaleTextureModel2x, resizeTextureModel } from '@/engine/texture/TextureStore'
+import type { TexelScale } from '@/engine/texture/types'
 import type { AppState, ProjectSlice } from './types'
 
 type Slice = StateCreator<AppState, [['zustand/immer', never]], [], ProjectSlice>
@@ -35,6 +37,7 @@ export const createProjectSlice: Slice = (set, get) => ({
     gridExtent: DEFAULT_GRID_EXTENT,
     noiseSeed: generateNoiseSeed(),
     voxelScaleY: 1,
+    texelScale: TEXEL_SCALE,
   },
 
   setModel: (model) =>
@@ -78,6 +81,28 @@ export const createProjectSlice: Slice = (set, get) => ({
       state.dirty = true
     }),
 
+  setTexelScale: (scale: TexelScale) => {
+    const next = normalizeTexelScale(scale)
+    get().textureBakeFloatIfAny()
+    const prev = normalizeTexelScale(get().meta.texelScale ?? TEXEL_SCALE)
+    if (next === prev) return
+    // Bracketed as one texture-undo step (the baseline carries the old faces + old scale), so
+    // the change is undoable — redo included. The voxel model itself is untouched, so its
+    // history stays.
+    get().textureBeginStroke()
+    set((state) => {
+      state.texture = resampleTextureModel(state.texture, state.meta.gridExtent, prev, next)
+      state.meta.texelScale = next
+      // Masks/origins are texel-indexed for one size — drop them rather than clip through them.
+      state.textureSelection = null
+      state.textureFloat = null
+      state.textureFloatOrigin = null
+      state.meta.modifiedAt = new Date().toISOString()
+      state.dirty = true
+    })
+    get().textureCommitStroke()
+  },
+
   updateProjectSettings: (name, gridExtent) => {
     // Bake any pending floats first so in-bounds work lands in the model before the resize clips.
     get().bakeFloatIfAny()
@@ -103,7 +128,12 @@ export const createProjectSlice: Slice = (set, get) => ({
       state.meta.gridExtent = extent
 
       // Re-house the texture faces (center-crop on shrink, EMPTY-pad on grow).
-      state.texture = resizeTextureModel(state.texture, prevExtent, extent)
+      state.texture = resizeTextureModel(
+        state.texture,
+        prevExtent,
+        extent,
+        normalizeTexelScale(state.meta.texelScale ?? TEXEL_SCALE),
+      )
 
       // Markers are position-dependent too — drop any outside the new bounds.
       state.markers = state.markers.filter((m) => withinWorkingBounds(m.position, extent))
@@ -160,7 +190,12 @@ export const createProjectSlice: Slice = (set, get) => ({
       state.dirty = true
 
       // Texture paint doubles with the voxels (nearest-neighbor, glued by world position).
-      state.texture = rescaleTextureModel2x(state.texture, prevExtent, extent)
+      state.texture = rescaleTextureModel2x(
+        state.texture,
+        prevExtent,
+        extent,
+        normalizeTexelScale(state.meta.texelScale ?? TEXEL_SCALE),
+      )
 
       // Markers double about the origin with everything else (frozen facing basis untouched).
       for (const m of state.markers) {
@@ -262,6 +297,7 @@ export const createProjectSlice: Slice = (set, get) => ({
         gridExtent: extent,
         noiseSeed: generateNoiseSeed(),
         voxelScaleY: 1,
+        texelScale: TEXEL_SCALE,
       }
       state.past = []
       state.future = []
