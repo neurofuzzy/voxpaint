@@ -113,6 +113,43 @@ export function quarterGeometry(rotation: 0 | 1 | 2 | 3 = 0): THREE.BufferGeomet
 }
 
 /**
+ * Model J — flat: `thin`'s centre plane as a bare quad — the u×v square at `z = 0`,
+ * normal +z. Zero thickness: a true plane for glass panels and the like. Rendered
+ * `DoubleSide` in the editor (single quad); export emits both windings (see
+ * `voxelMeshBuilder`'s two-sided handling). Takes no `rotation`.
+ */
+export function flatGeometry(): THREE.BufferGeometry {
+  const hw = H
+  const positions = new Float32Array([
+    -hw, -hw, 0, hw, -hw, 0, hw, hw, 0,
+    -hw, -hw, 0, hw, hw, 0, -hw, hw, 0,
+  ])
+  const geometry = new THREE.BufferGeometry()
+  geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3))
+  geometry.computeVertexNormals()
+  return geometry
+}
+
+/**
+ * Model K — flat wedge: `wedge`'s diagonal cut face as a bare quad — the diagonal
+ * through the cell centre, full depth (`b(3), b(1), t(1), t(3)`, NW to SE),
+ * normal toward the open (NE) corner. Zero thickness; several stepping diagonally
+ * (du = dv) tile into a continuous 45° pane. `rotation` is the open corner index
+ * (NE=0, SE=1, SW=2, NW=3 — the wedge convention), baked with the same `rotateZ`
+ * convention as the other prefabs. Never resolver-created.
+ */
+export function flatWedgeGeometry(rotation: 0 | 1 | 2 | 3 = 0): THREE.BufferGeometry {
+  const geometry = buildGeometry(
+    [
+      [b(3), b(1), t(1)],
+      [b(3), t(1), t(3)],
+    ],
+    rotation,
+  )
+  return geometry
+}
+
+/**
  * Mirror a chamfer geometry across the v axis (negate local y) with winding reversed so faces stay
  * outward-wound. Paired with the proper-rotation matrix chamferInstanceMatrix produces for reflected
  * planes, this renders the identical shape in the identical place but with det=+1 (so lighting is

@@ -86,19 +86,71 @@ function unionAll(bsps: ThreeBSP[]): ThreeBSP | null {
  * `isOccupied`, when given, additionally strips any **glass** group's faces that back onto an
  * occupied grid cell (see `removeOccludedGlassFaces`) — right after the CSG union, before the
  * coplanar merge, while triangles still correspond ~1:1 to per-voxel faces.
+ *
+ * Two-sided flats (`flat`/`flatwedge`, marked `userData.twoSidedFlat` by the builder) bypass
+ * the union — an open quad is undefined behaviour for ThreeBSP — and are appended to their
+ * group's output after the union (and after the glass cull, which samples outward normals and
+ * would eat a glass flat's hidden-side winding) but before the coplanar merge, so same-facing
+ * flats in adjacent cells still weld. The merge itself is same-facing-only, so a flat's own
+ * opposite-winding pair always survives.
  */
+/** Empty position+normal shell — the attribute shape every merge/output stage reads and writes. */
+function emptyShellGeometry(): THREE.BufferGeometry {
+  const out = new THREE.BufferGeometry()
+  out.setAttribute('position', new THREE.Float32BufferAttribute([], 3))
+  out.setAttribute('normal', new THREE.Float32BufferAttribute([], 3))
+  return out
+}
+
+/**
+ * Concatenates non-indexed `extras` onto `base`, carrying exactly `base`'s attribute set
+ * (attributes an extra lacks are zero-filled, so per-vertex counts stay consistent for
+ * rendering). Used to append two-sided flat quads back onto their group's unioned output —
+ * both windings already carry world-space position+normal.
+ */
+function appendGeometries(base: THREE.BufferGeometry, extras: THREE.BufferGeometry[]): THREE.BufferGeometry {
+  const names = Object.keys(base.attributes)
+  const itemSizes = new Map(names.map((n) => [n, (base.getAttribute(n) as THREE.BufferAttribute).itemSize]))
+  const chunks = new Map<string, number[]>(
+    names.map((n) => [n, Array.from((base.getAttribute(n) as THREE.BufferAttribute).array as ArrayLike<number>)]),
+  )
+  for (const extra of extras) {
+    const count = (extra.getAttribute('position') as THREE.BufferAttribute).count
+    for (const name of names) {
+      const attr = extra.getAttribute(name) as THREE.BufferAttribute | undefined
+      const size = itemSizes.get(name)!
+      const chunk = chunks.get(name)!
+      if (attr && attr.itemSize === size) {
+        const arr = attr.array as ArrayLike<number>
+        for (let i = 0; i < attr.count * size; i++) chunk.push(arr[i])
+      } else {
+        for (let i = 0; i < count * size; i++) chunk.push(0)
+      }
+    }
+  }
+  const out = new THREE.BufferGeometry()
+  for (const name of names) {
+    out.setAttribute(name, new THREE.Float32BufferAttribute(chunks.get(name)!, itemSizes.get(name)!))
+  }
+  return out
+}
+
 export function optimizeGroupsByCSG<T extends VoxelGroup>(
   groups: T[],
   mergeCoplanar = true,
   isOccupied?: (x: number, y: number, z: number) => boolean,
 ): (ColorGroupGeometry & Omit<T, keyof VoxelGroup>)[] {
-  const postUnion: { group: T; geometry: THREE.BufferGeometry }[] = []
+  const postUnion: { group: T; geometry: THREE.BufferGeometry; flatGeoms: THREE.BufferGeometry[] }[] = []
 
   for (const group of groups) {
     if (group.geometries.length === 0) continue
 
+    // Two-sided flats bypass the union — an open quad is undefined behaviour for ThreeBSP —
+    // and get their OWN optimization pass below: flats merge only with flats, never with solids.
+    const flatGeoms = group.geometries.filter((g) => (g.userData as { twoSidedFlat?: boolean }).twoSidedFlat)
     const bsps: ThreeBSP[] = []
     for (const geom of group.geometries) {
+      if ((geom.userData as { twoSidedFlat?: boolean }).twoSidedFlat) continue
       bsps.push(new ThreeBSP(geom))
     }
 
@@ -110,23 +162,42 @@ export function optimizeGroupsByCSG<T extends VoxelGroup>(
         csgGeom.dispose()
         csgGeom = culled
       }
-      postUnion.push({ group, geometry: csgGeom })
+      postUnion.push({ group, geometry: csgGeom, flatGeoms })
+    } else if (flatGeoms.length > 0) {
+      // A group of only flats has no solid to union: the flat pass below emits the quads.
+      postUnion.push({ group, geometry: emptyShellGeometry(), flatGeoms })
     }
   }
 
   // Cross-group interior cull while triangles still correspond ~1:1 to per-voxel faces (the
   // coplanar merge below re-triangulates them into multi-cell polygons that no longer match).
+  // Flat pairs are intra-group (one entry's own two windings), so they never match across entries.
   cullCoincidentOpaqueInterfaces(postUnion)
 
   const results: (ColorGroupGeometry & Omit<T, keyof VoxelGroup>)[] = []
-  for (const { group, geometry } of postUnion) {
+  for (const { group, geometry, flatGeoms } of postUnion) {
     const optimized = mergeCoplanar ? mergeCoplanarFaces(geometry) : geometry
     if (mergeCoplanar) geometry.dispose()
+    let out = optimized
+    if (flatGeoms.length > 0) {
+      // Dedicated flat pass: weld coplanar same-facing quads across cells into panes (the merge
+      // is same-facing-only, so a flat's own opposite-winding pair always survives), then append.
+      // Both sides are position+normal-only, so the concat keeps a uniform attribute shape.
+      const flatSoup = appendGeometries(emptyShellGeometry(), flatGeoms)
+      const flatMerged = mergeCoplanar ? mergeCoplanarFaces(flatSoup) : flatSoup
+      if (mergeCoplanar) flatSoup.dispose()
+      const withFlats = appendGeometries(out, [flatMerged])
+      if (mergeCoplanar) {
+        out.dispose()
+        flatMerged.dispose()
+      }
+      out = withFlats
+    }
     const { geometries: _geometries, colorKey, materialClass, ...rest } = group
     results.push({
       colorKey,
       materialClass,
-      geometry: optimized,
+      geometry: out,
       ...rest,
     } as ColorGroupGeometry & Omit<T, keyof VoxelGroup>)
   }

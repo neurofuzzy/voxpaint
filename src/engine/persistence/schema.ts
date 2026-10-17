@@ -5,7 +5,7 @@ import type { PaletteSlotRef, PaletteState } from '@/engine/palette/types'
 import type { BoxFace } from '@/engine/texture/types'
 import type { GltfExportAnchor } from '@/engine/export/gltfExport'
 
-export const CURRENT_SCHEMA_VERSION = 10 as const
+export const CURRENT_SCHEMA_VERSION = 11 as const
 
 export type ViewSettings = {
   ambientOcclusion: boolean

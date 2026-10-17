@@ -263,6 +263,50 @@ describe('rescaleVoxelModel', () => {
     }
   })
 
+  it('tiles a flat wedge onto the doubled diagonal, same rotation', () => {
+    const base: Coord = [0, 0, 0]
+    // Even rotations ride NW-SE through (0,0)+(1,1); odd ride NE-SW through (1,0)+(0,1).
+    for (const rotation of [0, 1, 2, 3] as const) {
+      const next = rescaleVoxelModel(singleVoxel(base, { axis: 'z', orientation: 1, kind: 'flatwedge', rotation }))
+      expect(next.color.size, `r=${rotation}`).toBe(4)
+      expect(next.chamfer.size, `r=${rotation}`).toBe(4)
+      for (let du = 0; du < 2; du++) {
+        for (let dv = 0; dv < 2; dv++) {
+          for (let dw = 0; dw < 2; dw++) {
+            const onDiag = rotation % 2 === 0 ? du === dv : du !== dv
+            const key = encodeKey(...childAt(base, 'z', 1, du, dv, dw))
+            expect(next.color.has(key), `r=${rotation} ${du},${dv},${dw}`).toBe(onDiag)
+            if (onDiag) {
+              const cell = next.chamfer.get(key)
+              expect(cell?.resolvedTo).toEqual({ shapeKind: 'flatwedge', rotation })
+              expect(cell?.planeAxis).toBe('z')
+              expect(cell?.planeOrientation).toBe(1)
+            }
+          }
+        }
+      }
+    }
+  })
+
+  it('shifts a flat into the +normal-side layer (no exact fit exists)', () => {
+    const base: Coord = [0, 0, 0]
+    const next = rescaleVoxelModel(singleVoxel(base, { axis: 'z', orientation: 1, kind: 'flat', rotation: 0 }))
+    // The doubled centre plane is the dw boundary: 4 flats tiling the dw=1 layer, verbatim basis.
+    expect(next.color.size).toBe(4)
+    expect(next.chamfer.size).toBe(4)
+    for (let du = 0; du < 2; du++) {
+      for (let dv = 0; dv < 2; dv++) {
+        for (let dw = 0; dw < 2; dw++) {
+          const key = encodeKey(...childAt(base, 'z', 1, du, dv, dw))
+          expect(next.color.has(key), `${du},${dv},${dw}`).toBe(dw === 1)
+          if (dw === 1) {
+            expect(next.chamfer.get(key)?.resolvedTo).toEqual({ shapeKind: 'flat', rotation: 0 })
+          }
+        }
+      }
+    }
+  })
+
   it('snaps a quarter column to 2 full cubes in its quadrant', () => {
     const base: Coord = [0, 0, 0]
     // Rotation 0 = NE quadrant (du=1, dv=0); rotation 2 = SW (du=0, dv=1).
@@ -316,9 +360,9 @@ describe('rescaleVoxelModel', () => {
     // the parent's, so volumes compare directly.
     const volume: Record<string, number> = {
       cube: 1, ramp: 1 / 2, wedge: 1 / 2, convex: 1 / 3, concave: 2 / 3, thin: 1 / 2, half: 1 / 2,
-      post: 1 / 4, quarter: 1 / 4,
+      post: 1 / 4, quarter: 1 / 4, flat: 0, flatwedge: 0,
     }
-    const kinds: ChamferShapeKind[] = ['ramp', 'wedge', 'convex', 'concave', 'thin', 'half', 'post', 'quarter']
+    const kinds: ChamferShapeKind[] = ['ramp', 'wedge', 'convex', 'concave', 'thin', 'half', 'post', 'quarter', 'flat', 'flatwedge']
     for (const kind of kinds) {
       for (const rotation of [0, 1, 2, 3] as const) {
         const next = rescaleVoxelModel(singleVoxel([0, 0, 0], { axis: 'z', orientation: 1, kind, rotation }))

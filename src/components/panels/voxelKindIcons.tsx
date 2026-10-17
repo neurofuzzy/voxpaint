@@ -1,5 +1,7 @@
 import chamferUrl from '@/assets/chamfer.svg'
 import cubeUrl from '@/assets/cube.svg'
+import flatUrl from '@/assets/flat.svg'
+import flatwedgeUrl from '@/assets/flatwedge.svg'
 import halfUrl from '@/assets/half.svg'
 import postUrl from '@/assets/post.svg'
 import quarterUrl from '@/assets/quarter.svg'
@@ -50,4 +52,12 @@ export function PostIcon({ size = 18 }: IconProps) {
 
 export function QuarterIcon({ size = 18 }: IconProps) {
   return <FileIcon url={quarterUrl} size={size} />
+}
+
+export function FlatIcon({ size = 18 }: IconProps) {
+  return <FileIcon url={flatUrl} size={size} />
+}
+
+export function FlatWedgeIcon({ size = 18 }: IconProps) {
+  return <FileIcon url={flatwedgeUrl} size={size} />
 }

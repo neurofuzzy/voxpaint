@@ -18,7 +18,7 @@ import { outwardNormal } from '@/engine/plane/planeGeometry'
  * conservation per kind × rotation in rescale.test.ts guards this).
  *
  * Children reduced to an edge or less (zero volume — e.g. concave's far-corner child) match
- * nothing and are left empty, which is exact. Four shapes need direct rules instead of sampling:
+ * nothing and are left empty, which is exact. Six shapes need direct rules instead of sampling:
  * - `thin` (centered slab, quarter-lattice boundaries the sampler can't see): 8 flush `half`
  *   slabs — 4 back-to-back columns, lower layer oriented +1, upper −1.
  * - `half` (flush slab): sampling would hallucinate phantom slabs on zero-volume boundary
@@ -28,6 +28,13 @@ import { outwardNormal } from '@/engine/plane/planeGeometry'
  *   the block center.
  * - `quarter` (corner 0.5-wide column): the doubled solid is a full 1-wide column in one
  *   quadrant of the 2×2 footprint, full in W — 2 full cubes stacked in W, no chamfer entries.
+ * - `flatwedge` (diagonal quad): the doubled diagonal crosses 2 children per W layer — those
+ *   children each get a `flatwedge` with the same rotation (even rotations take the (0,0)+(1,1)
+ *   cells, odd rotations (1,0)+(0,1)). Exact.
+ * - `flat` (centre quad): the doubled centre plane lies on the boundary between the two new
+ *   layers, where no cell centre is — no exact representation exists. By decision it shifts
+ *   into the +normal-side layer: 4 `flat`s tiling that layer (the pane moves half a new
+ *   voxel — a quarter of an old one).
  */
 
 /** Rescale factor: 2x along every axis (1 voxel → 8). */
@@ -239,6 +246,45 @@ export function rescaleVoxelModel(model: VoxelModel): VoxelModel {
         if (du !== qu || dv !== qv) continue
         const coord = childCoord(base, du, dv, dw, U, V, W)
         color.set(encodeKey(...coord), { paletteSlot: colorCell.paletteSlot })
+      }
+      continue
+    }
+
+    if (shapeKind === 'flatwedge') {
+      // Diagonal quad doubles to the block diagonal: in each W layer the 2 children the
+      // diagonal crosses each get a flatwedge with the same rotation. Even rotations run
+      // NW-SE through (0,0)+(1,1); odd rotations run NE-SW through (1,0)+(0,1). Exact.
+      const onDiagonal = (du: number, dv: number) =>
+        resolved.rotation % 2 === 0 ? du === dv : du !== dv
+      for (const [du, dv, dw] of CHILD_OFFSETS) {
+        if (!onDiagonal(du, dv)) continue
+        const coord = childCoord(base, du, dv, dw, U, V, W)
+        const childKey = encodeKey(...coord)
+        color.set(childKey, { paletteSlot: colorCell.paletteSlot })
+        chamfer.set(childKey, {
+          planeAxis: chamferCell.planeAxis,
+          planeOrientation: chamferCell.planeOrientation,
+          resolvedTo: { shapeKind: 'flatwedge', rotation: resolved.rotation },
+        })
+      }
+      continue
+    }
+
+    if (shapeKind === 'flat') {
+      // Centre quad doubles onto the boundary between the two new layers — no exact
+      // representation. Shifts into the +normal-side layer (dw=1): 4 flats tiling that layer,
+      // verbatim basis. The pane moves half a new voxel (a quarter of an old one); the rescale
+      // summary must say so.
+      for (const [du, dv, dw] of CHILD_OFFSETS) {
+        if (dw !== 1) continue
+        const coord = childCoord(base, du, dv, dw, U, V, W)
+        const childKey = encodeKey(...coord)
+        color.set(childKey, { paletteSlot: colorCell.paletteSlot })
+        chamfer.set(childKey, {
+          planeAxis: chamferCell.planeAxis,
+          planeOrientation: chamferCell.planeOrientation,
+          resolvedTo: { shapeKind: 'flat', rotation: 0 },
+        })
       }
       continue
     }

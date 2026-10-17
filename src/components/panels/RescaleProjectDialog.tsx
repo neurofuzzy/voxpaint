@@ -65,6 +65,7 @@ export function RescaleProjectDialog({ open, onOpenChange }: { open: boolean; on
                 <span className="font-mono tabular-nums">{colorCount} → {projected} voxels</span>
               </li>
               <li className="text-neutral-400">Ramps and corners become exact staircases; thin slabs become back-to-back half-slabs, posts become quarter-columns, quarters become full cubes.</li>
+              <li className="text-neutral-400">Flat wedges tile the doubled diagonal; flats shift half a voxel toward their facing (no exact fit).</li>
               <li className="text-neutral-400">Texture paint, markers, and animation scale along.</li>
               <li className="text-neutral-400">Undo history and selections are cleared — this can't be undone.</li>
             </ul>

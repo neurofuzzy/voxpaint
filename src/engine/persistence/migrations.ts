@@ -80,6 +80,11 @@ MIGRATIONS[8] = (doc) => ({
  * files with "please update" instead of crashing on an unknown shape in the render pools. */
 MIGRATIONS[9] = (doc) => ({ ...doc, schemaVersion: 10 })
 
+/** v10 → v11: the `flat` / `flatwedge` zero-thickness quads are introduced. No reshape —
+ * pre-v11 files simply contain no flats. Same stamp rationale as v10: older app versions
+ * reject v11 files with "please update" instead of crashing on an unknown shape. */
+MIGRATIONS[10] = (doc) => ({ ...doc, schemaVersion: 11 })
+
 export class UnsupportedSchemaVersionError extends Error {
   constructor(foundVersion: unknown) {
     super(`This file is from a newer version of VoxPaint (schemaVersion=${String(foundVersion)}). Please update the app.`)

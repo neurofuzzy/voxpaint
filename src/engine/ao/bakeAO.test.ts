@@ -1,10 +1,11 @@
 import { describe, expect, it } from 'vitest'
+import * as THREE from 'three'
 import { emptyModel, encodeKey, recomputeBounds } from '@/engine/grid/GridStore'
-import type { VoxelModel } from '@/engine/grid/types'
+import type { ChamferShapeKind, Rotation, VoxelModel } from '@/engine/grid/types'
 import { DEFAULT_PALETTE } from '@/engine/palette/defaultPalette'
 import { buildOptimizedVoxelGroups } from '@/engine/instancing/voxelMeshBuilder'
 import { unwrapGeometries, type UnwrappedAtlas } from './uvUnwrap'
-import { bakeAOToAtlas, makeSpecularNoiseTexture } from './bakeAO'
+import { bakeAOToAtlas, bakeOccupancyField, makeSpecularNoiseTexture } from './bakeAO'
 
 function bakeForModel(model: VoxelModel): { data: Uint8ClampedArray; width: number; height: number } {
   const { groups } = buildOptimizedVoxelGroups(model, DEFAULT_PALETTE)
@@ -141,5 +142,135 @@ describe('noiseScale quantization', () => {
       expect(new Set(values).size).toBe(1)
     }
     expect(new Set([...blocks.values()].map((v) => v[0])).size).toBeGreaterThan(1)
+  })
+})
+
+describe('flats in the occupancy field', () => {
+  it('treats flat panels as empty — they cast no AO on neighbours', () => {
+    const model = emptyModel()
+    model.color.set(encodeKey(0, 0, 0), { paletteSlot: { kind: 'base', index: 0 } })
+    model.color.set(encodeKey(1, 0, 0), { paletteSlot: { kind: 'base', index: 0 } })
+    model.chamfer.set(encodeKey(1, 0, 0), { planeAxis: 'z', planeOrientation: 1, resolvedTo: { shapeKind: 'flat', rotation: 0 } })
+    model.bounds = recomputeBounds(model)
+    const tex = bakeOccupancyField(model)!
+    const data = tex.image.data as Uint8Array
+    // 2×1×1 field: the cube is occupied, the flat cell is not.
+    expect(data.length).toBe(2)
+    expect(data[0]).toBe(255)
+    expect(data[1]).toBe(0)
+  })
+})
+
+/** Single-rect atlas covering the world quad (origin + u·t1 + v·t2, (u,v) in ranges). */
+function rectAtlas(
+  normal: [number, number, number],
+  t1: [number, number, number],
+  t2: [number, number, number],
+  depth: number,
+  minU: number,
+  maxU: number,
+  minV: number,
+  maxV: number,
+  size = 16,
+): UnwrappedAtlas {
+  const tex = (a: number, b: number) => Math.ceil((b - a) * 4) + 2
+  return {
+    size,
+    rects: [{
+      normal: new THREE.Vector3(...normal),
+      tangent1: new THREE.Vector3(...t1),
+      tangent2: new THREE.Vector3(...t2),
+      depthCoord: depth,
+      minU,
+      maxU,
+      minV,
+      maxV,
+      faceIndices: [],
+      atlasX: 0,
+      atlasY: 0,
+      texWidth: tex(minU, maxU),
+      texHeight: tex(minV, maxV),
+    }],
+  }
+}
+
+function modelWith(cells: Array<{ coord: [number, number, number]; flat?: { shapeKind: ChamferShapeKind; rotation: Rotation } }>): VoxelModel {
+  const model = emptyModel()
+  for (const { coord, flat } of cells) {
+    model.color.set(encodeKey(...coord), { paletteSlot: { kind: 'base', index: 0 } })
+    if (flat) {
+      model.chamfer.set(encodeKey(...coord), {
+        planeAxis: 'z',
+        planeOrientation: 1,
+        resolvedTo: { shapeKind: flat.shapeKind, rotation: flat.rotation },
+      })
+    }
+  }
+  model.bounds = { min: [0, 0, -1], max: [1, 0, 1] }
+  return model
+}
+
+describe('flats in the AO bake', () => {
+  // The +x face of the cube at the origin (world plane x=1, y,z in [0,1]).
+  const cubeFace = () => rectAtlas([1, 0, 0], [0, 1, 0], [0, 0, 1], 1, 0, 1, 0, 1)
+
+  it('does not darken a face backing onto a flat cell (no casting)', () => {
+    const alone = bakeAOToAtlas(modelWith([{ coord: [0, 0, 0] }]), cubeFace())
+    const withFlat = bakeAOToAtlas(
+      modelWith([{ coord: [0, 0, 0] }, { coord: [1, 0, 0], flat: { shapeKind: 'flat', rotation: 0 } }]),
+      cubeFace(),
+    )
+    // Byte-identical: the flat might as well not be there.
+    expect(withFlat.data).toEqual(alone.data)
+  })
+
+  it('control: a solid neighbour does darken the same face', () => {
+    const alone = bakeAOToAtlas(modelWith([{ coord: [0, 0, 0] }]), cubeFace())
+    const withCube = bakeAOToAtlas(modelWith([{ coord: [0, 0, 0] }, { coord: [1, 0, 0] }]), cubeFace())
+    let min = 255
+    for (let i = 0; i < withCube.data.length; i += 4) min = Math.min(min, withCube.data[i])
+    expect(min).toBeLessThan(255)
+    expect(alone.data).not.toEqual(withCube.data)
+  })
+
+  it('bakes flat-quad texels constant white even next to a wall (no receiving)', () => {
+    // Rect on the flat quad itself (world plane z=0.5 over the flat cell x in [1,2], y in [0,1]),
+    // with solid cubes directly ahead at z=1 and behind at z=-1.
+    const pane = () => rectAtlas([0, 0, 1], [1, 0, 0], [0, 1, 0], 0.5, 1, 2, 0, 1)
+    const walled = modelWith([
+      { coord: [1, 0, 0], flat: { shapeKind: 'flat', rotation: 0 } },
+      { coord: [1, 0, 1] },
+      { coord: [1, 0, -1] },
+    ])
+    const { data } = bakeAOToAtlas(walled, pane())
+    for (let i = 0; i < data.length; i += 4) {
+      expect(data[i]).toBe(255)
+    }
+  })
+
+  it('control: a solid face in the same walled setup does darken', () => {
+    // Same walls, but the rect sits on a solid cube's +z face at z=1 (cube at (1,0,0), no flat):
+    // the wall at z=1... the face backs onto (1,0,1)'s region — it must catch shadow.
+    const solidFace = () => rectAtlas([0, 0, 1], [1, 0, 0], [0, 1, 0], 1, 1, 2, 0, 1)
+    const walled = modelWith([{ coord: [1, 0, 0] }, { coord: [1, 0, 1] }, { coord: [1, 0, -1] }])
+    const { data } = bakeAOToAtlas(walled, solidFace())
+    let min = 255
+    for (let i = 0; i < data.length; i += 4) min = Math.min(min, data[i])
+    expect(min).toBeLessThan(255)
+  })
+
+  it('bakes flatwedge-quad texels constant white (diagonal plane + facing)', () => {
+    // Rotation-0 diagonal of the (1,0,0) cell on the z plane (v runs toward −y, so the prefab
+    // NW-SE diagonal lands on the world x+y=2 plane), normal (1,1,0)/√2.
+    const s = Math.SQRT1_2
+    const diag = () => rectAtlas([s, s, 0], [s, -s, 0], [0, 0, 1], Math.SQRT2, 0, 2 * s, 0, 1)
+    const walled = modelWith([
+      { coord: [1, 0, 0], flat: { shapeKind: 'flatwedge', rotation: 0 } },
+      { coord: [2, 0, 0] },
+    ])
+    const { data } = bakeAOToAtlas(walled, diag())
+    for (let i = 0; i < data.length; i += 4) {
+      expect(data[i]).toBe(255)
+    }
   })
 })

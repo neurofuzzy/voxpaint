@@ -9,7 +9,7 @@ import type { TexelClip } from '@/engine/texture/texelOps'
 import type { AnimationSpeed, AnimationType, SliceAnimSettings, SliceKey } from '@/engine/animation/types'
 
 export type ToolId = 'paint' | 'erase' | 'eyedropper' | 'select' | 'fill' | 'clone' | 'move' | 'material' | 'pivot' | 'textureface' | 'marker'
-export type VoxelKind = 'cube' | 'ramp' | 'wedge' | 'thin' | 'half' | 'post' | 'quarter'
+export type VoxelKind = 'cube' | 'ramp' | 'wedge' | 'thin' | 'half' | 'post' | 'quarter' | 'flat' | 'flatwedge'
 
 export type SelectionRegion = {
   originU: number
@@ -308,7 +308,7 @@ export type PaintActionsSlice = {
    * wedge source converts to its congruent ramp; a thin slab only ever flips orientation on its
    *   own axis, since turning it would rotate the slab). Existing resolved ramps/wedges/thins
    *   only — no-op (false) on empty/out-of-bounds cells, other shapes (halves, posts, quarters,
-   *   corners — posts/quarters sample texture cube-like by face normal and need no facing), and
+   *   flats — refacing any of those would move the solid, or there is no face to switch), and
    * solids the active plane can't express (so drags don't record junk undo steps). Plain cubes sample texture by
    * face normal and need no facing.
    */
@@ -337,8 +337,8 @@ export type ToolActionsSlice = {
    * — the selection-scale texture-face tool. Geometry is never touched: ramps/wedges rebase via
    * exact-solid duals, thin slabs and unresolved cells only take same-axis orientation flips
    * (the centered slab is mirror-symmetric, so the solid is identical and only the sampled
-   * texture face switches). Convex/concave corners, halves, posts, quarters, cross-axis thins,
-   * and inexpressible slopes are left alone. Only cells on the active slice are affected; plain cubes need no facing and
+   * texture face switches). Convex/concave corners, halves, posts, quarters, flats, cross-axis
+   * thins, and inexpressible slopes are left alone. Only cells on the active slice are affected; plain cubes need no facing and
    * are ignored. One undo stroke. Returns faced/skipped chamfer-cell counts for the caller to
    * report (the toast lives in SelectionPalette, not the store). */
   faceSelection: () => { faced: number; skipped: number }
