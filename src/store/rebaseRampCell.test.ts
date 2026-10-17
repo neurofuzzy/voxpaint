@@ -166,4 +166,28 @@ describe('rebaseRampCell', () => {
       resolvedTo: { shapeKind: 'thin', rotation: 0 },
     })
   })
+
+  it('refuses halves, posts, and quarters (geometry edits or nothing to switch)', () => {
+    for (const shapeKind of ['half', 'post', 'quarter'] as const) {
+      const model = emptyModel()
+      model.color.set(encodeKey(0, 0, 0), { paletteSlot: { kind: 'base', index: 3 } })
+      model.chamfer.set(encodeKey(0, 0, 0), {
+        planeAxis: 'z',
+        planeOrientation: 1,
+        resolvedTo: { shapeKind, rotation: 0 },
+      })
+      useAppStore.getState().setModel(model)
+      const s = useAppStore.getState()
+      const { u, v } = pixelFromGridCoord(s.plane, [0, 0, 0])
+      s.beginStroke()
+      expect(s.rebaseRampCell(u, v), shapeKind).toBe(false)
+      s.commitStroke()
+
+      expect(useAppStore.getState().model.chamfer.get(encodeKey(0, 0, 0))).toEqual({
+        planeAxis: 'z',
+        planeOrientation: 1,
+        resolvedTo: { shapeKind, rotation: 0 },
+      })
+    }
+  })
 })

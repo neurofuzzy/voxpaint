@@ -148,6 +148,46 @@ function applyPaintCell(
       })
     }
     strokeSlabKeys?.add(key)
+  } else if (kind === 'post') {
+    // Re-clicking a post spins it 90° about the V it was painted on — the same click-to-rotate
+    // contract as the slabs (the centered column's only free parameter is its long axis).
+    // Revisits within the same stroke are left untouched, like the slab branches above.
+    const existing = state.model.chamfer.get(key)
+    if (strokeSlabKeys?.has(key)) {
+      // Already touched this stroke — leave the chamfer entry exactly as the stroke left it.
+    } else if (existing?.resolvedTo?.shapeKind === 'post') {
+      state.model.chamfer.set(key, spinSlabAboutLocalY(existing))
+    } else {
+      // A post is a centered 0.5×0.5 column running the full unit length along the outward
+      // axis — the centered sibling of the thin slab with the axes swapped. Fully symmetric,
+      // so no neighbor sampling and no rotation: frozen at paint time with rotation 0.
+      state.model.chamfer.set(key, {
+        planeAxis: plane.axis,
+        planeOrientation: plane.orientation,
+        resolvedTo: { shapeKind: 'post', rotation: 0 },
+      })
+    }
+    strokeSlabKeys?.add(key)
+  } else if (kind === 'quarter') {
+    // Re-clicking a quarter cycles its occupied corner 90° (NE → SE → SW → NW) — the
+    // wedge-style manual rotation, since the corner is the quarter's free parameter (its long
+    // axis comes from the paint plane). Revisits within the same stroke are left untouched.
+    const existing = state.model.chamfer.get(key)
+    if (strokeSlabKeys?.has(key)) {
+      // Already touched this stroke — leave the chamfer entry exactly as the stroke left it.
+    } else if (existing?.resolvedTo?.shapeKind === 'quarter') {
+      const rotation = ((existing.resolvedTo.rotation + 1) % 4) as Rotation
+      existing.resolvedTo = { shapeKind: 'quarter', rotation }
+    } else {
+      // A quarter is the post pushed into the NE corner — a 0.5×0.5×1 column in one quadrant,
+      // full length along the outward axis. Fresh paints start NE; re-click cycles corners.
+      state.model.chamfer.set(key, {
+        planeAxis: plane.axis,
+        planeOrientation: plane.orientation,
+        resolvedTo: { shapeKind: 'quarter', rotation: 0 },
+      })
+    }
+    strokeSlabKeys?.add(key)
   } else {
     state.model.chamfer.delete(key)
   }

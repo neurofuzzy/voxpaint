@@ -18,10 +18,12 @@ import { RAMP_LOCAL_CORNERS, WEDGE_LOCAL_CORNERS, rotateLocal } from './rampDual
  * and the result is looked up among the same shape's (axis, orientation, rotation) candidates.
  * Same-axis cells always resolve back onto their own basis with the legacy renumbering, so the
  * previously-working case is behavior-identical — only cross-axis cells change (from wrong to
- * right). Unresolved cells and slabs (thin's centered slab and half's flush slab — neither's
- * corners pin a solid on their own) only get their authoring basis moved, never a shape. For
- * half that basis move is still exact: the slab is fully determined by its outward normal, which
- * the tracked basis carries along.
+ * right). Unresolved cells and slabs (thin's centered slab, half's flush slab, and post's centered
+ * column — none of their corners pin a solid on their own) only get their authoring basis moved,
+ * never a shape. For half that basis move is still exact: the slab is fully determined by its
+ * outward normal, which the tracked basis carries along. (Post is the same: the centered column
+ * is fully determined by its long axis.) Quarter columns do pin a corner solid, so they map
+ * through the exact corner-set lookup like the bevels.
  */
 
 // Occupied local-prefab corners of a rotation-0 convex corner: the full base quad plus the single
@@ -46,16 +48,24 @@ const CONCAVE_LOCAL_CORNERS: Coord[] = [
   [-0.5, -0.5, 0.5], // t3 NW top
 ]
 
-const SHAPE_CORNERS: Record<Exclude<ChamferShapeKind, 'thin' | 'half'>, Coord[]> = {
+// Occupied local-prefab corners of a rotation-0 quarter column: the NE vertical edge only
+// (base b0 + top t0) — the 0.5×0.5×1 column in the NE quadrant (see quarterGeometry).
+const QUARTER_LOCAL_CORNERS: Coord[] = [
+  [0.5, -0.5, -0.5], // b0 NE base
+  [0.5, -0.5, 0.5], // t0 NE top
+]
+
+const SHAPE_CORNERS: Record<Exclude<ChamferShapeKind, 'thin' | 'half' | 'post'>, Coord[]> = {
   ramp: RAMP_LOCAL_CORNERS,
   wedge: WEDGE_LOCAL_CORNERS,
   convex: CONVEX_LOCAL_CORNERS,
   concave: CONCAVE_LOCAL_CORNERS,
+  quarter: QUARTER_LOCAL_CORNERS,
 }
 
 /** World-space (cell-relative, translation-free) occupied corners. Pure geometry truth, memoized. */
 const cornersMemo = new Map<string, Coord[]>()
-function solidCorners(shape: Exclude<ChamferShapeKind, 'thin' | 'half'>, axis: Axis, orientation: Orientation, rotation: Rotation): Coord[] {
+function solidCorners(shape: Exclude<ChamferShapeKind, 'thin' | 'half' | 'post'>, axis: Axis, orientation: Orientation, rotation: Rotation): Coord[] {
   const key = `${shape}|${axis}|${orientation}|${rotation}`
   const hit = cornersMemo.get(key)
   if (hit) return hit
@@ -136,7 +146,7 @@ function trackedBasis(cell: ChamferCell, T: RigidMap): [Axis, Orientation] {
 function applyMotion(cell: ChamferCell, T: RigidMap): ChamferCell {
   const resolved = cell.resolvedTo
   const [ax, o] = trackedBasis(cell, T)
-  if (!resolved || resolved.shapeKind === 'thin' || resolved.shapeKind === 'half') {
+  if (!resolved || resolved.shapeKind === 'thin' || resolved.shapeKind === 'half' || resolved.shapeKind === 'post') {
     return { planeAxis: ax, planeOrientation: o, resolvedTo: resolved ? { ...resolved } : null }
   }
 
@@ -169,11 +179,14 @@ export function mirrorChamferCell(cell: ChamferCell, planeAxis: Axis, mirrorU: b
 }
 
 /**
- * Spins a thin/half slab 90° about the V axis it was painted on — the click-to-rotate escape
+ * Spins a thin/half/post slab 90° about the V axis it was painted on — the click-to-rotate escape
  * hatch for slabs, mirroring the wedge's manual rotation. The outward normal swings through
  * the cell's own authoring frame (object axis, not the world or active-plane frame): x/z-faced
- * slabs cycle W → U → -W → -U and back in four clicks. A slab solid is fully determined by its
- * outward normal, so only the authoring basis moves; shapeKind/rotation are preserved.
+ * slabs cycle W → U → -W → -U and back in four clicks. A slab/column solid is fully determined
+ * by its outward normal (post's centered column by its long axis), so only the authoring basis
+ * moves; shapeKind/rotation are preserved.
+ * Non-slab cells (including unresolved ones, and quarter columns — whose re-click cycles the
+ * corner rotation instead) are returned untouched.
  * Non-slab cells (including unresolved ones) are returned untouched.
  *
  * Note the y-faced transient: the y basis's V is a world z axis, so the first spin of a
@@ -183,7 +196,7 @@ export function mirrorChamferCell(cell: ChamferCell, planeAxis: Axis, mirrorU: b
  */
 export function spinSlabAboutLocalY(cell: ChamferCell): ChamferCell {
   const resolved = cell.resolvedTo
-  if (!resolved || (resolved.shapeKind !== 'thin' && resolved.shapeKind !== 'half')) return cell
+  if (!resolved || (resolved.shapeKind !== 'thin' && resolved.shapeKind !== 'half' && resolved.shapeKind !== 'post')) return cell
   const { vDir: V } = planeLogicalBasis(cell.planeAxis)
   const N = outwardNormal(cell.planeAxis, cell.planeOrientation)
   // +90° about the cell's own +V (right-hand rule): N → V × N. All three are signed unit

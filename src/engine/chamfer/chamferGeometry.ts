@@ -85,6 +85,34 @@ export function halfGeometry(): THREE.BufferGeometry {
 }
 
 /**
+ * Model H — post: a centered square column, 0.5×0.5 in the plane's u×v footprint and running
+ * the full unit length along the outward (z) axis. The centered sibling of the thin slab with
+ * the axes swapped (thin is full-footprint × half-thickness; post is half-footprint ×
+ * full-length). Fully symmetric about z and under quarter-turns about z, so like `thinGeometry`
+ * it takes no `rotation` and paints frozen with `rotation: 0`. Returned non-indexed for
+ * `voxelMeshBuilder`'s triangle-soup loop.
+ */
+export function postGeometry(): THREE.BufferGeometry {
+  return new THREE.BoxGeometry(0.5, 0.5, 1).toNonIndexed()
+}
+
+/**
+ * Model I — quarter: the post pushed into one u×v corner — a 0.5×0.5×1 column occupying a
+ * single quadrant of the cell, full length along the outward (z) axis. Canonical (rotation-0)
+ * quadrant is NE (`u ∈ [0, 0.5]`, `v ∈ [-0.5, 0]`); `rotation` is the *occupied* corner index
+ * (NE=0, SE=1, SW=2, NW=3 — the same corner order `classify` uses), baked with the same
+ * `rotateZ` convention as the other prefabs so the instancing matrix's `Rz(rotation)` agrees.
+ * Like `halfGeometry` it is returned non-indexed for `voxelMeshBuilder`'s triangle-soup loop.
+ * Never resolver-created; only quarter paint (fresh paints start NE, re-click cycles corners).
+ */
+export function quarterGeometry(rotation: 0 | 1 | 2 | 3 = 0): THREE.BufferGeometry {
+  const geometry = new THREE.BoxGeometry(0.5, 0.5, 1).toNonIndexed()
+  geometry.translate(H / 2, -H / 2, 0)
+  if (rotation) geometry.rotateZ((rotation * Math.PI) / 2)
+  return geometry
+}
+
+/**
  * Mirror a chamfer geometry across the v axis (negate local y) with winding reversed so faces stay
  * outward-wound. Paired with the proper-rotation matrix chamferInstanceMatrix produces for reflected
  * planes, this renders the identical shape in the identical place but with det=+1 (so lighting is

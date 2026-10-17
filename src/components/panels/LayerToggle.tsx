@@ -1,7 +1,7 @@
 import * as Tooltip from '@radix-ui/react-tooltip'
 import { useAppStore } from '@/store/useAppStore'
 import type { VoxelKind } from '@/store/types'
-import { ChamferIcon, CubeIcon, HalfIcon, ThinIcon, WedgeIcon } from './voxelKindIcons'
+import { ChamferIcon, CubeIcon, HalfIcon, PostIcon, QuarterIcon, ThinIcon, WedgeIcon } from './voxelKindIcons'
 
 const KINDS: Array<{ id: VoxelKind; label: string; Icon: typeof CubeIcon; hint: string }> = [
   { id: 'cube', label: 'Cube', Icon: CubeIcon, hint: 'Cube mode: standard block shapes' },
@@ -9,6 +9,8 @@ const KINDS: Array<{ id: VoxelKind; label: string; Icon: typeof CubeIcon; hint: 
   { id: 'wedge', label: 'Wedge', Icon: WedgeIcon, hint: 'Wedge mode: quick corner cut, flat diagonal facing you' },
   { id: 'thin', label: 'Thin', Icon: ThinIcon, hint: 'Thin mode: half-thickness panel/fin facing you' },
   { id: 'half', label: 'Half', Icon: HalfIcon, hint: 'Half mode: flush half-slab on the near half of the voxel facing you' },
+  { id: 'post', label: 'Post', Icon: PostIcon, hint: 'Post mode: centered square column along the face normal' },
+  { id: 'quarter', label: 'Quarter', Icon: QuarterIcon, hint: 'Quarter mode: corner column, re-click to cycle corners' },
 ]
 
 /**

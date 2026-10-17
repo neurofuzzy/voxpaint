@@ -70,6 +70,21 @@ describe('boxFaceForCell', () => {
     expect(boxFaceForCell(thin, [0, 0, 1])).toBe('nz')
   })
 
+  it('maps post/quarter columns cube-like: each face samples its own dominant-normal page', () => {
+    // A z-authored column's ends sample the end pages and its sides the side pages — the
+    // authoring basis only places the geometry, never the texture.
+    const post: ChamferCell = { planeAxis: 'z', planeOrientation: 1, resolvedTo: { shapeKind: 'post', rotation: 0 } }
+    const quarter: ChamferCell = { planeAxis: 'z', planeOrientation: -1, resolvedTo: { shapeKind: 'quarter', rotation: 2 } }
+    for (const cell of [post, quarter]) {
+      expect(boxFaceForCell(cell, [1, 0, 0])).toBe('px')
+      expect(boxFaceForCell(cell, [-1, 0, 0])).toBe('nx')
+      expect(boxFaceForCell(cell, [0, 1, 0])).toBe('py')
+      expect(boxFaceForCell(cell, [0, -1, 0])).toBe('ny')
+      expect(boxFaceForCell(cell, [0, 0, 1])).toBe('pz')
+      expect(boxFaceForCell(cell, [0, 0, -1])).toBe('nz')
+    }
+  })
+
   it('uses the dominant signed normal axis for plain cube faces', () => {
     expect(boxFaceForCell(undefined, [1, 0, 0])).toBe('px')
     expect(boxFaceForCell(undefined, [-1, 0, 0])).toBe('nx')
