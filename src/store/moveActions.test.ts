@@ -1,6 +1,10 @@
 import { beforeEach, describe, expect, it } from 'vitest'
 import { encodeKey } from '@/engine/grid/GridStore'
 import { gridCoordFromPixel } from '@/engine/plane/constructionPlane'
+import { cloneTextureModel } from '@/engine/texture/TextureStore'
+import { EMPTY, faceSizeFor } from '@/engine/texture/types'
+import type { BoxFace } from '@/engine/texture/types'
+import { rectRegion } from '@/engine/tools/selectionMask'
 import { useAppStore } from './useAppStore'
 
 const PLANE = { axis: 'z' as const, orientation: 1 as const, offset: 0 }
@@ -144,5 +148,144 @@ describe('transformWholeModel', () => {
     const after = useAppStore.getState()
     expect(after.model.color.has(keyFor(2, 3))).toBe(true)
     expect(after.past.length).toBe(pastBefore)
+  })
+})
+
+const FACE_SIZE = faceSizeFor(16) // default texel scale on a fresh 16-project
+
+function setupModelWithTexture() {
+  const s = useAppStore.getState()
+  s.newProject('Test', 16)
+  s.setMode('model')
+  s.setActiveVoxelKind('cube')
+  s.setActivePaletteSlot(SLOT_A)
+  s.setPlaneAxisOrientation('z', 1)
+  s.setPlaneOffset(0)
+  s.setSelection(null)
+}
+
+function paintTexels(writes: Array<readonly [BoxFace, number, number, number]>) {
+  const s = useAppStore.getState()
+  const next = cloneTextureModel(s.texture)
+  for (const [face, u, v, value] of writes) next.faces[face][v * FACE_SIZE + u] = value
+  s.setTexture(next)
+}
+
+/** Whole-model Move drags carry the box-mapped texture (wrapped); slice drags don't. */
+describe('whole-model move carries the texture', () => {
+  beforeEach(() => {
+    setupModelWithTexture()
+    paintCells([[2, 3]])
+    paintTexels([['pz', 10, 20, 3], ['pz', FACE_SIZE - 1, 20, 4]])
+  })
+
+  it('shifts texels with the voxels and wraps around, as one texture-undo step', () => {
+    const before = useAppStore.getState()
+    const texBefore = before.texture
+    const texturePastBefore = before.texturePast.length
+    // z-plane du=1 -> world +x -> pz shifts +u by one voxel = 4 texels.
+    before.beginMove(true)
+    useAppStore.getState().updateMove(1, 0)
+    useAppStore.getState().endMove()
+
+    const after = useAppStore.getState()
+    expect(after.texture.faces.pz[20 * FACE_SIZE + 14]).toBe(3)
+    expect(after.texture.faces.pz[20 * FACE_SIZE + 10]).toBe(EMPTY)
+    // (63,20) + 4 texels wraps to (3,20).
+    expect(after.texture.faces.pz[20 * FACE_SIZE + 3]).toBe(4)
+    expect(after.texture.faces.pz[20 * FACE_SIZE + (FACE_SIZE - 1)]).toBe(EMPTY)
+    // Voxels moved too, and both histories grew by one.
+    expect(after.model.color.has(keyFor(2, 3))).toBe(false)
+    expect(after.texturePast.length).toBe(texturePastBefore + 1)
+    expect(after.texture).not.toBe(texBefore)
+  })
+
+  it('leaves the texture reference-identical on slice (non-whole-model) moves', () => {
+    const texBefore = useAppStore.getState().texture
+    const texturePastBefore = useAppStore.getState().texturePast.length
+    useAppStore.getState().beginMove(false)
+    useAppStore.getState().updateMove(1, 0)
+    useAppStore.getState().endMove()
+
+    const after = useAppStore.getState()
+    expect(after.texture).toBe(texBefore)
+    expect(after.texturePast.length).toBe(texturePastBefore)
+  })
+
+  it('records no texture history on a click-without-drag', () => {
+    const texBefore = useAppStore.getState().texture
+    const texturePastBefore = useAppStore.getState().texturePast.length
+    useAppStore.getState().beginMove(true)
+    useAppStore.getState().endMove()
+
+    const after = useAppStore.getState()
+    expect(after.texture).toBe(texBefore)
+    expect(after.texturePast.length).toBe(texturePastBefore)
+  })
+
+  it('leaves the texture alone when a voxel selection is active', () => {
+    const texBefore = useAppStore.getState().texture
+    const texturePastBefore = useAppStore.getState().texturePast.length
+    useAppStore.getState().setSelection(rectRegion(0, 0, 1, 1))
+    useAppStore.getState().beginMove(true)
+    useAppStore.getState().updateMove(1, 0)
+    useAppStore.getState().endMove()
+
+    const after = useAppStore.getState()
+    expect(after.texture).toBe(texBefore)
+    expect(after.texturePast.length).toBe(texturePastBefore)
+  })
+})
+
+/** Whole-model rotates/mirrors permute the texture's box faces as one texture-undo step. */
+describe('transformWholeModel carries the texture', () => {
+  beforeEach(() => {
+    setupModelWithTexture()
+    paintCells([[2, 3]])
+  })
+
+  it('moves the py face onto px on a z-plane cw rotate', () => {
+    const s = useAppStore.getState()
+    const next = cloneTextureModel(s.texture)
+    next.faces.py.fill(3)
+    s.setTexture(next)
+    const texturePastBefore = useAppStore.getState().texturePast.length
+
+    useAppStore.getState().transformWholeModel('rotate')
+
+    const after = useAppStore.getState()
+    expect(after.texture.faces.px.every((t) => t === 3)).toBe(true)
+    expect(after.texture.faces.py.every((t) => t === EMPTY)).toBe(true)
+    expect(after.texturePast.length).toBe(texturePastBefore + 1)
+    expect(after.selection).toBeNull()
+  })
+
+  it('skips the texture when a voxel selection is active (voxels still transform)', () => {
+    const s = useAppStore.getState()
+    const next = cloneTextureModel(s.texture)
+    next.faces.py.fill(3)
+    s.setTexture(next)
+    const texBefore = useAppStore.getState().texture
+    const texturePastBefore = useAppStore.getState().texturePast.length
+    useAppStore.getState().setSelection(rectRegion(0, 0, 1, 1))
+
+    useAppStore.getState().transformWholeModel('rotate')
+
+    const after = useAppStore.getState()
+    expect(after.texture).toBe(texBefore)
+    expect(after.texturePast.length).toBe(texturePastBefore)
+    // The voxel transform itself still ran (moved off its start cell, no selection left).
+    expect(after.model.color.has(keyFor(2, 3))).toBe(false)
+    expect(after.selection).toBeNull()
+  })
+
+  it('records no texture history when the texture is unpainted', () => {
+    const texturePastBefore = useAppStore.getState().texturePast.length
+    const pastBefore = useAppStore.getState().past.length
+    useAppStore.getState().transformWholeModel('rotate')
+
+    const after = useAppStore.getState()
+    expect(after.texturePast.length).toBe(texturePastBefore)
+    expect(after.past.length).toBe(pastBefore + 1)
   })
 })
