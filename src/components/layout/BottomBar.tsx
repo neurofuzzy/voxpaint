@@ -5,7 +5,7 @@ import type { ToolId } from '@/store/types'
 const TOOL_HINTS: Record<ToolId, string> = {
   paint: 'click or drag to paint · shift+drag: straight line · right-click: quick erase · 3D Edit: click faces to block',
   erase: 'click or drag to erase · shift+drag: straight line · 3D Edit: click voxels to erase',
-  eyedropper: 'click to pick a color · 3D Edit: click a voxel to pick its color',
+  eyedropper: 'click to pick a color and voxel type · 3D Edit: click a voxel to pick its color and type',
   material: 'click or drag to repaint occupied voxels · never adds or deletes · 3D Edit: drag across faces',
   select: 'drag to select · alt+drag: lasso · drag inside to move (alt: full depth)',
   fill: 'click to flood-fill connected cells in 2d, ALT-click to flood fill in 3d',

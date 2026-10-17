@@ -9,6 +9,7 @@ import { hasActiveAnimations } from '@/engine/animation/animationLayers'
 import type { InstancingManager } from '@/engine/instancing/InstancingManager'
 import { planeFromFaceHit } from '@/engine/plane/constructionPlane'
 import { axisIndex, outwardNormal } from '@/engine/plane/planeGeometry'
+import { voxelKindForCell } from '@/engine/tools/eyedropperTool'
 import { useAppStore } from '@/store/useAppStore'
 import { usePlaneLayerScroll } from '@/components/usePlaneLayerScroll'
 import { AnimatedModelView } from './AnimatedModelView'
@@ -109,7 +110,7 @@ function ToneMappingController({ exposure }: { exposure: number }) {
  *
  * In 3D Edit mode (`edit3D`) with a paint/erase/eyedropper/material tool active, taps dispatch
  * the tool straight onto voxel faces — paint adds the neighbor cell across the face, erase deletes
- * the cell, eyedropper samples its slot, material recolors the cell. Paint/erase/eyedropper are
+ * the cell, eyedropper samples its color and voxel type, material recolors the cell. Paint/erase/eyedropper are
  * tap-only (drags orbit, so sweeps can't spray voxels); material recolors in place and is safe to
  * drag, bracketed as one undo stroke with orbit suppressed until pointer-up. Empty-space paint
  * taps start a blob on the active slice. Every other tool keeps the plane-setting behavior in
@@ -129,7 +130,7 @@ function editHint(tool: BlockingTool): string {
   if (tool === 'paint') return 'Click a face to paint a voxel'
   if (tool === 'erase') return 'Click a voxel to erase it'
   if (tool === 'material') return 'Click or drag to repaint · never adds voxels'
-  return 'Click a voxel to pick its color'
+  return 'Click a voxel to pick its color and type'
 }
 
 function voxelHint(axis: string, orientation: number): string {
@@ -222,7 +223,7 @@ function VoxelInteractionHandler({ managerRef, controlsRef }: {
     }
 
     /** Applies the blocking tool once for a tap (Edit mode only): paint adds the neighbor cell
-     * across the face, erase deletes the cell, eyedropper samples its slot, material recolors the
+     * across the face, erase deletes the cell, eyedropper samples its color and voxel type, material recolors the
      * cell. Paint/erase/material bracket their own single-cell undo stroke; eyedropper mutates no
      * model. Paint/erase/eyedropper drags never apply (every pointer crossing would spray voxels
      * along the raycast), so movement always orbits — material alone drags (see onPointerMove). */
@@ -235,7 +236,8 @@ function VoxelInteractionHandler({ managerRef, controlsRef }: {
           const cell = store.model.color.get(result.key)
           if (!cell) return
           store.setActivePaletteSlot(cell.paletteSlot)
-          store.setActiveTool('paint') // after picking, drop straight into painting with the picked color
+          store.setActiveVoxelKind(voxelKindForCell(store.model.chamfer.get(result.key)))
+          store.setActiveTool('paint') // after picking, drop straight into painting with the picked color and type
           return
         }
         if (tool === 'material') {

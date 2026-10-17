@@ -47,6 +47,7 @@ export interface ToolContext {
   endMove: () => void
   cloneStampCell: (srcU: number, srcV: number, destU: number, destV: number) => void
   setActivePaletteSlot: (slot: PaletteSlotRef) => void
+  setActiveVoxelKind: (kind: VoxelKind) => void
   setActiveTool: (tool: ToolId) => void
   setSelection: (region: SelectionRegion | null) => void
   /** Alt-drag passes `deep` to lift the full cuboid under the selection window (see
