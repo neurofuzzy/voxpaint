@@ -10,9 +10,10 @@ import type { ClipboardCell, ClipboardData } from '@/store/types'
  * their new positions still bevelling the old way.
  *
  * `ramp` numbers its rotation off the OPEN side shifted by -1 (see `classify`), so it renumbers
- * through the side tables; `convex`, `concave` and `wedge` all number theirs directly off a corner
- * (wedge borrows convex's corner rotation — see paintActions.ts). `thin` and `half` are invariant
- * under in-plane rotation/mirror (always rotation 0) and pass through untouched.
+ * through the side tables; `convex`, `concave`, `wedge`, and `quarter` all number theirs directly
+ * off a corner (`quarter`'s is the *occupied* corner; wedge borrows convex's corner rotation — see
+ * paintActions.ts). `thin`, `half`, and `post` are invariant under in-plane rotation/mirror
+ * (always rotation 0) and pass through untouched.
  */
 const SIDE_MIRROR_U: readonly Rotation[] = [0, 3, 2, 1] // E <-> W, N/S fixed
 const SIDE_MIRROR_V: readonly Rotation[] = [2, 1, 0, 3] // N <-> S, E/W fixed
@@ -21,7 +22,7 @@ const CORNER_MIRROR_V: readonly Rotation[] = [1, 0, 3, 2] // NE <-> SE, NW <-> S
 
 /** Renumbers a resolved shape for a mirror in logical u and/or v. See the tables above. */
 export function mirrorClassification(c: ChamferClassification, mirrorU: boolean, mirrorV: boolean): ChamferClassification {
-  if (c.shapeKind === 'thin' || c.shapeKind === 'half' || (!mirrorU && !mirrorV)) return c
+  if (c.shapeKind === 'thin' || c.shapeKind === 'half' || c.shapeKind === 'post' || (!mirrorU && !mirrorV)) return c
 
   if (c.shapeKind === 'ramp') {
     let open = ((c.rotation + 1) % 4) as Rotation
@@ -42,7 +43,7 @@ export function mirrorClassification(c: ChamferClassification, mirrorU: boolean,
  * every rotatable kind is a plain ±1 step regardless of which table it uses.
  */
 export function rotateClassification90(c: ChamferClassification, direction: 'cw' | 'ccw' = 'cw'): ChamferClassification {
-  if (c.shapeKind === 'thin' || c.shapeKind === 'half') return c
+  if (c.shapeKind === 'thin' || c.shapeKind === 'half' || c.shapeKind === 'post') return c
   return { shapeKind: c.shapeKind, rotation: ((c.rotation + (direction === 'cw' ? 1 : 3)) % 4) as Rotation }
 }
 

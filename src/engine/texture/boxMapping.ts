@@ -40,13 +40,23 @@ export const FACE_ATLAS_CELL: Record<BoxFace, { col: number; row: number }> = {
  * (void faces the painter), so the viewer-visible broad face points opposite the authoring
  * outward normal — the page flips to what a full voxel's (or thin slab's) viewer-facing face
  * samples. Rebase refuses halves, so this page is never user-set; it must be right automatically.
+ *
+ * Post and quarter columns are the other exception, in the other direction: their long axis is
+ * the authoring W but their largest faces are the four sides (normals ⊥ W), so a single
+ * authoring page would smear one face's pixels across sideways walls. They map cube-like —
+ * each face samples its own dominant-normal page (ends sample the end page, sides the side
+ * pages) — with the authoring basis used only to place the geometry. Reface tools refuse them,
+ * so like halves they are right automatically.
  */
 export function boxFaceForCell(chamfer: ChamferCell | undefined, normal: Coord): BoxFace {
   if (chamfer) {
     if (chamfer.resolvedTo?.shapeKind === 'half') {
       return boxFaceOf(chamfer.planeAxis, chamfer.planeOrientation === 1 ? -1 : 1)
     }
-    return boxFaceOf(chamfer.planeAxis, chamfer.planeOrientation)
+    const kind = chamfer.resolvedTo?.shapeKind
+    if (kind !== 'post' && kind !== 'quarter') {
+      return boxFaceOf(chamfer.planeAxis, chamfer.planeOrientation)
+    }
   }
   let axis: Axis = 'x'
   let maxAbs = -Infinity

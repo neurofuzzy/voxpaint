@@ -22,7 +22,7 @@ const convex = (rotation: Rotation): ChamferClassification => ({ shapeKind: 'con
 
 describe('mirrorClassification', () => {
   it('is an involution for every kind and rotation', () => {
-    const kinds = ['ramp', 'convex', 'concave', 'wedge', 'thin', 'half'] as const
+    const kinds = ['ramp', 'convex', 'concave', 'wedge', 'thin', 'half', 'post', 'quarter'] as const
     for (const shapeKind of kinds) {
       for (const rotation of [0, 1, 2, 3] as const) {
         for (const [mu, mv] of [
@@ -44,6 +44,17 @@ describe('mirrorClassification', () => {
   it('leaves the flush half slab alone', () => {
     expect(mirrorClassification({ shapeKind: 'half', rotation: 0 }, true, true)).toEqual({ shapeKind: 'half', rotation: 0 })
     expect(mirrorClassification({ shapeKind: 'half', rotation: 0 }, true, false)).toEqual({ shapeKind: 'half', rotation: 0 })
+  })
+
+  it('leaves the centered post alone', () => {
+    expect(mirrorClassification({ shapeKind: 'post', rotation: 0 }, true, true)).toEqual({ shapeKind: 'post', rotation: 0 })
+    expect(mirrorClassification({ shapeKind: 'post', rotation: 0 }, false, true)).toEqual({ shapeKind: 'post', rotation: 0 })
+  })
+
+  it('mirrors a quarter corner like the other corner shapes (NE<->NW on U, NE<->SE on V)', () => {
+    expect(mirrorClassification({ shapeKind: 'quarter', rotation: 0 }, true, false)).toEqual({ shapeKind: 'quarter', rotation: 3 })
+    expect(mirrorClassification({ shapeKind: 'quarter', rotation: 0 }, false, true)).toEqual({ shapeKind: 'quarter', rotation: 1 })
+    expect(mirrorClassification({ shapeKind: 'quarter', rotation: 1 }, true, false)).toEqual({ shapeKind: 'quarter', rotation: 2 })
   })
 
   it('mirrors a ramp in u by swapping its open side E<->W', () => {

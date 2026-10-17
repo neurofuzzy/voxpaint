@@ -9,7 +9,7 @@ import type { TexelClip } from '@/engine/texture/texelOps'
 import type { AnimationSpeed, AnimationType, SliceAnimSettings, SliceKey } from '@/engine/animation/types'
 
 export type ToolId = 'paint' | 'erase' | 'eyedropper' | 'select' | 'fill' | 'clone' | 'move' | 'material' | 'pivot' | 'textureface' | 'marker'
-export type VoxelKind = 'cube' | 'ramp' | 'wedge' | 'thin' | 'half'
+export type VoxelKind = 'cube' | 'ramp' | 'wedge' | 'thin' | 'half' | 'post' | 'quarter'
 
 export type SelectionRegion = {
   originU: number
@@ -89,8 +89,8 @@ export type ProjectSlice = {
   updateProjectSettings: (name: string, gridExtent: GridExtent) => void
   /** Doubles the working cube (`gridExtent` → twice the even working grid) and scales every
    * voxel to its exact 2×2×2 block — cubes octuplicate, bevels decompose into exact staircases,
-   * thin slabs become back-to-back half-slab columns, texture/markers/animation remap along.
-   * Not undoable (snapshots can't span an extent change): clears all histories, selections, and
+   * thin slabs become back-to-back half-slab columns, posts become quarter-columns, quarters
+   * become full cubes, texture/markers/animation remap along. Not undoable (snapshots can't span an extent change): clears all histories, selections, and
    * floats, and doubles the construction-plane offset. No-op past the 64-cell cap. */
   rescaleProject: () => void
   /** Re-rolls `meta.noiseSeed`, changing the baked noise/specular grain's pattern without touching
@@ -306,9 +306,10 @@ export type PaintActionsSlice = {
    * Re-authors the ramp, wedge, or thin slab at plane-space (u,v) onto the active construction
    * plane's basis, reproducing its exact solid so only its box-mapped texture face changes (a
    * wedge source converts to its congruent ramp; a thin slab only ever flips orientation on its
-   * own axis, since turning it would rotate the slab). Existing resolved ramps/wedges/thins
-   * only — no-op (false) on empty/out-of-bounds cells, other shapes, and solids the active
-   * plane can't express (so drags don't record junk undo steps). Plain cubes sample texture by
+   *   own axis, since turning it would rotate the slab). Existing resolved ramps/wedges/thins
+   *   only — no-op (false) on empty/out-of-bounds cells, other shapes (halves, posts, quarters,
+   *   corners — posts/quarters sample texture cube-like by face normal and need no facing), and
+   * solids the active plane can't express (so drags don't record junk undo steps). Plain cubes sample texture by
    * face normal and need no facing.
    */
   rebaseRampCell: (u: number, v: number) => boolean
@@ -336,8 +337,8 @@ export type ToolActionsSlice = {
    * — the selection-scale texture-face tool. Geometry is never touched: ramps/wedges rebase via
    * exact-solid duals, thin slabs and unresolved cells only take same-axis orientation flips
    * (the centered slab is mirror-symmetric, so the solid is identical and only the sampled
-   * texture face switches). Convex/concave corners, cross-axis thins, and inexpressible slopes
-   * are left alone. Only cells on the active slice are affected; plain cubes need no facing and
+   * texture face switches). Convex/concave corners, halves, posts, quarters, cross-axis thins,
+   * and inexpressible slopes are left alone. Only cells on the active slice are affected; plain cubes need no facing and
    * are ignored. One undo stroke. Returns faced/skipped chamfer-cell counts for the caller to
    * report (the toast lives in SelectionPalette, not the store). */
   faceSelection: () => { faced: number; skipped: number }

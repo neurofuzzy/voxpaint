@@ -6,7 +6,7 @@ import { mirrorChamferCell, rotateChamferCell, spinSlabAboutLocalY } from './cha
 const AXES: Axis[] = ['x', 'y', 'z']
 const ORIENTATIONS: Orientation[] = [1, -1]
 const ROTATIONS: Rotation[] = [0, 1, 2, 3]
-const SHAPES: ChamferShapeKind[] = ['ramp', 'convex', 'concave', 'wedge', 'thin', 'half']
+const SHAPES: ChamferShapeKind[] = ['ramp', 'convex', 'concave', 'wedge', 'thin', 'half', 'post', 'quarter']
 
 function cell(axis: Axis, orientation: Orientation, shape: ChamferShapeKind, rotation: Rotation): ChamferCell {
   return { planeAxis: axis, planeOrientation: orientation, resolvedTo: { shapeKind: shape, rotation } }
@@ -129,6 +129,35 @@ describe('chamferTransform cross-axis mapping', () => {
       resolvedTo: { shapeKind: 'half', rotation: 0 },
     })
   })
+
+  it('swings posts onto the turned normal exactly like thin slabs', () => {
+    // The centered column is fully determined by its long axis, so the tracked basis carries
+    // it exactly — same ride-along as the slabs, never a shape change.
+    expect(mirrorChamferCell(cell('x', 1, 'post', 0), 'z', true, false)).toEqual({
+      planeAxis: 'x',
+      planeOrientation: -1,
+      resolvedTo: { shapeKind: 'post', rotation: 0 },
+    })
+    expect(rotateChamferCell(cell('x', 1, 'post', 0), 'z', 'cw')).toEqual({
+      planeAxis: 'y',
+      planeOrientation: -1,
+      resolvedTo: { shapeKind: 'post', rotation: 0 },
+    })
+  })
+
+  it('re-bases quarter columns by exact corner-solid match (same-plane turn steps the corner)', () => {
+    // Same-axis turns renumber through the legacy corner tables, like the other corner shapes.
+    expect(rotateChamferCell(cell('z', 1, 'quarter', 0), 'z', 'cw')).toEqual({
+      planeAxis: 'z',
+      planeOrientation: 1,
+      resolvedTo: { shapeKind: 'quarter', rotation: 1 },
+    })
+    expect(mirrorChamferCell(cell('z', 1, 'quarter', 0), 'z', true, false)).toEqual({
+      planeAxis: 'z',
+      planeOrientation: 1,
+      resolvedTo: { shapeKind: 'quarter', rotation: 3 },
+    })
+  })
 })
 
 describe('spinSlabAboutLocalY (slab click-to-rotate)', () => {
@@ -150,10 +179,10 @@ describe('spinSlabAboutLocalY (slab click-to-rotate)', () => {
     }
   })
 
-  it('four spins return every x/z-faced thin/half slab to its start', () => {
+  it('four spins return every x/z-faced thin/half/post slab to its start', () => {
     // x/z bases share the world −y local v axis, so the facing cycles in place through four
     // distinct facings (two world axes, both signs) and back.
-    for (const shape of ['thin', 'half'] as const) {
+    for (const shape of ['thin', 'half', 'post'] as const) {
       for (const axis of ['x', 'z'] as const) {
         for (const o of ORIENTATIONS) {
           let c = cell(axis, o, shape, 0)
@@ -175,7 +204,7 @@ describe('spinSlabAboutLocalY (slab click-to-rotate)', () => {
     // The y basis's local v is a world z axis, so the first spin leaves the y axis for x —
     // after that the facing stays in the x/z 4-cycle (the paint-time V is not stored on the
     // cell, so the original y facing is not recoverable by spinning — repaint it instead).
-    for (const shape of ['thin', 'half'] as const) {
+    for (const shape of ['thin', 'half', 'post'] as const) {
       for (const o of ORIENTATIONS) {
         const first = spinSlabAboutLocalY(cell('y', o, shape, 0))
         expect(first.planeAxis).toBe('x')
@@ -192,6 +221,8 @@ describe('spinSlabAboutLocalY (slab click-to-rotate)', () => {
     expect(spinSlabAboutLocalY(wedge)).toBe(wedge)
     const ramp = cell('x', -1, 'ramp', 1)
     expect(spinSlabAboutLocalY(ramp)).toBe(ramp)
+    const quarter = cell('z', 1, 'quarter', 2)
+    expect(spinSlabAboutLocalY(quarter)).toBe(quarter)
     const unresolved: ChamferCell = { planeAxis: 'y', planeOrientation: 1, resolvedTo: null }
     expect(spinSlabAboutLocalY(unresolved)).toBe(unresolved)
   })

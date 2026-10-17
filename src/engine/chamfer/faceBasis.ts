@@ -16,9 +16,11 @@ import { findDualRampRotation, findWedgeRampDual } from './rampDual'
  *   (a geometry edit) and is refused.
  * - unresolved (`resolvedTo: null`): renders as a plain cube but still samples texture by its
  *   basis, so the basis is updated while the shape stays unresolved. Still a cube either way.
- * - convex/concave/half: no exact dual exists (half's flush slab would move halves — a geometry
- *   edit — and `rampDual.ts` has no corner duals) and re-basing would alter the solid — always
- *   false, left untouched.
+ * - convex/concave/half/post/quarter: no exact dual exists (half's flush slab would move
+ *   halves — a geometry edit; post's centered column is basis-agnostic under the cube-like
+ *   texture mapping, so there is nothing to switch; quarter's corner move is a geometry edit —
+ *   and `rampDual.ts` has no corner duals) and re-basing would alter (or pointlessly rewrite)
+ *   the solid — always false, left untouched.
  */
 export function rebaseChamferCell(cell: ChamferCell, targetAxis: Axis, targetOrientation: Orientation): boolean {
   const kind = cell.resolvedTo?.shapeKind

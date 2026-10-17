@@ -18,11 +18,16 @@ import { outwardNormal } from '@/engine/plane/planeGeometry'
  * conservation per kind × rotation in rescale.test.ts guards this).
  *
  * Children reduced to an edge or less (zero volume — e.g. concave's far-corner child) match
- * nothing and are left empty, which is exact. Two shapes need direct rules instead of sampling:
+ * nothing and are left empty, which is exact. Four shapes need direct rules instead of sampling:
  * - `thin` (centered slab, quarter-lattice boundaries the sampler can't see): 8 flush `half`
  *   slabs — 4 back-to-back columns, lower layer oriented +1, upper −1.
  * - `half` (flush slab): sampling would hallucinate phantom slabs on zero-volume boundary
  *   hits, so it maps directly to 4 full cubes in the slab's layer.
+ * - `post` (centered 0.5-wide column): the doubled solid is a 1-wide column centered in the
+ *   2×2 footprint, full in W — 8 `quarter` columns, one per child, each in the corner facing
+ *   the block center.
+ * - `quarter` (corner 0.5-wide column): the doubled solid is a full 1-wide column in one
+ *   quadrant of the 2×2 footprint, full in W — 2 full cubes stacked in W, no chamfer entries.
  */
 
 /** Rescale factor: 2x along every axis (1 voxel → 8). */
@@ -191,6 +196,47 @@ export function rescaleVoxelModel(model: VoxelModel): VoxelModel {
       const layer = chamferCell.planeOrientation === 1 ? 1 : 0
       for (const [du, dv, dw] of CHILD_OFFSETS) {
         if (dw !== layer) continue
+        const coord = childCoord(base, du, dv, dw, U, V, W)
+        color.set(encodeKey(...coord), { paletteSlot: colorCell.paletteSlot })
+      }
+      continue
+    }
+
+    if (shapeKind === 'post') {
+      // Centered column doubles to a 1-wide column centered in the 2×2 footprint, full in W:
+      // every child holds the quadrant facing the block center (child (du,dv) spans
+      // u∈[du,du+1] about center 1, so its inner corner is (du=0?E:W)×(dv=0?S:N)).
+      const INNER_CORNER: Record<string, Rotation> = {
+        '0,0': 1, // SE
+        '1,0': 2, // SW
+        '0,1': 0, // NE
+        '1,1': 3, // NW
+      }
+      for (const [du, dv, dw] of CHILD_OFFSETS) {
+        const coord = childCoord(base, du, dv, dw, U, V, W)
+        const childKey = encodeKey(...coord)
+        color.set(childKey, { paletteSlot: colorCell.paletteSlot })
+        chamfer.set(childKey, {
+          planeAxis: chamferCell.planeAxis,
+          planeOrientation: chamferCell.planeOrientation,
+          resolvedTo: { shapeKind: 'quarter', rotation: INNER_CORNER[`${du},${dv}`] },
+        })
+      }
+      continue
+    }
+
+    if (shapeKind === 'quarter') {
+      // Corner column doubles to a full 1-wide column in one quadrant, full in W: 2 full cubes
+      // stacked in W, no chamfer entries. Occupied corner (NE=0…) selects the (du,dv) quadrant.
+      const QUADRANT: Record<Rotation, [number, number]> = {
+        0: [1, 0], // NE: u+, v−
+        1: [1, 1], // SE: u+, v+
+        2: [0, 1], // SW: u−, v+
+        3: [0, 0], // NW: u−, v−
+      }
+      const [qu, qv] = QUADRANT[resolved.rotation]
+      for (const [du, dv, dw] of CHILD_OFFSETS) {
+        if (du !== qu || dv !== qv) continue
         const coord = childCoord(base, du, dv, dw, U, V, W)
         color.set(encodeKey(...coord), { paletteSlot: colorCell.paletteSlot })
       }

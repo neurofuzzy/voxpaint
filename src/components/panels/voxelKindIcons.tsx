@@ -1,6 +1,8 @@
 import chamferUrl from '@/assets/chamfer.svg'
 import cubeUrl from '@/assets/cube.svg'
 import halfUrl from '@/assets/half.svg'
+import postUrl from '@/assets/post.svg'
+import quarterUrl from '@/assets/quarter.svg'
 import thinUrl from '@/assets/thin.svg'
 import wedgeUrl from '@/assets/wedge.svg'
 
@@ -40,4 +42,12 @@ export function ThinIcon({ size = 18 }: IconProps) {
 
 export function HalfIcon({ size = 18 }: IconProps) {
   return <FileIcon url={halfUrl} size={size} height={size * (147 / 83)} />
+}
+
+export function PostIcon({ size = 18 }: IconProps) {
+  return <FileIcon url={postUrl} size={size} />
+}
+
+export function QuarterIcon({ size = 18 }: IconProps) {
+  return <FileIcon url={quarterUrl} size={size} />
 }

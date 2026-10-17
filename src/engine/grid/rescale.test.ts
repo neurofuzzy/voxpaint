@@ -243,6 +243,45 @@ describe('rescaleVoxelModel', () => {
     }
   })
 
+  it('expands a post to 8 quarter-columns, one inner corner per child', () => {
+    const base: Coord = [0, 0, 0]
+    const next = rescaleVoxelModel(singleVoxel(base, { axis: 'z', orientation: 1, kind: 'post', rotation: 0 }))
+    expect(next.color.size).toBe(8)
+    expect(next.chamfer.size).toBe(8)
+    // Child (du,dv) spans u∈[du,du+1] about center 1: its inner corner is SE/SW/NE/NW.
+    const expected: Record<string, number> = { '0,0': 1, '1,0': 2, '0,1': 0, '1,1': 3 }
+    for (let du = 0; du < 2; du++) {
+      for (let dv = 0; dv < 2; dv++) {
+        for (let dw = 0; dw < 2; dw++) {
+          const coord = childAt(base, 'z', 1, du, dv, dw)
+          const cell = next.chamfer.get(encodeKey(...coord))
+          expect(cell?.resolvedTo).toEqual({ shapeKind: 'quarter', rotation: expected[`${du},${dv}`] })
+          expect(cell?.planeAxis).toBe('z')
+          expect(cell?.planeOrientation).toBe(1)
+        }
+      }
+    }
+  })
+
+  it('snaps a quarter column to 2 full cubes in its quadrant', () => {
+    const base: Coord = [0, 0, 0]
+    // Rotation 0 = NE quadrant (du=1, dv=0); rotation 2 = SW (du=0, dv=1).
+    for (const [rotation, qu, qv] of [[0, 1, 0], [1, 1, 1], [2, 0, 1], [3, 0, 0]] as const) {
+      const next = rescaleVoxelModel(singleVoxel(base, { axis: 'z', orientation: 1, kind: 'quarter', rotation }))
+      expect(next.color.size, `r=${rotation}`).toBe(2)
+      expect(next.chamfer.size, `r=${rotation}`).toBe(0)
+      for (let du = 0; du < 2; du++) {
+        for (let dv = 0; dv < 2; dv++) {
+          for (let dw = 0; dw < 2; dw++) {
+            expect(next.color.has(encodeKey(...childAt(base, 'z', 1, du, dv, dw))), `r=${rotation} ${du},${dv},${dw}`).toBe(
+              du === qu && dv === qv,
+            )
+          }
+        }
+      }
+    }
+  })
+
   it('never lets neighboring voxels collide (negative-basis placement)', () => {
     // Regression test: the z-plane v axis runs toward −y, and a naive du·V placement mapped two
     // face-adjacent voxels onto 4 shared children. Children must tile exactly [2c, 2c+1].
@@ -277,8 +316,9 @@ describe('rescaleVoxelModel', () => {
     // the parent's, so volumes compare directly.
     const volume: Record<string, number> = {
       cube: 1, ramp: 1 / 2, wedge: 1 / 2, convex: 1 / 3, concave: 2 / 3, thin: 1 / 2, half: 1 / 2,
+      post: 1 / 4, quarter: 1 / 4,
     }
-    const kinds: ChamferShapeKind[] = ['ramp', 'wedge', 'convex', 'concave', 'thin', 'half']
+    const kinds: ChamferShapeKind[] = ['ramp', 'wedge', 'convex', 'concave', 'thin', 'half', 'post', 'quarter']
     for (const kind of kinds) {
       for (const rotation of [0, 1, 2, 3] as const) {
         const next = rescaleVoxelModel(singleVoxel([0, 0, 0], { axis: 'z', orientation: 1, kind, rotation }))
