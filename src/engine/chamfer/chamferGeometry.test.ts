@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import * as THREE from 'three'
-import { concaveCornerGeometry, convexCornerGeometry, halfGeometry, mirrorVGeometry, postGeometry, quarterGeometry, rampGeometry, unitCubeGeometry, wedgeGeometry } from './chamferGeometry'
+import { concaveCornerGeometry, convexCornerGeometry, flatGeometry, flatWedgeGeometry, halfGeometry, mirrorVGeometry, postGeometry, quarterGeometry, rampGeometry, unitCubeGeometry, wedgeGeometry } from './chamferGeometry'
 
 type Vec = [number, number, number]
 
@@ -354,6 +354,91 @@ describe('chamfer geometry — quarter column (Model I)', () => {
     expect([round(min.x), round(min.y), round(min.z)]).toEqual([0, 0, -0.5])
     expect([round(max.x), round(max.y), round(max.z)]).toEqual([0.5, 0.5, 0.5])
     const inside: Vec = [0.25, 0.25, 0]
+    for (const tri of triangles(m)) {
+      const normal = cross(sub(tri[1], tri[0]), sub(tri[2], tri[0]))
+      expect(dot(normal, sub(centroid(tri), inside)), `triangle ${JSON.stringify(tri)}`).toBeGreaterThan(0)
+    }
+  })
+})
+
+describe('chamfer geometry — flat quad (Model J)', () => {
+  it('is a single u×v square at z = 0 with a +z normal (2 triangles)', () => {
+    const g = flatGeometry()
+    const tris = triangles(g)
+    expect(tris.length).toBe(2)
+    g.computeBoundingBox()
+    const { min, max } = g.boundingBox!
+    expect([round(min.x), round(min.y), round(min.z)]).toEqual([-0.5, -0.5, 0])
+    expect([round(max.x), round(max.y), round(max.z)]).toEqual([0.5, 0.5, 0])
+    for (const tri of tris) {
+      const normal = cross(sub(tri[1], tri[0]), sub(tri[2], tri[0]))
+      expect(normal[2]).toBeGreaterThan(0)
+      expect(Math.abs(normal[0]) + Math.abs(normal[1])).toBeLessThan(1e-9)
+    }
+  })
+
+  it('mirrorVGeometry(flat) is the same quad with a +z normal', () => {
+    const m = mirrorVGeometry(flatGeometry())
+    expect(triangles(m).length).toBe(2)
+    m.computeBoundingBox()
+    const { min, max } = m.boundingBox!
+    expect([round(min.x), round(min.y), round(min.z)]).toEqual([-0.5, -0.5, 0])
+    expect([round(max.x), round(max.y), round(max.z)]).toEqual([0.5, 0.5, 0])
+    const nrm = m.getAttribute('normal') as THREE.BufferAttribute
+    for (let i = 0; i < nrm.count; i++) {
+      expect(nrm.getZ(i)).toBeGreaterThan(0)
+    }
+  })
+})
+
+describe('chamfer geometry — flat wedge quad (Model K)', () => {
+  it('rotation 0 is the NW-SE diagonal, full depth, normal toward NE (2 triangles)', () => {
+    const g = flatWedgeGeometry(0)
+    const tris = triangles(g)
+    expect(tris.length).toBe(2)
+    // Every vertex sits on the u−v = 0 diagonal, at the cell's vertical edges.
+    for (const tri of tris) {
+      for (const v of tri) {
+        expect(round(v[0] - v[1])).toBe(0)
+        expect(Math.abs(round(v[0]))).toBe(0.5)
+      }
+    }
+    // Normal points NE (u+, v−), horizontal: (1,−1,0)/√2.
+    for (const tri of tris) {
+      const normal = cross(sub(tri[1], tri[0]), sub(tri[2], tri[0]))
+      const len = Math.hypot(normal[0], normal[1], normal[2])
+      expect(normal[0] / len).toBeCloseTo(Math.SQRT1_2, 5)
+      expect(normal[1] / len).toBeCloseTo(-Math.SQRT1_2, 5)
+      expect(normal[2] / len).toBeCloseTo(0, 5)
+    }
+  })
+
+  it.each([
+    [0, 0], // NW-SE diagonal: u−v = 0
+    [1, 2], // NE-SW diagonal: u+v = 0
+    [2, 0], // NW-SE diagonal, opposite facing
+    [3, 2], // NE-SW diagonal, opposite facing
+  ] as const)('rotation %i rides its diagonal', (rotation, diag) => {
+    const g = flatWedgeGeometry(rotation)
+    expect(triangles(g).length).toBe(2)
+    for (const tri of triangles(g)) {
+      for (const v of tri) {
+        const key = diag === 0 ? round(v[0] - v[1]) : round(v[0] + v[1])
+        expect(key).toBe(0)
+      }
+    }
+  })
+
+  it('mirrorVGeometry(flatwedge) rides the NE-SW diagonal (the rotation-1 solid)', () => {
+    const m = mirrorVGeometry(flatWedgeGeometry(0))
+    expect(triangles(m).length).toBe(2)
+    for (const tri of triangles(m)) {
+      for (const v of tri) {
+        expect(round(v[0] + v[1])).toBe(0)
+      }
+    }
+    // Mirrored normal faces SE; the interior point sits behind it (u+v < 0).
+    const inside: Vec = [-0.25, -0.25, 0]
     for (const tri of triangles(m)) {
       const normal = cross(sub(tri[1], tri[0]), sub(tri[2], tri[0]))
       expect(dot(normal, sub(centroid(tri), inside)), `triangle ${JSON.stringify(tri)}`).toBeGreaterThan(0)

@@ -18,11 +18,12 @@ import { RAMP_LOCAL_CORNERS, WEDGE_LOCAL_CORNERS, rotateLocal } from './rampDual
  * and the result is looked up among the same shape's (axis, orientation, rotation) candidates.
  * Same-axis cells always resolve back onto their own basis with the legacy renumbering, so the
  * previously-working case is behavior-identical — only cross-axis cells change (from wrong to
- * right). Unresolved cells and slabs (thin's centered slab, half's flush slab, and post's centered
- * column — none of their corners pin a solid on their own) only get their authoring basis moved,
- * never a shape. For half that basis move is still exact: the slab is fully determined by its
- * outward normal, which the tracked basis carries along. (Post is the same: the centered column
- * is fully determined by its long axis.) Quarter columns do pin a corner solid, so they map
+ * right). Unresolved cells and slabs (thin's centered slab, half's flush slab, post's centered
+ * column, and flat's centre quad — none of their corners pin a solid on their own) only get
+ * their authoring basis moved, never a shape. For half that basis move is still exact: the slab
+ * is fully determined by its outward normal, which the tracked basis carries along. (Post and
+ * flat are the same: the centered column / centre quad is fully determined by its long axis /
+ * facing normal.) Quarter columns and flat-wedge quads do pin corner solids, so they map
  * through the exact corner-set lookup like the bevels.
  */
 
@@ -55,17 +56,36 @@ const QUARTER_LOCAL_CORNERS: Coord[] = [
   [0.5, -0.5, 0.5], // t0 NE top
 ]
 
-const SHAPE_CORNERS: Record<Exclude<ChamferShapeKind, 'thin' | 'half' | 'post'>, Coord[]> = {
+// Occupied local-prefab corners of a rotation-0 flat-wedge quad: the diagonal's two vertical
+// edges (base b3+b1, top t1+t3 — see flatWedgeGeometry, the wedge's diagonal cut face).
+const FLATWEDGE_LOCAL_CORNERS: Coord[] = [
+  [-0.5, -0.5, -0.5], // b3 NW base
+  [0.5, 0.5, -0.5], // b1 SE base
+  [0.5, 0.5, 0.5], // t1 SE top
+  [-0.5, -0.5, 0.5], // t3 NW top
+]
+
+const SHAPE_CORNERS: Record<Exclude<ChamferShapeKind, 'thin' | 'half' | 'post' | 'flat'>, Coord[]> = {
   ramp: RAMP_LOCAL_CORNERS,
   wedge: WEDGE_LOCAL_CORNERS,
   convex: CONVEX_LOCAL_CORNERS,
   concave: CONCAVE_LOCAL_CORNERS,
   quarter: QUARTER_LOCAL_CORNERS,
+  flatwedge: FLATWEDGE_LOCAL_CORNERS,
+}
+
+// Canonical prefab-space facing for shapes whose corner set is 180°-symmetric: opposite
+// rotations occupy the same corners (flatwedge 0/2 share the NW-SE edges, 1/3 the NE-SW
+// ones), so the corner signature alone can't tell facings apart and the lookup would collapse
+// them (silently swapping a pane's textured front/back on clipboard rotate). The mapped facing
+// disambiguates: a rigid motion carries the front side to exactly one candidate's front.
+const SHAPE_FACING: Partial<Record<Exclude<ChamferShapeKind, 'thin' | 'half' | 'post' | 'flat'>, Coord>> = {
+  flatwedge: [1, -1, 0], // toward the open (NE) corner, horizontal
 }
 
 /** World-space (cell-relative, translation-free) occupied corners. Pure geometry truth, memoized. */
 const cornersMemo = new Map<string, Coord[]>()
-function solidCorners(shape: Exclude<ChamferShapeKind, 'thin' | 'half' | 'post'>, axis: Axis, orientation: Orientation, rotation: Rotation): Coord[] {
+function solidCorners(shape: Exclude<ChamferShapeKind, 'thin' | 'half' | 'post' | 'flat'>, axis: Axis, orientation: Orientation, rotation: Rotation): Coord[] {
   const key = `${shape}|${axis}|${orientation}|${rotation}`
   const hit = cornersMemo.get(key)
   if (hit) return hit
@@ -139,22 +159,38 @@ function trackedBasis(cell: ChamferCell, T: RigidMap): [Axis, Orientation] {
  * renumbering; cross-axis bevels re-base onto whichever axis their solid turns into), while
  * unresolved cells and slabs only ride their basis along. The tracked basis always carries
  * the same normal the rotated solid does, and the in-plane frame difference is a whole number
- * of quarter-turns — so exactly one of the four rotations matches. The defensive fallback (no
- * candidate matches — geometry truth changed under us) keeps the cell frozen rather than
- * corrupting it.
+ * of quarter-turns — so exactly one of the four rotations matches (180°-symmetric solids also
+ * match on the mapped facing — see `SHAPE_FACING`). The defensive fallback (no candidate
+ * matches — geometry truth changed under us) keeps the cell frozen rather than corrupting it.
  */
 function applyMotion(cell: ChamferCell, T: RigidMap): ChamferCell {
   const resolved = cell.resolvedTo
   const [ax, o] = trackedBasis(cell, T)
-  if (!resolved || resolved.shapeKind === 'thin' || resolved.shapeKind === 'half' || resolved.shapeKind === 'post') {
+  if (!resolved || resolved.shapeKind === 'thin' || resolved.shapeKind === 'half' || resolved.shapeKind === 'post' || resolved.shapeKind === 'flat') {
     return { planeAxis: ax, planeOrientation: o, resolvedTo: resolved ? { ...resolved } : null }
   }
 
   const shape = resolved.shapeKind
-  const sourceSig = signatureOf(solidCorners(shape, cell.planeAxis, cell.planeOrientation, resolved.rotation).map(T))
+  const facing = SHAPE_FACING[shape]
+  const directedSig = (corners: Coord[], face: Coord | null): string =>
+    signatureOf(corners) + (face ? `|${cornerKey(face)}` : '')
+  const worldFacing = (axis: Axis, orientation: Orientation, rotation: Rotation): Coord | null => {
+    if (!facing) return null
+    const [u, v, w] = rotateLocal(facing, rotation)
+    const { uDir: U, vDir: V } = planeLogicalBasis(axis)
+    const W = outwardNormal(axis, orientation)
+    return [
+      u * U[0] + v * V[0] + w * W[0],
+      u * U[1] + v * V[1] + w * W[1],
+      u * U[2] + v * V[2] + w * W[2],
+    ]
+  }
+  const sourceCorners = solidCorners(shape, cell.planeAxis, cell.planeOrientation, resolved.rotation).map(T)
+  const sourceFace = worldFacing(cell.planeAxis, cell.planeOrientation, resolved.rotation)
+  const sourceSig = directedSig(sourceCorners, sourceFace && T(sourceFace))
   const rotations: Rotation[] = [0, 1, 2, 3]
   for (const r of rotations) {
-    if (signatureOf(solidCorners(shape, ax, o, r)) === sourceSig) {
+    if (directedSig(solidCorners(shape, ax, o, r), worldFacing(ax, o, r)) === sourceSig) {
       return { planeAxis: ax, planeOrientation: o, resolvedTo: { shapeKind: shape, rotation: r } }
     }
   }
@@ -179,13 +215,13 @@ export function mirrorChamferCell(cell: ChamferCell, planeAxis: Axis, mirrorU: b
 }
 
 /**
- * Spins a thin/half/post slab 90° about the V axis it was painted on — the click-to-rotate escape
+ * Spins a thin/half/post/flat slab 90° about the V axis it was painted on — the click-to-rotate escape
  * hatch for slabs, mirroring the wedge's manual rotation. The outward normal swings through
  * the cell's own authoring frame (object axis, not the world or active-plane frame): x/z-faced
- * slabs cycle W → U → -W → -U and back in four clicks. A slab/column solid is fully determined
+ * slabs cycle W → U → -W → -U and back in four clicks. A slab/column/quad solid is fully determined
  * by its outward normal (post's centered column by its long axis), so only the authoring basis
  * moves; shapeKind/rotation are preserved.
- * Non-slab cells (including unresolved ones, and quarter columns — whose re-click cycles the
+ * Non-slab cells (including unresolved ones, and quarter/flatwedge columns — whose re-click cycles the
  * corner rotation instead) are returned untouched.
  * Non-slab cells (including unresolved ones) are returned untouched.
  *
@@ -196,7 +232,7 @@ export function mirrorChamferCell(cell: ChamferCell, planeAxis: Axis, mirrorU: b
  */
 export function spinSlabAboutLocalY(cell: ChamferCell): ChamferCell {
   const resolved = cell.resolvedTo
-  if (!resolved || (resolved.shapeKind !== 'thin' && resolved.shapeKind !== 'half' && resolved.shapeKind !== 'post')) return cell
+  if (!resolved || (resolved.shapeKind !== 'thin' && resolved.shapeKind !== 'half' && resolved.shapeKind !== 'post' && resolved.shapeKind !== 'flat')) return cell
   const { vDir: V } = planeLogicalBasis(cell.planeAxis)
   const N = outwardNormal(cell.planeAxis, cell.planeOrientation)
   // +90° about the cell's own +V (right-hand rule): N → V × N. All three are signed unit

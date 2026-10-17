@@ -34,6 +34,12 @@ This is **not** a general glTF tutorial, and **not** an internal architecture do
 - Interior faces between same-color voxels are already culled by the CSG union (watertight, non-overlapping).
 - Textured models: one mesh per `(materialClass, colorKey, animationSlice)` with box-mapped UVs.
 
+### Two-sided flats (`flat` / `flatwedge` zero-thickness quads)
+
+- A flat cell exports as **two coincident quads with opposite normals and opposite windings** (4 triangles): the front winding faces the recorded normal, the back winding faces away. Both windings are always present, on every export path (textured, untextured, animated).
+- Materials are **single-sided** (no `doubleSided` flag). With face culling, exactly one winding renders per viewpoint, so standard viewers show no z-fighting. Do NOT "fix" the coincident pair by deleting one side, and do NOT set `doubleSided: true` (that reintroduces z-fighting outside engines whose shader derives each face's normal toward the viewer).
+- No `doubleSided` flag is relied upon anywhere: importers that ignore material flags still read flats from both sides.
+
 ### Not present
 
 - No morph targets.

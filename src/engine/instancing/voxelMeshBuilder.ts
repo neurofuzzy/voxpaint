@@ -1,7 +1,7 @@
 import * as THREE from 'three'
 import { decodeKey, encodeKey } from '@/engine/grid/GridStore'
 import type { CellKey, ChamferCell, Coord, VoxelModel } from '@/engine/grid/types'
-import { concaveCornerGeometry, convexCornerGeometry, halfGeometry, mirrorVGeometry, postGeometry, quarterGeometry, rampGeometry, thinGeometry, wedgeGeometry } from '@/engine/chamfer/chamferGeometry'
+import { concaveCornerGeometry, convexCornerGeometry, flatGeometry, flatWedgeGeometry, halfGeometry, mirrorVGeometry, postGeometry, quarterGeometry, rampGeometry, thinGeometry, wedgeGeometry } from '@/engine/chamfer/chamferGeometry'
 import { materialClassFor, resolveSlotColor, type MaterialClass } from '@/engine/palette/palette'
 import type { PaletteState } from '@/engine/palette/types'
 import type { SliceKey } from '@/engine/animation/types'
@@ -44,6 +44,13 @@ interface Face {
   /** The voxel cell this face was emitted from — tagged in `buildShellFaces`, read by the
    * animation-aware shell cull (`removeInteriorFaces`) and by-slice grouping. */
   cellKey?: CellKey
+  /**
+   * One winding of a two-sided flat (`flat`/`flatwedge`): export emits both windings as
+   * coincident opposite-normal quads so the GLB reads from both sides without relying on
+   * double-sided materials. Tagged faces are never paired by the shell pass (`removeInteriorFaces`)
+   * — the pair is the surface, not a hidden interior interface.
+   */
+  twoSided?: boolean
 }
 
 /**
@@ -68,6 +75,8 @@ const CHAMFER_BASE: Record<string, THREE.BufferGeometry> = (() => {
   const half = halfGeometry()
   const post = postGeometry()
   const quarter = quarterGeometry(0)
+  const flat = flatGeometry()
+  const flatwedge = flatWedgeGeometry(0)
   return {
     ramp,
     convex,
@@ -77,6 +86,8 @@ const CHAMFER_BASE: Record<string, THREE.BufferGeometry> = (() => {
     half,
     post,
     quarter,
+    flat,
+    flatwedge,
     rampM: mirrorVGeometry(ramp),
     convexM: mirrorVGeometry(convex),
     concaveM: mirrorVGeometry(concave),
@@ -85,11 +96,58 @@ const CHAMFER_BASE: Record<string, THREE.BufferGeometry> = (() => {
     halfM: mirrorVGeometry(half),
     postM: mirrorVGeometry(post),
     quarterM: mirrorVGeometry(quarter),
+    flatM: mirrorVGeometry(flat),
+    flatwedgeM: mirrorVGeometry(flatwedge),
   }
 })()
 
 function faceNormal(a: THREE.Vector3, b: THREE.Vector3, c: THREE.Vector3): THREE.Vector3 {
   return new THREE.Vector3().crossVectors(new THREE.Vector3().subVectors(b, a), new THREE.Vector3().subVectors(c, a)).normalize()
+}
+
+/** Clone a non-indexed geometry with every triangle's winding reversed and normals negated —
+ * the back winding of a two-sided flat export pair. Flat prefabs carry position+normal only.
+ * Normals are negated on ALL three vertices (not just the swapped pair): the merge reads the
+ * first vertex's normal, so a stale +z there would group the back winding with the front. */
+function reverseWinding(geom: THREE.BufferGeometry): THREE.BufferGeometry {
+  const out = geom.clone()
+  const pos = out.getAttribute('position') as THREE.BufferAttribute
+  const nrm = out.getAttribute('normal') as THREE.BufferAttribute
+  const parr = pos.array as Float32Array
+  const narr = nrm.array as Float32Array
+  for (let i = 0; i < pos.count; i += 3) {
+    for (let k = 0; k < 3; k++) {
+      const a = (i + 1) * 3 + k
+      const c = (i + 2) * 3 + k
+      const tp = parr[a]
+      parr[a] = parr[c]
+      parr[c] = tp
+      const tn = -narr[a]
+      narr[a] = -narr[c]
+      narr[c] = tn
+      narr[i * 3 + k] = -narr[i * 3 + k]
+    }
+  }
+  pos.needsUpdate = true
+  nrm.needsUpdate = true
+  return out
+}
+
+/**
+ * Push one cell's CSG-path geometry, plus the reversed winding for two-sided flats. An open
+ * quad is undefined behaviour for the ThreeBSP union, so both flat windings bypass it: marked
+ * `userData.twoSidedFlat` for `optimizeGroupsByCSG` to append post-union (the same pair the
+ * shell path emits as tagged `Face`s). Returns the appended triangle count for `rawTriangles`.
+ */
+function pushCellGeometry(group: VoxelGroup, geom: THREE.BufferGeometry, chamfer: ChamferCell | undefined): number {
+  group.geometries.push(geom)
+  const kind = chamfer?.resolvedTo?.shapeKind
+  if (kind !== 'flat' && kind !== 'flatwedge') return 0
+  geom.userData.twoSidedFlat = true
+  const back = reverseWinding(geom)
+  back.userData.twoSidedFlat = true
+  group.geometries.push(back)
+  return triangleCount(back)
 }
 
 /** Add one triangle, orienting its winding so its normal agrees with `outward` (if given). */
@@ -212,6 +270,9 @@ export function removeInteriorFaces(faces: Face[], nodeAssignment?: Map<CellKey,
   for (const idxs of byTri.values()) {
     if (idxs.length !== 2) continue
     const [i, j] = idxs
+    // A two-sided flat's own windings share a vertex-triple by construction — they are the
+    // visible surface from opposite sides, never a hidden interior interface. Never pair them.
+    if (faces[i].twoSided || faces[j].twoSided) continue
     if (faces[i].normal.dot(faces[j].normal) >= -0.9) continue // not back-to-back
     if (nodeAssignment && sliceOf(faces[i]) !== sliceOf(faces[j])) continue // different animation nodes
 
@@ -259,6 +320,27 @@ function buildShellFaces(
       const base = CHAMFER_BASE[`${chamfer.resolvedTo.shapeKind}${variant}`]
       chamferInstanceMatrix(coord, chamfer.planeAxis, chamfer.planeOrientation, chamfer.resolvedTo.rotation, matrix)
       emitChamfer(faces, base, matrix, mat)
+      const kind = chamfer.resolvedTo.shapeKind
+      if (kind === 'flat' || kind === 'flatwedge') {
+        // Two-sided export: the editor renders the single quad DoubleSide, but export must read
+        // from both sides without relying on double-sided materials — append the reversed
+        // winding as coincident opposite-normal quads. Both windings are tagged so the shell
+        // pass below never pairs them back together (see `Face.twoSided`).
+        const end = faces.length
+        for (let i = start; i < end; i++) {
+          const f = faces[i]
+          f.twoSided = true
+          faces.push({
+            a: f.a,
+            b: f.c,
+            c: f.b,
+            normal: f.normal.clone().negate(),
+            colorKey: f.colorKey,
+            materialClass: f.materialClass,
+            twoSided: true,
+          })
+        }
+      }
       for (let i = start; i < faces.length; i++) faces[i].chamfer = chamfer
     } else {
       emitCube(faces, coord, mat)
@@ -340,8 +422,7 @@ export function buildOptimizedVoxelGroups(model: VoxelModel, palette: PaletteSta
       geom.translate(coord[0] + 0.5, coord[1] + 0.5, coord[2] + 0.5)
     }
 
-    rawTriangles += triangleCount(geom)
-    group.geometries.push(geom)
+    rawTriangles += triangleCount(geom) + pushCellGeometry(group, geom, chamfer)
   }
 
   const isOccupied = (x: number, y: number, z: number) => isCellOccupied(model, x, y, z)
@@ -414,8 +495,7 @@ export function buildOptimizedVoxelGroupsBySlice(
       geom.translate(coord[0] + 0.5, coord[1] + 0.5, coord[2] + 0.5)
     }
 
-    rawTriangles += triangleCount(geom)
-    group.geometries.push(geom)
+    rawTriangles += triangleCount(geom) + pushCellGeometry(group, geom, chamfer)
   }
 
   const isOccupied = (x: number, y: number, z: number) => isCellOccupied(model, x, y, z)
@@ -609,46 +689,68 @@ export function buildTexturedShellGeometryByColorMerged(
 
     // Merge input soup (position + flat normal per shell triangle) with the texture page as the
     // per-triangle merge key; the merged output reports one page per surviving triangle.
-    const inPositions: number[] = []
-    const inNormals: number[] = []
-    const inTags: string[] = []
-    for (const f of group) {
-      const tag = tagFor(f.chamfer, f.normal)
-      for (const v of [f.a, f.b, f.c]) {
-        inPositions.push(v.x, v.y, v.z)
-        inNormals.push(f.normal.x, f.normal.y, f.normal.z)
+    // Two-sided flats merge in their OWN pass (flats only with flats — never with solids): the
+    // flat subset welds coplanar same-facing quads across cells into panes, while the same-facing
+    // rule keeps each flat's opposite-winding pair intact, exactly like the CSG path's flat pass.
+    const mergeFaces = (subset: Face[]) => {
+      const inPositions: number[] = []
+      const inNormals: number[] = []
+      const inTags: string[] = []
+      for (const f of subset) {
+        const tag = tagFor(f.chamfer, f.normal)
+        for (const v of [f.a, f.b, f.c]) {
+          inPositions.push(v.x, v.y, v.z)
+          inNormals.push(f.normal.x, f.normal.y, f.normal.z)
+        }
+        inTags.push(tag)
       }
-      inTags.push(tag)
+      const soup = new THREE.BufferGeometry()
+      soup.setAttribute('position', new THREE.Float32BufferAttribute(inPositions, 3))
+      soup.setAttribute('normal', new THREE.Float32BufferAttribute(inNormals, 3))
+      const merged = mergeCoplanarFacesWithKeys(soup, (t) => inTags[t])
+      soup.dispose()
+      return merged
     }
-    const soup = new THREE.BufferGeometry()
-    soup.setAttribute('position', new THREE.Float32BufferAttribute(inPositions, 3))
-    soup.setAttribute('normal', new THREE.Float32BufferAttribute(inNormals, 3))
-    const merged = mergeCoplanarFacesWithKeys(soup, (t) => inTags[t])
-    soup.dispose()
-
-    const mergedPos = merged.geometry.getAttribute('position') as THREE.BufferAttribute
-    const mergedNrm = merged.geometry.getAttribute('normal') as THREE.BufferAttribute
+    const emitMerged = (merged: { geometry: THREE.BufferGeometry; keys: TexturedFaceTag[] }) => {
+      const mergedPos = merged.geometry.getAttribute('position') as THREE.BufferAttribute
+      const mergedNrm = merged.geometry.getAttribute('normal') as THREE.BufferAttribute
+      const positions: number[] = []
+      const normals: number[] = []
+      const colors: number[] = []
+      const uvs: number[] = []
+      const v = new THREE.Vector3()
+      for (let t = 0; t < merged.keys.length; t++) {
+        for (let k = 0; k < 3; k++) {
+          v.fromBufferAttribute(mergedPos, t * 3 + k)
+          positions.push(v.x, v.y, v.z)
+          normals.push(mergedNrm.getX(t * 3 + k), mergedNrm.getY(t * 3 + k), mergedNrm.getZ(t * 3 + k))
+          colors.push(color.r, color.g, color.b)
+          const [uu, vv] = uvForTag(merged.keys[t], v)
+          uvs.push(uu, vv)
+        }
+      }
+      merged.geometry.dispose()
+      return { positions, normals, colors, uvs }
+    }
+    const solidFaces = group.filter((f) => !f.twoSided)
+    const flatFaces = group.filter((f) => f.twoSided)
     const positions: number[] = []
     const normals: number[] = []
     const colors: number[] = []
     const uvs: number[] = []
-    const v = new THREE.Vector3()
-    for (let t = 0; t < merged.keys.length; t++) {
-      for (let k = 0; k < 3; k++) {
-        v.fromBufferAttribute(mergedPos, t * 3 + k)
-        positions.push(v.x, v.y, v.z)
-        normals.push(mergedNrm.getX(t * 3 + k), mergedNrm.getY(t * 3 + k), mergedNrm.getZ(t * 3 + k))
-        colors.push(color.r, color.g, color.b)
-        const [uu, vv] = uvForTag(merged.keys[t], v)
-        uvs.push(uu, vv)
-      }
+    for (const subset of [solidFaces, flatFaces]) {
+      if (subset.length === 0) continue
+      const out = emitMerged(mergeFaces(subset))
+      positions.push(...out.positions)
+      normals.push(...out.normals)
+      colors.push(...out.colors)
+      uvs.push(...out.uvs)
     }
     const geometry = new THREE.BufferGeometry()
     geometry.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3))
     geometry.setAttribute('normal', new THREE.Float32BufferAttribute(normals, 3))
     geometry.setAttribute('color', new THREE.Float32BufferAttribute(colors, 3))
     geometry.setAttribute('uv', new THREE.Float32BufferAttribute(uvs, 2))
-    merged.geometry.dispose()
     optimizedTriangles += triangleCount(geometry)
     out.push({ colorKey, materialClass, geometry })
   }

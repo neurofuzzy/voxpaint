@@ -621,3 +621,159 @@ describe('paintCell quarter-column handling', () => {
     })
   })
 })
+
+describe('paintCell flat-quad handling', () => {
+  beforeEach(() => {
+    const s = useAppStore.getState()
+    s.newProject('Test', 16)
+    s.setActiveVoxelKind('flat')
+    s.setPlaneAxisOrientation('z', 1)
+    s.setPlaneOffset(0)
+  })
+
+  it('paints a centre quad on the verbatim plane basis, frozen at rotation 0', () => {
+    const s = useAppStore.getState()
+    s.beginStroke()
+    expect(s.paintCell(4, 4)).toBe(true)
+    s.commitStroke()
+
+    const after = useAppStore.getState()
+    expect(after.model.color.size).toBe(1)
+    expect(after.model.chamfer.get(keyFor(4, 4))).toEqual({
+      planeAxis: 'z',
+      planeOrientation: 1,
+      resolvedTo: { shapeKind: 'flat', rotation: 0 },
+    })
+  })
+
+  it('re-clicking a flat spins its facing 90° per click, cycling back after four', () => {
+    const s = useAppStore.getState()
+    s.beginStroke()
+    expect(s.paintCell(4, 4)).toBe(true)
+    s.commitStroke()
+
+    // Same cycle as the thin slab painted on the same plane.
+    const expected: [string, number][] = [
+      ['x', -1],
+      ['z', -1],
+      ['x', 1],
+      ['z', 1],
+    ]
+    for (const [axis, orientation] of expected) {
+      useAppStore.getState().beginStroke()
+      expect(useAppStore.getState().paintCell(4, 4)).toBe(true)
+      useAppStore.getState().commitStroke()
+      expect(useAppStore.getState().model.chamfer.get(keyFor(4, 4))).toEqual({
+        planeAxis: axis,
+        planeOrientation: orientation,
+        resolvedTo: { shapeKind: 'flat', rotation: 0 },
+      })
+    }
+  })
+
+  it('re-applying a flat within the same stroke does not spin it', () => {
+    const s = useAppStore.getState()
+    s.beginStroke()
+    expect(s.paintCell(4, 4)).toBe(true)
+    expect(s.paintCell(4, 4)).toBe(true)
+    s.commitStroke()
+
+    expect(useAppStore.getState().model.chamfer.get(keyFor(4, 4))).toEqual({
+      planeAxis: 'z',
+      planeOrientation: 1,
+      resolvedTo: { shapeKind: 'flat', rotation: 0 },
+    })
+  })
+
+  it('re-painting with cube clears the flat entry', () => {
+    const s = useAppStore.getState()
+    s.beginStroke()
+    expect(s.paintCell(4, 4)).toBe(true)
+    s.commitStroke()
+
+    useAppStore.getState().setActiveVoxelKind('cube')
+    const s2 = useAppStore.getState()
+    s2.beginStroke()
+    expect(s2.paintCell(4, 4)).toBe(true)
+    s2.commitStroke()
+
+    const after = useAppStore.getState()
+    expect(after.model.color.size).toBe(1)
+    expect(after.model.chamfer.has(keyFor(4, 4))).toBe(false)
+  })
+})
+
+describe('paintCell flat-wedge handling', () => {
+  beforeEach(() => {
+    const s = useAppStore.getState()
+    s.newProject('Test', 16)
+    s.setActiveVoxelKind('flatwedge')
+    s.setPlaneAxisOrientation('z', 1)
+    s.setPlaneOffset(0)
+  })
+
+  it('paints an open-NE diagonal quad on the verbatim plane basis', () => {
+    const s = useAppStore.getState()
+    s.beginStroke()
+    expect(s.paintCell(4, 4)).toBe(true)
+    s.commitStroke()
+
+    const after = useAppStore.getState()
+    expect(after.model.color.size).toBe(1)
+    expect(after.model.chamfer.get(keyFor(4, 4))).toEqual({
+      planeAxis: 'z',
+      planeOrientation: 1,
+      resolvedTo: { shapeKind: 'flatwedge', rotation: 0 },
+    })
+  })
+
+  it('re-clicking a flat wedge advances its rotation, wrapping after four', () => {
+    const s = useAppStore.getState()
+    s.beginStroke()
+    expect(s.paintCell(4, 4)).toBe(true)
+    s.commitStroke()
+
+    for (const rotation of [1, 2, 3, 0]) {
+      useAppStore.getState().beginStroke()
+      expect(useAppStore.getState().paintCell(4, 4)).toBe(true)
+      useAppStore.getState().commitStroke()
+      expect(useAppStore.getState().model.chamfer.get(keyFor(4, 4))).toEqual({
+        planeAxis: 'z',
+        planeOrientation: 1,
+        resolvedTo: { shapeKind: 'flatwedge', rotation },
+      })
+    }
+  })
+
+  it('re-applying a flat wedge within the same stroke does not advance it', () => {
+    const s = useAppStore.getState()
+    s.beginStroke()
+    expect(s.paintCell(4, 4)).toBe(true)
+    expect(s.paintCell(4, 4)).toBe(true)
+    s.commitStroke()
+
+    expect(useAppStore.getState().model.chamfer.get(keyFor(4, 4))).toEqual({
+      planeAxis: 'z',
+      planeOrientation: 1,
+      resolvedTo: { shapeKind: 'flatwedge', rotation: 0 },
+    })
+  })
+
+  it('painting flatwedge over flat re-bases instead of advancing', () => {
+    useAppStore.getState().setActiveVoxelKind('flat')
+    const s = useAppStore.getState()
+    s.beginStroke()
+    expect(s.paintCell(4, 4)).toBe(true)
+    s.commitStroke()
+
+    useAppStore.getState().setActiveVoxelKind('flatwedge')
+    useAppStore.getState().beginStroke()
+    expect(useAppStore.getState().paintCell(4, 4)).toBe(true)
+    useAppStore.getState().commitStroke()
+    expect(useAppStore.getState().model.chamfer.get(keyFor(4, 4))).toEqual({
+      planeAxis: 'z',
+      planeOrientation: 1,
+      resolvedTo: { shapeKind: 'flatwedge', rotation: 0 },
+    })
+  })
+})

@@ -132,6 +132,10 @@ export function ExportStlDialog({ open, onOpenChange }: { open: boolean; onOpenC
                 </span>
               </span>
             </label>
+
+            <p className="ml-[4.5rem] text-xs text-neutral-500">
+              Flat panels are always skipped — zero thickness isn't printable.
+            </p>
           </div>
 
           <div className="mt-6 flex justify-end gap-2">

@@ -168,7 +168,7 @@ describe('rebaseRampCell', () => {
   })
 
   it('refuses halves, posts, and quarters (geometry edits or nothing to switch)', () => {
-    for (const shapeKind of ['half', 'post', 'quarter'] as const) {
+    for (const shapeKind of ['half', 'post', 'quarter', 'flat', 'flatwedge'] as const) {
       const model = emptyModel()
       model.color.set(encodeKey(0, 0, 0), { paletteSlot: { kind: 'base', index: 3 } })
       model.chamfer.set(encodeKey(0, 0, 0), {

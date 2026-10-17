@@ -6,6 +6,7 @@ import { faceSizeFor } from '@/engine/texture/types'
 import { migrateToCurrent } from './migrations'
 import { deserializeProject, serializeProject } from './serialize'
 import type { ProjectMeta, VoxPaintProjectFileV1 } from './schema'
+import { CURRENT_SCHEMA_VERSION } from './schema'
 
 const meta: ProjectMeta = { name: 'T', createdAt: '2026-01-01T00:00:00.000Z', modifiedAt: '2026-01-01T00:00:00.000Z', gridExtent: 16, noiseSeed: 0, voxelScaleY: 1 }
 const faceSize = faceSizeFor(meta.gridExtent)
@@ -20,7 +21,7 @@ describe('serialize with texture', () => {
     texture.faces.nx[100] = 1
 
     const file = serializeProject(model, DEFAULT_PALETTE, meta, texture)
-    expect(file.schemaVersion).toBe(10)
+    expect(file.schemaVersion).toBe(CURRENT_SCHEMA_VERSION)
     expect(file.texture?.faceSize).toBeGreaterThan(0)
 
     const restored = deserializeProject(file)
@@ -69,7 +70,7 @@ describe('v1 → current migration', () => {
       model: { bounds: null, colorCells: [], chamferCells: [] },
     }
     const migrated = migrateToCurrent(v1)
-    expect(migrated.schemaVersion).toBe(10)
+    expect(migrated.schemaVersion).toBe(CURRENT_SCHEMA_VERSION)
     expect(migrated.texture).toBeUndefined()
     expect(migrated.meta.gridExtent).toBe(16)
 
@@ -101,7 +102,7 @@ describe('v2 → v3 migration (blink/pulse → metal/glass)', () => {
       },
     }
     const migrated = migrateToCurrent(v2) as any
-    expect(migrated.schemaVersion).toBe(10)
+    expect(migrated.schemaVersion).toBe(CURRENT_SCHEMA_VERSION)
     // Palette reshaped: metal/glass present, blink/pulse gone; base/emissive preserved.
     expect(migrated.palette.metal).toHaveLength(4)
     expect(migrated.palette.glass).toHaveLength(4)
@@ -155,7 +156,7 @@ describe('markers persistence (v9)', () => {
       model: { bounds: null, colorCells: [], chamferCells: [] },
     }
     const migrated = migrateToCurrent(v6)
-    expect(migrated.schemaVersion).toBe(10)
+    expect(migrated.schemaVersion).toBe(CURRENT_SCHEMA_VERSION)
     expect(deserializeProject(migrated).markers).toEqual([])
   })
 
@@ -171,7 +172,7 @@ describe('markers persistence (v9)', () => {
       ],
     }
     const migrated = migrateToCurrent(v7)
-    expect(migrated.schemaVersion).toBe(10)
+    expect(migrated.schemaVersion).toBe(CURRENT_SCHEMA_VERSION)
     expect(migrated.markers).toEqual([
       { id: 'a', color: 1, x: 1, y: 2, z: 3, planeAxis: 'y', planeOrientation: 1 },
       { id: 'nope', color: 1, x: 99, y: 0, z: 0, planeAxis: 'y', planeOrientation: 1 },
@@ -191,7 +192,7 @@ describe('markers persistence (v9)', () => {
       markers: [{ id: 'a', color: 3, x: 1, y: 2, z: 3 }],
     }
     const migrated = migrateToCurrent(v8)
-    expect(migrated.schemaVersion).toBe(10)
+    expect(migrated.schemaVersion).toBe(CURRENT_SCHEMA_VERSION)
     expect(deserializeProject(migrated).markers).toEqual([
       { id: 'a', color: 3, position: [1, 2, 3], planeAxis: 'y', planeOrientation: 1 },
     ])
@@ -225,7 +226,51 @@ describe('half slabs persistence (v10)', () => {
       model: { bounds: null, colorCells: [], chamferCells: [] },
     }
     const migrated = migrateToCurrent(v9)
-    expect(migrated.schemaVersion).toBe(10)
+    expect(migrated.schemaVersion).toBe(CURRENT_SCHEMA_VERSION)
+    expect(deserializeProject(migrated).model.color.size).toBe(0)
+  })
+})
+
+describe('flats persistence (v11)', () => {
+  it('round-trips flat and flatwedge cells through serialize → deserialize', () => {
+    const model = emptyModel()
+    model.color.set(encodeKey(0, 0, 0), { paletteSlot: { kind: 'base', index: 3 } })
+    model.chamfer.set(encodeKey(0, 0, 0), {
+      planeAxis: 'z',
+      planeOrientation: 1,
+      resolvedTo: { shapeKind: 'flat', rotation: 0 },
+    })
+    model.color.set(encodeKey(1, 0, 0), { paletteSlot: { kind: 'base', index: 4 } })
+    model.chamfer.set(encodeKey(1, 0, 0), {
+      planeAxis: 'z',
+      planeOrientation: 1,
+      resolvedTo: { shapeKind: 'flatwedge', rotation: 2 },
+    })
+    const texture = emptyTextureModel(meta.gridExtent)
+    const file = serializeProject(model, DEFAULT_PALETTE, meta, texture)
+    expect(file.schemaVersion).toBe(CURRENT_SCHEMA_VERSION)
+    const restored = deserializeProject(file)
+    expect(restored.model.chamfer.get(encodeKey(0, 0, 0))).toEqual({
+      planeAxis: 'z',
+      planeOrientation: 1,
+      resolvedTo: { shapeKind: 'flat', rotation: 0 },
+    })
+    expect(restored.model.chamfer.get(encodeKey(1, 0, 0))).toEqual({
+      planeAxis: 'z',
+      planeOrientation: 1,
+      resolvedTo: { shapeKind: 'flatwedge', rotation: 2 },
+    })
+  })
+
+  it('migrates v10 files untouched, stamping v11', () => {
+    const v10 = {
+      schemaVersion: 10,
+      meta,
+      palette: DEFAULT_PALETTE,
+      model: { bounds: null, colorCells: [], chamferCells: [] },
+    }
+    const migrated = migrateToCurrent(v10)
+    expect(migrated.schemaVersion).toBe(CURRENT_SCHEMA_VERSION)
     expect(deserializeProject(migrated).model.color.size).toBe(0)
   })
 })

@@ -188,6 +188,46 @@ function applyPaintCell(
       })
     }
     strokeSlabKeys?.add(key)
+  } else if (kind === 'flat') {
+    // Re-clicking a flat spins it 90° about the V it was painted on — the same click-to-rotate
+    // contract as the slabs (the centre quad's only free parameter is its facing normal), so one
+    // click picks any of the three axes. Revisits within the same stroke are left untouched.
+    const existing = state.model.chamfer.get(key)
+    if (strokeSlabKeys?.has(key)) {
+      // Already touched this stroke — leave the chamfer entry exactly as the stroke left it.
+    } else if (existing?.resolvedTo?.shapeKind === 'flat') {
+      state.model.chamfer.set(key, spinSlabAboutLocalY(existing))
+    } else {
+      // A flat is thin's centre plane as a bare quad — frozen at paint time with rotation 0,
+      // never auto-resolved. The editor renders the single quad DoubleSide; export emits both
+      // windings (see voxelMeshBuilder's two-sided handling).
+      state.model.chamfer.set(key, {
+        planeAxis: plane.axis,
+        planeOrientation: plane.orientation,
+        resolvedTo: { shapeKind: 'flat', rotation: 0 },
+      })
+    }
+    strokeSlabKeys?.add(key)
+  } else if (kind === 'flatwedge') {
+    // Re-clicking a flat wedge advances its rotation (the wedge-style manual rotation — the
+    // diagonal is the free parameter; its plane comes from the paint plane). Revisits within
+    // the same stroke are left untouched.
+    const existing = state.model.chamfer.get(key)
+    if (strokeSlabKeys?.has(key)) {
+      // Already touched this stroke — leave the chamfer entry exactly as the stroke left it.
+    } else if (existing?.resolvedTo?.shapeKind === 'flatwedge') {
+      const rotation = ((existing.resolvedTo.rotation + 1) % 4) as Rotation
+      existing.resolvedTo = { shapeKind: 'flatwedge', rotation }
+    } else {
+      // A flat wedge is wedge's diagonal cut face as a bare quad — open NE corner at rotation 0
+      // (the wedge convention), never resolver-created. Fresh paints start NE; re-click cycles.
+      state.model.chamfer.set(key, {
+        planeAxis: plane.axis,
+        planeOrientation: plane.orientation,
+        resolvedTo: { shapeKind: 'flatwedge', rotation: 0 },
+      })
+    }
+    strokeSlabKeys?.add(key)
   } else {
     state.model.chamfer.delete(key)
   }

@@ -55,7 +55,7 @@ describe('rebaseChamferCell', () => {
   })
 
   it('leaves convex and concave corners untouched', () => {
-    for (const shapeKind of ['convex', 'concave', 'half', 'post', 'quarter'] as const) {
+    for (const shapeKind of ['convex', 'concave', 'half', 'post', 'quarter', 'flat', 'flatwedge'] as const) {
       const cell: ChamferCell = { planeAxis: 'x', planeOrientation: -1, resolvedTo: { shapeKind, rotation: 0 } }
       expect(rebaseChamferCell(cell, 'z', 1)).toBe(false)
       expect(cell.planeAxis).toBe('x')

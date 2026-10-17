@@ -85,6 +85,17 @@ describe('boxFaceForCell', () => {
     }
   })
 
+  it('maps flats to the authoring page like thin slabs and wedges', () => {
+    // A z-authored flat's quad samples 'pz' regardless of the queried normal; a flatwedge
+    // samples its authoring page like every other wedge-family face.
+    const flat: ChamferCell = { planeAxis: 'z', planeOrientation: 1, resolvedTo: { shapeKind: 'flat', rotation: 0 } }
+    expect(boxFaceForCell(flat, [0, 0, 1])).toBe('pz')
+    expect(boxFaceForCell(flat, [0, 0, -1])).toBe('pz')
+    const flatwedge: ChamferCell = { planeAxis: 'x', planeOrientation: -1, resolvedTo: { shapeKind: 'flatwedge', rotation: 2 } }
+    expect(boxFaceForCell(flatwedge, [0, 0, 1])).toBe('nx')
+    expect(boxFaceForCell(flatwedge, [1, 1, 0])).toBe('nx')
+  })
+
   it('uses the dominant signed normal axis for plain cube faces', () => {
     expect(boxFaceForCell(undefined, [1, 0, 0])).toBe('px')
     expect(boxFaceForCell(undefined, [-1, 0, 0])).toBe('nx')

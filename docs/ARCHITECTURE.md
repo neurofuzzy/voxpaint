@@ -206,6 +206,22 @@ reclassified" invariant. `cloneStampCell` (`store/toolActionsSlice.ts`) and `app
 (`engine/tools/clipboard.ts`, paste/re-stamp) now preserve the source chamfer's full cell data via
 deep copy instead of reclassifying.
 
+Beyond the resolver shapes, paint kinds write frozen shapes directly (never classified):
+thin/half slabs, post/quarter columns, wedges, and the zero-thickness flats (`flat` — thin's
+centre plane as a bare quad; `flatwedge` — wedge's diagonal cut face as a bare quad, rotation =
+open corner). Flats render `DoubleSide` from the single-sided prefab in the editor; every export
+path emits **both windings** as coincident opposite-normal quads (tagged `twoSided` so the shell
+pass never pairs them; `userData.twoSidedFlat` so they bypass the ThreeBSP union, which is
+undefined behaviour for open surfaces — see `optimizeGroupsByCSG`). Flats merge only with flats:
+each export path runs a dedicated flat-only weld pass, so panes weld across cells while each
+opposite-winding pair survives. Materials stay single-sided
+(no `doubleSided` flag), so exactly one winding renders per viewpoint — see
+`gltf-export-contract.md`. Flats are resolved cells, so they already count as empty for the glass
+occlusion cull and the AO occupancy grid — and `bakeAOToAtlas` additionally bakes texels lying
+on a flat's quad plane constant white, so glass panes neither cast nor catch AO shadows. 2× rescale tiles `flatwedge` onto the doubled diagonal
+exactly; `flat` has no exact fit and shifts into the +normal-side layer (disclosed in the rescale
+dialog). STL strips flats (unprintable) with a logged count. Schema v11 stamps their introduction.
+
 Cells with `resolvedTo: null` render differently in 2D vs 3D. In the 3D view, `InstancingManager.sync()`
 buckets a cell into the `cube` pool (not the appropriate chamfer pool) until `resolvedTo` is set.
 In the 2D editor, every chamfer cell (regardless of `resolvedTo`) shows the diagonal-stripe marker,
