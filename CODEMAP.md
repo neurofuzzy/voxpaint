@@ -1,8 +1,8 @@
 ```
 # Auto-generated project map
-# Last updated: 2026-10-17 07:22:29
-# Files: 212
-# Lines of code: ~27259
+# Last updated: 2026-10-17 18:48:21
+# Files: 213
+# Lines of code: ~27711
 ```
 - **/assets**
 - **/components**
@@ -33,8 +33,6 @@
       - Function: `Editor2D`
     - [PixelCanvas.tsx](../src/components/editor2d/PixelCanvas.tsx)
       - Function: `PixelCanvas`
-    - [PlaneControlsOverlay.tsx](../src/components/editor2d/PlaneControlsOverlay.tsx)
-      - Function: `PlaneControlsOverlay` - Frosted overlay pinned to the top-right of the ...
     - [PlaneEdgeSlider.tsx](../src/components/editor2d/PlaneEdgeSlider.tsx)
       - Function: `PlaneEdgeSlider` - Touch strip pinned to the far right edge of the...
     - [TextureCanvas.tsx](../src/components/editor2d/TextureCanvas.tsx)
@@ -579,6 +577,11 @@
       - Type: `TextureDragState`
       - Interface: `TextureToolHandler`
       - Variable: `textureToolMap`
+    - [textureTransform.test.ts](../src/engine/texture/textureTransform.test.ts)
+    - [textureTransform.ts](../src/engine/texture/textureTransform.ts)
+      - Function: `translateTextureModelWrap` - Translates every texture face by a whole-model ...
+      - Function: `transformTextureWholeModel` - Remaps the six box-map faces for a whole-model ...
+      - Function: `textureContentEquals` - Byte-exact equality of two textures' faces (len...
     - [types.ts](../src/engine/texture/types.ts)
       - Type: `BoxFace` - The 6 box-map directions. A box face **is** a c...
       - Variable: `BOX_FACES` - Every box face, in a stable order (used for atl...

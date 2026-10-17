@@ -4,8 +4,6 @@ import { MarkersPanel } from '@/components/panels/MarkersPanel'
 import { usePlaneLayerScroll } from '@/components/usePlaneLayerScroll'
 import { useAppStore } from '@/store/useAppStore'
 import { PixelCanvas } from './PixelCanvas'
-import { PlaneControlsOverlay } from './PlaneControlsOverlay'
-import { PlaneEdgeSlider } from './PlaneEdgeSlider'
 import { TextureCanvas } from './TextureCanvas'
 import { TextureOverlay } from './TextureOverlay'
 
@@ -23,16 +21,10 @@ export function Editor2D() {
             <TextureOverlay />
           </>
         ) : mode === 'animate' ? (
-          <>
-            <PixelCanvas />
-            <PlaneControlsOverlay />
-            <PlaneEdgeSlider />
-          </>
+          <PixelCanvas />
         ) : (
           <>
             <PixelCanvas />
-            <PlaneControlsOverlay />
-            <PlaneEdgeSlider />
             <MarkersPanel />
           </>
         )}

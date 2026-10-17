@@ -1,4 +1,5 @@
 import { useRef, useState } from 'react'
+import { ChevronDown, ChevronUp } from 'lucide-react'
 import { effectiveExtent } from '@/engine/grid/GridStore'
 import { useAppStore } from '@/store/useAppStore'
 
@@ -6,16 +7,18 @@ import { useAppStore } from '@/store/useAppStore'
 const PX_PER_LAYER = 20
 
 /**
- * Touch strip pinned to the far right edge of the 2D editor: slide a finger up/down to step the
- * construction-plane offset (up = +1, down = −1), the touch equivalent of the overlay steppers
- * and Shift+wheel. Pointer-capture drag accumulates travel into whole layers, so slow drags are
+ * Touch strip pinned to the far right edge of the window (over the 3D viewport's right edge —
+ * it lives in MainLayout, not Editor2D): slide a finger up/down to step the
+ * construction-plane offset (up = +1, down = −1), the touch equivalent of Shift+wheel.
+ * Pointer-capture drag accumulates travel into whole layers, so slow drags are
  * precise and long drags traverse the whole working cube in one gesture. Keyboard-focusable
  * (Up/Down arrows) for the same reason.
  *
- * Sibling of PlaneControlsOverlay (which keeps the exact +/- buttons and offset readout) — this
- * strip carries no readout of its own except a transient bubble while dragging. Narrow and
- * translucent so it costs almost no canvas space; it sits under the top-right overlay (z-30 vs
- * z-40) so the stepper buttons stay tappable where they overlap.
+ * This strip carries no readout of its own except a transient bubble while dragging. Narrow and
+ * translucent so it costs almost no canvas space; it sits under the 3D view's top-right and
+ * bottom-right overlays (z-30 vs z-40) so those buttons stay tappable where they overlap.
+ * Stepper buttons directly above (+1) and below (−1) the grip replace the old 2D overlay
+ * steppers; the whole cluster is vertically centered, clear of the corner overlays.
  */
 export function PlaneEdgeSlider() {
   const offset = useAppStore((s) => s.plane.offset)
@@ -39,6 +42,33 @@ export function PlaneEdgeSlider() {
     // setPlaneOffset clamps to the project bounds; guard the call itself so hovering between
     // layer boundaries doesn't churn the store (each call bakes floats / clears object targets).
     if (next !== plane.offset) setPlaneOffset(next)
+  }
+
+  function stepperButton(
+    direction: 1 | -1,
+    label: string,
+    hint: string,
+    disabled: boolean,
+    Icon: typeof ChevronUp,
+  ) {
+    return (
+      <button
+        aria-label={label}
+        title={label}
+        disabled={disabled}
+        onPointerDown={(e) => e.stopPropagation()}
+        onClick={() => useAppStore.getState().setPlaneOffset(offset + direction)}
+        onPointerEnter={() => setStatusMessage(hint)}
+        onPointerLeave={() => setStatusMessage(null)}
+        className={
+          'flex h-9 w-9 items-center justify-center rounded-full border border-neutral-700/60 ' +
+          'bg-neutral-900/40 text-neutral-300 transition-colors disabled:cursor-not-allowed disabled:opacity-30 ' +
+          'enabled:hover:border-neutral-500 enabled:hover:bg-neutral-900/70 enabled:hover:text-neutral-100'
+        }
+      >
+        <Icon size={17} />
+      </button>
+    )
   }
 
   return (
@@ -88,28 +118,32 @@ export function PlaneEdgeSlider() {
       onPointerLeave={() => {
         if (!dragRef.current) setStatusMessage(null)
       }}
-      className="absolute bottom-0 right-0 top-0 z-30 w-8 touch-none select-none outline-none"
+      className="absolute bottom-0 right-0 top-0 z-30 flex w-12 touch-none select-none flex-col items-center justify-center outline-none"
     >
-      {/* Grip hint — translucent until hovered/dragged so it reads as chrome, not canvas. */}
-      <div
-        className={
-          'pointer-events-none absolute right-1.5 top-1/2 flex -translate-y-1/2 flex-col items-center gap-1 ' +
-          'rounded-full border px-1.5 py-3 transition-colors ' +
-          (dragging
-            ? 'border-cyan-400/70 bg-cyan-400/15'
-            : 'border-neutral-700/60 bg-neutral-900/40 hover:border-neutral-500 hover:bg-neutral-900/70')
-        }
-      >
-        <div className={`h-6 w-1 rounded-full ${atTop && !dragging ? 'bg-neutral-700' : 'bg-neutral-400'}`} />
-        <div className="flex flex-col items-center gap-1">
-          <div className="h-1 w-1 rounded-full bg-neutral-500" />
-          <div className="h-1 w-1 rounded-full bg-neutral-500" />
-          <div className="h-1 w-1 rounded-full bg-neutral-500" />
+      <div className="flex flex-col items-center gap-2">
+        {stepperButton(1, 'Increase offset', 'Click to move the plane forward one layer', atTop, ChevronUp)}
+        {/* Grip hint — translucent until hovered/dragged so it reads as chrome, not canvas. */}
+        <div
+          className={
+            'pointer-events-none flex w-9 flex-col items-center gap-1 ' +
+            'rounded-full border px-2 py-3 transition-colors ' +
+            (dragging
+              ? 'border-cyan-400/70 bg-cyan-400/15'
+              : 'border-neutral-700/60 bg-neutral-900/40 hover:border-neutral-500 hover:bg-neutral-900/70')
+          }
+        >
+          <div className={`h-6 w-1 rounded-full ${atTop && !dragging ? 'bg-neutral-700' : 'bg-neutral-400'}`} />
+          <div className="flex flex-col items-center gap-1">
+            <div className="h-1 w-1 rounded-full bg-neutral-500" />
+            <div className="h-1 w-1 rounded-full bg-neutral-500" />
+            <div className="h-1 w-1 rounded-full bg-neutral-500" />
+          </div>
+          <div className={`h-6 w-1 rounded-full ${atBottom && !dragging ? 'bg-neutral-700' : 'bg-neutral-400'}`} />
         </div>
-        <div className={`h-6 w-1 rounded-full ${atBottom && !dragging ? 'bg-neutral-700' : 'bg-neutral-400'}`} />
+        {stepperButton(-1, 'Decrease offset', 'Click to move the plane back one layer', atBottom, ChevronDown)}
       </div>
       {dragging && (
-        <div className="pointer-events-none absolute right-10 top-1/2 -translate-y-1/2 rounded-lg border border-cyan-400/50 bg-neutral-900/95 px-2.5 py-1.5 font-mono text-sm tabular-nums text-cyan-200 shadow-2xl">
+        <div className="pointer-events-none absolute right-14 top-1/2 -translate-y-1/2 rounded-lg border border-cyan-400/50 bg-neutral-900/95 px-2.5 py-1.5 font-mono text-sm tabular-nums text-cyan-200 shadow-2xl">
           {offset}
         </div>
       )}
