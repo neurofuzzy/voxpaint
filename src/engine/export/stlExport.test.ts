@@ -59,6 +59,24 @@ describe('exportModelToStl', () => {
     expect(oriented).toBe(plain)
   })
 
+  it('skips flat panels (zero thickness is not printable), keeping solid voxels', () => {
+    const model = emptyModel()
+    model.color.set(encodeKey(0, 0, 0), { paletteSlot: base0 })
+    model.color.set(encodeKey(1, 0, 0), { paletteSlot: base0 })
+    model.chamfer.set(encodeKey(1, 0, 0), { planeAxis: 'z', planeOrientation: 1, resolvedTo: { shapeKind: 'flat', rotation: 0 } })
+    model.bounds = recomputeBounds(model)
+    // Just the remaining cube — the flat contributes no triangles.
+    expect(triangleCountFromStl(exportModelToStl(model, DEFAULT_PALETTE))).toBe(12)
+  })
+
+  it('throws on a flats-only model (nothing printable left)', () => {
+    const model = emptyModel()
+    model.color.set(encodeKey(0, 0, 0), { paletteSlot: base0 })
+    model.chamfer.set(encodeKey(0, 0, 0), { planeAxis: 'z', planeOrientation: 1, resolvedTo: { shapeKind: 'flatwedge', rotation: 0 } })
+    model.bounds = recomputeBounds(model)
+    expect(() => exportModelToStl(model, DEFAULT_PALETTE)).toThrow()
+  })
+
   it('scaleFactor scales the exported vertex bounds', () => {
     const model = emptyModel()
     model.color.set(encodeKey(0, 0, 0), { paletteSlot: base0 })

@@ -11,17 +11,31 @@ interface Tri {
   normal: THREE.Vector3
   plane: THREE.Plane
   vertices: THREE.Vector3[]
+  /**
+   * Merge-group discriminator carried alongside the geometry. Triangles only ever merge with
+   * same-key partners (checked in both grouping passes below); the merged output inherits the
+   * group key. Callers that don't care pass a uniform key and get exactly the legacy behavior.
+   * The textured path uses this for its box-face tag so coplanar faces sampling different
+   * texture pages are never welded into one polygon.
+   */
+  key: string
 }
 
 /**
  * CSG-based mesh optimizer. Groups per-voxel closed (watertight) solid geometries by
  * (materialClass, colorKey), then binary-tree-unions each group through ThreeBSP. The CSG
- * boolean union naturally discards interior faces between adjacent same-colour voxels while
+ * boolean union naturally discards interior faces between adjacent same-group voxels while
  * preserving disconnected components without accidental edge-sharing bridges.
  *
- * Because colour separation happens *before* unioning, adjacent voxels of different colours
- * keep their shared interface faces. Each result group carries a single `colorKey` and
- * `materialClass` — the consumer creates one solid-colour material (no vertex colors needed).
+ * Because colour separation happens *before* unioning, the union alone can't see interfaces
+ * between different groups — so after unioning, `cullCoincidentOpaqueInterfaces` drops
+ * exactly-coincident back-to-back triangles shared by two *opaque* (non-glass) groups (both
+ * sides: the interface is inside the combined solid). Glass-involved interfaces are left alone
+ * here — the glass side is handled by `removeOccludedGlassFaces` instead, which keeps the
+ * solid neighbour's face visible through the transmission.
+ *
+ * Each result group carries a single `colorKey` and `materialClass` — the consumer creates one
+ * solid-colour material (no vertex colors needed).
  */
 
 export interface VoxelGroup {
@@ -64,26 +78,79 @@ function unionAll(bsps: ThreeBSP[]): ThreeBSP | null {
 
 /**
  * For each `VoxelGroup`, transform every solid geometry into a ThreeBSP tree, binary-tree-union
- * them into a single watertight surface, run a coplanar-face merge pass to reduce triangle count,
- * and convert the result back to BufferGeometry. Each output entry carries the group's `colorKey`
- * and `materialClass` — the caller applies a solid-colour material (no vertex colors).
+ * them into a single watertight surface, cull coincident opaque interfaces shared with other
+ * groups (see `cullCoincidentOpaqueInterfaces`), run a coplanar-face merge pass to reduce triangle
+ * count, and convert the result back to BufferGeometry. Each output entry carries the group's
+ * `colorKey` and `materialClass` — the caller applies a solid-colour material (no vertex colors).
  *
  * `isOccupied`, when given, additionally strips any **glass** group's faces that back onto an
  * occupied grid cell (see `removeOccludedGlassFaces`) — right after the CSG union, before the
  * coplanar merge, while triangles still correspond ~1:1 to per-voxel faces.
+ *
+ * Two-sided flats (`flat`/`flatwedge`, marked `userData.twoSidedFlat` by the builder) bypass
+ * the union — an open quad is undefined behaviour for ThreeBSP — and are appended to their
+ * group's output after the union (and after the glass cull, which samples outward normals and
+ * would eat a glass flat's hidden-side winding) but before the coplanar merge, so same-facing
+ * flats in adjacent cells still weld. The merge itself is same-facing-only, so a flat's own
+ * opposite-winding pair always survives.
  */
+/** Empty position+normal shell — the attribute shape every merge/output stage reads and writes. */
+function emptyShellGeometry(): THREE.BufferGeometry {
+  const out = new THREE.BufferGeometry()
+  out.setAttribute('position', new THREE.Float32BufferAttribute([], 3))
+  out.setAttribute('normal', new THREE.Float32BufferAttribute([], 3))
+  return out
+}
+
+/**
+ * Concatenates non-indexed `extras` onto `base`, carrying exactly `base`'s attribute set
+ * (attributes an extra lacks are zero-filled, so per-vertex counts stay consistent for
+ * rendering). Used to append two-sided flat quads back onto their group's unioned output —
+ * both windings already carry world-space position+normal.
+ */
+function appendGeometries(base: THREE.BufferGeometry, extras: THREE.BufferGeometry[]): THREE.BufferGeometry {
+  const names = Object.keys(base.attributes)
+  const itemSizes = new Map(names.map((n) => [n, (base.getAttribute(n) as THREE.BufferAttribute).itemSize]))
+  const chunks = new Map<string, number[]>(
+    names.map((n) => [n, Array.from((base.getAttribute(n) as THREE.BufferAttribute).array as ArrayLike<number>)]),
+  )
+  for (const extra of extras) {
+    const count = (extra.getAttribute('position') as THREE.BufferAttribute).count
+    for (const name of names) {
+      const attr = extra.getAttribute(name) as THREE.BufferAttribute | undefined
+      const size = itemSizes.get(name)!
+      const chunk = chunks.get(name)!
+      if (attr && attr.itemSize === size) {
+        const arr = attr.array as ArrayLike<number>
+        for (let i = 0; i < attr.count * size; i++) chunk.push(arr[i])
+      } else {
+        for (let i = 0; i < count * size; i++) chunk.push(0)
+      }
+    }
+  }
+  const out = new THREE.BufferGeometry()
+  for (const name of names) {
+    out.setAttribute(name, new THREE.Float32BufferAttribute(chunks.get(name)!, itemSizes.get(name)!))
+  }
+  return out
+}
+
 export function optimizeGroupsByCSG<T extends VoxelGroup>(
   groups: T[],
   mergeCoplanar = true,
   isOccupied?: (x: number, y: number, z: number) => boolean,
 ): (ColorGroupGeometry & Omit<T, keyof VoxelGroup>)[] {
-  const results: (ColorGroupGeometry & Omit<T, keyof VoxelGroup>)[] = []
+  const postUnion: { group: T; geometry: THREE.BufferGeometry; flatGeoms: THREE.BufferGeometry[] }[] = []
 
   for (const group of groups) {
     if (group.geometries.length === 0) continue
 
+    // Two-sided flats bypass the union — an open quad is undefined behaviour for ThreeBSP —
+    // and get their OWN optimization pass below: flats merge only with flats, never with solids.
+    const flatGeoms = group.geometries.filter((g) => (g.userData as { twoSidedFlat?: boolean }).twoSidedFlat)
     const bsps: ThreeBSP[] = []
     for (const geom of group.geometries) {
+      if ((geom.userData as { twoSidedFlat?: boolean }).twoSidedFlat) continue
       bsps.push(new ThreeBSP(geom))
     }
 
@@ -95,16 +162,44 @@ export function optimizeGroupsByCSG<T extends VoxelGroup>(
         csgGeom.dispose()
         csgGeom = culled
       }
-      const optimized = mergeCoplanar ? mergeCoplanarFaces(csgGeom) : csgGeom
-      if (mergeCoplanar) csgGeom.dispose()
-      const { geometries: _geometries, colorKey, materialClass, ...rest } = group
-      results.push({
-        colorKey,
-        materialClass,
-        geometry: optimized,
-        ...rest,
-      } as ColorGroupGeometry & Omit<T, keyof VoxelGroup>)
+      postUnion.push({ group, geometry: csgGeom, flatGeoms })
+    } else if (flatGeoms.length > 0) {
+      // A group of only flats has no solid to union: the flat pass below emits the quads.
+      postUnion.push({ group, geometry: emptyShellGeometry(), flatGeoms })
     }
+  }
+
+  // Cross-group interior cull while triangles still correspond ~1:1 to per-voxel faces (the
+  // coplanar merge below re-triangulates them into multi-cell polygons that no longer match).
+  // Flat pairs are intra-group (one entry's own two windings), so they never match across entries.
+  cullCoincidentOpaqueInterfaces(postUnion)
+
+  const results: (ColorGroupGeometry & Omit<T, keyof VoxelGroup>)[] = []
+  for (const { group, geometry, flatGeoms } of postUnion) {
+    const optimized = mergeCoplanar ? mergeCoplanarFaces(geometry) : geometry
+    if (mergeCoplanar) geometry.dispose()
+    let out = optimized
+    if (flatGeoms.length > 0) {
+      // Dedicated flat pass: weld coplanar same-facing quads across cells into panes (the merge
+      // is same-facing-only, so a flat's own opposite-winding pair always survives), then append.
+      // Both sides are position+normal-only, so the concat keeps a uniform attribute shape.
+      const flatSoup = appendGeometries(emptyShellGeometry(), flatGeoms)
+      const flatMerged = mergeCoplanar ? mergeCoplanarFaces(flatSoup) : flatSoup
+      if (mergeCoplanar) flatSoup.dispose()
+      const withFlats = appendGeometries(out, [flatMerged])
+      if (mergeCoplanar) {
+        out.dispose()
+        flatMerged.dispose()
+      }
+      out = withFlats
+    }
+    const { geometries: _geometries, colorKey, materialClass, ...rest } = group
+    results.push({
+      colorKey,
+      materialClass,
+      geometry: out,
+      ...rest,
+    } as ColorGroupGeometry & Omit<T, keyof VoxelGroup>)
   }
 
   return results
@@ -170,6 +265,220 @@ export function removeOccludedGlassFaces(
   out.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3))
   out.setAttribute('normal', new THREE.Float32BufferAttribute(normals, 3))
   return out
+}
+
+/**
+ * Cross-group interior-face cull for the CSG path. After each group's own union, an interface
+ * between two adjacent voxels of different (materialClass, colorKey) groups survives as a pair
+ * of exactly-coincident, back-to-back interface patches — one in each group's geometry. When
+ * both sides are opaque (non-glass) the patch is dropped on both sides — the interface is
+ * inside the combined solid and never seen. Each group's mesh keeps a hidden hole there; the
+ * holes coincide, so nothing shows from outside. (Leaving both sides in used to export
+ * coincident opposite-normal quads — e.g. an emissive block under a matte cap — that z-fight
+ * in some engines.)
+ *
+ * Matching is quad-aware, not just triangle-aware: `BoxGeometry` triangulates opposite faces on
+ * opposite diagonals, so the two sides of one interface almost never share identical
+ * vertex-triples. Triangles are therefore first paired back into quads *within* each group
+ * (coplanar, same-facing, sharing an edge — longest shared edge first, which re-pairs each
+ * quad along its diagonal), and quads match across groups by corner set. Unpaired leftover
+ * triangles still match by exact triple. This runs strictly *after* the unions on the groups'
+ * own closed-solid geometry — faces are never deleted pre-union, which the BSP boolean
+ * requires to stay watertight.
+ *
+ * Deliberately conservative, mirroring `removeInteriorFaces`:
+ * - Glass-involved pairs are skipped — the glass side is owned by `removeOccludedGlassFaces`
+ *   (which runs before this), and the solid neighbour's face must stay visible through it.
+ * - Pairs spanning different animation `sliceKey`s are skipped — those cells move apart
+ *   independently at runtime, so the face between them is real, not hidden.
+ * - Only exactly-coincident patches (same quantized corners, back-to-back normals, precisely
+ *   one patch per side) are culled. Partial chamfer overlaps never match, so exposed
+ *   remainders survive.
+ */
+function cullCoincidentOpaqueInterfaces(entries: { group: VoxelGroup; geometry: THREE.BufferGeometry }[]): void {
+  if (entries.length < 2) return
+
+  interface TriInfo {
+    entry: number
+    tri: number
+    keys: [string, string, string]
+    pts: [THREE.Vector3, THREE.Vector3, THREE.Vector3]
+    n: THREE.Vector3
+    plane: THREE.Plane
+    paired: boolean
+  }
+  interface QuadInfo {
+    entry: number
+    tris: [number, number]
+    key: string
+    n: THREE.Vector3
+  }
+  interface TriRef {
+    entry: number
+    tri: number
+    nx: number
+    ny: number
+    nz: number
+  }
+
+  const v = new THREE.Vector3()
+  const n = new THREE.Vector3()
+  const perEntry: TriInfo[][] = entries.map(({ geometry }, entry) => {
+    const list: TriInfo[] = []
+    const pos = geometry.getAttribute('position') as THREE.BufferAttribute | undefined
+    const nrm = geometry.getAttribute('normal') as THREE.BufferAttribute | undefined
+    if (!pos || !nrm) return list
+    for (let t = 0; t < pos.count / 3; t++) {
+      const pts = [0, 1, 2].map((k) => new THREE.Vector3().fromBufferAttribute(pos, t * 3 + k)) as [
+        THREE.Vector3,
+        THREE.Vector3,
+        THREE.Vector3,
+      ]
+      n.fromBufferAttribute(nrm, t * 3)
+      const len = n.length() || 1
+      const nn = new THREE.Vector3(n.x / len, n.y / len, n.z / len)
+      list.push({
+        entry,
+        tri: t,
+        keys: [vertexKey(pts[0]), vertexKey(pts[1]), vertexKey(pts[2])],
+        pts,
+        n: nn,
+        plane: new THREE.Plane().setFromNormalAndCoplanarPoint(nn, pts[0]),
+        paired: false,
+      })
+    }
+    return list
+  })
+
+  const sliceOf = (group: VoxelGroup): string =>
+    ((group as unknown as { sliceKey?: unknown }).sliceKey as string | undefined) ?? ''
+
+  /** True when two entries may share a culled interface (both opaque, same animation node). */
+  const eligiblePair = (aEntry: number, bEntry: number): boolean => {
+    if (aEntry === bEntry) return false // within-group coincidence is the union's own job
+    const groupA = entries[aEntry].group
+    const groupB = entries[bEntry].group
+    if (groupA.materialClass === 'glass' || groupB.materialClass === 'glass') return false
+    return sliceOf(groupA) === sliceOf(groupB)
+  }
+
+  const condemned = new Map<number, Set<number>>()
+  const mark = (entry: number, tri: number) => {
+    let set = condemned.get(entry)
+    if (!set) {
+      set = new Set<number>()
+      condemned.set(entry, set)
+    }
+    set.add(tri)
+  }
+
+  // ── Quad pairing within each entry (longest shared edge first) ────────────
+  const quads: QuadInfo[] = []
+  perEntry.forEach((list) => {
+    const byEdge = new Map<string, number[]>()
+    list.forEach((tri, idx) => {
+      for (let e = 0; e < 3; e++) {
+        const ek = edgeKey(tri.pts[e], tri.pts[(e + 1) % 3])
+        const arr = byEdge.get(ek)
+        if (arr) arr.push(idx)
+        else byEdge.set(ek, [idx])
+      }
+    })
+    interface Cand {
+      a: number
+      b: number
+      len: number
+    }
+    const cands: Cand[] = []
+    for (const idxs of byEdge.values()) {
+      if (idxs.length !== 2) continue
+      const [ia, ib] = idxs
+      const ta = list[ia]
+      const tb = list[ib]
+      if (ta.n.dot(tb.n) <= NORMAL_THRESHOLD) continue
+      if (Math.abs(ta.plane.distanceToPoint(tb.pts[0])) > COPLANAR_THRESHOLD) continue
+      const shared = ta.keys.filter((k) => tb.keys.includes(k))
+      if (shared.length !== 2) continue
+      const pa = ta.pts[ta.keys.indexOf(shared[0])]
+      const pb = ta.pts[ta.keys.indexOf(shared[1])]
+      cands.push({ a: ia, b: ib, len: pa.distanceToSquared(pb) })
+    }
+    // Longest shared edge first: re-pairs each quad along its diagonal (the longest edge
+    // of either triangle) rather than across quad boundaries.
+    cands.sort((x, y) => y.len - x.len)
+    for (const c of cands) {
+      const ta = list[c.a]
+      const tb = list[c.b]
+      if (ta.paired || tb.paired) continue
+      const corners = [...new Set([...ta.keys, ...tb.keys])].sort()
+      if (corners.length !== 4) continue
+      ta.paired = tb.paired = true
+      quads.push({ entry: ta.entry, tris: [ta.tri, tb.tri], key: corners.join('|'), n: ta.n })
+    }
+  })
+
+  // ── Cross-group quad matching ─────────────────────────────────────────────
+  const quadsByKey = new Map<string, QuadInfo[]>()
+  for (const q of quads) {
+    const arr = quadsByKey.get(q.key)
+    if (arr) arr.push(q)
+    else quadsByKey.set(q.key, [q])
+  }
+  for (const group of quadsByKey.values()) {
+    if (group.length !== 2) continue
+    const [a, b] = group
+    if (!eligiblePair(a.entry, b.entry)) continue
+    if (a.n.dot(b.n) >= -0.9) continue // not back-to-back
+    mark(a.entry, a.tris[0])
+    mark(a.entry, a.tris[1])
+    mark(b.entry, b.tris[0])
+    mark(b.entry, b.tris[1])
+  }
+
+  // ── Exact-triple matching for unpaired leftovers ──────────────────────────
+  const singlesByKey = new Map<string, TriRef[]>()
+  for (const list of perEntry) {
+    for (const tri of list) {
+      if (tri.paired) continue
+      const key = [...tri.keys].sort().join('|')
+      const arr = singlesByKey.get(key)
+      const ref: TriRef = { entry: tri.entry, tri: tri.tri, nx: tri.n.x, ny: tri.n.y, nz: tri.n.z }
+      if (arr) arr.push(ref)
+      else singlesByKey.set(key, [ref])
+    }
+  }
+  for (const refs of singlesByKey.values()) {
+    if (refs.length !== 2) continue
+    const [a, b] = refs
+    if (!eligiblePair(a.entry, b.entry)) continue
+    if (a.nx * b.nx + a.ny * b.ny + a.nz * b.nz >= -0.9) continue // not back-to-back
+    mark(a.entry, a.tri)
+    mark(b.entry, b.tri)
+  }
+
+  if (condemned.size === 0) return
+
+  for (const [entry, tris] of condemned) {
+    const geometry = entries[entry].geometry
+    const pos = geometry.getAttribute('position') as THREE.BufferAttribute
+    const nrm = geometry.getAttribute('normal') as THREE.BufferAttribute
+    const positions: number[] = []
+    const normals: number[] = []
+    for (let t = 0; t < pos.count / 3; t++) {
+      if (tris.has(t)) continue
+      for (let k = 0; k < 3; k++) {
+        v.fromBufferAttribute(pos, t * 3 + k)
+        positions.push(v.x, v.y, v.z)
+        n.fromBufferAttribute(nrm, t * 3 + k)
+        normals.push(n.x, n.y, n.z)
+      }
+    }
+    const out = new THREE.BufferGeometry()
+    out.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3))
+    out.setAttribute('normal', new THREE.Float32BufferAttribute(normals, 3))
+    geometry.dispose()
+    entries[entry].geometry = out
+  }
 }
 
 // ── Coplanar-face merge (post-CSG triangle reduction) ─────────────────────
@@ -239,6 +548,7 @@ function mergeConnectedGroups(groups: Tri[][]): Tri[][] {
       for (let j = i + 1; j < current.length; j++) {
         if (placed.has(j)) continue
         const head = current[j][0]
+        if (group[0].key !== head.key) continue
         if (group[0].normal.dot(head.normal) <= NORMAL_THRESHOLD) continue
         if (Math.abs(group[0].plane.distanceToPoint(head.vertices[0])) > COPLANAR_THRESHOLD) continue
         if (!groupsShareEdge(group, current[j])) continue
@@ -470,7 +780,7 @@ function mergeCoplanarTriangles(triangles: Tri[]): Tri[] {
     if (calcNormal.lengthSq() > 0) calcNormal.normalize()
 
     const vertices = calcNormal.dot(normal) < -0.5 ? [v0, v2, v1] : [v0, v1, v2]
-    out.push({ vertices, normal: normal.clone(), plane: reference.plane })
+    out.push({ vertices, normal: normal.clone(), plane: reference.plane, key: reference.key })
   }
 
   return out.length > 0 ? out : triangles
@@ -483,9 +793,24 @@ function toNonIndexed(geometry: THREE.BufferGeometry): THREE.BufferGeometry {
 
 /** Merge coplanar edge-connected faces on a post-CSG geometry to reduce triangle count. */
 function mergeCoplanarFaces(geometry: THREE.BufferGeometry): THREE.BufferGeometry {
+  return mergeCoplanarFacesWithKeys(geometry, () => '').geometry
+}
+
+/**
+ * Tag-aware coplanar merge: like `mergeCoplanarFaces`, but triangles only merge with partners
+ * carrying the same per-triangle key, and the key of every surviving output triangle is
+ * returned alongside the geometry (one entry per output triangle, in emitted order). The
+ * textured path keys on its box-face tag so a weld never mixes texture pages; UVs are then
+ * recomputed per vertex from (key, position), which is exact because the box-map projection is
+ * affine in position for a fixed page (barycentric interpolation reproduces it precisely).
+ */
+export function mergeCoplanarFacesWithKeys(
+  geometry: THREE.BufferGeometry,
+  getKey: (triangleIndex: number) => string,
+): { geometry: THREE.BufferGeometry; keys: string[] } {
   const positionAttr = geometry.getAttribute('position') as THREE.BufferAttribute
   const normalAttr = geometry.getAttribute('normal') as THREE.BufferAttribute
-  if (!positionAttr || !normalAttr) return geometry
+  if (!positionAttr || !normalAttr) return { geometry, keys: [] }
 
   const triangleTotal = positionAttr.count / 3
   const triangles: Tri[] = []
@@ -500,6 +825,7 @@ function mergeCoplanarFaces(geometry: THREE.BufferGeometry): THREE.BufferGeometr
       normal,
       plane: new THREE.Plane().setFromNormalAndCoplanarPoint(normal, v0),
       vertices: [v0, v1, v2],
+      key: getKey(t),
     })
   }
 
@@ -508,6 +834,7 @@ function mergeCoplanarFaces(geometry: THREE.BufferGeometry): THREE.BufferGeometr
     let placed = false
     for (const group of groups) {
       const head = group[0]
+      if (tri.key !== head.key) continue
       if (tri.normal.dot(head.normal) <= NORMAL_THRESHOLD) continue
       if (Math.abs(head.plane.distanceToPoint(tri.vertices[0])) > COPLANAR_THRESHOLD) continue
       if (!group.some((g) => trianglesShareEdge(tri, g))) continue
@@ -528,15 +855,17 @@ function mergeCoplanarFaces(geometry: THREE.BufferGeometry): THREE.BufferGeometr
 
   const positions: number[] = []
   const normals: number[] = []
+  const keys: string[] = []
   for (const tri of optimized) {
     for (const v of tri.vertices) {
       positions.push(v.x, v.y, v.z)
       normals.push(tri.normal.x, tri.normal.y, tri.normal.z)
     }
+    keys.push(tri.key)
   }
 
   const out = new THREE.BufferGeometry()
   out.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3))
   out.setAttribute('normal', new THREE.Float32BufferAttribute(normals, 3))
-  return out
+  return { geometry: out, keys }
 }

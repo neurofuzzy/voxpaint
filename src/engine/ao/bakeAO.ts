@@ -1,6 +1,9 @@
 import * as THREE from 'three'
-import { decodeKey } from '@/engine/grid/GridStore'
-import type { CellKey, VoxelModel } from '@/engine/grid/types'
+import { decodeKey, encodeKey } from '@/engine/grid/GridStore'
+import type { CellKey, Coord, VoxelModel } from '@/engine/grid/types'
+import { planeLogicalBasis } from '@/engine/plane/constructionPlane'
+import { outwardNormal } from '@/engine/plane/planeGeometry'
+import { rotateLocal } from '@/engine/chamfer/rampDual'
 import type { UnwrappedAtlas } from './uvUnwrap'
 
 const TEXELS_PER_UNIT = 4
@@ -41,6 +44,14 @@ export function generateNoiseSeed(): number {
 }
 
 /**
+ * Grain cell size in atlas texels, clamped to the supported 1/2/4 set: 1 hashes every texel
+ * individually, 2/4 hash one value per 2×2 / 4×4 block (nearest-quantized, never blurred).
+ */
+function blockScale(noiseScale: number): 1 | 2 | 4 {
+  return noiseScale >= 4 ? 4 : noiseScale >= 2 ? 2 : 1
+}
+
+/**
  * Fills an RGBA texture of the given size with specular-colour noise whose R, G and B channels are
  * all set to `1 − specularNoiseLevel × hash(worldPos)` so the noise uniformly darkens the specular
  * reflection in a per-pixel decorrelated pattern from the AO grain.
@@ -49,6 +60,7 @@ export function makeSpecularNoiseTexture(
   atlas: UnwrappedAtlas,
   level: number,
   seed = 0,
+  noiseScale: number = 1,
 ): {
   metalness: { data: Uint8ClampedArray; width: number; height: number }
   roughness: { data: Uint8ClampedArray; width: number; height: number }
@@ -64,6 +76,7 @@ export function makeSpecularNoiseTexture(
     baseColor: { data: b, width: atlas.size, height: atlas.size },
   }
 
+  const bs = blockScale(noiseScale)
   for (const rect of atlas.rects) {
     for (let ty = PADDING; ty < rect.texHeight - PADDING; ty++) {
       for (let tx = PADDING; tx < rect.texWidth - PADDING; tx++) {
@@ -72,7 +85,12 @@ export function makeSpecularNoiseTexture(
         const wx = rect.normal.x * rect.depthCoord + rect.tangent1.x * u + rect.tangent2.x * v
         const wy = rect.normal.y * rect.depthCoord + rect.tangent1.y * u + rect.tangent2.y * v
         const wz = rect.normal.z * rect.depthCoord + rect.tangent1.z * u + rect.tangent2.z * v
-        const n = specularHash(wx, wy, wz, seed)
+        const n = specularHash(
+          Math.floor((wx * TEXELS_PER_UNIT) / bs),
+          Math.floor((wy * TEXELS_PER_UNIT) / bs),
+          Math.floor((wz * TEXELS_PER_UNIT) / bs),
+          seed,
+        )
         const rust = Math.max(0, Math.min(1, level * n))
         const idx = ((rect.atlasY + ty) * atlas.size + (rect.atlasX + tx)) * 4
 
@@ -182,6 +200,7 @@ export function bakeAOToAtlas(
   aoStrength = 1,
   excludeKeys?: Set<CellKey>,
   seed = 0,
+  noiseScale: number = 1,
 ): {
   data: Uint8ClampedArray
   width: number
@@ -194,8 +213,35 @@ export function bakeAOToAtlas(
   const occ = buildOccGrid(model, excludeKeys)
   if (!occ) return { data, width: size, height: size }
 
+  // Zero-thickness flats neither cast (absent from the occupancy grid above, like every chamfer
+  // cell) nor receive AO: a glass pane must not catch contact shadows, so its texels bake
+  // constant white. Each flat's world quad plane (unit normal + centre) is derived from its
+  // frozen authoring basis — the same convention the geometry prefabs use.
+  const flatByCell = new Map<string, { nx: number; ny: number; nz: number; cx: number; cy: number; cz: number }>()
+  for (const [key, cell] of model.chamfer) {
+    const resolved = cell.resolvedTo
+    if (!resolved || (resolved.shapeKind !== 'flat' && resolved.shapeKind !== 'flatwedge')) continue
+    const { uDir: U, vDir: V } = planeLogicalBasis(cell.planeAxis)
+    const W = outwardNormal(cell.planeAxis, cell.planeOrientation)
+    let n: Coord
+    if (resolved.shapeKind === 'flat') {
+      n = W
+    } else {
+      const [u, v, w] = rotateLocal([1, -1, 0], resolved.rotation)
+      n = [
+        u * U[0] + v * V[0] + w * W[0],
+        u * U[1] + v * V[1] + w * W[1],
+        u * U[2] + v * V[2] + w * W[2],
+      ]
+    }
+    const len = Math.hypot(n[0], n[1], n[2])
+    const [x, y, z] = decodeKey(key)
+    flatByCell.set(key, { nx: n[0] / len, ny: n[1] / len, nz: n[2] / len, cx: x + 0.5, cy: y + 0.5, cz: z + 0.5 })
+  }
+
   const { grid, gx, gy, gz, min: occMin } = occ
   const dirs = hemisphereDirs()
+  const bs = blockScale(noiseScale)
 
   for (const rect of atlas.rects) {
     const { normal, tangent1: t1, tangent2: t2 } = rect
@@ -208,6 +254,18 @@ export function bakeAOToAtlas(
         const wx = normal.x * rect.depthCoord + t1.x * worldU + t2.x * worldV
         const wy = normal.y * rect.depthCoord + t1.y * worldU + t2.y * worldV
         const wz = normal.z * rect.depthCoord + t1.z * worldU + t2.z * worldV
+
+        // Flat-quad texel: backing off along the rect normal lands in a flat cell, the texel
+        // sits on that flat's quad plane, and the normals are parallel — bake constant white
+        // (data is pre-filled 255) with no raycast. All three tests are needed: the cell test
+        // alone would whitewash solid faces sitting exactly on a cell boundary next to a flat,
+        // and the plane test alone would whitewash a solid face continuing the pane's plane.
+        const flat = flatByCell.get(encodeKey(Math.floor(wx - normal.x * 1e-3), Math.floor(wy - normal.y * 1e-3), Math.floor(wz - normal.z * 1e-3)))
+        if (flat) {
+          const parallel = Math.abs(normal.x * flat.nx + normal.y * flat.ny + normal.z * flat.nz)
+          const planar = Math.abs((wx - flat.cx) * flat.nx + (wy - flat.cy) * flat.ny + (wz - flat.cz) * flat.nz)
+          if (parallel > 0.999 && planar < 1e-3) continue
+        }
 
         // Grid cell of the surface texel (no nudge — exact surface position).
         const sx = Math.round((wx - occMin[0]) * TEXELS_PER_UNIT) - 1;
@@ -250,7 +308,16 @@ export function bakeAOToAtlas(
 
         const ao = totalOcclusion / dirs.length
         const shaded = 1 - aoStrength * ao
-        const noiseVal = noiseLevel > 0 ? hashNoise(wx, wy, wz, seed) : 0
+        // Quantized grain: texels inside the same bs×bs block hash the same block indices, so
+        // the grain reads as chunky cells rather than per-texel static (nearest, never blurred).
+        const noiseVal = noiseLevel > 0
+          ? hashNoise(
+            Math.floor((wx * TEXELS_PER_UNIT) / bs),
+            Math.floor((wy * TEXELS_PER_UNIT) / bs),
+            Math.floor((wz * TEXELS_PER_UNIT) / bs),
+            seed,
+          )
+          : 0
         const noised = Math.max(0, Math.min(1, shaded - noiseLevel * noiseVal))
         const value = Math.round(noised * 255)
 

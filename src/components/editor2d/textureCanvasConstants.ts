@@ -1,5 +1,5 @@
 import type { GridExtent } from '@/engine/grid/types'
-import { faceSizeFor } from '@/engine/texture/types'
+import { faceSizeFor, TEXEL_SCALE } from '@/engine/texture/types'
 import type { CanvasPan, CanvasSize } from './cameraTransform'
 import { PAN_PADDING_PX, REFERENCE_GRID_EXTENT } from './canvasConstants'
 
@@ -22,8 +22,8 @@ export function texClampZoom(zoom: number): number {
  * occupies roughly the same screen area at any locked-in size — the texel twin of the voxel canvas's
  * `defaultZoomForExtent`, sharing the same `REFERENCE_GRID_EXTENT` baseline. `vScale` is the face's
  * v-axis stretch (Y voxel scale on faces whose v runs along Y): tall faces zoom out to fit. */
-export function defaultTexZoomForExtent(gridExtent: GridExtent, vScale = 1): number {
-  return texClampZoom(faceSizeFor(REFERENCE_GRID_EXTENT) / (faceSizeFor(gridExtent) * Math.max(1, vScale)))
+export function defaultTexZoomForExtent(gridExtent: GridExtent, vScale = 1, texelScale: number = TEXEL_SCALE): number {
+  return texClampZoom(faceSizeFor(REFERENCE_GRID_EXTENT, texelScale) / (faceSizeFor(gridExtent, texelScale) * Math.max(1, vScale)))
 }
 
 export function texWorldToScreen(tu: number, tv: number, size: CanvasSize, pan: CanvasPan, zoom: number, texHalf: number, vScale = 1): [number, number] {

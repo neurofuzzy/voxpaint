@@ -4,6 +4,8 @@ import type { Axis, Coord, Orientation, Rotation } from '@/engine/grid/types'
 import type { PaletteSlotRef } from '@/engine/palette/types'
 import type { ConstructionPlane } from '@/engine/plane/types'
 import { classify, sampleNeighbors } from '@/engine/chamfer/chamferResolver'
+import { spinSlabAboutLocalY } from '@/engine/chamfer/chamferTransform'
+import { findDualRampRotation, findWedgeRampDual } from '@/engine/chamfer/rampDual'
 import { gridCoordFromPixel, pixelFromGridCoord } from '@/engine/plane/constructionPlane'
 import { axisIndex } from '@/engine/plane/planeGeometry'
 import { isCellSelected } from '@/engine/tools/selectionMask'
@@ -16,15 +18,21 @@ let freshChamferKeys: Set<string> | null = null
 // their rotation-0 fallback and eligible for retry as more of the stroke gets painted. A key
 // leaves this set (frozen) as soon as it finds a true match, even mid-stroke.
 let pendingWedgeKeys: Set<string> | null = null
+// Thin/half cells touched this stroke. Re-clicking a slab spins it (see below), but a drag's
+// Bresenham interpolation re-applies cells already visited this stroke — without this guard
+// the stroke's own anchor cell would spin on the first move event. Mirrors pendingWedgeKeys.
+let strokeSlabKeys: Set<string> | null = null
 
 export function beginFreshChamferTracking() {
   freshChamferKeys = new Set()
   pendingWedgeKeys = new Set()
+  strokeSlabKeys = new Set()
 }
 
 export function endFreshChamferTracking() {
   freshChamferKeys = null
   pendingWedgeKeys = null
+  strokeSlabKeys = null
 }
 
 /**
@@ -100,14 +108,126 @@ function applyPaintCell(
       }
     }
   } else if (kind === 'thin') {
-    // A thin slab is a normal color cell plus a fixed chamfer entry recording only the
-    // outward/thin axis. No neighbor sampling and no rotation — it's symmetric and never
-    // auto-resolves (frozen at paint time, like every other shape once resolved).
-    state.model.chamfer.set(key, {
-      planeAxis: plane.axis,
-      planeOrientation: plane.orientation,
-      resolvedTo: { shapeKind: 'thin', rotation: 0 },
-    })
+    // Re-clicking a thin slab spins it 90° about the V it was painted on (the wedge-style
+    // click-to-rotate escape hatch). Revisits within the same stroke are left untouched so a
+    // drag's interpolated re-application can't spin (or clobber) what the stroke just wrote.
+    const existing = state.model.chamfer.get(key)
+    if (strokeSlabKeys?.has(key)) {
+      // Already touched this stroke — leave the chamfer entry exactly as the stroke left it.
+    } else if (existing?.resolvedTo?.shapeKind === 'thin') {
+      state.model.chamfer.set(key, spinSlabAboutLocalY(existing))
+    } else {
+      // A thin slab is a normal color cell plus a fixed chamfer entry recording only the
+      // outward/thin axis. No neighbor sampling and no rotation — it's symmetric and never
+      // auto-resolves (frozen at paint time, like every other shape once resolved).
+      state.model.chamfer.set(key, {
+        planeAxis: plane.axis,
+        planeOrientation: plane.orientation,
+        resolvedTo: { shapeKind: 'thin', rotation: 0 },
+      })
+    }
+    strokeSlabKeys?.add(key)
+  } else if (kind === 'half') {
+    // Same click-to-rotate contract as thin: re-clicking a half slab spins it about the V it
+    // was painted on. (Flipping the authoring orientation in place would move the slab to the
+    // other half of the cell — a geometry edit — which is why rebase tools refuse halves;
+    // spinning the facing is the escape hatch instead.)
+    const existing = state.model.chamfer.get(key)
+    if (strokeSlabKeys?.has(key)) {
+      // Already touched this stroke — leave the chamfer entry exactly as the stroke left it.
+    } else if (existing?.resolvedTo?.shapeKind === 'half') {
+      state.model.chamfer.set(key, spinSlabAboutLocalY(existing))
+    } else {
+      // A half slab is the flush sibling of the centered thin slab — but recessed, not proud:
+      // the void faces the painter (negated orientation), so the voxel reads as set back next
+      // to full neighbors instead of hiding an internal pocket behind a flush face.
+      state.model.chamfer.set(key, {
+        planeAxis: plane.axis,
+        planeOrientation: plane.orientation === 1 ? -1 : 1,
+        resolvedTo: { shapeKind: 'half', rotation: 0 },
+      })
+    }
+    strokeSlabKeys?.add(key)
+  } else if (kind === 'post') {
+    // Re-clicking a post spins it 90° about the V it was painted on — the same click-to-rotate
+    // contract as the slabs (the centered column's only free parameter is its long axis).
+    // Revisits within the same stroke are left untouched, like the slab branches above.
+    const existing = state.model.chamfer.get(key)
+    if (strokeSlabKeys?.has(key)) {
+      // Already touched this stroke — leave the chamfer entry exactly as the stroke left it.
+    } else if (existing?.resolvedTo?.shapeKind === 'post') {
+      state.model.chamfer.set(key, spinSlabAboutLocalY(existing))
+    } else {
+      // A post is a centered 0.5×0.5 column running the full unit length along the outward
+      // axis — the centered sibling of the thin slab with the axes swapped. Fully symmetric,
+      // so no neighbor sampling and no rotation: frozen at paint time with rotation 0.
+      state.model.chamfer.set(key, {
+        planeAxis: plane.axis,
+        planeOrientation: plane.orientation,
+        resolvedTo: { shapeKind: 'post', rotation: 0 },
+      })
+    }
+    strokeSlabKeys?.add(key)
+  } else if (kind === 'quarter') {
+    // Re-clicking a quarter cycles its occupied corner 90° (NE → SE → SW → NW) — the
+    // wedge-style manual rotation, since the corner is the quarter's free parameter (its long
+    // axis comes from the paint plane). Revisits within the same stroke are left untouched.
+    const existing = state.model.chamfer.get(key)
+    if (strokeSlabKeys?.has(key)) {
+      // Already touched this stroke — leave the chamfer entry exactly as the stroke left it.
+    } else if (existing?.resolvedTo?.shapeKind === 'quarter') {
+      const rotation = ((existing.resolvedTo.rotation + 1) % 4) as Rotation
+      existing.resolvedTo = { shapeKind: 'quarter', rotation }
+    } else {
+      // A quarter is the post pushed into the NE corner — a 0.5×0.5×1 column in one quadrant,
+      // full length along the outward axis. Fresh paints start NE; re-click cycles corners.
+      state.model.chamfer.set(key, {
+        planeAxis: plane.axis,
+        planeOrientation: plane.orientation,
+        resolvedTo: { shapeKind: 'quarter', rotation: 0 },
+      })
+    }
+    strokeSlabKeys?.add(key)
+  } else if (kind === 'flat') {
+    // Re-clicking a flat spins it 90° about the V it was painted on — the same click-to-rotate
+    // contract as the slabs (the centre quad's only free parameter is its facing normal), so one
+    // click picks any of the three axes. Revisits within the same stroke are left untouched.
+    const existing = state.model.chamfer.get(key)
+    if (strokeSlabKeys?.has(key)) {
+      // Already touched this stroke — leave the chamfer entry exactly as the stroke left it.
+    } else if (existing?.resolvedTo?.shapeKind === 'flat') {
+      state.model.chamfer.set(key, spinSlabAboutLocalY(existing))
+    } else {
+      // A flat is thin's centre plane as a bare quad — frozen at paint time with rotation 0,
+      // never auto-resolved. The editor renders the single quad DoubleSide; export emits both
+      // windings (see voxelMeshBuilder's two-sided handling).
+      state.model.chamfer.set(key, {
+        planeAxis: plane.axis,
+        planeOrientation: plane.orientation,
+        resolvedTo: { shapeKind: 'flat', rotation: 0 },
+      })
+    }
+    strokeSlabKeys?.add(key)
+  } else if (kind === 'flatwedge') {
+    // Re-clicking a flat wedge advances its rotation (the wedge-style manual rotation — the
+    // diagonal is the free parameter; its plane comes from the paint plane). Revisits within
+    // the same stroke are left untouched.
+    const existing = state.model.chamfer.get(key)
+    if (strokeSlabKeys?.has(key)) {
+      // Already touched this stroke — leave the chamfer entry exactly as the stroke left it.
+    } else if (existing?.resolvedTo?.shapeKind === 'flatwedge') {
+      const rotation = ((existing.resolvedTo.rotation + 1) % 4) as Rotation
+      existing.resolvedTo = { shapeKind: 'flatwedge', rotation }
+    } else {
+      // A flat wedge is wedge's diagonal cut face as a bare quad — open NE corner at rotation 0
+      // (the wedge convention), never resolver-created. Fresh paints start NE; re-click cycles.
+      state.model.chamfer.set(key, {
+        planeAxis: plane.axis,
+        planeOrientation: plane.orientation,
+        resolvedTo: { shapeKind: 'flatwedge', rotation: 0 },
+      })
+    }
+    strokeSlabKeys?.add(key)
   } else {
     state.model.chamfer.delete(key)
   }
@@ -141,13 +261,75 @@ function applyMaterialCell(state: AppState, coord: Coord, slot: PaletteSlotRef):
 }
 
 export const createPaintActionsSlice: Slice = (set, get) => ({
+  correctChamferStroke: () => {
+    // Outside an open stroke there is nothing stroke-local to correct (both tracking sets are
+    // only non-null between beginStroke/commitStroke).
+    if (!freshChamferKeys && !pendingWedgeKeys) return
+    let changed = false
+    set((state) => {
+      if (freshChamferKeys) {
+        for (const freshKey of freshChamferKeys) {
+          const cell = state.model.chamfer.get(freshKey)
+          if (!cell) continue
+          // Each cell carries its own authoring basis, so multi-plane strokes correct every
+          // cell in its own frame (not just the currently active plane).
+          const coord = decodeKey(freshKey)
+          const cellPlane: ConstructionPlane = {
+            axis: cell.planeAxis,
+            orientation: cell.planeOrientation,
+            offset: coord[axisIndex(cell.planeAxis)],
+          }
+          const { u: fu, v: fv } = pixelFromGridCoord(cellPlane, coord)
+          const rt = classify(sampleNeighbors(state.model, cellPlane, fu, fv))
+          // Overwrite even when already resolved: a mid-stroke verdict read partial neighbors
+          // (this stroke's own later paints completed them). Still-null stays null.
+          if (JSON.stringify(cell.resolvedTo) !== JSON.stringify(rt)) {
+            cell.resolvedTo = rt
+            changed = true
+          }
+        }
+      }
+      if (pendingWedgeKeys) {
+        for (const pendingKey of pendingWedgeKeys) {
+          const cell = state.model.chamfer.get(pendingKey)
+          if (!cell) {
+            pendingWedgeKeys.delete(pendingKey)
+            continue
+          }
+          const coord = decodeKey(pendingKey)
+          const cellPlane: ConstructionPlane = {
+            axis: cell.planeAxis,
+            orientation: cell.planeOrientation,
+            offset: coord[axisIndex(cell.planeAxis)],
+          }
+          const { u: pu, v: pv } = pixelFromGridCoord(cellPlane, coord)
+          const rt = classify(sampleNeighbors(state.model, cellPlane, pu, pv))
+          // Wedges only upgrade: an unresolved fallback takes its true corner once the stroke
+          // completes it, but a locked-in wedge never flips (freeze + click-to-rotate intact).
+          if (rt?.shapeKind === 'convex') {
+            cell.resolvedTo = { shapeKind: 'wedge', rotation: rt.rotation }
+            pendingWedgeKeys.delete(pendingKey)
+            changed = true
+          }
+        }
+      }
+      if (changed) {
+        state.meta.modifiedAt = new Date().toISOString()
+        state.dirty = true
+      }
+    })
+  },
+
   paintCell: (u: number, v: number) => {
     get().bakeFloatIfAny()
     const { plane, activeVoxelKind, activePaletteSlot, selection, meta } = get()
     const coord = gridCoordFromPixel(plane, u, v)
     if (!withinWorkingBounds(coord, meta.gridExtent)) return false
     // An active selection clips editing to its mask (bakeFloatIfAny above already resolved any float).
-    if (selection && !isCellSelected(selection, u, v)) return false
+    if (selection && !isCellSelected(selection, u, v)) {
+      get().flashSelectionBlocked()
+      return false
+    }
 
     set((state) => {
       applyPaintCell(state, coord, u, v, plane, activeVoxelKind, activePaletteSlot)
@@ -176,7 +358,10 @@ export const createPaintActionsSlice: Slice = (set, get) => ({
     const { plane, selection } = get()
     if (selection) {
       const { u, v } = pixelFromGridCoord(plane, coord)
-      if (!isCellSelected(selection, u, v)) return
+      if (!isCellSelected(selection, u, v)) {
+        get().flashSelectionBlocked()
+        return
+      }
     }
     set((state) => {
       applyEraseCell(state, coord)
@@ -195,7 +380,10 @@ export const createPaintActionsSlice: Slice = (set, get) => ({
     const { plane, activePaletteSlot, selection, meta } = get()
     const coord = gridCoordFromPixel(plane, u, v)
     if (!withinWorkingBounds(coord, meta.gridExtent)) return false
-    if (selection && !isCellSelected(selection, u, v)) return false
+    if (selection && !isCellSelected(selection, u, v)) {
+      get().flashSelectionBlocked()
+      return false
+    }
     let changed = false
     set((state) => {
       changed = applyMaterialCell(state, coord, activePaletteSlot)
@@ -210,6 +398,49 @@ export const createPaintActionsSlice: Slice = (set, get) => ({
     let changed = false
     set((state) => {
       changed = applyMaterialCell(state, coord, activePaletteSlot)
+    })
+    return changed
+  },
+
+  rebaseRampCell: (u: number, v: number) => {
+    get().bakeFloatIfAny()
+    const { plane, selection, meta } = get()
+    const coord = gridCoordFromPixel(plane, u, v)
+    if (!withinWorkingBounds(coord, meta.gridExtent)) return false
+    if (selection && !isCellSelected(selection, u, v)) {
+      get().flashSelectionBlocked()
+      return false
+    }
+    let changed = false
+    set((state) => {
+      const key = encodeKey(...coord)
+      const cell = state.model.chamfer.get(key)
+      const kind = cell?.resolvedTo?.shapeKind
+      // Thin slabs flip orientation on their own axis: the centered slab is mirror-symmetric,
+      // so the solid is identical and only the sampled texture face switches. A cross-axis
+      // facing would rotate the slab (a geometry edit) and is refused.
+      if (kind === 'thin') {
+        if (cell!.planeAxis !== plane.axis || cell!.planeOrientation === plane.orientation) return
+        cell!.planeOrientation = plane.orientation
+        state.meta.modifiedAt = new Date().toISOString()
+        state.dirty = true
+        changed = true
+        return
+      }
+      // Ramps and wedges are congruent prisms — both rebase onto a ramp basis reproducing the
+      // exact solid (a wedge source converts shapeKind, since its dual is always a ramp).
+      if (kind !== 'ramp' && kind !== 'wedge') return
+      const rotation = kind === 'ramp'
+        ? findDualRampRotation(cell!, plane.axis, plane.orientation)
+        : findWedgeRampDual(cell!, plane.axis, plane.orientation)
+      if (rotation === null) return
+      if (kind === 'ramp' && rotation === cell!.resolvedTo!.rotation && cell!.planeAxis === plane.axis && cell!.planeOrientation === plane.orientation) return
+      cell!.planeAxis = plane.axis
+      cell!.planeOrientation = plane.orientation
+      cell!.resolvedTo = { shapeKind: 'ramp', rotation }
+      state.meta.modifiedAt = new Date().toISOString()
+      state.dirty = true
+      changed = true
     })
     return changed
   },

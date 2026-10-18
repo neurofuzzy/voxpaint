@@ -1,14 +1,15 @@
 import type { Axis, CellKey, ChamferCell, Coord, GridExtent, Orientation, VoxelModel, VoxelScaleY } from '@/engine/grid/types'
+import type { Marker } from '@/engine/markers/types'
 import type { GltfExportAnchor } from '@/engine/export/gltfExport'
 import type { EmissiveAnimMode, PaletteSlotRef, PaletteState } from '@/engine/palette/types'
 import type { ConstructionPlane } from '@/engine/plane/types'
 import type { ProjectMeta } from '@/engine/persistence/schema'
-import type { BoxFace, TextureModel } from '@/engine/texture/types'
+import type { BoxFace, TexelScale, TextureModel } from '@/engine/texture/types'
 import type { TexelClip } from '@/engine/texture/texelOps'
 import type { AnimationSpeed, AnimationType, SliceAnimSettings, SliceKey } from '@/engine/animation/types'
 
-export type ToolId = 'paint' | 'erase' | 'eyedropper' | 'select' | 'fill' | 'clone' | 'move' | 'material' | 'pivot'
-export type VoxelKind = 'cube' | 'ramp' | 'wedge' | 'thin'
+export type ToolId = 'paint' | 'erase' | 'eyedropper' | 'select' | 'fill' | 'clone' | 'move' | 'material' | 'pivot' | 'textureface' | 'marker'
+export type VoxelKind = 'cube' | 'ramp' | 'wedge' | 'thin' | 'half' | 'post' | 'quarter' | 'flat' | 'flatwedge'
 
 export type SelectionRegion = {
   originU: number
@@ -75,12 +76,23 @@ export type ProjectSlice = {
    * touches no grid/texture data and clears no history — the grid stays integer and only
    * presentation (3D scene, 2D X/Z-plane views, baked exports) stretches. */
   setVoxelScaleY: (k: VoxelScaleY) => void
+  /** Sets the project-level texels-per-voxel scale (1/2/4, Project Settings). Resamples the
+   * box-map faces with nearest-neighbor (quantized, never blurred) as one texture-undo step, and
+   * clears the texel selection and pending floats — the voxel model and its history are untouched.
+   * No-op when the scale is unchanged. */
+  setTexelScale: (scale: TexelScale) => void
   /** Renames the project and/or resizes its working cube (Project Settings dialog). Growing keeps
    * everything; shrinking deletes voxels outside the new bounds (the caller warns first via
    * `countCellsOutsideBounds`) and center-crops/pads the texture faces. A resize also clears all
    * undo/redo history, selections, and pending floats, drops animation slices outside the new
    * bounds, and clamps the construction-plane offset into range. Rename-only calls just rename. */
   updateProjectSettings: (name: string, gridExtent: GridExtent) => void
+  /** Doubles the working cube (`gridExtent` → twice the even working grid) and scales every
+   * voxel to its exact 2×2×2 block — cubes octuplicate, bevels decompose into exact staircases,
+   * thin slabs become back-to-back half-slab columns, posts become quarter-columns, quarters
+   * become full cubes, texture/markers/animation remap along. Not undoable (snapshots can't span an extent change): clears all histories, selections, and
+   * floats, and doubles the construction-plane offset. No-op past the 64-cell cap. */
+  rescaleProject: () => void
   /** Re-rolls `meta.noiseSeed`, changing the baked noise/specular grain's pattern without touching
    * the model — for when the current project's noise happened to land on an unflattering roll. */
   randomizeNoiseSeed: () => void
@@ -88,8 +100,8 @@ export type ProjectSlice = {
 }
 
 export type HistorySlice = {
-  past: VoxelModel[]
-  future: VoxelModel[]
+  past: ModelSnapshot[]
+  future: ModelSnapshot[]
   beginStroke: () => void
   commitStroke: () => void
   /** Abandons an open stroke without recording it — for project switches (new/import), where a
@@ -98,6 +110,13 @@ export type HistorySlice = {
   cancelStroke: () => void
   undo: () => void
   redo: () => void
+}
+
+/** One model-mode undo/redo snapshot: the voxel model plus the design markers travel together,
+ * so a marker edit and the voxel paint around it undo as one gesture. */
+export type ModelSnapshot = {
+  model: VoxelModel
+  markers: Marker[]
 }
 
 /** The voxel/face last landed on via a 3D face-click, while still eligible for a same-voxel
@@ -144,6 +163,10 @@ export type SelectionSlice = {
  * commits the plane to whichever face is current at click time (see handleVoxelFaceClick). */
 export type HoveredFace = { cellKey: CellKey; axis: Axis; orientation: Orientation }
 
+/** Baked-grain cell size in atlas texels, shared by the AO noise and the metal specular noise:
+ * 1 = per-texel grain, 2/4 = chunkier 2×2 / 4×4 quantized blocks (nearest, never blurred). */
+export type NoiseScale = 1 | 2 | 4
+
 export type ViewSlice = {
   fullscreen: boolean
   /** 3D Edit mode: clicks/drags in the viewport dispatch the active paint/erase/eyedropper tool
@@ -155,6 +178,7 @@ export type ViewSlice = {
   hoveredFace: HoveredFace | null
   /** 3D preview: render the mesh as wireframe (applies to both the instanced and optimized views). */
   wireframe: boolean
+  textureFaceMap: boolean
   /** 3D preview: apply coplanar-face merge on top of the CSG shell for maximum triangle reduction. */
   optimizedMesh: boolean
   /** 3D preview: apply baked ambient occlusion (only visible in the optimized-mesh PBR view). */
@@ -163,6 +187,8 @@ export type ViewSlice = {
   noiseLevel: number
   /** 3D preview: intensity of specular noise on metal materials (0–1, default 0 = off). */
   specularNoiseLevel: number
+  /** 3D preview + export: grain cell size for both noise bakes (default 1 = per-texel). */
+  noiseScale: NoiseScale
   /** 3D preview: roughness level for glass materials (0–1, default 0.3 = slightly frosted). */
   glassRoughnessLevel: number
   /** Last-known triangle counts from the optimized-mesh builder for the header stats line. */
@@ -176,6 +202,11 @@ export type ViewSlice = {
   /** Dynamic status message shown in the footer's center area. Components set this on hover to
    * show contextual info; cleared on pointer leave. Falls back to the active tool hint when null. */
   statusMessage: string | null
+  /** Transient red alert in the footer, shown when a 2D edit is rejected by the selection clip
+   * (painting outside the active selection). Takes precedence over `statusMessage` while set.
+   * `key` retriggers the blink animation on repeat offenses. Auto-clears after a few seconds,
+   * on the next stroke, or on selection change. */
+  statusAlert: { message: string; key: number } | null
   /** Texture mode: show the 3D model silhouette as a ghosted guide behind the texel grid. */
   onionSkin: boolean
   /** GLTF export: scale factor as a percentage (1–1000, default 100). */
@@ -190,26 +221,40 @@ export type ViewSlice = {
   /** GLTF export: emit texture maps — baked color overlay, ambient occlusion, metal maps
    * (default true). Off = solid materials + bare geometry, no maps or TEXCOORDs. */
   exportIncludeTextureMaps: boolean
+  /** GLTF export: bake ambient occlusion into an aoMap (default true). Off skips the AO bake
+   * (and any aoMap assignment) while leaving other texture maps untouched. */
+  exportIncludeAOMaps: boolean
+  /** GLTF export: emit design markers as empty nodes with `extras.voxpaint` payloads
+   * (default true). Off exports voxels only. */
+  exportIncludeMarkers: boolean
   setFullscreen: (v: boolean) => void
   setEdit3D: (v: boolean) => void
   setHoverCell: (coord: Coord | null, chamferValid: boolean | null) => void
   setHoveredFace: (face: HoveredFace | null) => void
   setWireframe: (v: boolean) => void
+  setTextureFaceMap: (v: boolean) => void
   setOptimizedMesh: (v: boolean) => void
   setAmbientOcclusion: (v: boolean) => void
   setNoiseLevel: (v: number) => void
   setSpecularNoiseLevel: (v: number) => void
+  setNoiseScale: (v: NoiseScale) => void
   setGlassRoughnessLevel: (v: number) => void
   setMeshTriangles: (v: { optimized: number; raw: number } | null) => void
   setExposure: (v: number) => void
   setAoStrength: (v: number) => void
   setStatusMessage: (msg: string | null) => void
+  /** Flashes the selection-blocked alert (Esc hint). Call when a 2D edit hits the selection clip. */
+  flashSelectionBlocked: () => void
+  /** Dismisses the selection-blocked alert early (new stroke, selection change). */
+  clearStatusAlert: () => void
   setOnionSkin: (v: boolean) => void
   setExportScaleFactor: (v: number) => void
   setExportAnchor: (v: GltfExportAnchor) => void
   setExportAlignToObjectBounds: (v: boolean) => void
   setExportDisableMeshOptimization: (v: boolean) => void
   setExportIncludeTextureMaps: (v: boolean) => void
+  setExportIncludeAOMaps: (v: boolean) => void
+  setExportIncludeMarkers: (v: boolean) => void
 }
 
 export type PersistenceSlice = {
@@ -228,6 +273,17 @@ export type PaintActionsSlice = {
    * (auto-resolved from neighbors). Returns false if out of bounds.
    */
   paintCell: (u: number, v: number) => boolean
+  /**
+   * End-of-stroke correction pass for bevel (ramp) cells painted since `beginStroke()`: re-runs
+   * neighbor classification against the stroke's final color layer and overwrites each
+   * same-stroke cell's `resolvedTo` — including cells that already resolved mid-stroke against
+   * incomplete neighbors (e.g. a corner that read as convex, then gained a third side and is
+   * really a ramp). Must run inside the open stroke (before `commitStroke()`) so the fix lands
+   * in the same undo step. Still-unresolvable cells keep `resolvedTo: null`. Pending (fallback)
+   * wedges only ever upgrade null → resolved, never overwrite — their freeze + click-to-rotate
+   * contract is untouched. No-op outside an open stroke.
+   */
+  correctChamferStroke: () => void
   /** Erases both color and chamfer layers at a cell. */
   eraseCell: (coord: Coord) => void
   /**
@@ -246,6 +302,17 @@ export type PaintActionsSlice = {
   paintMaterialCell: (u: number, v: number) => boolean
   /** Direct-3D recolor at an explicit grid coordinate (Edit mode). No selection clip. */
   paintMaterialAtCoord: (coord: Coord) => boolean
+  /**
+   * Re-authors the ramp, wedge, or thin slab at plane-space (u,v) onto the active construction
+   * plane's basis, reproducing its exact solid so only its box-mapped texture face changes (a
+   * wedge source converts to its congruent ramp; a thin slab only ever flips orientation on its
+   *   own axis, since turning it would rotate the slab). Existing resolved ramps/wedges/thins
+   *   only — no-op (false) on empty/out-of-bounds cells, other shapes (halves, posts, quarters,
+   *   flats — refacing any of those would move the solid, or there is no face to switch), and
+   * solids the active plane can't express (so drags don't record junk undo steps). Plain cubes sample texture by
+   * face normal and need no facing.
+   */
+  rebaseRampCell: (u: number, v: number) => boolean
 }
 
 /** `rotate` is the clockwise quarter-turn (the bare name predates `rotate-ccw` and is what the `r`
@@ -254,7 +321,9 @@ export type SelectionTransformKind = 'rotate' | 'rotate-ccw' | 'mirror-h' | 'mir
 
 export type ToolActionsSlice = {
   /** Flood fill (color layer only, spec §2) starting at plane-space (u,v). One undo stroke.
-   * No-op if the region leaks across all 4 edges of the plane's span (see `fillLeaksToEdges`). */
+   * No-op if the region leaks across all 4 edges of the plane's span (see `fillLeaksToEdges`) —
+   * unless (u,v) lands inside the active selection, which bounds the fill to its own mask (no
+   * painted enclosure needed) and skips the leak guard. */
   floodFill: (u: number, v: number) => void
   /** 6-connected flood fill through the full 3D model (not just the current plane), color layer
    * only. No-op unless (u,v) lands on an already-occupied voxel. One undo stroke. */
@@ -264,6 +333,15 @@ export type ToolActionsSlice = {
   copySelection: () => void
   cutSelection: () => void
   deleteSelection: () => void
+  /** Re-faces every chamfer cell under the selection onto the active construction plane's basis
+   * — the selection-scale texture-face tool. Geometry is never touched: ramps/wedges rebase via
+   * exact-solid duals, thin slabs and unresolved cells only take same-axis orientation flips
+   * (the centered slab is mirror-symmetric, so the solid is identical and only the sampled
+   * texture face switches). Convex/concave corners, halves, posts, quarters, flats, cross-axis
+   * thins, and inexpressible slopes are left alone. Only cells on the active slice are affected; plain cubes need no facing and
+   * are ignored. One undo stroke. Returns faced/skipped chamfer-cell counts for the caller to
+   * report (the toast lives in SelectionPalette, not the store). */
+  faceSelection: () => { faced: number; skipped: number }
   /** Pastes the clipboard as a new floating selection at (u,v) — does not commit to the model.
    * Content copied off a different construction plane is re-expressed for the active one first
    * (see `transformClipboardToPlane`), so it pastes with the destination plane's orientation. */
@@ -296,6 +374,10 @@ export type MoveActionsSlice = {
   updateMove: (du: number, dv: number) => void
   /** Ends the Move drag and commits the undo stroke. */
   endMove: () => void
+  /** Rotates/mirrors the entire model in the active plane's frame (about the grid origin) as one
+   * undo step, leaving no selection behind. Model mode only. Chamfer shapes ride along renumbered
+   * exactly like a select-all + transform + bake would — markers are untouched. */
+  transformWholeModel: (kind: SelectionTransformKind) => void
 }
 
 /** The top-level authoring mode. `model` = voxel modeling (the original app); `animate` = per-slice
@@ -306,6 +388,13 @@ export type EditorMode = 'model' | 'animate' | 'texture'
 export type ModeSlice = {
   mode: EditorMode
   setMode: (mode: EditorMode) => void
+}
+
+/** One texture undo/redo snapshot: the faces plus the texel scale they were painted at, so a
+ * scale change itself is undoable and every entry always matches its faces' buffer sizes. */
+export type TextureHistoryEntry = {
+  texture: TextureModel
+  texelScale: TexelScale
 }
 
 /**
@@ -320,9 +409,9 @@ export type TextureSlice = {
   /** Active grayscale index (0..4) the texture brush writes. */
   activeGrayIndex: number
 
-  /** Separate undo/redo stacks — whole-`TextureModel` snapshots, one per completed gesture. */
-  texturePast: TextureModel[]
-  textureFuture: TextureModel[]
+  /** Separate undo/redo stacks — snapshots, one per completed gesture (paint strokes and scale changes). */
+  texturePast: TextureHistoryEntry[]
+  textureFuture: TextureHistoryEntry[]
 
   /** Texel selection/float/clipboard, mirroring the voxel selection subsystem on a flat grid. */
   textureSelection: SelectionRegion | null
@@ -452,6 +541,31 @@ export type AnimSnapshot = {
   slicePivots: Map<SliceKey, CellKey>
 }
 
+export type MarkerSlice = {
+  /** Color-coded, non-voxel annotation points (see engine/markers/types.ts). Undo travels with the
+   * voxel-model stroke (HistorySlice snapshots carry both), so there is no separate marker history. */
+  markers: Marker[]
+  /** Currently selected marker (2D/3D highlight + list-panel focus), or null. */
+  selectedMarkerId: string | null
+  /** Color index (into MARKER_COLORS) new markers are placed with. Pure view pref — never
+   * persisted, never dirties, never undoable (like the active palette slot). */
+  activeMarkerColor: number
+  /** Adds a marker at a grid cell with the active color, capturing the active construction
+   * plane's basis as its facing (or the explicit `basis` override, used by 3D face taps to
+   * capture the hit face instead). The caller brackets the gesture with
+   * beginStroke/commitStroke (the marker tool does this per drag; single-shot callers
+   * self-bracket — see setMarkerColor/deleteMarker). */
+  addMarker: (coord: Coord, basis?: { axis: Axis; orientation: Orientation }) => void
+  /** Moves a marker to a grid cell (same bracketing contract as addMarker). */
+  moveMarker: (id: string, coord: Coord) => void
+  /** Recolors a marker. Self-brackets its own undo stroke. */
+  setMarkerColor: (id: string, color: number) => void
+  /** Deletes a marker. Self-brackets its own undo stroke. */
+  deleteMarker: (id: string) => void
+  selectMarker: (id: string | null) => void
+  setActiveMarkerColor: (color: number) => void
+}
+
 export type AppState = ProjectSlice &
   HistorySlice &
   PlaneSlice &
@@ -465,4 +579,5 @@ export type AppState = ProjectSlice &
   ModeSlice &
   TextureSlice &
   AnimationSlice &
+  MarkerSlice &
   UiSlice

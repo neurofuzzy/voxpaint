@@ -3,6 +3,7 @@ import { decodeKey, encodeKey } from '@/engine/grid/GridStore'
 import { gridCoordFromPixel, pixelFromGridCoord } from '@/engine/plane/constructionPlane'
 import { displayViewCenter, toDisplayGridlineU, toDisplayGridlineV, toDisplayU, toDisplayV } from '@/engine/plane/planeDisplay'
 import { resolveSlotColor, shadeColor } from '@/engine/palette/palette'
+import { markerColorHex } from '@/engine/markers/markers'
 import { forEachSelectedCell, traceSelectionOutline } from '@/engine/tools/selectionMask'
 import { encodeSliceKey } from '@/engine/animation/animationLayers'
 import { useAppStore } from '@/store/useAppStore'
@@ -88,6 +89,8 @@ export function PixelCanvas() {
   const slicePivots = useAppStore((s) => s.slicePivots)
   const gridExtent = useAppStore((s) => s.meta.gridExtent)
   const voxelScaleY = useAppStore((s) => s.meta.voxelScaleY)
+  const markers = useAppStore((s) => s.markers)
+  const selectedMarkerId = useAppStore((s) => s.selectedMarkerId)
   // V-axis display stretch for the active plane (Y voxel scale on X/Z planes, square on Y).
   const vScale = vScaleForPlane(plane.axis, voxelScaleY)
 
@@ -396,7 +399,32 @@ export function PixelCanvas() {
       }
       ctx.setLineDash([])
     }
-  }, [model, palette, plane, linePreview, selection, selectPreview, floatContent, floatOrigin, antPhase, size, pan, zoom, vScale, mode, sliceMasks, slicePivots, gridExtent])
+
+    // Design markers on the active slice — colored diamond pins, drawn last so they
+    // sit above voxels, floats, and selection. Markers off this slice are skipped (they still
+    // show in the 3D view and the markers list).
+    const markerAxis = plane.axis === 'x' ? 0 : plane.axis === 'y' ? 1 : 2
+    for (const m of markers) {
+      if (m.position[markerAxis] !== plane.offset) continue
+      const { u: mu, v: mv } = pixelFromGridCoord(plane, m.position)
+      const [sx, sy] = worldToScreen(toDisplayU(plane, mu), toDisplayV(plane, mv), size, pan, zoom, vScale)
+      const cx = sx + cellPx / 2
+      const cy = sy + cellH / 2
+      const r = Math.max(5, Math.min(cellPx, cellH) * 0.28)
+      const selected = m.id === selectedMarkerId
+      ctx.beginPath()
+      ctx.moveTo(cx, cy - r)
+      ctx.lineTo(cx + r * 0.7, cy)
+      ctx.lineTo(cx, cy + r)
+      ctx.lineTo(cx - r * 0.7, cy)
+      ctx.closePath()
+      ctx.fillStyle = markerColorHex(m.color)
+      ctx.fill()
+      ctx.lineWidth = selected ? 2.5 : 1.5
+      ctx.strokeStyle = selected ? '#ffffff' : 'rgba(0, 0, 0, 0.55)'
+      ctx.stroke()
+    }
+  }, [model, palette, plane, linePreview, selection, selectPreview, floatContent, floatOrigin, antPhase, size, pan, zoom, vScale, mode, sliceMasks, slicePivots, gridExtent, markers, selectedMarkerId])
 
   useEffect(() => {
     draw()

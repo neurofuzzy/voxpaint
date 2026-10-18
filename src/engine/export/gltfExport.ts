@@ -1,14 +1,18 @@
 import * as THREE from 'three'
 import { GLTFExporter } from 'three/addons/exporters/GLTFExporter.js'
 import { viewOriginShift } from '@/engine/grid/GridStore'
+import { outwardNormal } from '@/engine/plane/planeGeometry'
 import type { Axis, VoxelModel, CellKey, GridExtent, VoxelScaleY } from '@/engine/grid/types'
+import type { Marker } from '@/engine/markers/types'
+import { markerColorHex, markerNodeName, markerWorldCenter } from '@/engine/markers/markers'
 import type { PaletteState } from '@/engine/palette/types'
+import { TEXEL_SCALE } from '@/engine/texture/types'
 import type { TextureModel } from '@/engine/texture/types'
 import { bakeAOToAtlas, makeSpecularNoiseTexture } from '@/engine/ao/bakeAO'
 import { unwrapGeometries } from '@/engine/ao/uvUnwrap'
 import { buildBlendAtlas } from '@/engine/texture/boxMapping'
 import { bakeOverlayTexture } from '@/engine/texture/overlay'
-import { buildTexturedGeometryByColor, buildTexturedGeometryBySlice } from '@/engine/texture/texturedGeometry'
+import { buildTexturedGeometryByColorMerged, buildTexturedGeometryBySlice } from '@/engine/texture/texturedGeometry'
 import { hasTextureContent } from '@/engine/texture/TextureStore'
 import { buildOptimizedVoxelGeometryByMaterial, buildOptimizedVoxelGroupsBySlice } from '@/engine/instancing/voxelMeshBuilder'
 import { darkestBaseColor, materialParamsFor, type MaterialClass } from '@/engine/palette/palette'
@@ -52,6 +56,8 @@ export type GltfExportOptions = {
   ambientOcclusion?: boolean
   /** Intensity of monochromatic noise baked into the AO texture (0–1, default 0 = no noise). */
   noiseLevel?: number
+  /** Grain cell size for the noise bakes in atlas texels (1/2/4, default 1 = per-texel). */
+  noiseScale?: number
   /** Intensity of specular-colour noise on metal materials (0–1, default 0 = off). */
   specularNoiseLevel?: number
   /** AO strength multiplier (1.0–5.0, default 1.0). */
@@ -74,10 +80,14 @@ export type GltfExportOptions = {
    * from every other project's at the same voxel coordinates (default 0 = unseeded). Pass
    * `meta.noiseSeed`. */
   noiseSeed?: number
+  /** Texels per voxel of the box-map faces (1/2/4, default 4 = full detail). Pass
+   * `meta.texelScale` so UVs sample the project's own face resolution. */
+  texelScale?: number
   /** Merge coplanar faces on the PBR (untextured) path (default true). Set false to keep the raw
    * per-voxel surface triangulation — the CSG union still welds cells and drops hidden interior
    * faces, but the exposed surface stays subdivided per voxel so downstream tools can deform the
-   * mesh along its original voxel topology. No effect on the textured path (already per-voxel). */
+   * mesh along its original voxel topology. On the textured path this gates the tag-aware
+   * coplanar merge instead (same default); the animated textured path always stays per-voxel. */
   optimizeMesh?: boolean
   /** Emit texture maps: the baked color overlay, ambient-occlusion, and metal specular-noise maps
    * (default true). Set false to export materials + geometry only — no `map`/`aoMap`/metalness-map
@@ -88,6 +98,13 @@ export type GltfExportOptions = {
    * exported vertices after every other bake step (overlay/AO/specular all run in unit-cube voxel
    * units), so the .glb matches the scaled 3D view — see `scaleGeometry.ts`. */
   voxelScaleY?: VoxelScaleY
+  /** Design markers to export as empty nodes (default: none). Each becomes one child `Group`
+   * under the export root with its label/id in `extras.voxpaint`, so downstream tools can
+   * compose external content at those points. Positions are cell centers in the same voxel
+   * units as the mesh vertices, inheriting the export scale/anchor via the shared root. */
+  markers?: Marker[]
+  /** Emit the `markers` as empty nodes (default true). Off skips them — the .glb carries voxels only. */
+  includeMarkers?: boolean
 }
 
 const hex6 = (colorKey: number) => colorKey.toString(16).padStart(6, '0')
@@ -227,10 +244,11 @@ export async function exportModelToGlb(
     // Textured overlay path — one baked-texture material per colour (and per animation slice, if any).
     // Glass + KHR_materials_volume + baseColorTexture breaks Mac Preview / Blender;
     // for glass we emit a solid-colour material (no baked map, no unused TEXCOORD_0).
+    const texelScale = options.texelScale ?? TEXEL_SCALE
     const groups: Array<{ geometry: THREE.BufferGeometry; colorKey: number; materialClass: MaterialClass; sliceKey?: string }> =
       hasAnimations && nodeAssignment
-        ? buildTexturedGeometryBySlice(model, palette, nodeAssignment, gridExtent)
-        : buildTexturedGeometryByColor(model, palette, gridExtent).map((g) => ({ ...g, sliceKey: undefined }))
+        ? buildTexturedGeometryBySlice(model, palette, nodeAssignment, gridExtent, texelScale)
+        : buildTexturedGeometryByColorMerged(model, palette, gridExtent, options.optimizeMesh ?? true, texelScale).groups.map((g) => ({ ...g, sliceKey: undefined }))
     for (const { geometry } of groups) geometries.push(geometry)
     if (!includeTextureMaps) stripUVs(groups)
 
@@ -243,18 +261,31 @@ export async function exportModelToGlb(
     // everything else (bakeAOToAtlas samples the full `model`, not the atlas contents), so excluding
     // them here only means they never get an aoMap of their own.
     const aoGroups = groups.filter((g) => g.materialClass !== 'emissive')
-    if (includeTextureMaps && (options.ambientOcclusion || (options.specularNoiseLevel ?? 0) > 0) && aoGroups.length > 0) {
+    // AO maps are independently excludable (`options.ambientOcclusion`); specular-noise maps
+    // still bake when requested even with AO off (they share the unwrap atlas, not the AO bake).
+    // The monochromatic noise grain lives inside the AO atlas, so it must bake whenever
+    // `noiseLevel > 0` even with AO off — matching the live preview (`usePreviewAOMaps`), which
+    // shows noise with AO off. Otherwise the export silently drops the noise the preview shows.
+    const wantAO = includeTextureMaps && !!options.ambientOcclusion && aoGroups.length > 0
+    const wantNoise = includeTextureMaps && (options.noiseLevel ?? 0) > 0 && aoGroups.length > 0
+    const specularLevel = options.specularNoiseLevel ?? 0
+    if (includeTextureMaps && (wantAO || wantNoise || specularLevel > 0) && aoGroups.length > 0) {
       const unwrapped = unwrapGeometries(aoGroups.map((g) => g.geometry))
       for (let i = 0; i < aoGroups.length; i++) {
         aoGroups[i].geometry.setAttribute('uv1', new THREE.Float32BufferAttribute(unwrapped.uv1Arrays[i], 2))
       }
-      const baked = bakeAOToAtlas(model, unwrapped.atlas, options.noiseLevel ?? 0, options.aoStrength ?? 1, animatedKeys, options.noiseSeed ?? 0)
-      aoTex = aoMapTexture(baked.data, baked.width, baked.height)
-      textures.push(aoTex)
+      if (wantAO || wantNoise) {
+        // Preview parity: with AO off but noise on, the bake still runs (strength 1, as in the
+        // preview) so the grain exports instead of vanishing.
+        const effectiveAo = options.ambientOcclusion ? (options.aoStrength ?? 1) : 1
+        const baked = bakeAOToAtlas(model, unwrapped.atlas, options.noiseLevel ?? 0, effectiveAo, animatedKeys, options.noiseSeed ?? 0, options.noiseScale ?? 1)
+        aoTex = aoMapTexture(baked.data, baked.width, baked.height)
+        textures.push(aoTex)
+      }
 
-      const sl = options.specularNoiseLevel ?? 0
+      const sl = specularLevel
       if (sl > 0) {
-        const spec = makeSpecularNoiseTexture(unwrapped.atlas, sl, options.noiseSeed ?? 0)
+        const spec = makeSpecularNoiseTexture(unwrapped.atlas, sl, options.noiseSeed ?? 0, options.noiseScale ?? 1)
         metalTex = noiseMapTexture(spec.metalness.data, spec.metalness.width, spec.metalness.height)
         roughTex = noiseMapTexture(spec.roughness.data, spec.roughness.width, spec.roughness.height)
         colorTex = noiseMapTexture(spec.baseColor.data, spec.baseColor.width, spec.baseColor.height)
@@ -263,7 +294,7 @@ export async function exportModelToGlb(
       }
     }
 
-    const blend = includeTextureMaps ? buildBlendAtlas(texture!, gridExtent) : null
+    const blend = includeTextureMaps ? buildBlendAtlas(texture!, gridExtent, texelScale) : null
     // Y-scale bakes after the AO/unwrap work above (unit-cube voxel units) and before meshes —
     // anchors below then operate on true scaled extents.
     bakeScaleY(groups)
@@ -353,20 +384,27 @@ export async function exportModelToGlb(
     let colorTex: THREE.Texture | null = null
     // See the textured path above: emissive materials skip AO/noise entirely.
     const aoGroups = groups.filter((g) => g.materialClass !== 'emissive')
-    if (includeTextureMaps && (options.ambientOcclusion || (options.specularNoiseLevel ?? 0) > 0) && aoGroups.length > 0) {
+    const wantAO = includeTextureMaps && !!options.ambientOcclusion && aoGroups.length > 0
+    const wantNoise = includeTextureMaps && (options.noiseLevel ?? 0) > 0 && aoGroups.length > 0
+    const specularLevel = options.specularNoiseLevel ?? 0
+    if (includeTextureMaps && (wantAO || wantNoise || specularLevel > 0) && aoGroups.length > 0) {
       const unwrapped = unwrapGeometries(aoGroups.map((g) => g.geometry))
       for (let i = 0; i < aoGroups.length; i++) {
         const uv1 = new THREE.Float32BufferAttribute(unwrapped.uv1Arrays[i], 2)
         aoGroups[i].geometry.setAttribute('uv1', uv1)
         aoGroups[i].geometry.setAttribute('uv', uv1)
       }
-      const baked = bakeAOToAtlas(model, unwrapped.atlas, options.noiseLevel ?? 0, options.aoStrength ?? 1, animatedKeys, options.noiseSeed ?? 0)
-      aoTex = aoMapTexture(baked.data, baked.width, baked.height)
-      textures.push(aoTex)
+      if (wantAO || wantNoise) {
+        // Preview parity — see the textured path above: noise must bake even with AO off.
+        const effectiveAo = options.ambientOcclusion ? (options.aoStrength ?? 1) : 1
+        const baked = bakeAOToAtlas(model, unwrapped.atlas, options.noiseLevel ?? 0, effectiveAo, animatedKeys, options.noiseSeed ?? 0, options.noiseScale ?? 1)
+        aoTex = aoMapTexture(baked.data, baked.width, baked.height)
+        textures.push(aoTex)
+      }
 
-      const sl = options.specularNoiseLevel ?? 0
+      const sl = specularLevel
       if (sl > 0) {
-        const spec = makeSpecularNoiseTexture(unwrapped.atlas, sl, options.noiseSeed ?? 0)
+        const spec = makeSpecularNoiseTexture(unwrapped.atlas, sl, options.noiseSeed ?? 0, options.noiseScale ?? 1)
         metalTex = noiseMapTexture(spec.metalness.data, spec.metalness.width, spec.metalness.height)
         roughTex = noiseMapTexture(spec.roughness.data, spec.roughness.width, spec.roughness.height)
         colorTex = noiseMapTexture(spec.baseColor.data, spec.baseColor.width, spec.baseColor.height)
@@ -450,6 +488,38 @@ export async function exportModelToGlb(
       root.position.set(-shift * scale, -shift * scale, -box.min.z * scale)
     } else {
       root.position.set(-shift * scale, -shift * scale, -shift * scale)
+    }
+  }
+
+  // Design markers — one empty node per marker, parented under root so each inherits the
+  // export scale/anchor transform above (local positions stay in pre-scale voxel units, exactly
+  // like the mesh vertices). Added AFTER the anchor block so marker positions never expand the
+  // measured voxel AABB: anchors stay voxel-pure (a landscaping marker off to the side must not
+  // recenter the model). The node is rotated so its local +Z points along the marker's draw-time
+  // outward normal, meaning content composed onto the node downstream faces away from the drawn
+  // surface. The exporter serializes `userData` into the node's `extras`
+  // (GLTFExporter.serializeUserData), giving downstream tools a stable lookup: nodes whose
+  // `extras.voxpaint.kind === 'marker'`, carrying color hex plus the draw-time basis.
+  if (options.includeMarkers ?? true) {
+    const taken = new Set<string>()
+    const forward = new THREE.Vector3(0, 0, 1)
+    for (const marker of options.markers ?? []) {
+      const node = new THREE.Group()
+      node.name = markerNodeName(marker, taken)
+      const [x, y, z] = markerWorldCenter(marker.position, voxelScaleY)
+      node.position.set(x, y, z)
+      const outward = outwardNormal(marker.planeAxis, marker.planeOrientation)
+      node.quaternion.setFromUnitVectors(forward, new THREE.Vector3(outward[0], outward[1], outward[2]))
+      node.userData = {
+        voxpaint: {
+          kind: 'marker',
+          id: marker.id,
+          color: markerColorHex(marker.color),
+          axis: marker.planeAxis,
+          orientation: marker.planeOrientation,
+        },
+      }
+      root.add(node)
     }
   }
 

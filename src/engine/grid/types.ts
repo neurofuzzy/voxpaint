@@ -3,7 +3,7 @@ import type { PaletteSlotRef } from '@/engine/palette/types'
 export type Axis = 'x' | 'y' | 'z'
 export type Orientation = 1 | -1
 export type Rotation = 0 | 1 | 2 | 3
-export type ChamferShapeKind = 'ramp' | 'convex' | 'concave' | 'wedge' | 'thin'
+export type ChamferShapeKind = 'ramp' | 'convex' | 'concave' | 'wedge' | 'thin' | 'half' | 'post' | 'quarter' | 'flat' | 'flatwedge'
 
 /** Locked-in project size (edge length of the working cube), chosen at project creation and
  * editable thereafter in Project Settings (`updateProjectSettings` — growing keeps everything,

@@ -20,3 +20,19 @@ body {
 * {
   box-sizing: border-box;
 }
+
+/* Footer selection-blocked alert: three quick blinks on each flash. BottomBar remounts the
+ * message span per alert key, so repeat offenses restart the animation from full opacity. */
+@keyframes status-alert-blink {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.2;
+  }
+}
+
+.status-alert-blink {
+  animation: status-alert-blink 0.45s ease-in-out 3;
+}

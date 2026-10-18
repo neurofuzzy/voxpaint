@@ -1,5 +1,7 @@
 # VoxPaint glTF Export Contract
 
+See also `marker-export-contract.md` — the companion contract for design markers (composition locators) in the same export.
+
 ## Purpose
 
 This document specifies exactly which **glTF 2.0 features** are present in `.glb` files exported by VoxPaint, so that a consuming engine's importer knows precisely what to support — rather than implementing the entire glTF spec.
@@ -31,6 +33,12 @@ This is **not** a general glTF tutorial, and **not** an internal architecture do
 - One mesh per `(materialClass, colorKey)` pair when untextured and unanimated; one mesh per `(materialClass, colorKey, animationSlice)` when animated.
 - Interior faces between same-color voxels are already culled by the CSG union (watertight, non-overlapping).
 - Textured models: one mesh per `(materialClass, colorKey, animationSlice)` with box-mapped UVs.
+
+### Two-sided flats (`flat` / `flatwedge` zero-thickness quads)
+
+- A flat cell exports as **two coincident quads with opposite normals and opposite windings** (4 triangles): the front winding faces the recorded normal, the back winding faces away. Both windings are always present, on every export path (textured, untextured, animated).
+- Materials are **single-sided** (no `doubleSided` flag). With face culling, exactly one winding renders per viewpoint, so standard viewers show no z-fighting. Do NOT "fix" the coincident pair by deleting one side, and do NOT set `doubleSided: true` (that reintroduces z-fighting outside engines whose shader derives each face's normal toward the viewer).
+- No `doubleSided` flag is relied upon anywhere: importers that ignore material flags still read flats from both sides.
 
 ### Not present
 
@@ -150,5 +158,6 @@ This contract should be **revisited whenever**:
 - Extension support changes (new KHR extensions added, or old ones removed).
 - Emissive animation behavior changes (`EMISSIVE_ANIM_CYCLE_SECONDS`, interpolation modes, channel paths, off-color behavior).
 - Animation interpolation modes change in `src/engine/animation/animationGLTF.ts`.
+- Marker export surface changes — see `marker-export-contract.md` (payload, naming, orientation).
 
 Mirror the upkeep expectation stated in `docs/ARCHITECTURE.md`'s opening section.

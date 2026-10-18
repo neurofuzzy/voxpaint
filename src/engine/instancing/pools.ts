@@ -1,6 +1,6 @@
 import * as THREE from 'three'
 import type { ChamferCell } from '@/engine/grid/types'
-import { concaveCornerGeometry, convexCornerGeometry, mirrorVGeometry, rampGeometry, thinGeometry, unitCubeGeometry, wedgeGeometry } from '@/engine/chamfer/chamferGeometry'
+import { concaveCornerGeometry, convexCornerGeometry, flatGeometry, flatWedgeGeometry, halfGeometry, mirrorVGeometry, postGeometry, quarterGeometry, rampGeometry, thinGeometry, unitCubeGeometry, wedgeGeometry } from '@/engine/chamfer/chamferGeometry'
 import { chamferBasisIsReflected } from './basis'
 
 /**
@@ -12,9 +12,9 @@ import { chamferBasisIsReflected } from './basis'
  * use the mirrored geometry so every rendered instance stays a proper rotation and lights
  * correctly. See basis.ts's `chamferBasisIsReflected` and chamferGeometry.ts's `mirrorVGeometry`.
  */
-export type PoolId = 'cube' | 'ramp' | 'convex' | 'concave' | 'wedge' | 'thin' | 'rampM' | 'convexM' | 'concaveM' | 'wedgeM' | 'thinM'
+export type PoolId = 'cube' | 'ramp' | 'convex' | 'concave' | 'wedge' | 'thin' | 'half' | 'post' | 'quarter' | 'flat' | 'flatwedge' | 'rampM' | 'convexM' | 'concaveM' | 'wedgeM' | 'thinM' | 'halfM' | 'postM' | 'quarterM' | 'flatM' | 'flatwedgeM'
 
-export const POOL_IDS: PoolId[] = ['cube', 'ramp', 'convex', 'concave', 'wedge', 'thin', 'rampM', 'convexM', 'concaveM', 'wedgeM', 'thinM']
+export const POOL_IDS: PoolId[] = ['cube', 'ramp', 'convex', 'concave', 'wedge', 'thin', 'half', 'post', 'quarter', 'flat', 'flatwedge', 'rampM', 'convexM', 'concaveM', 'wedgeM', 'thinM', 'halfM', 'postM', 'quarterM', 'flatM', 'flatwedgeM']
 
 /** The pool a color cell belongs to, accounting for its baked shape and plane handedness. */
 export function poolIdFor(chamfer: ChamferCell | undefined): PoolId {
@@ -33,6 +33,11 @@ export function buildPoolGeometries(): Record<PoolId, THREE.BufferGeometry> {
   const concave = concaveCornerGeometry(0)
   const wedge = wedgeGeometry(0)
   const thin = thinGeometry()
+  const half = halfGeometry()
+  const post = postGeometry()
+  const quarter = quarterGeometry(0)
+  const flat = flatGeometry()
+  const flatwedge = flatWedgeGeometry(0)
   return {
     cube: unitCubeGeometry(),
     ramp,
@@ -40,6 +45,11 @@ export function buildPoolGeometries(): Record<PoolId, THREE.BufferGeometry> {
     concave,
     wedge,
     thin,
+    half,
+    post,
+    quarter,
+    flat,
+    flatwedge,
     rampM: mirrorVGeometry(ramp),
     convexM: mirrorVGeometry(convex),
     concaveM: mirrorVGeometry(concave),
@@ -47,5 +57,21 @@ export function buildPoolGeometries(): Record<PoolId, THREE.BufferGeometry> {
     // Symmetric slab: mirrorV is the same shape, but keeps reflected-plane instances det=+1 and
     // correctly lit on the same path as the chamfer pools.
     thinM: mirrorVGeometry(thin),
+    // Flush-outward slab, mirrored across v like the other M pools: the slab stays on the
+    // outward half (mirroring never moves it across halves), keeping reflected-plane instances
+    // det=+1. The inward half renders from the same geometry via a flipped authoring orientation.
+    halfM: mirrorVGeometry(half),
+    // Centered column: mirrorV is the same solid, keeping reflected-plane instances det=+1.
+    postM: mirrorVGeometry(post),
+    // Corner column: mirroring across v moves NE to SE (like the wedge's cut corner), and the
+    // reflected-plane matrix's negated rotation moves it back — same scheme as the bevel pools.
+    quarterM: mirrorVGeometry(quarter),
+    // Bare quads: rendered DoubleSide in the editor from the single-sided prefab; export emits
+    // both windings (see voxelMeshBuilder). Mirrored variants keep reflected-plane instances
+    // det=+1 on the same path as every other pool.
+    flatM: mirrorVGeometry(flat),
+    // Diagonal quad: mirroring across v moves the NW-SE diagonal to NE-SW (the rotation-1
+    // solid), and the reflected-plane matrix's negated rotation moves it back — wedge scheme.
+    flatwedgeM: mirrorVGeometry(flatwedge),
   }
 }

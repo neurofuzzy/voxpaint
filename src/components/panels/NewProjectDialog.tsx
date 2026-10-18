@@ -2,6 +2,7 @@ import * as Dialog from '@radix-ui/react-dialog'
 import { FilePlus } from 'lucide-react'
 import { useEffect, useState } from 'react'
 import type { GridExtent } from '@/engine/grid/types'
+import { isIPad } from '@/engine/input/isIPad'
 import { useAppStore } from '@/store/useAppStore'
 import { ProjectSizePicker } from './ProjectSizePicker'
 import { parseCustomSize } from './projectSizeOptions'
@@ -37,7 +38,7 @@ export function NewProjectDialog({ open, onOpenChange }: { open: boolean; onOpen
   }
 
   return (
-    <Dialog.Root open={open} onOpenChange={onOpenChange}>
+    <Dialog.Root open={open} onOpenChange={onOpenChange} modal={!isIPad() /* non-modal on iPad: modal Radix overlays swallow Apple Pencil taps */}>
       <Dialog.Portal>
         <Dialog.Overlay className="fixed inset-0 z-50 bg-black/60 backdrop-blur-sm" />
         <Dialog.Content

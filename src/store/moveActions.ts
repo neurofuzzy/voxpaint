@@ -1,8 +1,13 @@
 import type { StateCreator } from 'zustand'
 import type { ChamferCell, ColorCell, Coord } from '@/engine/grid/types'
-import { decodeKey, encodeKey, recomputeBounds, withinWorkingBounds } from '@/engine/grid/GridStore'
+import { decodeKey, effectiveExtent, encodeKey, recomputeBounds, withinWorkingBounds } from '@/engine/grid/GridStore'
 import { planeLogicalBasis } from '@/engine/plane/constructionPlane'
 import { axisIndex } from '@/engine/plane/planeGeometry'
+import { cloneTextureModel, hasTextureContent, normalizeTexelScale } from '@/engine/texture/TextureStore'
+import { textureContentEquals, transformTextureWholeModel, translateTextureModelWrap } from '@/engine/texture/textureTransform'
+import { TEXEL_SCALE } from '@/engine/texture/types'
+import type { TextureModel } from '@/engine/texture/types'
+import { rectRegion } from '@/engine/tools/selectionMask'
 import type { AppState, MoveActionsSlice } from './types'
 
 type Slice = StateCreator<AppState, [['zustand/immer', never]], [], MoveActionsSlice>
@@ -15,6 +20,10 @@ type MoveGesture = {
   uDir: Coord
   vDir: Coord
   placedKeys: string[]
+  /** Deep copy of the box-map faces when this drag carries the texture along (whole-model,
+   * no-selection drags in Model mode with painted texels) — every `updateMove` re-derives the
+   * live texture from this base so scrubbing back and forth is exact. Null otherwise. */
+  textureBase: TextureModel | null
 }
 let gesture: MoveGesture | null = null
 
@@ -31,11 +40,16 @@ const cloneChamfer = (c: ChamferCell): ChamferCell => ({
  * one undo stroke. `wholeModel` (Alt-drag) moves every cell; otherwise only the current plane
  * slice's cells move. Cells dragged out of the working box are simply not re-placed, but stay in the
  * snapshot so they reappear if dragged back within the same gesture.
+ *
+ * A whole-model drag with no voxel selection also carries the box-mapped texture along (same
+ * world delta, faces wrapped toroidally so nothing scrolls away) as one texture-undo step —
+ * slice moves and selection-scoped edits leave the global box map untouched.
  */
 export const createMoveActionsSlice: Slice = (set, get) => ({
   beginMove: (wholeModel: boolean) => {
     get().bakeFloatIfAny()
-    const { model, plane } = get()
+    const st = get()
+    const { model, plane } = st
     const ai = axisIndex(plane.axis)
     const { uDir, vDir } = planeLogicalBasis(plane.axis)
 
@@ -50,13 +64,39 @@ export const createMoveActionsSlice: Slice = (set, get) => ({
       snapshot.push({ coord, color: model.color.get(key), chamfer: model.chamfer.get(key) })
     }
 
-    gesture = { snapshot, uDir, vDir, placedKeys: snapshot.map((s) => encodeKey(...s.coord)) }
+    // Only an unscoped whole-model drag moves the texture: a slice move or an active
+    // selection/float means the voxels being moved aren't the whole model, so the global box
+    // map stays put. An unpainted texture arms nothing (no junk undo step).
+    const textureBase =
+      wholeModel && st.mode === 'model' && st.selection === null && st.floatContent === null && hasTextureContent(st.texture)
+        ? cloneTextureModel(st.texture)
+        : null
+    if (textureBase) get().textureBeginStroke()
+
+    gesture = { snapshot, uDir, vDir, placedKeys: snapshot.map((s) => encodeKey(...s.coord)), textureBase }
     get().beginStroke()
   },
 
   updateMove: (du: number, dv: number) => {
     const g = gesture
     if (!g) return
+    // Rebuilt outside the producer (Uint8Array faces are Immer-opaque — same discipline as
+    // textureSlice's copy-on-write), then assigned in.
+    let nextTexture: TextureModel | null = null
+    if (g.textureBase) {
+      const s = get()
+      const worldDelta: Coord = [
+        du * g.uDir[0] + dv * g.vDir[0],
+        du * g.uDir[1] + dv * g.vDir[1],
+        du * g.uDir[2] + dv * g.vDir[2],
+      ]
+      nextTexture = translateTextureModelWrap(
+        g.textureBase,
+        worldDelta,
+        s.meta.gridExtent,
+        normalizeTexelScale(s.meta.texelScale ?? TEXEL_SCALE),
+      )
+    }
     set((state) => {
       // Clear last frame's placement, then re-lay every snapshot cell at the new offset.
       for (const k of g.placedKeys) {
@@ -77,6 +117,7 @@ export const createMoveActionsSlice: Slice = (set, get) => ({
         placed.push(nk)
       }
       g.placedKeys = placed
+      if (nextTexture) state.texture = nextTexture
       state.model.bounds = recomputeBounds(state.model)
       state.meta.modifiedAt = new Date().toISOString()
       state.dirty = true
@@ -85,7 +126,54 @@ export const createMoveActionsSlice: Slice = (set, get) => ({
 
   endMove: () => {
     if (!gesture) return
+    const { textureBase } = gesture
     gesture = null
     get().commitStroke()
+    if (textureBase) {
+      // A click-without-drag (or a full-wrap move) nets zero texture change — abandon the
+      // stroke instead of recording a junk undo step.
+      if (textureContentEquals(get().texture, textureBase)) get().textureCancelStroke()
+      else get().textureCommitStroke()
+    }
+  },
+
+  transformWholeModel: (kind) => {
+    // Model mode only — the voxel selection/float stack doesn't exist in Texture mode.
+    if (get().mode !== 'model') return
+    // A select-all + deep-lift + transform + bake, as one gesture: the full-span window covers
+    // every cell, the deep lift carries all depths, the float transform renumbers chamfers in
+    // the plane frame, and the bake lands back in place (rotation about the grid origin). One
+    // undo stroke (lift opens, bake commits); the working selection is cleared afterwards so
+    // later paints aren't clipped to it.
+    get().bakeFloatIfAny()
+    // Only an unscoped transform carries the texture: with an active selection/float the user
+    // scoped the gesture at a subset, so the global box map stays put. Captured before the
+    // select-all below overwrites it.
+    const hadSelection = get().selection !== null || get().floatContent !== null
+    const half = effectiveExtent(get().meta.gridExtent) / 2
+    get().setSelection(rectRegion(-half, -half, half - 1, half - 1))
+    get().liftSelectionToFloat(true)
+    get().transformFloat(kind)
+    get().bakeFloatIfAny()
+    get().setSelection(null)
+    if (!hadSelection) {
+      const s = get()
+      if (!hasTextureContent(s.texture)) return
+      const next = transformTextureWholeModel(
+        s.texture,
+        kind,
+        s.plane.axis,
+        s.meta.gridExtent,
+        normalizeTexelScale(s.meta.texelScale ?? TEXEL_SCALE),
+      )
+      if (textureContentEquals(next, s.texture)) return
+      get().textureBeginStroke()
+      set((state) => {
+        state.texture = next
+        state.dirty = true
+        state.meta.modifiedAt = new Date().toISOString()
+      })
+      get().textureCommitStroke()
+    }
   },
 })

@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 import { Settings } from 'lucide-react'
 import logoUrl from '@/assets/logo.svg'
 import { FileMenu } from '@/components/panels/FileMenu'
+import { EditMenu } from '@/components/panels/EditMenu'
 import { FullscreenToggle } from '@/components/panels/FullscreenToggle'
 import { ModeTabs } from '@/components/panels/ModeTabs'
 import { ModelStats } from '@/components/panels/ModelStats'
@@ -70,6 +71,7 @@ export function TopToolbar() {
     <div className="flex h-11 items-center gap-3 border-b border-neutral-800 bg-neutral-900 px-2">
       <img src={logoUrl} alt="VoxPaint" className="h-5 w-auto" />
       <FileMenu />
+      <EditMenu />
       <ModeTabs />
       <ProjectName />
       <button

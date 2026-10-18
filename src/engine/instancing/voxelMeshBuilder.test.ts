@@ -1,11 +1,12 @@
 import { describe, expect, it } from 'vitest'
 import * as THREE from 'three'
 import { emptyModel, encodeKey, recomputeBounds } from '@/engine/grid/GridStore'
-import type { VoxelModel } from '@/engine/grid/types'
+import type { CellKey, VoxelModel } from '@/engine/grid/types'
 import { DEFAULT_PALETTE } from '@/engine/palette/defaultPalette'
 import type { PaletteSlotRef } from '@/engine/palette/types'
+import type { SliceKey } from '@/engine/animation/types'
 import { triangleCount } from './meshOptimizer'
-import { buildOptimizedVoxelGroups } from './voxelMeshBuilder'
+import { buildOptimizedVoxelGroups, buildOptimizedVoxelGroupsBySlice, buildTexturedShellGeometryByColorMerged } from './voxelMeshBuilder'
 
 function twoVoxels(a: PaletteSlotRef, b: PaletteSlotRef): VoxelModel {
   const model = emptyModel()
@@ -19,6 +20,45 @@ const base1: PaletteSlotRef = { kind: 'base', index: 1 }
 const glass0: PaletteSlotRef = { kind: 'glass', index: 0 }
 const glass1: PaletteSlotRef = { kind: 'glass', index: 1 }
 const metal0: PaletteSlotRef = { kind: 'metal', index: 0 }
+const emissive0: PaletteSlotRef = { kind: 'emissive', index: 0 }
+
+/** Triangles of `geometry` lying fully on the `axis = value` plane with a ±axis normal. */
+function trisOnPlane(geometry: THREE.BufferGeometry, axis: 'x' | 'y' | 'z', value: number): number {  const pos = geometry.getAttribute('position')
+  const nrm = geometry.getAttribute('normal')
+  const a = new THREE.Vector3()
+  const b = new THREE.Vector3()
+  const c = new THREE.Vector3()
+  const n = new THREE.Vector3()
+  let count = 0
+  for (let t = 0; t < pos.count / 3; t++) {
+    a.fromBufferAttribute(pos, t * 3)
+    b.fromBufferAttribute(pos, t * 3 + 1)
+    c.fromBufferAttribute(pos, t * 3 + 2)
+    n.fromBufferAttribute(nrm, t * 3).normalize()
+    if (Math.abs(a[axis] - value) > 1e-4 || Math.abs(b[axis] - value) > 1e-4 || Math.abs(c[axis] - value) > 1e-4) continue
+    if (Math.abs(Math.abs(n[axis]) - 1) > 1e-3) continue
+    count++
+  }
+  return count
+}
+
+/** Splits triangles by agreement with the first triangle's stored normal — guards two-sided
+ * export pairs, which must carry equal opposite windings (a stale normal on one winding would
+ * silently weld it into the other). Works for any facing, including diagonal flatwedges. */
+function windingBalance(geometry: THREE.BufferGeometry): { withFirst: number; againstFirst: number } {
+  const nrm = geometry.getAttribute('normal')
+  const ref = new THREE.Vector3()
+  const n = new THREE.Vector3()
+  const out = { withFirst: 0, againstFirst: 0 }
+  ref.fromBufferAttribute(nrm, 0).normalize()
+  for (let t = 0; t < nrm.count / 3; t++) {
+    n.fromBufferAttribute(nrm, t * 3).normalize()
+    const d = n.dot(ref)
+    if (d > 0.5) out.withFirst++
+    else if (d < -0.5) out.againstFirst++
+  }
+  return out
+}
 
 describe('CSG per-color-group optimizer', () => {
   it('unions two adjacent same-colour voxels into a single group with interior faces removed', () => {
@@ -30,11 +70,85 @@ describe('CSG per-color-group optimizer', () => {
     expect(built.optimizedTriangles).toBeLessThan(24)
   })
 
-  it('keeps matte and metal voxels in separate groups with all faces intact (occupancy culling is glass-only)', () => {
+  it('drops the shared interface on BOTH sides for adjacent matte and metal voxels (opaque-opaque cull)', () => {
     const built = buildOptimizedVoxelGroups(twoVoxels(base0, metal0), DEFAULT_PALETTE)
     expect(built.groups).toHaveLength(2)
     expect(built.rawTriangles).toBe(24)
+    // The shared quad (2 tris per side) is interior to the combined solid: 24 - 4 = 20.
+    expect(built.optimizedTriangles).toBe(20)
+    // Same result with the coplanar merge off (preview toggle-off / CSG-only path).
+    const unmerged = buildOptimizedVoxelGroups(twoVoxels(base0, metal0), DEFAULT_PALETTE, false)
+    expect(unmerged.optimizedTriangles).toBe(20)
+  })
+
+  it('drops the shared interface on BOTH sides for adjacent matte and emissive voxels (lamp cap regression)', () => {
+    const built = buildOptimizedVoxelGroups(twoVoxels(base0, emissive0), DEFAULT_PALETTE)
+    expect(built.groups).toHaveLength(2)
+    expect(built.rawTriangles).toBe(24)
+    expect(built.optimizedTriangles).toBe(20)
+    for (const g of built.groups) {
+      expect(trisOnPlane(g.geometry, 'x', 1)).toBe(0)
+    }
+  })
+
+  it('leaves no coincident interface faces for a 3x3 emissive slab under a 3x3 matte cap', () => {
+    const model = emptyModel()
+    for (let x = -1; x <= 1; x++) {
+      for (let z = -1; z <= 1; z++) {
+        model.color.set(encodeKey(x, 8, z), { paletteSlot: emissive0 })
+        model.color.set(encodeKey(x, 9, z), { paletteSlot: base0 })
+      }
+    }
+    const built = buildOptimizedVoxelGroups({ ...model, bounds: recomputeBounds(model) }, DEFAULT_PALETTE)
+    expect(built.groups).toHaveLength(2)
+    for (const g of built.groups) {
+      expect(trisOnPlane(g.geometry, 'y', 9)).toBe(0)
+    }
+  })
+
+  it('keeps the textured shell free of the cross-material interface (opaque-opaque shell cull)', () => {
+    const merged = buildTexturedShellGeometryByColorMerged(
+      twoVoxels(base0, metal0),
+      DEFAULT_PALETTE,
+      () => 't',
+      () => [0, 0] as [number, number],
+      false,
+    )
+    expect(merged.groups).toHaveLength(2)
+    // Shell pass drops the shared quad on both sides before grouping: 24 - 4 = 20.
+    expect(merged.rawTriangles).toBe(20)
+    expect(merged.optimizedTriangles).toBe(20)
+  })
+
+  it('does NOT cull an opaque-opaque interface spanning two different animation slices', () => {
+    const model = twoVoxels(base0, metal0)
+    const nodeAssignment = new Map<CellKey, SliceKey>([
+      [encodeKey(0, 0, 0), 'slice-a'],
+      [encodeKey(1, 0, 0), 'slice-b'],
+    ])
+    const built = buildOptimizedVoxelGroupsBySlice(
+      { ...model, bounds: recomputeBounds(model) },
+      DEFAULT_PALETTE,
+      nodeAssignment,
+    )
+    expect(built.rawTriangles).toBe(24)
+    // The faces will separate at runtime, so both sides stay: nothing culled.
     expect(built.optimizedTriangles).toBe(24)
+  })
+
+  it('still culls an opaque-opaque interface when both voxels share one animation slice', () => {
+    const model = twoVoxels(base0, metal0)
+    const nodeAssignment = new Map<CellKey, SliceKey>([
+      [encodeKey(0, 0, 0), 'slice-a'],
+      [encodeKey(1, 0, 0), 'slice-a'],
+    ])
+    const built = buildOptimizedVoxelGroupsBySlice(
+      { ...model, bounds: recomputeBounds(model) },
+      DEFAULT_PALETTE,
+      nodeAssignment,
+    )
+    expect(built.rawTriangles).toBe(24)
+    expect(built.optimizedTriangles).toBe(20)
   })
 })
 
@@ -138,5 +252,116 @@ describe('glass occupancy culling (rough grid test, not triangle matching)', () 
     const built = buildOptimizedVoxelGroups({ ...model, bounds: recomputeBounds(model) }, DEFAULT_PALETTE)
     const glassGroup = built.groups.find((g) => g.materialClass === 'glass')!
     expect(triangleCount(glassGroup.geometry)).toBe(10) // one face (2 tris) culled
+  })
+})
+
+describe('two-sided flats (flat/flatwedge export pairs)', () => {
+  function flatModel(shapeKind: 'flat' | 'flatwedge', slot: PaletteSlotRef = base0): VoxelModel {
+    const model = emptyModel()
+    model.color.set(encodeKey(0, 0, 0), { paletteSlot: slot })
+    model.chamfer.set(encodeKey(0, 0, 0), { planeAxis: 'z', planeOrientation: 1, resolvedTo: { shapeKind, rotation: 0 } })
+    return { ...model, bounds: recomputeBounds(model) }
+  }
+
+  it('exports a lone flat as 4 triangles in 2 opposite-winding pairs (textured shell path)', () => {
+    for (const shapeKind of ['flat', 'flatwedge'] as const) {
+      const merged = buildTexturedShellGeometryByColorMerged(
+        flatModel(shapeKind),
+        DEFAULT_PALETTE,
+        () => 't',
+        () => [0, 0] as [number, number],
+        false,
+      )
+      expect(merged.groups, shapeKind).toHaveLength(1)
+      // The shell pass keeps both windings: 2 quads × 2 tris, neither paired away.
+      expect(merged.rawTriangles, shapeKind).toBe(4)
+      expect(merged.optimizedTriangles, shapeKind).toBe(4)
+      expect(windingBalance(merged.groups[0].geometry), shapeKind).toEqual({ withFirst: 2, againstFirst: 2 })
+    }
+  })
+
+  it('keeps both windings through the coplanar merge (same-facing-only welding)', () => {
+    const merged = buildTexturedShellGeometryByColorMerged(
+      flatModel('flat'),
+      DEFAULT_PALETTE,
+      () => 't',
+      () => [0, 0] as [number, number],
+      true,
+    )
+    expect(merged.optimizedTriangles).toBe(4)
+  })
+
+  it('exports a lone flat as 4 triangles via the CSG path (union bypass)', () => {
+    for (const shapeKind of ['flat', 'flatwedge'] as const) {
+      const built = buildOptimizedVoxelGroups(flatModel(shapeKind), DEFAULT_PALETTE)
+      expect(built.groups, shapeKind).toHaveLength(1)
+      expect(triangleCount(built.groups[0].geometry), shapeKind).toBe(4)
+      // Both windings present with opposite stored normals — not one winding doubled.
+      expect(windingBalance(built.groups[0].geometry), shapeKind).toEqual({ withFirst: 2, againstFirst: 2 })
+    }
+  })
+
+  it('leaves neighbouring cube faces intact next to a flat (never coincident)', () => {
+    const model = emptyModel()
+    model.color.set(encodeKey(0, 0, 0), { paletteSlot: base0 })
+    model.color.set(encodeKey(1, 0, 0), { paletteSlot: base1 })
+    model.chamfer.set(encodeKey(1, 0, 0), { planeAxis: 'z', planeOrientation: 1, resolvedTo: { shapeKind: 'flat', rotation: 0 } })
+    const built = buildOptimizedVoxelGroups({ ...model, bounds: recomputeBounds(model) }, DEFAULT_PALETTE)
+    expect(built.groups).toHaveLength(2)
+    // Cube: full 12; flat cell: its own 4. The cube's +x face (x=1) survives whole.
+    const cubeGroup = built.groups.find((g) => triangleCount(g.geometry) === 12)!
+    expect(cubeGroup).toBeDefined()
+    expect(trisOnPlane(cubeGroup.geometry, 'x', 1)).toBe(2)
+    const flatGroup = built.groups.find((g) => triangleCount(g.geometry) === 4)!
+    expect(flatGroup).toBeDefined()
+  })
+
+  it('welds coplanar same-facing flats across cells into a pane (flat-only pass)', () => {
+    // Two same-colour flats side by side: one group, 8 raw tris (2 windings × 2 quads),
+    // welded to 4 (one quad per winding) by the dedicated flat pass.
+    const model = emptyModel()
+    for (const x of [0, 1]) {
+      model.color.set(encodeKey(x, 0, 0), { paletteSlot: base0 })
+      model.chamfer.set(encodeKey(x, 0, 0), { planeAxis: 'z', planeOrientation: 1, resolvedTo: { shapeKind: 'flat', rotation: 0 } })
+    }
+    const built = buildOptimizedVoxelGroups({ ...model, bounds: recomputeBounds(model) }, DEFAULT_PALETTE)
+    expect(built.groups).toHaveLength(1)
+    expect(built.rawTriangles).toBe(8)
+    expect(triangleCount(built.groups[0].geometry)).toBe(4)
+    expect(windingBalance(built.groups[0].geometry)).toEqual({ withFirst: 2, againstFirst: 2 })
+  })
+
+  it('welds diagonal flatwedge panes across diagonal steps, keeping both windings', () => {
+    // Rotation-0 flatwedges in (0,0,0) and (1,-1,0) share the world x+y=1 plane and the
+    // (1,0)-(1,0,1) edge: 8 raw tris weld to 4 (one quad per winding). Even rotations step
+    // du=-dv; odd rotations step du=dv (the other diagonal family).
+    const model = emptyModel()
+    for (const [x, y] of [[0, 0], [1, -1]] as const) {
+      model.color.set(encodeKey(x, y, 0), { paletteSlot: base0 })
+      model.chamfer.set(encodeKey(x, y, 0), { planeAxis: 'z', planeOrientation: 1, resolvedTo: { shapeKind: 'flatwedge', rotation: 0 } })
+    }
+    const built = buildOptimizedVoxelGroups({ ...model, bounds: recomputeBounds(model) }, DEFAULT_PALETTE)
+    expect(built.groups).toHaveLength(1)
+    expect(built.rawTriangles).toBe(8)
+    expect(triangleCount(built.groups[0].geometry)).toBe(4)
+    expect(windingBalance(built.groups[0].geometry)).toEqual({ withFirst: 2, againstFirst: 2 })
+  })
+
+  it('welds flat panes in the textured merge without mixing the windings', () => {
+    const model = emptyModel()
+    for (const x of [0, 1]) {
+      model.color.set(encodeKey(x, 0, 0), { paletteSlot: base0 })
+      model.chamfer.set(encodeKey(x, 0, 0), { planeAxis: 'z', planeOrientation: 1, resolvedTo: { shapeKind: 'flat', rotation: 0 } })
+    }
+    const merged = buildTexturedShellGeometryByColorMerged(
+      { ...model, bounds: recomputeBounds(model) },
+      DEFAULT_PALETTE,
+      () => 't',
+      () => [0, 0] as [number, number],
+      true,
+    )
+    expect(merged.groups).toHaveLength(1)
+    expect(merged.rawTriangles).toBe(8)
+    expect(merged.optimizedTriangles).toBe(4)
   })
 })

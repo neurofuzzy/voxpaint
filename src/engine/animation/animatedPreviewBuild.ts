@@ -3,6 +3,7 @@ import type { Axis, CellKey, GridExtent, VoxelModel } from '@/engine/grid/types'
 import type { PaletteState } from '@/engine/palette/types'
 import type { TextureModel } from '@/engine/texture/types'
 import { buildBlendAtlas } from '@/engine/texture/boxMapping'
+import { TEXEL_SCALE } from '@/engine/texture/types'
 import { bakeOverlayTexturesByColor } from '@/engine/texture/overlay'
 import { buildTexturedGeometryBySlice } from '@/engine/texture/texturedGeometry'
 import { hasTextureContent } from '@/engine/texture/TextureStore'
@@ -36,6 +37,7 @@ export function buildAnimatedSliceMeshes(
   gridExtent: GridExtent,
   glassRoughnessLevel: number,
   slicePivots: Map<SliceKey, CellKey>,
+  texelScale: number = TEXEL_SCALE,
 ): AnimatedSliceMeshes | null {
   if (animSettings.size === 0) return null
   const { nodes } = assignVoxelsToNodes(model, animSettings, sliceMasks)
@@ -49,11 +51,11 @@ export function buildAnimatedSliceMeshes(
 
   const textured = hasTextureContent(texture)
   const groups = textured
-    ? buildTexturedGeometryBySlice(model, palette, nodeAssignment, gridExtent)
+    ? buildTexturedGeometryBySlice(model, palette, nodeAssignment, gridExtent, texelScale)
     : buildOptimizedVoxelGroupsBySlice(model, palette, nodeAssignment).groups
 
   const overlayByColor = textured
-    ? bakeOverlayTexturesByColor(groups.map((g) => g.colorKey), buildBlendAtlas(texture, gridExtent))
+    ? bakeOverlayTexturesByColor(groups.map((g) => g.colorKey), buildBlendAtlas(texture, gridExtent, texelScale))
     : null
 
   const emissiveAnimIndex = buildEmissiveAnimIndex(palette)

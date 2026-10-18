@@ -1,4 +1,7 @@
 import { useEffect } from 'react'
+import { effectiveExtent } from '@/engine/grid/GridStore'
+import { rectRegion } from '@/engine/tools/selectionMask'
+import { faceSizeFor, TEXEL_SCALE } from '@/engine/texture/types'
 import { useAppStore } from '@/store/useAppStore'
 import type { ToolId } from '@/store/types'
 
@@ -7,14 +10,16 @@ const TOOL_KEYS: Record<string, ToolId> = {
   e: 'erase',
   i: 'eyedropper',
   m: 'material',
+  t: 'textureface',
   s: 'select',
   k: 'fill',
   c: 'clone',
   v: 'move',
+  d: 'marker',
 }
 
 /**
- * Global keyboard shortcuts — undo/redo, copy/cut/paste, Escape-to-
+ * Global keyboard shortcuts — undo/redo, select-all, copy/cut/paste, Escape-to-
  * deselect, and single-letter tool switching. One decoupled if-chain (matching
  * trixelart's own use-keyboard-shortcuts.ts), separate from tool pointer-dispatch since this is
  * app/selection-domain, not per-tool pointer logic.
@@ -65,6 +70,18 @@ export function useKeyboardShortcuts(hoverCellRef?: React.RefObject<[number, num
           if (e.shiftKey) redo()
           else undo()
           e.preventDefault()
+        } else if (key === 'a' && !isAnimate) {
+          // Select-all: the full plane span in Model mode (logical (u,v) run over the even
+          // effective grid, symmetric about the origin), the whole face in Texture mode.
+          // setSelection bakes any pending float first, like every other selection change.
+          if (isTexture) {
+            const faceSize = faceSizeFor(store.meta.gridExtent, store.meta.texelScale ?? TEXEL_SCALE)
+            store.setTextureSelection(rectRegion(0, 0, faceSize - 1, faceSize - 1))
+          } else {
+            const half = effectiveExtent(store.meta.gridExtent) / 2
+            store.setSelection(rectRegion(-half, -half, half - 1, half - 1))
+          }
+          e.preventDefault()
         } else if (key === 'c' && selection) {
           copy()
           e.preventDefault()
@@ -85,6 +102,7 @@ export function useKeyboardShortcuts(hoverCellRef?: React.RefObject<[number, num
       if (e.key === 'Escape') {
         bakeFloat()
         clearSelection()
+        if (!isTexture && !isAnimate) store.selectMarker(null)
         e.preventDefault()
         return
       }
@@ -117,6 +135,13 @@ export function useKeyboardShortcuts(hoverCellRef?: React.RefObject<[number, num
 
       if ((key === 'delete' || key === 'backspace') && selection) {
         deleteSelection()
+        e.preventDefault()
+        return
+      }
+
+      // Delete/Backspace with no voxel selection removes the selected design marker (if any).
+      if ((key === 'delete' || key === 'backspace') && !isTexture && !isAnimate && store.selectedMarkerId) {
+        store.deleteMarker(store.selectedMarkerId)
         e.preventDefault()
         return
       }

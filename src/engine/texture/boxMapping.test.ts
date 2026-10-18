@@ -56,6 +56,46 @@ describe('boxFaceForCell', () => {
     expect(boxFaceForCell({ ...chamfer, planeOrientation: -1 }, [0, 0, 1])).toBe('nx')
   })
 
+  it('flips the page for half slabs, whose stored basis is the solid (non-viewer) side', () => {
+    // Recessed paint on z/1 stores (z,−1) with the void toward +z: the viewer-facing broad
+    // face must sample 'pz', exactly like a thin slab or full voxel facing +z.
+    const recessed: ChamferCell = { planeAxis: 'z', planeOrientation: -1, resolvedTo: { shapeKind: 'half', rotation: 0 } }
+    expect(boxFaceForCell(recessed, [0, 0, 1])).toBe('pz')
+    expect(boxFaceForCell(recessed, [0, 0, -1])).toBe('pz')
+    // The void-side page follows the void: an outward (z,1) half samples 'nz'.
+    const proud: ChamferCell = { planeAxis: 'z', planeOrientation: 1, resolvedTo: { shapeKind: 'half', rotation: 0 } }
+    expect(boxFaceForCell(proud, [0, 0, 1])).toBe('nz')
+    // Other shapes are untouched by the flip.
+    const thin: ChamferCell = { planeAxis: 'z', planeOrientation: -1, resolvedTo: { shapeKind: 'thin', rotation: 0 } }
+    expect(boxFaceForCell(thin, [0, 0, 1])).toBe('nz')
+  })
+
+  it('maps post/quarter columns cube-like: each face samples its own dominant-normal page', () => {
+    // A z-authored column's ends sample the end pages and its sides the side pages — the
+    // authoring basis only places the geometry, never the texture.
+    const post: ChamferCell = { planeAxis: 'z', planeOrientation: 1, resolvedTo: { shapeKind: 'post', rotation: 0 } }
+    const quarter: ChamferCell = { planeAxis: 'z', planeOrientation: -1, resolvedTo: { shapeKind: 'quarter', rotation: 2 } }
+    for (const cell of [post, quarter]) {
+      expect(boxFaceForCell(cell, [1, 0, 0])).toBe('px')
+      expect(boxFaceForCell(cell, [-1, 0, 0])).toBe('nx')
+      expect(boxFaceForCell(cell, [0, 1, 0])).toBe('py')
+      expect(boxFaceForCell(cell, [0, -1, 0])).toBe('ny')
+      expect(boxFaceForCell(cell, [0, 0, 1])).toBe('pz')
+      expect(boxFaceForCell(cell, [0, 0, -1])).toBe('nz')
+    }
+  })
+
+  it('maps flats to the authoring page like thin slabs and wedges', () => {
+    // A z-authored flat's quad samples 'pz' regardless of the queried normal; a flatwedge
+    // samples its authoring page like every other wedge-family face.
+    const flat: ChamferCell = { planeAxis: 'z', planeOrientation: 1, resolvedTo: { shapeKind: 'flat', rotation: 0 } }
+    expect(boxFaceForCell(flat, [0, 0, 1])).toBe('pz')
+    expect(boxFaceForCell(flat, [0, 0, -1])).toBe('pz')
+    const flatwedge: ChamferCell = { planeAxis: 'x', planeOrientation: -1, resolvedTo: { shapeKind: 'flatwedge', rotation: 2 } }
+    expect(boxFaceForCell(flatwedge, [0, 0, 1])).toBe('nx')
+    expect(boxFaceForCell(flatwedge, [1, 1, 0])).toBe('nx')
+  })
+
   it('uses the dominant signed normal axis for plain cube faces', () => {
     expect(boxFaceForCell(undefined, [1, 0, 0])).toBe('px')
     expect(boxFaceForCell(undefined, [-1, 0, 0])).toBe('nx')

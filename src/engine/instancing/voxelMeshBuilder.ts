@@ -1,12 +1,12 @@
 import * as THREE from 'three'
 import { decodeKey, encodeKey } from '@/engine/grid/GridStore'
 import type { CellKey, ChamferCell, Coord, VoxelModel } from '@/engine/grid/types'
-import { concaveCornerGeometry, convexCornerGeometry, mirrorVGeometry, rampGeometry, thinGeometry, wedgeGeometry } from '@/engine/chamfer/chamferGeometry'
+import { concaveCornerGeometry, convexCornerGeometry, flatGeometry, flatWedgeGeometry, halfGeometry, mirrorVGeometry, postGeometry, quarterGeometry, rampGeometry, thinGeometry, wedgeGeometry } from '@/engine/chamfer/chamferGeometry'
 import { materialClassFor, resolveSlotColor, type MaterialClass } from '@/engine/palette/palette'
 import type { PaletteState } from '@/engine/palette/types'
 import type { SliceKey } from '@/engine/animation/types'
 import { chamferBasisIsReflected, chamferInstanceMatrix } from './basis'
-import { optimizeGroupsByCSG, triangleCount, type VoxelGroup } from './meshOptimizer'
+import { mergeCoplanarFacesWithKeys, optimizeGroupsByCSG, triangleCount, type VoxelGroup } from './meshOptimizer'
 
 /**
  * Bakes the whole model into a single optimized "shell" mesh for the 3D preview's optimized-mesh
@@ -44,6 +44,13 @@ interface Face {
   /** The voxel cell this face was emitted from — tagged in `buildShellFaces`, read by the
    * animation-aware shell cull (`removeInteriorFaces`) and by-slice grouping. */
   cellKey?: CellKey
+  /**
+   * One winding of a two-sided flat (`flat`/`flatwedge`): export emits both windings as
+   * coincident opposite-normal quads so the GLB reads from both sides without relying on
+   * double-sided materials. Tagged faces are never paired by the shell pass (`removeInteriorFaces`)
+   * — the pair is the surface, not a hidden interior interface.
+   */
+  twoSided?: boolean
 }
 
 /**
@@ -65,22 +72,82 @@ const CHAMFER_BASE: Record<string, THREE.BufferGeometry> = (() => {
   const concave = concaveCornerGeometry(0)
   const wedge = wedgeGeometry(0)
   const thin = thinGeometry()
+  const half = halfGeometry()
+  const post = postGeometry()
+  const quarter = quarterGeometry(0)
+  const flat = flatGeometry()
+  const flatwedge = flatWedgeGeometry(0)
   return {
     ramp,
     convex,
     concave,
     wedge,
     thin,
+    half,
+    post,
+    quarter,
+    flat,
+    flatwedge,
     rampM: mirrorVGeometry(ramp),
     convexM: mirrorVGeometry(convex),
     concaveM: mirrorVGeometry(concave),
     wedgeM: mirrorVGeometry(wedge),
     thinM: mirrorVGeometry(thin),
+    halfM: mirrorVGeometry(half),
+    postM: mirrorVGeometry(post),
+    quarterM: mirrorVGeometry(quarter),
+    flatM: mirrorVGeometry(flat),
+    flatwedgeM: mirrorVGeometry(flatwedge),
   }
 })()
 
 function faceNormal(a: THREE.Vector3, b: THREE.Vector3, c: THREE.Vector3): THREE.Vector3 {
   return new THREE.Vector3().crossVectors(new THREE.Vector3().subVectors(b, a), new THREE.Vector3().subVectors(c, a)).normalize()
+}
+
+/** Clone a non-indexed geometry with every triangle's winding reversed and normals negated —
+ * the back winding of a two-sided flat export pair. Flat prefabs carry position+normal only.
+ * Normals are negated on ALL three vertices (not just the swapped pair): the merge reads the
+ * first vertex's normal, so a stale +z there would group the back winding with the front. */
+function reverseWinding(geom: THREE.BufferGeometry): THREE.BufferGeometry {
+  const out = geom.clone()
+  const pos = out.getAttribute('position') as THREE.BufferAttribute
+  const nrm = out.getAttribute('normal') as THREE.BufferAttribute
+  const parr = pos.array as Float32Array
+  const narr = nrm.array as Float32Array
+  for (let i = 0; i < pos.count; i += 3) {
+    for (let k = 0; k < 3; k++) {
+      const a = (i + 1) * 3 + k
+      const c = (i + 2) * 3 + k
+      const tp = parr[a]
+      parr[a] = parr[c]
+      parr[c] = tp
+      const tn = -narr[a]
+      narr[a] = -narr[c]
+      narr[c] = tn
+      narr[i * 3 + k] = -narr[i * 3 + k]
+    }
+  }
+  pos.needsUpdate = true
+  nrm.needsUpdate = true
+  return out
+}
+
+/**
+ * Push one cell's CSG-path geometry, plus the reversed winding for two-sided flats. An open
+ * quad is undefined behaviour for the ThreeBSP union, so both flat windings bypass it: marked
+ * `userData.twoSidedFlat` for `optimizeGroupsByCSG` to append post-union (the same pair the
+ * shell path emits as tagged `Face`s). Returns the appended triangle count for `rawTriangles`.
+ */
+function pushCellGeometry(group: VoxelGroup, geom: THREE.BufferGeometry, chamfer: ChamferCell | undefined): number {
+  group.geometries.push(geom)
+  const kind = chamfer?.resolvedTo?.shapeKind
+  if (kind !== 'flat' && kind !== 'flatwedge') return 0
+  geom.userData.twoSidedFlat = true
+  const back = reverseWinding(geom)
+  back.userData.twoSidedFlat = true
+  group.geometries.push(back)
+  return triangleCount(back)
 }
 
 /** Add one triangle, orienting its winding so its normal agrees with `outward` (if given). */
@@ -173,12 +240,15 @@ function emitChamfer(faces: Face[], base: THREE.BufferGeometry, matrix: THREE.Ma
 /**
  * Shell pass: drop back-to-back interior face pairs. Two faces with the same (order-independent)
  * quantized vertex-triple and opposing normals are the touching sides of two adjacent voxels. Culling:
- * - **Same material class:** both faces are dropped — a same-material interface is genuinely hidden.
+ * - **Both sides opaque** (matte/emissive/metal, same or different class): both faces are dropped —
+ *   the interface sits inside the combined solid and is never seen. Each material's mesh keeps a
+ *   hidden hole at the interface; the holes coincide, so nothing shows from outside. (Keeping both
+ *   sides instead leaves coincident opposite-normal quads that z-fight in some engines — e.g. an
+ *   emissive lamp block directly under a matte cap.)
  * - **Glass against a different material:** only the **glass** face is dropped, keeping the opaque
  *   neighbour's face. This avoids the glass surface z-fighting the coincident solid face behind it,
  *   while the solid face stays visible through the transmission.
- * - **Two different opaque classes** (e.g. matte↔metal): both kept — the interface is inside the solid
- *   model, never seen, so there's nothing to z-fight and different classes live in different meshes.
+ * - **Glass against glass:** both dropped (same-class rule).
  * Boundary faces (against empty space) and non-coincident faces are always kept.
  *
  * When `nodeAssignment` is given (animated export), a pair spanning two *different* animation nodes
@@ -200,14 +270,21 @@ export function removeInteriorFaces(faces: Face[], nodeAssignment?: Map<CellKey,
   for (const idxs of byTri.values()) {
     if (idxs.length !== 2) continue
     const [i, j] = idxs
+    // A two-sided flat's own windings share a vertex-triple by construction — they are the
+    // visible surface from opposite sides, never a hidden interior interface. Never pair them.
+    if (faces[i].twoSided || faces[j].twoSided) continue
     if (faces[i].normal.dot(faces[j].normal) >= -0.9) continue // not back-to-back
     if (nodeAssignment && sliceOf(faces[i]) !== sliceOf(faces[j])) continue // different animation nodes
 
     if (faces[i].materialClass === faces[j].materialClass) {
       removed.add(i) // same material → both sides hidden
       removed.add(j)
+    } else if (faces[i].materialClass !== 'glass' && faces[j].materialClass !== 'glass') {
+      removed.add(i) // different opaque classes (e.g. matte↔emissive) → both sides hidden
+      removed.add(j)
     } else {
-      // Different classes: drop only a glass face (it would z-fight the solid face behind it).
+      // Glass against a different class: drop only the glass face (it would z-fight the solid
+      // face behind it, while the solid face stays visible through the transmission).
       if (faces[i].materialClass === 'glass') removed.add(i)
       if (faces[j].materialClass === 'glass') removed.add(j)
     }
@@ -243,6 +320,27 @@ function buildShellFaces(
       const base = CHAMFER_BASE[`${chamfer.resolvedTo.shapeKind}${variant}`]
       chamferInstanceMatrix(coord, chamfer.planeAxis, chamfer.planeOrientation, chamfer.resolvedTo.rotation, matrix)
       emitChamfer(faces, base, matrix, mat)
+      const kind = chamfer.resolvedTo.shapeKind
+      if (kind === 'flat' || kind === 'flatwedge') {
+        // Two-sided export: the editor renders the single quad DoubleSide, but export must read
+        // from both sides without relying on double-sided materials — append the reversed
+        // winding as coincident opposite-normal quads. Both windings are tagged so the shell
+        // pass below never pairs them back together (see `Face.twoSided`).
+        const end = faces.length
+        for (let i = start; i < end; i++) {
+          const f = faces[i]
+          f.twoSided = true
+          faces.push({
+            a: f.a,
+            b: f.c,
+            c: f.b,
+            normal: f.normal.clone().negate(),
+            colorKey: f.colorKey,
+            materialClass: f.materialClass,
+            twoSided: true,
+          })
+        }
+      }
       for (let i = start; i < faces.length; i++) faces[i].chamfer = chamfer
     } else {
       emitCube(faces, coord, mat)
@@ -283,9 +381,11 @@ export interface OptimizedVoxelGroups {
 
 /**
  * Build per-voxel solid geometry grouped by (materialClass, colorKey), then CSG-union each group.
- * CSG boolean union naturally discards interior faces between adjacent same-colour voxels and
- * never creates false edge-bridges between disconnected components. Adjacent voxels of different
- * colours keep their shared interface faces (they live in separate CSG groups).
+ * CSG boolean union naturally discards interior faces between adjacent same-group voxels and
+ * never creates false edge-bridges between disconnected components. Exactly-coincident
+ * back-to-back interface faces between adjacent *opaque* groups are then culled on both sides
+ * (see `cullCoincidentOpaqueInterfaces` in `meshOptimizer.ts`) — the interface is inside the
+ * combined solid. Glass-involved interfaces keep the solid side (glass side only is dropped).
  *
  * Returns one `ColorGroupGeometry` per (materialClass, colorKey) pair — the consumer creates one
  * solid-colour PBR material per group. No vertex colours are needed.
@@ -322,8 +422,7 @@ export function buildOptimizedVoxelGroups(model: VoxelModel, palette: PaletteSta
       geom.translate(coord[0] + 0.5, coord[1] + 0.5, coord[2] + 0.5)
     }
 
-    rawTriangles += triangleCount(geom)
-    group.geometries.push(geom)
+    rawTriangles += triangleCount(geom) + pushCellGeometry(group, geom, chamfer)
   }
 
   const isOccupied = (x: number, y: number, z: number) => isCellOccupied(model, x, y, z)
@@ -396,8 +495,7 @@ export function buildOptimizedVoxelGroupsBySlice(
       geom.translate(coord[0] + 0.5, coord[1] + 0.5, coord[2] + 0.5)
     }
 
-    rawTriangles += triangleCount(geom)
-    group.geometries.push(geom)
+    rawTriangles += triangleCount(geom) + pushCellGeometry(group, geom, chamfer)
   }
 
   const isOccupied = (x: number, y: number, z: number) => isCellOccupied(model, x, y, z)
@@ -406,6 +504,21 @@ export function buildOptimizedVoxelGroupsBySlice(
   for (const g of groups) optimizedTriangles += triangleCount(g.geometry)
 
   return { groups, rawTriangles, optimizedTriangles }
+}
+
+function geometryFromFaces(faces: Face[]): THREE.BufferGeometry {
+  const positions: number[] = []
+  const normals: number[] = []
+  for (const f of faces) {
+    for (const v of [f.a, f.b, f.c]) {
+      positions.push(v.x, v.y, v.z)
+      normals.push(f.normal.x, f.normal.y, f.normal.z)
+    }
+  }
+  const geometry = new THREE.BufferGeometry()
+  geometry.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3))
+  geometry.setAttribute('normal', new THREE.Float32BufferAttribute(normals, 3))
+  return geometry
 }
 
 /**
@@ -446,6 +559,15 @@ export function buildTexturedShellGeometry(model: VoxelModel, palette: PaletteSt
   return geometryFromFacesUV(faces, uvFor)
 }
 
+export function buildShellGeometryByFacePredicate(
+  model: VoxelModel,
+  palette: PaletteState,
+  predicate: (chamfer: ChamferCell | undefined, normal: THREE.Vector3) => boolean,
+): THREE.BufferGeometry {
+  const { faces } = buildShellFaces(model, palette)
+  return geometryFromFaces(faces.filter((f) => predicate(f.chamfer, f.normal)))
+}
+
 /** Per-(color, material class) split of the textured shell, for GLTF export — each group carries UVs
  * so every per-color material can share the atlas map (baseColor × map = the shade/multiply preview). */
 export function buildTexturedShellGeometryByColor(model: VoxelModel, palette: PaletteState, uvFor: VertexUV): ColorGroupGeometry[] {
@@ -467,8 +589,7 @@ export function buildTexturedShellGeometryByColor(model: VoxelModel, palette: Pa
 /** Per-(color, material class, animation slice) split of the textured shell, for animated GLTF
  * export. Faces spanning two different animation nodes are never shell-culled (see
  * `removeInteriorFaces`), so each node's mesh stays watertight once it moves independently. */
-export function buildTexturedShellGeometryBySliceColor(
-  model: VoxelModel,
+export function buildTexturedShellGeometryBySliceColor(  model: VoxelModel,
   palette: PaletteState,
   uvFor: VertexUV,
   nodeAssignment: Map<CellKey, SliceKey>,
@@ -488,4 +609,151 @@ export function buildTexturedShellGeometryBySliceColor(
     out.push({ colorKey: group[0].colorKey, materialClass: group[0].materialClass, sliceKey, geometry: geometryFromFacesUV(group, uvFor) })
   }
   return out
+}
+
+/**
+ * Box-face tag a shell face samples its texture from, injected so `engine/instancing` keeps no
+ * dependency on `engine/texture` (same pattern as `VertexUV`). The texture layer resolves it via
+ * `boxFaceForCell` — the exact page the unmerged path would sample for this face.
+ */
+export type TexturedFaceTag = string
+export type TagForTexturedFace = (chamfer: ChamferCell | undefined, normal: THREE.Vector3) => TexturedFaceTag
+/** UV lookup for a merged vertex: the box-map projection of `vertex` onto the tagged page. */
+export type UVForTexturedTag = (tag: TexturedFaceTag, vertex: THREE.Vector3) => [number, number]
+
+export interface TexturedGroupsResult {
+  groups: ColorGroupGeometry[]
+  /** Shell triangles after interior-face culling, before any coplanar merge. */
+  rawTriangles: number
+  /** Triangles after the (optional) coplanar merge. */
+  optimizedTriangles: number
+}
+
+/**
+ * Per-(color, material class) textured shell with an optional tag-aware coplanar merge — the
+ * Model-mode preview path for textured models. Merge groups are keyed on (material, color,
+ * texture page), so a weld never mixes materials, colors, or texture pages; UVs are recomputed
+ * per merged vertex from (page, position), which is exact because the box-map projection is
+ * affine in position for a fixed page (the rasterizer's barycentric interpolation then
+ * reproduces the per-texel mapping precisely, including across freshly triangulated interiors).
+ *
+ * With `mergeCoplanar` off this reduces to the plain shell (same output as
+ * `buildTexturedShellGeometryByColor`, plus counts) — the toggle-off path stays untouched.
+ */
+export function buildTexturedShellGeometryByColorMerged(
+  model: VoxelModel,
+  palette: PaletteState,
+  tagFor: TagForTexturedFace,
+  uvForTag: UVForTexturedTag,
+  mergeCoplanar: boolean,
+): TexturedGroupsResult {
+  const { faces } = buildShellFaces(model, palette)
+  const byMaterial = new Map<string, Face[]>()
+  for (const f of faces) {
+    const matKey = `${f.colorKey}:${f.materialClass}`
+    const group = byMaterial.get(matKey)
+    if (group) group.push(f)
+    else byMaterial.set(matKey, [f])
+  }
+
+  const out: ColorGroupGeometry[] = []
+  let optimizedTriangles = 0
+  const color = new THREE.Color()
+  for (const group of byMaterial.values()) {
+    const [{ colorKey, materialClass }] = group
+    color.setHex(colorKey)
+    if (!mergeCoplanar) {
+      const positions: number[] = []
+      const normals: number[] = []
+      const colors: number[] = []
+      const uvs: number[] = []
+      for (const f of group) {
+        const tag = tagFor(f.chamfer, f.normal)
+        for (const v of [f.a, f.b, f.c]) {
+          positions.push(v.x, v.y, v.z)
+          normals.push(f.normal.x, f.normal.y, f.normal.z)
+          colors.push(color.r, color.g, color.b)
+          const [uu, vv] = uvForTag(tag, v)
+          uvs.push(uu, vv)
+        }
+      }
+      const geometry = new THREE.BufferGeometry()
+      geometry.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3))
+      geometry.setAttribute('normal', new THREE.Float32BufferAttribute(normals, 3))
+      geometry.setAttribute('color', new THREE.Float32BufferAttribute(colors, 3))
+      geometry.setAttribute('uv', new THREE.Float32BufferAttribute(uvs, 2))
+      optimizedTriangles += triangleCount(geometry)
+      out.push({ colorKey, materialClass, geometry })
+      continue
+    }
+
+    // Merge input soup (position + flat normal per shell triangle) with the texture page as the
+    // per-triangle merge key; the merged output reports one page per surviving triangle.
+    // Two-sided flats merge in their OWN pass (flats only with flats — never with solids): the
+    // flat subset welds coplanar same-facing quads across cells into panes, while the same-facing
+    // rule keeps each flat's opposite-winding pair intact, exactly like the CSG path's flat pass.
+    const mergeFaces = (subset: Face[]) => {
+      const inPositions: number[] = []
+      const inNormals: number[] = []
+      const inTags: string[] = []
+      for (const f of subset) {
+        const tag = tagFor(f.chamfer, f.normal)
+        for (const v of [f.a, f.b, f.c]) {
+          inPositions.push(v.x, v.y, v.z)
+          inNormals.push(f.normal.x, f.normal.y, f.normal.z)
+        }
+        inTags.push(tag)
+      }
+      const soup = new THREE.BufferGeometry()
+      soup.setAttribute('position', new THREE.Float32BufferAttribute(inPositions, 3))
+      soup.setAttribute('normal', new THREE.Float32BufferAttribute(inNormals, 3))
+      const merged = mergeCoplanarFacesWithKeys(soup, (t) => inTags[t])
+      soup.dispose()
+      return merged
+    }
+    const emitMerged = (merged: { geometry: THREE.BufferGeometry; keys: TexturedFaceTag[] }) => {
+      const mergedPos = merged.geometry.getAttribute('position') as THREE.BufferAttribute
+      const mergedNrm = merged.geometry.getAttribute('normal') as THREE.BufferAttribute
+      const positions: number[] = []
+      const normals: number[] = []
+      const colors: number[] = []
+      const uvs: number[] = []
+      const v = new THREE.Vector3()
+      for (let t = 0; t < merged.keys.length; t++) {
+        for (let k = 0; k < 3; k++) {
+          v.fromBufferAttribute(mergedPos, t * 3 + k)
+          positions.push(v.x, v.y, v.z)
+          normals.push(mergedNrm.getX(t * 3 + k), mergedNrm.getY(t * 3 + k), mergedNrm.getZ(t * 3 + k))
+          colors.push(color.r, color.g, color.b)
+          const [uu, vv] = uvForTag(merged.keys[t], v)
+          uvs.push(uu, vv)
+        }
+      }
+      merged.geometry.dispose()
+      return { positions, normals, colors, uvs }
+    }
+    const solidFaces = group.filter((f) => !f.twoSided)
+    const flatFaces = group.filter((f) => f.twoSided)
+    const positions: number[] = []
+    const normals: number[] = []
+    const colors: number[] = []
+    const uvs: number[] = []
+    for (const subset of [solidFaces, flatFaces]) {
+      if (subset.length === 0) continue
+      const out = emitMerged(mergeFaces(subset))
+      positions.push(...out.positions)
+      normals.push(...out.normals)
+      colors.push(...out.colors)
+      uvs.push(...out.uvs)
+    }
+    const geometry = new THREE.BufferGeometry()
+    geometry.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3))
+    geometry.setAttribute('normal', new THREE.Float32BufferAttribute(normals, 3))
+    geometry.setAttribute('color', new THREE.Float32BufferAttribute(colors, 3))
+    geometry.setAttribute('uv', new THREE.Float32BufferAttribute(uvs, 2))
+    optimizedTriangles += triangleCount(geometry)
+    out.push({ colorKey, materialClass, geometry })
+  }
+
+  return { groups: out, rawTriangles: faces.length, optimizedTriangles }
 }

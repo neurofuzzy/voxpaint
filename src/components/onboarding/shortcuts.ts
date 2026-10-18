@@ -22,10 +22,12 @@ export function shortcutGroups(mod: string): ShortcutGroup[] {
         { keys: ['E'], label: 'Erase' },
         { keys: ['I'], label: 'Eyedropper' },
         { keys: ['M'], label: 'Material' },
+        { keys: ['T'], label: 'Texture Face' },
         { keys: ['S'], label: 'Select' },
         { keys: ['K'], label: 'Fill' },
         { keys: ['C'], label: 'Clone' },
         { keys: ['V'], label: 'Move' },
+        { keys: ['D'], label: 'Marker' },
       ],
     },
     {
@@ -38,6 +40,7 @@ export function shortcutGroups(mod: string): ShortcutGroup[] {
     {
       title: 'Selection & clipboard',
       shortcuts: [
+        { keys: [mod, 'A'], label: 'Select all' },
         { keys: [mod, 'C'], label: 'Copy selection' },
         { keys: [mod, 'X'], label: 'Cut selection' },
         { keys: [mod, 'V'], label: 'Paste in place' },

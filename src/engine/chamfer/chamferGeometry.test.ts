@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import * as THREE from 'three'
-import { concaveCornerGeometry, convexCornerGeometry, mirrorVGeometry, rampGeometry, unitCubeGeometry, wedgeGeometry } from './chamferGeometry'
+import { concaveCornerGeometry, convexCornerGeometry, flatGeometry, flatWedgeGeometry, halfGeometry, mirrorVGeometry, postGeometry, quarterGeometry, rampGeometry, unitCubeGeometry, wedgeGeometry } from './chamferGeometry'
 
 type Vec = [number, number, number]
 
@@ -221,8 +221,7 @@ describe('chamfer geometry — v-mirrored variants (reflected-plane pools)', () 
   })
 })
 
-describe('chamfer geometry — baked rotation', () => {
-  it('rotation is a plain rotation about the origin: 4 quarter-turns returns to the canonical mesh', () => {
+describe('chamfer geometry — baked rotation', () => {  it('rotation is a plain rotation about the origin: 4 quarter-turns returns to the canonical mesh', () => {
     const base = rampGeometry(0).getAttribute('position').array
     // A full turn (four 90° steps) is applied as rotation param 4 ≡ 0 via rotateZ; verify the
     // canonical mesh footprint bounds are rotation-invariant for each quarter turn.
@@ -246,5 +245,203 @@ describe('chamfer geometry — baked rotation', () => {
     expect(topKeys).toContain('-0.5,-0.5') // NW top present
     expect(topKeys).not.toContain('0.5,0.5') // SE knife
     expect(topKeys).not.toContain('-0.5,0.5') // SW knife
+  })
+})
+
+describe('chamfer geometry — half slab (Model G)', () => {
+  it('is a full-footprint box flush with the outward face (z in [0, 0.5])', () => {
+    const g = halfGeometry()
+    g.computeBoundingBox()
+    const { min, max } = g.boundingBox!
+    expect([round(min.x), round(min.y), round(min.z)]).toEqual([-0.5, -0.5, 0])
+    expect([round(max.x), round(max.y), round(max.z)]).toEqual([0.5, 0.5, 0.5])
+  })
+
+  it('has 12 triangles (a full box) with outward windings', () => {
+    const g = halfGeometry()
+    expect(triangles(g).length).toBe(12)
+    const inside: Vec = [0, 0, 0.25]
+    for (const tri of triangles(g)) {
+      const normal = cross(sub(tri[1], tri[0]), sub(tri[2], tri[0]))
+      expect(dot(normal, sub(centroid(tri), inside)), `triangle ${JSON.stringify(tri)}`).toBeGreaterThan(0)
+    }
+  })
+
+  it('mirrorVGeometry(half) keeps the flush-outward solid with outward windings', () => {
+    const m = mirrorVGeometry(halfGeometry())
+    expect(triangles(m).length).toBe(12)
+    m.computeBoundingBox()
+    const { min, max } = m.boundingBox!
+    expect([round(min.x), round(min.y), round(min.z)]).toEqual([-0.5, -0.5, 0])
+    expect([round(max.x), round(max.y), round(max.z)]).toEqual([0.5, 0.5, 0.5])
+    const inside: Vec = [0, 0, 0.25]
+    for (const tri of triangles(m)) {
+      const normal = cross(sub(tri[1], tri[0]), sub(tri[2], tri[0]))
+      expect(dot(normal, sub(centroid(tri), inside)), `triangle ${JSON.stringify(tri)}`).toBeGreaterThan(0)
+    }
+  })
+})
+
+describe('chamfer geometry — post column (Model H)', () => {
+  it('is a centered 0.5×0.5 column running the full unit length along z', () => {
+    const g = postGeometry()
+    g.computeBoundingBox()
+    const { min, max } = g.boundingBox!
+    expect([round(min.x), round(min.y), round(min.z)]).toEqual([-0.25, -0.25, -0.5])
+    expect([round(max.x), round(max.y), round(max.z)]).toEqual([0.25, 0.25, 0.5])
+  })
+
+  it('has 12 triangles (a full box) with outward windings', () => {
+    const g = postGeometry()
+    expect(triangles(g).length).toBe(12)
+    const inside: Vec = [0, 0, 0]
+    for (const tri of triangles(g)) {
+      const normal = cross(sub(tri[1], tri[0]), sub(tri[2], tri[0]))
+      expect(dot(normal, sub(centroid(tri), inside)), `triangle ${JSON.stringify(tri)}`).toBeGreaterThan(0)
+    }
+  })
+
+  it('mirrorVGeometry(post) keeps the centered solid with outward windings', () => {
+    const m = mirrorVGeometry(postGeometry())
+    expect(triangles(m).length).toBe(12)
+    m.computeBoundingBox()
+    const { min, max } = m.boundingBox!
+    expect([round(min.x), round(min.y), round(min.z)]).toEqual([-0.25, -0.25, -0.5])
+    expect([round(max.x), round(max.y), round(max.z)]).toEqual([0.25, 0.25, 0.5])
+    const inside: Vec = [0, 0, 0]
+    for (const tri of triangles(m)) {
+      const normal = cross(sub(tri[1], tri[0]), sub(tri[2], tri[0]))
+      expect(dot(normal, sub(centroid(tri), inside)), `triangle ${JSON.stringify(tri)}`).toBeGreaterThan(0)
+    }
+  })
+})
+
+describe('chamfer geometry — quarter column (Model I)', () => {
+  it('rotation 0 occupies the NE quadrant (u in [0, 0.5], v in [-0.5, 0]), full z length', () => {
+    const g = quarterGeometry(0)
+    g.computeBoundingBox()
+    const { min, max } = g.boundingBox!
+    expect([round(min.x), round(min.y), round(min.z)]).toEqual([0, -0.5, -0.5])
+    expect([round(max.x), round(max.y), round(max.z)]).toEqual([0.5, 0, 0.5])
+  })
+
+  it.each([
+    [0, [0, -0.5, -0.5], [0.5, 0, 0.5]], // NE
+    [1, [0, 0, -0.5], [0.5, 0.5, 0.5]], // SE
+    [2, [-0.5, 0, -0.5], [0, 0.5, 0.5]], // SW
+    [3, [-0.5, -0.5, -0.5], [0, 0, 0.5]], // NW
+  ] as const)('rotation %i occupies its corner with 12 outward-wound triangles', (rotation, lo, hi) => {
+    const g = quarterGeometry(rotation)
+    expect(triangles(g).length).toBe(12)
+    g.computeBoundingBox()
+    const { min, max } = g.boundingBox!
+    // rotateZ leaves exact-zero dust with a negative sign (−0); +0 collapses it for comparison.
+    const norm = (n: number) => round(n) + 0
+    expect([norm(min.x), norm(min.y), norm(min.z)]).toEqual([...lo])
+    expect([norm(max.x), norm(max.y), norm(max.z)]).toEqual([...hi])
+    const inside: Vec = [(lo[0] + hi[0]) / 2, (lo[1] + hi[1]) / 2, 0]
+    for (const tri of triangles(g)) {
+      const normal = cross(sub(tri[1], tri[0]), sub(tri[2], tri[0]))
+      expect(dot(normal, sub(centroid(tri), inside)), `triangle ${JSON.stringify(tri)}`).toBeGreaterThan(0)
+    }
+  })
+
+  it('mirrorVGeometry(quarter) moves NE to SE with outward windings', () => {
+    const m = mirrorVGeometry(quarterGeometry(0))
+    expect(triangles(m).length).toBe(12)
+    m.computeBoundingBox()
+    const { min, max } = m.boundingBox!
+    expect([round(min.x), round(min.y), round(min.z)]).toEqual([0, 0, -0.5])
+    expect([round(max.x), round(max.y), round(max.z)]).toEqual([0.5, 0.5, 0.5])
+    const inside: Vec = [0.25, 0.25, 0]
+    for (const tri of triangles(m)) {
+      const normal = cross(sub(tri[1], tri[0]), sub(tri[2], tri[0]))
+      expect(dot(normal, sub(centroid(tri), inside)), `triangle ${JSON.stringify(tri)}`).toBeGreaterThan(0)
+    }
+  })
+})
+
+describe('chamfer geometry — flat quad (Model J)', () => {
+  it('is a single u×v square at z = 0 with a +z normal (2 triangles)', () => {
+    const g = flatGeometry()
+    const tris = triangles(g)
+    expect(tris.length).toBe(2)
+    g.computeBoundingBox()
+    const { min, max } = g.boundingBox!
+    expect([round(min.x), round(min.y), round(min.z)]).toEqual([-0.5, -0.5, 0])
+    expect([round(max.x), round(max.y), round(max.z)]).toEqual([0.5, 0.5, 0])
+    for (const tri of tris) {
+      const normal = cross(sub(tri[1], tri[0]), sub(tri[2], tri[0]))
+      expect(normal[2]).toBeGreaterThan(0)
+      expect(Math.abs(normal[0]) + Math.abs(normal[1])).toBeLessThan(1e-9)
+    }
+  })
+
+  it('mirrorVGeometry(flat) is the same quad with a +z normal', () => {
+    const m = mirrorVGeometry(flatGeometry())
+    expect(triangles(m).length).toBe(2)
+    m.computeBoundingBox()
+    const { min, max } = m.boundingBox!
+    expect([round(min.x), round(min.y), round(min.z)]).toEqual([-0.5, -0.5, 0])
+    expect([round(max.x), round(max.y), round(max.z)]).toEqual([0.5, 0.5, 0])
+    const nrm = m.getAttribute('normal') as THREE.BufferAttribute
+    for (let i = 0; i < nrm.count; i++) {
+      expect(nrm.getZ(i)).toBeGreaterThan(0)
+    }
+  })
+})
+
+describe('chamfer geometry — flat wedge quad (Model K)', () => {
+  it('rotation 0 is the NW-SE diagonal, full depth, normal toward NE (2 triangles)', () => {
+    const g = flatWedgeGeometry(0)
+    const tris = triangles(g)
+    expect(tris.length).toBe(2)
+    // Every vertex sits on the u−v = 0 diagonal, at the cell's vertical edges.
+    for (const tri of tris) {
+      for (const v of tri) {
+        expect(round(v[0] - v[1])).toBe(0)
+        expect(Math.abs(round(v[0]))).toBe(0.5)
+      }
+    }
+    // Normal points NE (u+, v−), horizontal: (1,−1,0)/√2.
+    for (const tri of tris) {
+      const normal = cross(sub(tri[1], tri[0]), sub(tri[2], tri[0]))
+      const len = Math.hypot(normal[0], normal[1], normal[2])
+      expect(normal[0] / len).toBeCloseTo(Math.SQRT1_2, 5)
+      expect(normal[1] / len).toBeCloseTo(-Math.SQRT1_2, 5)
+      expect(normal[2] / len).toBeCloseTo(0, 5)
+    }
+  })
+
+  it.each([
+    [0, 0], // NW-SE diagonal: u−v = 0
+    [1, 2], // NE-SW diagonal: u+v = 0
+    [2, 0], // NW-SE diagonal, opposite facing
+    [3, 2], // NE-SW diagonal, opposite facing
+  ] as const)('rotation %i rides its diagonal', (rotation, diag) => {
+    const g = flatWedgeGeometry(rotation)
+    expect(triangles(g).length).toBe(2)
+    for (const tri of triangles(g)) {
+      for (const v of tri) {
+        const key = diag === 0 ? round(v[0] - v[1]) : round(v[0] + v[1])
+        expect(key).toBe(0)
+      }
+    }
+  })
+
+  it('mirrorVGeometry(flatwedge) rides the NE-SW diagonal (the rotation-1 solid)', () => {
+    const m = mirrorVGeometry(flatWedgeGeometry(0))
+    expect(triangles(m).length).toBe(2)
+    for (const tri of triangles(m)) {
+      for (const v of tri) {
+        expect(round(v[0] + v[1])).toBe(0)
+      }
+    }
+    // Mirrored normal faces SE; the interior point sits behind it (u+v < 0).
+    const inside: Vec = [-0.25, -0.25, 0]
+    for (const tri of triangles(m)) {
+      const normal = cross(sub(tri[1], tri[0]), sub(tri[2], tri[0]))
+      expect(dot(normal, sub(centroid(tri), inside)), `triangle ${JSON.stringify(tri)}`).toBeGreaterThan(0)
+    }
   })
 })

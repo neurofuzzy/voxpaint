@@ -10,6 +10,9 @@ import type { ToolContext, ToolHandler } from './types'
 export type EditToolHooks = {
   beginStroke: (ctx: ToolContext) => void
   commitStroke: (ctx: ToolContext) => void
+  /** Optional end-of-stroke fix-up, run inside the open stroke after the last cell write (and
+   * any shift-line flush) but before `commitStroke`, so it lands in the same undo step. */
+  correctStroke?: (ctx: ToolContext) => void
 }
 
 const defaultHooks: EditToolHooks = {
@@ -64,6 +67,10 @@ export function makeEditTool(apply: (ctx: ToolContext, u: number, v: number) => 
         for (const [lu, lv] of bresenhamLine(anchor[0], anchor[1], end[0], end[1])) apply(ctx, lu, lv)
       }
       ctx.setLinePreview(null)
+      // Same-stroke correction (e.g. bevel re-resolution against the finished stroke) before
+      // the commit seals the undo step. Covers mouse-up, pen-up, and touch-release alike —
+      // every pointer path funnels through this onUp.
+      hooks.correctStroke?.(ctx)
       ctx.drag.current = { kind: 'idle' }
       hooks.commitStroke(ctx)
     },

@@ -46,7 +46,24 @@ const PRINT_ORIENT_X = Math.atan(1 / Math.SQRT2)
 
 /** Build the export scene and serialize it to a binary STL ArrayBuffer. */
 export function exportModelToStl(model: VoxelModel, palette: PaletteState, options: StlExportOptions = {}): ArrayBuffer {
-  const groups = buildOptimizedVoxelGeometryByMaterial(model, palette, true)
+  // Zero-thickness flats are not printable: strip them before the group build (post-union
+  // groups have lost shape identity, so they can't be filtered afterward). The count is logged.
+  let buildModel = model
+  const flatKeys: string[] = []
+  for (const [key, cell] of model.chamfer) {
+    if (cell.resolvedTo?.shapeKind === 'flat' || cell.resolvedTo?.shapeKind === 'flatwedge') flatKeys.push(key)
+  }
+  if (flatKeys.length > 0) {
+    console.info(`[stl] skipping ${flatKeys.length} flat panel(s) — zero thickness isn't printable`)
+    const color = new Map(model.color)
+    const chamfer = new Map(model.chamfer)
+    for (const key of flatKeys) {
+      color.delete(key)
+      chamfer.delete(key)
+    }
+    buildModel = { color, chamfer, bounds: model.bounds }
+  }
+  const groups = buildOptimizedVoxelGeometryByMaterial(buildModel, palette, true)
   const geometries: THREE.BufferGeometry[] = []
   const content = new THREE.Group()
 

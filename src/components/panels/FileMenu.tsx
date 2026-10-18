@@ -4,6 +4,7 @@ import { useRef, useState } from 'react'
 import { readProjectFile, downloadProjectFile } from '@/engine/persistence/projectFile'
 import { deserializeProject, serializeProject } from '@/engine/persistence/serialize'
 import { clampPlaneOffset } from '@/engine/grid/GridStore'
+import { isIPad } from '@/engine/input/isIPad'
 import { useAppStore } from '@/store/useAppStore'
 import { showToast } from '@/components/ui/toastBus'
 import { ExportGltfDialog } from './ExportGltfDialog'
@@ -18,15 +19,15 @@ export function FileMenu() {
   const setStatusMessage = useAppStore((s) => s.setStatusMessage)
 
   function handleExport() {
-    const { model, palette, meta, texture, ambientOcclusion, noiseLevel, specularNoiseLevel, aoStrength, glassRoughnessLevel, exposure, exportScaleFactor, exportAnchor, exportAlignToObjectBounds, exportIncludeTextureMaps, animSettings, sliceMasks, slicePivots } = useAppStore.getState()
-    downloadProjectFile(serializeProject(model, palette, meta, texture, { ambientOcclusion, noiseLevel, specularNoiseLevel, aoStrength, glassRoughnessLevel, exposure, exportScaleFactor, exportAnchor, exportAlignToObjectBounds, exportIncludeTextureMaps }, animSettings, sliceMasks, slicePivots))
+    const { model, palette, meta, texture, ambientOcclusion, noiseLevel, specularNoiseLevel, noiseScale, aoStrength, glassRoughnessLevel, exposure, exportScaleFactor, exportAnchor, exportAlignToObjectBounds, exportIncludeTextureMaps, exportIncludeAOMaps, exportIncludeMarkers, animSettings, sliceMasks, slicePivots, markers } = useAppStore.getState()
+    downloadProjectFile(serializeProject(model, palette, meta, texture, { ambientOcclusion, noiseLevel, specularNoiseLevel, noiseScale, aoStrength, glassRoughnessLevel, exposure, exportScaleFactor, exportAnchor, exportAlignToObjectBounds, exportIncludeTextureMaps, exportIncludeAOMaps, exportIncludeMarkers }, animSettings, sliceMasks, slicePivots, markers))
     showToast('Project exported.')
   }
 
   async function handleImportFile(file: File) {
     try {
       const parsed = await readProjectFile(file)
-      const { model, palette, meta, texture, view, animSettings, sliceMasks, slicePivots } = deserializeProject(parsed)
+      const { model, palette, meta, texture, view, animSettings, sliceMasks, slicePivots, markers } = deserializeProject(parsed)
       // Same project-switch hygiene as newProject: abandon open strokes (a pending float belongs
       // to the old model) rather than baking them into the imported one.
       useAppStore.getState().cancelStroke()
@@ -59,6 +60,7 @@ export function FileMenu() {
         s.ambientOcclusion = view.ambientOcclusion ?? false
         s.noiseLevel = view.noiseLevel ?? 0
         s.specularNoiseLevel = view.specularNoiseLevel ?? 0
+        s.noiseScale = view.noiseScale === 2 || view.noiseScale === 4 ? view.noiseScale : 1
         s.aoStrength = view.aoStrength ?? 1
         s.glassRoughnessLevel = view.glassRoughnessLevel ?? 0.3
         s.exposure = view.exposure ?? 1
@@ -66,11 +68,15 @@ export function FileMenu() {
         s.exportAnchor = view.exportAnchor ?? 'center'
         s.exportAlignToObjectBounds = view.exportAlignToObjectBounds ?? false
         s.exportIncludeTextureMaps = view.exportIncludeTextureMaps ?? true
+        s.exportIncludeAOMaps = view.exportIncludeAOMaps ?? true
+        s.exportIncludeMarkers = view.exportIncludeMarkers ?? true
         s.animSettings = animSettings
         s.sliceMasks = sliceMasks
         s.slicePivots = slicePivots
         s.animPast = []
         s.animFuture = []
+        s.markers = markers
+        s.selectedMarkerId = null
       })
       showToast('Project imported.')
     } catch (err) {
@@ -80,7 +86,7 @@ export function FileMenu() {
 
   return (
     <>
-    <DropdownMenu.Root>
+    <DropdownMenu.Root modal={!isIPad() /* non-modal on iPad: modal Radix overlays swallow Apple Pencil taps */}>
       <DropdownMenu.Trigger asChild>
         <button
           className="flex items-center gap-1 rounded-md px-2.5 py-1.5 text-sm text-neutral-300 hover:bg-neutral-800"

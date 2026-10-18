@@ -70,6 +70,86 @@ export function thinGeometry(): THREE.BufferGeometry {
 }
 
 /**
+ * Model G — half slab: a full-footprint box that is half-thickness (0.5) along the outward (z)
+ * axis, flush with the outward face (`z ∈ [0, 0.5]`) rather than centered like the thin slab.
+ * The authoring orientation picks the side (flipping `planeOrientation` moves the slab to the
+ * other half — a geometry edit, so rebase tools refuse halves). Rotation is always 0; like
+ * `thinGeometry` it is returned non-indexed for `voxelMeshBuilder`'s triangle-soup loop. Created
+ * by project rescale (a doubled centered thin slab straddles the new layer boundary) and by the
+ * half paint kind — never by the chamfer resolver.
+ */
+export function halfGeometry(): THREE.BufferGeometry {
+  const geometry = new THREE.BoxGeometry(1, 1, 0.5).toNonIndexed()
+  geometry.translate(0, 0, 0.25)
+  return geometry
+}
+
+/**
+ * Model H — post: a centered square column, 0.5×0.5 in the plane's u×v footprint and running
+ * the full unit length along the outward (z) axis. The centered sibling of the thin slab with
+ * the axes swapped (thin is full-footprint × half-thickness; post is half-footprint ×
+ * full-length). Fully symmetric about z and under quarter-turns about z, so like `thinGeometry`
+ * it takes no `rotation` and paints frozen with `rotation: 0`. Returned non-indexed for
+ * `voxelMeshBuilder`'s triangle-soup loop.
+ */
+export function postGeometry(): THREE.BufferGeometry {
+  return new THREE.BoxGeometry(0.5, 0.5, 1).toNonIndexed()
+}
+
+/**
+ * Model I — quarter: the post pushed into one u×v corner — a 0.5×0.5×1 column occupying a
+ * single quadrant of the cell, full length along the outward (z) axis. Canonical (rotation-0)
+ * quadrant is NE (`u ∈ [0, 0.5]`, `v ∈ [-0.5, 0]`); `rotation` is the *occupied* corner index
+ * (NE=0, SE=1, SW=2, NW=3 — the same corner order `classify` uses), baked with the same
+ * `rotateZ` convention as the other prefabs so the instancing matrix's `Rz(rotation)` agrees.
+ * Like `halfGeometry` it is returned non-indexed for `voxelMeshBuilder`'s triangle-soup loop.
+ * Never resolver-created; only quarter paint (fresh paints start NE, re-click cycles corners).
+ */
+export function quarterGeometry(rotation: 0 | 1 | 2 | 3 = 0): THREE.BufferGeometry {
+  const geometry = new THREE.BoxGeometry(0.5, 0.5, 1).toNonIndexed()
+  geometry.translate(H / 2, -H / 2, 0)
+  if (rotation) geometry.rotateZ((rotation * Math.PI) / 2)
+  return geometry
+}
+
+/**
+ * Model J — flat: `thin`'s centre plane as a bare quad — the u×v square at `z = 0`,
+ * normal +z. Zero thickness: a true plane for glass panels and the like. Rendered
+ * `DoubleSide` in the editor (single quad); export emits both windings (see
+ * `voxelMeshBuilder`'s two-sided handling). Takes no `rotation`.
+ */
+export function flatGeometry(): THREE.BufferGeometry {
+  const hw = H
+  const positions = new Float32Array([
+    -hw, -hw, 0, hw, -hw, 0, hw, hw, 0,
+    -hw, -hw, 0, hw, hw, 0, -hw, hw, 0,
+  ])
+  const geometry = new THREE.BufferGeometry()
+  geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3))
+  geometry.computeVertexNormals()
+  return geometry
+}
+
+/**
+ * Model K — flat wedge: `wedge`'s diagonal cut face as a bare quad — the diagonal
+ * through the cell centre, full depth (`b(3), b(1), t(1), t(3)`, NW to SE),
+ * normal toward the open (NE) corner. Zero thickness; several stepping diagonally
+ * (du = dv) tile into a continuous 45° pane. `rotation` is the open corner index
+ * (NE=0, SE=1, SW=2, NW=3 — the wedge convention), baked with the same `rotateZ`
+ * convention as the other prefabs. Never resolver-created.
+ */
+export function flatWedgeGeometry(rotation: 0 | 1 | 2 | 3 = 0): THREE.BufferGeometry {
+  const geometry = buildGeometry(
+    [
+      [b(3), b(1), t(1)],
+      [b(3), t(1), t(3)],
+    ],
+    rotation,
+  )
+  return geometry
+}
+
+/**
  * Mirror a chamfer geometry across the v axis (negate local y) with winding reversed so faces stay
  * outward-wound. Paired with the proper-rotation matrix chamferInstanceMatrix produces for reflected
  * planes, this renders the identical shape in the identical place but with det=+1 (so lighting is

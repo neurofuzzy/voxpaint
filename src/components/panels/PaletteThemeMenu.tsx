@@ -1,6 +1,7 @@
 import * as DropdownMenu from '@radix-ui/react-dropdown-menu'
 import { Palette } from 'lucide-react'
 import { useAppStore } from '@/store/useAppStore'
+import { isIPad } from '@/engine/input/isIPad'
 import { DEFAULT_PALETTE } from '@/engine/palette/defaultPalette'
 import { PALETTE_THEMES, type PaletteTheme } from '@/engine/palette/themes'
 import { showToast } from '@/components/ui/toastBus'
@@ -33,7 +34,7 @@ export function PaletteThemeMenu() {
   const setStatusMessage = useAppStore((s) => s.setStatusMessage)
 
   return (
-    <DropdownMenu.Root>
+    <DropdownMenu.Root modal={!isIPad() /* non-modal on iPad: modal Radix overlays swallow Apple Pencil taps */}>
       <DropdownMenu.Trigger asChild>
         <button
           aria-label="Color theme"

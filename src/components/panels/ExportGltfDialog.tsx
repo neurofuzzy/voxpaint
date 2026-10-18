@@ -3,6 +3,8 @@ import { Package } from 'lucide-react'
 import { useEffect, useState } from 'react'
 import type { GltfExportAnchor } from '@/engine/export/gltfExport'
 import { downloadGlb, exportModelToGlb } from '@/engine/export/gltfExport'
+import { isIPad } from '@/engine/input/isIPad'
+import { TEXEL_SCALE } from '@/engine/texture/types'
 import { normalizeProjectFilename } from '@/engine/persistence/projectFile'
 import { useAppStore } from '@/store/useAppStore'
 import { showToast } from '@/components/ui/toastBus'
@@ -21,11 +23,15 @@ export function ExportGltfDialog({ open, onOpenChange }: { open: boolean; onOpen
   const exportAlignToObjectBounds = useAppStore((s) => s.exportAlignToObjectBounds)
   const exportDisableMeshOptimization = useAppStore((s) => s.exportDisableMeshOptimization)
   const exportIncludeTextureMaps = useAppStore((s) => s.exportIncludeTextureMaps)
+  const exportIncludeAOMaps = useAppStore((s) => s.exportIncludeAOMaps)
+  const exportIncludeMarkers = useAppStore((s) => s.exportIncludeMarkers)
   const setExportScaleFactor = useAppStore((s) => s.setExportScaleFactor)
   const setExportAnchor = useAppStore((s) => s.setExportAnchor)
   const setExportAlignToObjectBounds = useAppStore((s) => s.setExportAlignToObjectBounds)
   const setExportDisableMeshOptimization = useAppStore((s) => s.setExportDisableMeshOptimization)
   const setExportIncludeTextureMaps = useAppStore((s) => s.setExportIncludeTextureMaps)
+  const setExportIncludeAOMaps = useAppStore((s) => s.setExportIncludeAOMaps)
+  const setExportIncludeMarkers = useAppStore((s) => s.setExportIncludeMarkers)
 
   useEffect(() => {
     if (open) setScaleInput(String(exportScaleFactor))
@@ -45,7 +51,7 @@ export function ExportGltfDialog({ open, onOpenChange }: { open: boolean; onOpen
 
   async function run() {
     const state = useAppStore.getState()
-    const { model, palette, meta, texture, noiseLevel, specularNoiseLevel, aoStrength, glassRoughnessLevel, animSettings, sliceMasks, slicePivots } = state
+    const { model, palette, meta, texture, noiseLevel, specularNoiseLevel, aoStrength, glassRoughnessLevel, animSettings, sliceMasks, slicePivots, markers } = state
     const { gridExtent } = meta
     const sf = state.exportScaleFactor
     const anchor = state.exportAnchor
@@ -59,8 +65,9 @@ export function ExportGltfDialog({ open, onOpenChange }: { open: boolean; onOpen
     try {
       showToast('Exporting GLTF…')
       const glb = await exportModelToGlb(model, palette, gridExtent, texture, {
-        ambientOcclusion: true,
+        ambientOcclusion: state.exportIncludeAOMaps,
         noiseLevel,
+        noiseScale: state.noiseScale,
         specularNoiseLevel,
         aoStrength,
         glassRoughnessLevel,
@@ -69,8 +76,11 @@ export function ExportGltfDialog({ open, onOpenChange }: { open: boolean; onOpen
         alignToObjectBounds,
         noiseSeed: meta.noiseSeed,
         optimizeMesh: !state.exportDisableMeshOptimization,
+        texelScale: state.meta.texelScale ?? TEXEL_SCALE,
         includeTextureMaps: state.exportIncludeTextureMaps,
         voxelScaleY: meta.voxelScaleY,
+        markers,
+        includeMarkers: state.exportIncludeMarkers,
       }, animSettings, sliceMasks, slicePivots)
       downloadGlb(glb, normalizeProjectFilename(meta.name || 'voxpaint-model'))
       showToast('GLTF exported.')
@@ -83,7 +93,7 @@ export function ExportGltfDialog({ open, onOpenChange }: { open: boolean; onOpen
   }
 
   return (
-    <Dialog.Root open={open} onOpenChange={onOpenChange}>
+    <Dialog.Root open={open} onOpenChange={onOpenChange} modal={!isIPad() /* non-modal on iPad: modal Radix overlays swallow Apple Pencil taps */}>
       <Dialog.Portal>
         <Dialog.Overlay className="fixed inset-0 z-50 bg-black/60 backdrop-blur-sm" />
         <Dialog.Content
@@ -148,6 +158,26 @@ export function ExportGltfDialog({ open, onOpenChange }: { open: boolean; onOpen
                 className="h-4 w-4 shrink-0 cursor-pointer accent-violet-500"
               />
               <span className="text-sm text-neutral-400">Include texture maps</span>
+            </label>
+
+            <label className="flex items-center gap-2.5 ml-[4.5rem] cursor-pointer select-none" title="Off skips the ambient-occlusion bake (no aoMap); other texture maps are unaffected">
+              <input
+                type="checkbox"
+                checked={exportIncludeAOMaps}
+                onChange={(e) => setExportIncludeAOMaps(e.target.checked)}
+                className="h-4 w-4 shrink-0 cursor-pointer accent-violet-500"
+              />
+              <span className="text-sm text-neutral-400">Include AO maps</span>
+            </label>
+
+            <label className="flex items-center gap-2.5 ml-[4.5rem] cursor-pointer select-none" title="Emit design markers as empty nodes (name + extras.voxpaint payload) for composing external content downstream">
+              <input
+                type="checkbox"
+                checked={exportIncludeMarkers}
+                onChange={(e) => setExportIncludeMarkers(e.target.checked)}
+                className="h-4 w-4 shrink-0 cursor-pointer accent-violet-500"
+              />
+              <span className="text-sm text-neutral-400">Include markers</span>
             </label>
 
             <label className="flex items-center gap-2.5 ml-[4.5rem] cursor-pointer select-none" title="Keep per-voxel topology for deforming in other apps">

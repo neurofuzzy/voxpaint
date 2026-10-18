@@ -49,6 +49,42 @@ MIGRATIONS[4] = (doc) => ({ ...doc, schemaVersion: 5 })
  * painted bounds and their texture's existing `faceSize` (16 × texelScale) exactly. */
 MIGRATIONS[5] = (doc) => ({ ...doc, schemaVersion: 6, meta: { ...doc.meta, gridExtent: doc.meta?.gridExtent ?? 16 } })
 
+/** v6 → v7: the `markers` field was added for labeled design markers. v6 projects simply get no
+ * markers (matching their pre-marker behavior — nothing annotated). */
+MIGRATIONS[6] = (doc) => ({ ...doc, schemaVersion: 7 })
+
+/** v7 → v8: markers switch from freeform labels to a fixed color set. Positions and ids carry
+ * over; every marker takes the default color since labels can't map onto colors. */
+MIGRATIONS[7] = (doc) => ({
+  ...doc,
+  schemaVersion: 8,
+  markers: Array.isArray(doc.markers)
+    ? doc.markers
+      .filter((m: any) => typeof m?.id === 'string' && Number.isInteger(m?.x) && Number.isInteger(m?.y) && Number.isInteger(m?.z))
+      .map((m: any) => ({ id: m.id, color: 1, x: m.x, y: m.y, z: m.z }))
+    : undefined,
+})
+
+/** v8 → v9: markers gain their draw-time plane basis. Nothing recorded one before, so every
+ * existing marker faces up (the neutral default); positions/ids/colors carry over untouched. */
+MIGRATIONS[8] = (doc) => ({
+  ...doc,
+  schemaVersion: 9,
+  markers: Array.isArray(doc.markers)
+    ? doc.markers.map((m: any) => ({ ...m, planeAxis: 'y', planeOrientation: 1 }))
+    : undefined,
+})
+
+/** v9 → v10: the `half` chamfer shape is introduced (flush half-slab). No reshape — pre-v10
+ * files simply contain no halves. The stamp itself is the point: older app versions reject v10
+ * files with "please update" instead of crashing on an unknown shape in the render pools. */
+MIGRATIONS[9] = (doc) => ({ ...doc, schemaVersion: 10 })
+
+/** v10 → v11: the `flat` / `flatwedge` zero-thickness quads are introduced. No reshape —
+ * pre-v11 files simply contain no flats. Same stamp rationale as v10: older app versions
+ * reject v11 files with "please update" instead of crashing on an unknown shape. */
+MIGRATIONS[10] = (doc) => ({ ...doc, schemaVersion: 11 })
+
 export class UnsupportedSchemaVersionError extends Error {
   constructor(foundVersion: unknown) {
     super(`This file is from a newer version of VoxPaint (schemaVersion=${String(foundVersion)}). Please update the app.`)

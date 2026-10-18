@@ -3,6 +3,7 @@ import { Printer } from 'lucide-react'
 import { useState } from 'react'
 import type { StlExportAnchor } from '@/engine/export/stlExport'
 import { downloadStl, exportModelToStl } from '@/engine/export/stlExport'
+import { isIPad } from '@/engine/input/isIPad'
 import { normalizeProjectFilename } from '@/engine/persistence/projectFile'
 import { useAppStore } from '@/store/useAppStore'
 import { showToast } from '@/components/ui/toastBus'
@@ -55,7 +56,7 @@ export function ExportStlDialog({ open, onOpenChange }: { open: boolean; onOpenC
   }
 
   return (
-    <Dialog.Root open={open} onOpenChange={onOpenChange}>
+    <Dialog.Root open={open} onOpenChange={onOpenChange} modal={!isIPad() /* non-modal on iPad: modal Radix overlays swallow Apple Pencil taps */}>
       <Dialog.Portal>
         <Dialog.Overlay className="fixed inset-0 z-50 bg-black/60 backdrop-blur-sm" />
         <Dialog.Content
@@ -131,6 +132,10 @@ export function ExportStlDialog({ open, onOpenChange }: { open: boolean; onOpenC
                 </span>
               </span>
             </label>
+
+            <p className="ml-[4.5rem] text-xs text-neutral-500">
+              Flat panels are always skipped — zero thickness isn't printable.
+            </p>
           </div>
 
           <div className="mt-6 flex justify-end gap-2">

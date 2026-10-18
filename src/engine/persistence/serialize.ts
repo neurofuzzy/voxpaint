@@ -1,10 +1,12 @@
-import { decodeKey, emptyModel, encodeKey, recomputeBounds } from '@/engine/grid/GridStore'
+import { decodeKey, emptyModel, encodeKey, recomputeBounds, withinWorkingBounds } from '@/engine/grid/GridStore'
 import type { CellKey, GridExtent, VoxelModel } from '@/engine/grid/types'
+import type { Marker, SerializedMarkerPosition } from '@/engine/markers/types'
+import { MARKER_COLORS } from '@/engine/markers/types'
 import { DEFAULT_PALETTE } from '@/engine/palette/defaultPalette'
 import type { PaletteState } from '@/engine/palette/types'
 import type { BoxFace, TextureModel } from '@/engine/texture/types'
 import { BOX_FACES, faceSizeFor, TEXEL_SCALE } from '@/engine/texture/types'
-import { emptyTextureModel } from '@/engine/texture/TextureStore'
+import { emptyTextureModel, normalizeTexelScale } from '@/engine/texture/TextureStore'
 import type { SliceAnimSettings, SliceKey } from '@/engine/animation/types'
 import { encodeSliceKey } from '@/engine/animation/animationLayers'
 import { CURRENT_SCHEMA_VERSION, type ProjectMeta, type SerializedAnimLayer, type SerializedSliceMask, type SerializedSlicePivot, type SerializedTexture, type ViewSettings, type VoxPaintProjectFile } from './schema'
@@ -22,18 +24,19 @@ function base64ToU8(b64: string): Uint8Array {
   return a
 }
 
-function serializeTexture(texture: TextureModel, gridExtent: GridExtent): SerializedTexture {
+function serializeTexture(texture: TextureModel, gridExtent: GridExtent, texelScale: number): SerializedTexture {
   const faces = {} as Record<BoxFace, string>
   for (const face of BOX_FACES) faces[face] = u8ToBase64(texture.faces[face])
-  return { texelScale: TEXEL_SCALE, faceSize: faceSizeFor(gridExtent), faces }
+  return { texelScale, faceSize: faceSizeFor(gridExtent, texelScale), faces }
 }
 
-function deserializeTexture(s: SerializedTexture, gridExtent: GridExtent): TextureModel {
+function deserializeTexture(s: SerializedTexture, gridExtent: GridExtent, texelScale: number): TextureModel {
   // Guard against an incompatible face size (shouldn't happen — faceSize is derived from the
-  // project's own locked-in gridExtent — but a hand-edited or corrupt file could still mismatch)
-  // — rather than remap texels, fall back to an empty texture so the project still loads.
-  if (s.faceSize !== faceSizeFor(gridExtent)) return emptyTextureModel(gridExtent)
-  const texture = emptyTextureModel(gridExtent)
+  // project's own locked-in gridExtent + texelScale — but a hand-edited or corrupt file could
+  // still mismatch) — rather than remap texels, fall back to an empty texture so the project
+  // still loads.
+  if (s.faceSize !== faceSizeFor(gridExtent, texelScale)) return emptyTextureModel(gridExtent, texelScale)
+  const texture = emptyTextureModel(gridExtent, texelScale)
   for (const face of BOX_FACES) {
     const arr = base64ToU8(s.faces[face] ?? '')
     if (arr.length === texture.faces[face].length) texture.faces[face] = arr
@@ -97,7 +100,42 @@ function deserializeSlicePivots(pivots: SerializedSlicePivot[]): Map<SliceKey, C
   return map
 }
 
-export function serializeProject(model: VoxelModel, palette: PaletteState, meta: ProjectMeta, texture: TextureModel, view?: ViewSettings, animSettings?: Map<SliceKey, SliceAnimSettings>, sliceMasks?: Map<SliceKey, Set<CellKey>>, slicePivots?: Map<SliceKey, CellKey>): VoxPaintProjectFile {
+function serializeMarkers(markers: Marker[]): SerializedMarkerPosition[] {
+  return markers.map((m) => ({
+    id: m.id,
+    color: m.color,
+    x: m.position[0],
+    y: m.position[1],
+    z: m.position[2],
+    planeAxis: m.planeAxis,
+    planeOrientation: m.planeOrientation,
+  }))
+}
+
+function deserializeMarkers(entries: SerializedMarkerPosition[] | undefined, gridExtent: GridExtent): Marker[] {
+  if (!entries) return []
+  const out: Marker[] = []
+  const seen = new Set<string>()
+  for (const e of entries) {
+    if (typeof e?.id !== 'string') continue
+    if (!Number.isInteger(e.x) || !Number.isInteger(e.y) || !Number.isInteger(e.z)) continue
+    if (seen.has(e.id)) continue
+    seen.add(e.id)
+    const position: [number, number, number] = [e.x, e.y, e.z]
+    // Hand-edited or corrupt files could place markers outside the working cube — drop those
+    // rather than refusing to load (same spirit as the texture faceSize guard above).
+    if (!withinWorkingBounds(position, gridExtent)) continue
+    // Clamp out-of-range color indices to the default instead of dropping the marker.
+    const color = Number.isInteger(e.color) && (e.color as number) >= 0 && (e.color as number) < MARKER_COLORS.length ? e.color : 1
+    // Unknown facing falls back to up rather than dropping the marker.
+    const planeAxis = e.planeAxis === 'x' || e.planeAxis === 'y' || e.planeAxis === 'z' ? e.planeAxis : 'y'
+    const planeOrientation = e.planeOrientation === 1 || e.planeOrientation === -1 ? e.planeOrientation : 1
+    out.push({ id: e.id, color, position, planeAxis, planeOrientation })
+  }
+  return out
+}
+
+export function serializeProject(model: VoxelModel, palette: PaletteState, meta: ProjectMeta, texture: TextureModel, view?: ViewSettings, animSettings?: Map<SliceKey, SliceAnimSettings>, sliceMasks?: Map<SliceKey, Set<CellKey>>, slicePivots?: Map<SliceKey, CellKey>, markers?: Marker[]): VoxPaintProjectFile {
   const colorCells = Array.from(model.color.entries()).map(([key, cell]) => {
     const [x, y, z] = decodeKey(key)
     return { x, y, z, paletteSlot: cell.paletteSlot }
@@ -111,15 +149,16 @@ export function serializeProject(model: VoxelModel, palette: PaletteState, meta:
     meta,
     palette,
     model: { bounds: model.bounds, colorCells, chamferCells },
-    texture: serializeTexture(texture, meta.gridExtent),
+    texture: serializeTexture(texture, meta.gridExtent, normalizeTexelScale(meta.texelScale ?? TEXEL_SCALE)),
     view,
     animations: animSettings ? serializeAnimations(animSettings) : undefined,
     masks: sliceMasks ? serializeSliceMasks(sliceMasks) : undefined,
     pivots: slicePivots ? serializeSlicePivots(slicePivots) : undefined,
+    markers: markers ? serializeMarkers(markers) : undefined,
   }
 }
 
-export function deserializeProject(file: VoxPaintProjectFile): { model: VoxelModel; palette: PaletteState; meta: ProjectMeta; texture: TextureModel; view: ViewSettings; animSettings: Map<SliceKey, SliceAnimSettings>; sliceMasks: Map<SliceKey, Set<CellKey>>; slicePivots: Map<SliceKey, CellKey> } {
+export function deserializeProject(file: VoxPaintProjectFile): { model: VoxelModel; palette: PaletteState; meta: ProjectMeta; texture: TextureModel; view: ViewSettings; animSettings: Map<SliceKey, SliceAnimSettings>; sliceMasks: Map<SliceKey, Set<CellKey>>; slicePivots: Map<SliceKey, CellKey>; markers: Marker[] } {
   const model = emptyModel()
   const color = new Map(model.color)
   const chamfer = new Map(model.chamfer)
@@ -136,8 +175,17 @@ export function deserializeProject(file: VoxPaintProjectFile): { model: VoxelMod
   }
 
   const built: VoxelModel = { color, chamfer, bounds: file.model.bounds }
-  const texture = file.texture ? deserializeTexture(file.texture, file.meta.gridExtent) : emptyTextureModel(file.meta.gridExtent)
-  const view: ViewSettings = { ambientOcclusion: false, noiseLevel: 0, specularNoiseLevel: 0, aoStrength: 1, glassRoughnessLevel: 0.3, exposure: 1, exportScaleFactor: 100, exportAnchor: 'center', exportAlignToObjectBounds: false, exportDisableMeshOptimization: false, exportIncludeTextureMaps: true, ...file.view }
+  // `noiseSeed` post-dates `ProjectMeta` being otherwise fully required. Default to 0 (the
+  // hash functions' unseeded behavior) rather than a fresh random seed, so an old project's noise
+  // looks exactly the same as it always did instead of visibly shifting on next load.
+  // `voxelScaleY` is the same story one generation later: pre-scale files load as 1x (unit cubes).
+  // `texelScale` one generation after that: pre-scale files load at full detail (4). The merged
+  // meta must exist before the texture (whose face size derives from gridExtent + texelScale).
+  const meta: ProjectMeta = { ...file.meta, noiseSeed: file.meta.noiseSeed ?? 0, voxelScaleY: file.meta.voxelScaleY ?? 1, texelScale: normalizeTexelScale(file.meta.texelScale ?? TEXEL_SCALE) }
+  const texture = file.texture
+    ? deserializeTexture(file.texture, meta.gridExtent, meta.texelScale!)
+    : emptyTextureModel(meta.gridExtent, meta.texelScale!)
+  const view: ViewSettings = { ambientOcclusion: false, noiseLevel: 0, specularNoiseLevel: 0, noiseScale: 1, aoStrength: 1, glassRoughnessLevel: 0.3, exposure: 1, exportScaleFactor: 100, exportAnchor: 'center', exportAlignToObjectBounds: false, exportDisableMeshOptimization: false, exportIncludeTextureMaps: true, exportIncludeAOMaps: true, exportIncludeMarkers: true, ...file.view }
   const animSettings = file.animations ? deserializeAnimations(file.animations) : new Map()
   const sliceMasks = file.masks ? deserializeSliceMasks(file.masks) : new Map()
   const slicePivots = file.pivots ? deserializeSlicePivots(file.pivots) : new Map()
@@ -145,10 +193,6 @@ export function deserializeProject(file: VoxPaintProjectFile): { model: VoxelMod
   // palette shape — older files simply don't have it, so default-merge rather than bump the schema
   // (same treatment `exportAlignToObjectBounds` got for `view`).
   const palette: PaletteState = { ...DEFAULT_PALETTE, ...file.palette }
-  // `noiseSeed` likewise post-dates `ProjectMeta` being otherwise fully required. Default to 0 (the
-  // hash functions' unseeded behavior) rather than a fresh random seed, so an old project's noise
-  // looks exactly the same as it always did instead of visibly shifting on next load.
-  // `voxelScaleY` is the same story one generation later: pre-scale files load as 1x (unit cubes).
-  const meta: ProjectMeta = { ...file.meta, noiseSeed: file.meta.noiseSeed ?? 0, voxelScaleY: file.meta.voxelScaleY ?? 1 }
-  return { model: { ...built, bounds: recomputeBounds(built) }, palette, meta, texture, view, animSettings, sliceMasks, slicePivots }
+  const markers = deserializeMarkers(file.markers, meta.gridExtent)
+  return { model: { ...built, bounds: recomputeBounds(built) }, palette, meta, texture, view, animSettings, sliceMasks, slicePivots, markers }
 }

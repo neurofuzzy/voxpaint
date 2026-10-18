@@ -15,9 +15,9 @@ function blendForIndex(index: number): number {
 const ATLAS_COLS = 3
 const ATLAS_ROWS = 2
 
-/** Atlas pixel dimensions for a project's `gridExtent` — 3×2 packed faces, each `faceSizeFor(gridExtent)`. */
-export function atlasDimsFor(gridExtent: GridExtent): { width: number; height: number; faceSize: number } {
-  const faceSize = faceSizeFor(gridExtent)
+/** Atlas pixel dimensions for a project's `gridExtent` + texel scale — 3×2 packed faces. */
+export function atlasDimsFor(gridExtent: GridExtent, texelScale: number = TEXEL_SCALE): { width: number; height: number; faceSize: number } {
+  const faceSize = faceSizeFor(gridExtent, texelScale)
   return { width: ATLAS_COLS * faceSize, height: ATLAS_ROWS * faceSize, faceSize }
 }
 
@@ -35,9 +35,29 @@ export const FACE_ATLAS_CELL: Record<BoxFace, { col: number; row: number }> = {
  * sloped faces have diagonal normals), so **every face of a chamfer cell uses the axis the chamfer
  * was authored in** (`planeAxis`/`planeOrientation`). Plain cube faces use their own axis-aligned
  * normal's dominant axis + sign.
+ *
+ * Half slabs are the exception to the authoring rule: recessed paint stores the solid-side basis
+ * (void faces the painter), so the viewer-visible broad face points opposite the authoring
+ * outward normal — the page flips to what a full voxel's (or thin slab's) viewer-facing face
+ * samples. Rebase refuses halves, so this page is never user-set; it must be right automatically.
+ *
+ * Post and quarter columns are the other exception, in the other direction: their long axis is
+ * the authoring W but their largest faces are the four sides (normals ⊥ W), so a single
+ * authoring page would smear one face's pixels across sideways walls. They map cube-like —
+ * each face samples its own dominant-normal page (ends sample the end page, sides the side
+ * pages) — with the authoring basis used only to place the geometry. Reface tools refuse them,
+ * so like halves they are right automatically.
  */
 export function boxFaceForCell(chamfer: ChamferCell | undefined, normal: Coord): BoxFace {
-  if (chamfer) return boxFaceOf(chamfer.planeAxis, chamfer.planeOrientation)
+  if (chamfer) {
+    if (chamfer.resolvedTo?.shapeKind === 'half') {
+      return boxFaceOf(chamfer.planeAxis, chamfer.planeOrientation === 1 ? -1 : 1)
+    }
+    const kind = chamfer.resolvedTo?.shapeKind
+    if (kind !== 'post' && kind !== 'quarter') {
+      return boxFaceOf(chamfer.planeAxis, chamfer.planeOrientation)
+    }
+  }
   let axis: Axis = 'x'
   let maxAbs = -Infinity
   for (const a of ALL_AXES) {
@@ -72,18 +92,18 @@ const FLIP_V: Record<BoxFace, boolean> = { px: false, nx: false, py: true, ny: f
 
 /**
  * Projects a world vertex onto a box face's two in-plane axes, returning **continuous** texel
- * coordinates in `[0, faceSizeFor(gridExtent)]`. Reuses `planeLogicalBasis` so the projection
- * matches the 2D canvas's u/v convention, plus the per-face `FLIP_U`/`FLIP_V` correction so each
- * face reads the same way it was painted when viewed from outside the model.
+ * coordinates in `[0, faceSizeFor(gridExtent, texelScale)]`. Reuses `planeLogicalBasis` so the
+ * projection matches the 2D canvas's u/v convention, plus the per-face `FLIP_U`/`FLIP_V`
+ * correction so each face reads the same way it was painted when viewed from outside the model.
  */
-export function worldToTexel(face: BoxFace, x: number, y: number, z: number, gridExtent: GridExtent): [number, number] {
+export function worldToTexel(face: BoxFace, x: number, y: number, z: number, gridExtent: GridExtent, texelScale: number = TEXEL_SCALE): [number, number] {
   const { axis } = BOX_FACE_AXIS[face]
   const { uDir, vDir } = AXIS_BASIS[axis]
   const p: Coord = [x, y, z]
   const pu = FLIP_U[face] ? -dot(p, uDir) : dot(p, uDir)
   const pv = FLIP_V[face] ? -dot(p, vDir) : dot(p, vDir)
   const halfWorld = halfWorldFor(gridExtent)
-  return [(pu + halfWorld) * TEXEL_SCALE, (pv + halfWorld) * TEXEL_SCALE]
+  return [(pu + halfWorld) * texelScale, (pv + halfWorld) * texelScale]
 }
 
 /**
@@ -91,9 +111,9 @@ export function worldToTexel(face: BoxFace, x: number, y: number, z: number, gri
  * identical placement, so a vertex projected via `worldToTexel` samples the exact texel painted at
  * (tu, tv) on that face.
  */
-export function atlasUVFor(face: BoxFace, tu: number, tv: number, gridExtent: GridExtent): [number, number] {
+export function atlasUVFor(face: BoxFace, tu: number, tv: number, gridExtent: GridExtent, texelScale: number = TEXEL_SCALE): [number, number] {
   const { col, row } = FACE_ATLAS_CELL[face]
-  const { width, height, faceSize } = atlasDimsFor(gridExtent)
+  const { width, height, faceSize } = atlasDimsFor(gridExtent, texelScale)
   const atlasX = col * faceSize + tu
   const atlasY = row * faceSize + tv
   return [atlasX / width, atlasY / height]
@@ -105,10 +125,10 @@ export function atlasUVFor(face: BoxFace, tu: number, tv: number, gridExtent: Gr
  * this per vertex and letting the rasterizer interpolate reproduces the exact per-texel mapping even
  * across the large coplanar quads the mesh optimizer welds together.
  */
-export function atlasUVForVertex(normal: Coord, x: number, y: number, z: number, gridExtent: GridExtent): [number, number] {
+export function atlasUVForVertex(normal: Coord, x: number, y: number, z: number, gridExtent: GridExtent, texelScale: number = TEXEL_SCALE): [number, number] {
   const face = boxFaceForCell(undefined, normal)
-  const [tu, tv] = worldToTexel(face, x, y, z, gridExtent)
-  return atlasUVFor(face, tu, tv, gridExtent)
+  const [tu, tv] = worldToTexel(face, x, y, z, gridExtent, texelScale)
+  return atlasUVFor(face, tu, tv, gridExtent, texelScale)
 }
 
 /**
@@ -117,12 +137,12 @@ export function atlasUVForVertex(normal: Coord, x: number, y: number, z: number,
  * Reuses the same axis basis + per-face flips as `worldToTexel`, so the round-trip is exact — used by
  * the AO bake to place a sample point at each atlas texel.
  */
-export function texelCenterToWorld(face: BoxFace, tu: number, tv: number, depthCoord: number, gridExtent: GridExtent): Coord {
+export function texelCenterToWorld(face: BoxFace, tu: number, tv: number, depthCoord: number, gridExtent: GridExtent, texelScale: number = TEXEL_SCALE): Coord {
   const { axis } = BOX_FACE_AXIS[face]
   const { uDir, vDir } = AXIS_BASIS[axis]
   const halfWorld = halfWorldFor(gridExtent)
-  const su = (tu + 0.5) / TEXEL_SCALE - halfWorld
-  const sv = (tv + 0.5) / TEXEL_SCALE - halfWorld
+  const su = (tu + 0.5) / texelScale - halfWorld
+  const sv = (tv + 0.5) / texelScale - halfWorld
   const du = FLIP_U[face] ? -su : su // = dot(worldPos, uDir)
   const dv = FLIP_V[face] ? -sv : sv // = dot(worldPos, vDir)
   const p: Coord = [0, 0, 0]
@@ -141,8 +161,8 @@ export function texelCenterToWorld(face: BoxFace, tu: number, tv: number, depthC
  * preview shader reads `.r` and overlays it onto the voxel color; the exporter bakes it per color.
  * Stored as raw (non-color) data — consumers must set the texture's colorSpace to no-decode.
  */
-export function buildBlendAtlas(texture: TextureModel, gridExtent: GridExtent): { data: Uint8ClampedArray; width: number; height: number } {
-  const { width, height, faceSize } = atlasDimsFor(gridExtent)
+export function buildBlendAtlas(texture: TextureModel, gridExtent: GridExtent, texelScale: number = TEXEL_SCALE): { data: Uint8ClampedArray; width: number; height: number } {
+  const { width, height, faceSize } = atlasDimsFor(gridExtent, texelScale)
   const data = new Uint8ClampedArray(width * height * 4)
   // Default every pixel to neutral (0.5 blend → 128), so unused/empty atlas regions are no-ops.
   const neutral = Math.round(0.5 * 255)
