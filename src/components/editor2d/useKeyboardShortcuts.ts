@@ -24,16 +24,17 @@ const TOOL_KEYS: Record<string, ToolId> = {
  * trixelart's own use-keyboard-shortcuts.ts), separate from tool pointer-dispatch since this is
  * app/selection-domain, not per-tool pointer logic.
  *
- * Deliberately no bare single-key transform shortcuts: selection rotate/mirror live on the
- * SelectionPalette buttons instead, so a stray keypress can never reshape the model — only
- * explicit Cmd-chord clipboard/undo commands and selection-gated Delete may change it.
+ * Deliberately no bare single-key transform shortcuts for the *selection*: selection
+ * rotate/mirror live on the SelectionPalette buttons instead, so a stray keypress can never
+ * reshape the model — only explicit Cmd-chord clipboard/undo commands and selection-gated Delete
+ * may change it. `R` (brush rotation) is the one exception: it only changes what the *next* paint
+ * writes, never existing voxels.
  *
  * Mode-aware: in Texture mode every selection/history action dispatches to the parallel texture
  * actions (its own separate undo/redo history and texel selection/clipboard). Tool switching is
- * shared. Called from whichever 2D canvas is mounted (only one at a time), so a single listener is
- * ever active.
+ * shared. Called once from MainLayout (not the 2D canvases) so bindings stay live in 3D-only mode.
  */
-export function useKeyboardShortcuts(hoverCellRef?: React.RefObject<[number, number] | null>) {
+export function useKeyboardShortcuts() {
   useEffect(() => {
     function onKeyDown(e: KeyboardEvent) {
       const target = e.target as HTMLElement | null
@@ -152,10 +153,18 @@ export function useKeyboardShortcuts(hoverCellRef?: React.RefObject<[number, num
       if (tool && (!isAnimate || tool === 'paint' || tool === 'erase')) {
         store.setActiveTool(tool)
         e.preventDefault()
+        return
+      }
+
+      // Brush rotation: R steps +90°, Shift+R steps −90°. Model mode only (kind has no meaning
+      // while texturing/animating). Changes only the next paint, never existing voxels.
+      if (key === 'r' && !isTexture && !isAnimate) {
+        store.rotateBrush(e.shiftKey ? -1 : 1)
+        e.preventDefault()
       }
     }
 
     window.addEventListener('keydown', onKeyDown)
     return () => window.removeEventListener('keydown', onKeyDown)
-  }, [hoverCellRef])
+  }, [])
 }

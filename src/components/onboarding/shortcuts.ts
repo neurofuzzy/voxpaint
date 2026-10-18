@@ -31,6 +31,13 @@ export function shortcutGroups(mod: string): ShortcutGroup[] {
       ],
     },
     {
+      title: 'Brush',
+      shortcuts: [
+        { keys: ['R'], label: 'Rotate brush +90°' },
+        { keys: ['Shift', 'R'], label: 'Rotate brush −90°' },
+      ],
+    },
+    {
       title: 'History',
       shortcuts: [
         { keys: [mod, 'Z'], label: 'Undo' },

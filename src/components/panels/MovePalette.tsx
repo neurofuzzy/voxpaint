@@ -2,6 +2,7 @@ import * as Tooltip from '@radix-ui/react-tooltip'
 import { FlipHorizontal, FlipVertical, RotateCcw, RotateCw } from 'lucide-react'
 import { useAppStore } from '@/store/useAppStore'
 import type { SelectionTransformKind } from '@/store/types'
+import type { PaletteOrientation } from './FloatingPalette'
 
 const ACTIONS: Array<{ id: string; label: string; icon: typeof RotateCw; hint: string; transform: SelectionTransformKind }> = [
   { id: 'rotate-cw', label: 'Rotate Model CW', icon: RotateCw, hint: 'rotate the entire model 90° clockwise in the active plane', transform: 'rotate' },
@@ -16,14 +17,15 @@ const ACTIONS: Array<{ id: string; label: string; icon: typeof RotateCw; hint: s
  * active plane's frame as a single undo step each, with no selection left behind. Deliberately
  * button-only like SelectionPalette (a stray keypress must never mutate the model).
  */
-export function MovePalette() {
+export function MovePalette({ orientation = 'horizontal' }: { orientation?: PaletteOrientation } = {}) {
   const isEmpty = useAppStore((s) => s.model.color.size === 0)
   const setStatusMessage = useAppStore((s) => s.setStatusMessage)
   const transformWholeModel = useAppStore((s) => s.transformWholeModel)
+  const vertical = orientation === 'vertical'
 
   return (
     <Tooltip.Provider delayDuration={300}>
-      <div className="flex items-center gap-1">
+      <div className={vertical ? 'flex flex-col items-center gap-1' : 'flex items-center gap-1'}>
         {ACTIONS.map(({ id, label, icon: Icon, hint, transform }) => (
           <Tooltip.Root key={id}>
             <Tooltip.Trigger asChild>
@@ -44,7 +46,7 @@ export function MovePalette() {
             </Tooltip.Trigger>
             <Tooltip.Portal>
               <Tooltip.Content
-                side="top"
+                side={vertical ? 'right' : 'top'}
                 sideOffset={8}
                 className="z-50 rounded-md border border-neutral-700 bg-neutral-900 px-2 py-1 text-xs text-neutral-200 shadow-lg"
               >

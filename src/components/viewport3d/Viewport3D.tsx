@@ -1,9 +1,9 @@
-import { Canvas, useThree } from '@react-three/fiber'
+import { Canvas, useFrame, useThree } from '@react-three/fiber'
 import { OrbitControls } from '@react-three/drei'
 import { useEffect, useRef, useState } from 'react'
 import * as THREE from 'three'
 import type { OrbitControls as OrbitControlsImpl } from 'three-stdlib'
-import { decodeKey, effectiveExtent, viewOriginShift } from '@/engine/grid/GridStore'
+import { decodeKey, encodeKey, effectiveExtent, viewOriginShift } from '@/engine/grid/GridStore'
 import type { Coord } from '@/engine/grid/types'
 import { hasActiveAnimations } from '@/engine/animation/animationLayers'
 import type { InstancingManager } from '@/engine/instancing/InstancingManager'
@@ -16,6 +16,8 @@ import { AnimatedModelView } from './AnimatedModelView'
 import { BoundingBoxFaceSelector } from './BoundingBoxFaceSelector'
 import { CompassIcon, CompassTracker } from './Compass'
 import { ViewportModeToggle } from './ViewportModeToggle'
+import { BrushPreview } from './BrushPreview'
+import { brushViewQuaternion } from './brushViewSync'
 import { ConstructionPlaneGizmo } from './ConstructionPlaneGizmo'
 import { ConstructionPlaneVisual } from './ConstructionPlaneVisual'
 import { FloatGhostPreview } from './FloatGhostPreview'
@@ -108,6 +110,9 @@ function ToneMappingController({ exposure }: { exposure: number }) {
  * on that voxel's own slice — "object mode"; a second click on the SAME voxel advances the plane
  * one step forward through that same face — see `handleVoxelFaceClick` in planeSlice.ts).
  *
+ * When the cursor hits no voxel face, hover falls back to the construction-plane cell under the
+ * cursor (`resolveEmptyCell`), so the ghost preview still marks what a click would paint.
+ *
  * In 3D Edit mode (`edit3D`) with a paint/erase/eyedropper/material tool active, taps dispatch
  * the tool straight onto voxel faces — paint adds the neighbor cell across the face, erase deletes
  * the cell, eyedropper samples its color and voxel type, material recolors the cell. Paint/erase/eyedropper are
@@ -127,7 +132,7 @@ const BLOCKING_TOOLS = ['paint', 'erase', 'eyedropper', 'material'] as const
 type BlockingTool = (typeof BLOCKING_TOOLS)[number]
 
 function editHint(tool: BlockingTool): string {
-  if (tool === 'paint') return 'Click a face to paint a voxel'
+  if (tool === 'paint') return 'Click a face to paint a voxel · R rotates the brush'
   if (tool === 'erase') return 'Click a voxel to erase it'
   if (tool === 'material') return 'Click or drag to repaint · never adds voxels'
   return 'Click a voxel to pick its color and type'
@@ -226,7 +231,10 @@ function VoxelInteractionHandler({ managerRef, controlsRef }: {
      * across the face, erase deletes the cell, eyedropper samples its color and voxel type, material recolors the
      * cell. Paint/erase/material bracket their own single-cell undo stroke; eyedropper mutates no
      * model. Paint/erase/eyedropper drags never apply (every pointer crossing would spray voxels
-     * along the raycast), so movement always orbits — material alone drags (see onPointerMove). */
+     * along the raycast), so movement always orbits — material alone drags (see onPointerMove).
+     *
+     * Paint placement crosses the clicked face, but orientation ALWAYS inherits the active
+     * construction plane — never the raycast face — so the write matches the brush preview. */
     function applyBlockingTap(clientX: number, clientY: number) {
       const store = useAppStore.getState()
       const tool = activeToolRef.current
@@ -254,8 +262,10 @@ function VoxelInteractionHandler({ managerRef, controlsRef }: {
           tool === 'paint' ? [x + normal[0], y + normal[1], z + normal[2]] : [x, y, z]
         store.bakeFloatIfAny()
         store.beginStroke()
-        if (tool === 'paint') store.paintCellAtCoord(target, result.plane.axis, result.plane.orientation)
-        else store.eraseCellAtCoord(target)
+        if (tool === 'paint') {
+          const activePlane = planeRef.current
+          store.paintCellAtCoord(target, activePlane.axis, activePlane.orientation)
+        } else store.eraseCellAtCoord(target)
         store.commitStroke()
         return
       }
@@ -302,10 +312,15 @@ function VoxelInteractionHandler({ managerRef, controlsRef }: {
     const onPointerMove = (e: PointerEvent) => {
       const result = resolveFaceHit(e.clientX, e.clientY)
 
-      const cellKey = result?.key ?? null
+      // No voxel face under the cursor: fall back to the construction plane, so the ghost
+      // preview still marks the cell a click would paint (empty-space paint starts a blob on
+      // the active slice — see applyBlockingTap). Null when the ray runs parallel to the plane.
+      const empty = result ? null : resolveEmptyCell(e.clientX, e.clientY)
+      const hoverCoord = result ? decodeKey(result.key) : empty
+      const cellKey = result?.key ?? (empty ? encodeKey(...empty) : null)
       if (cellKey !== lastCellKey) {
         lastCellKey = cellKey
-        setHoverCell(cellKey ? decodeKey(cellKey) : null, null)
+        setHoverCell(hoverCoord, null)
       }
 
       const faceKey = result ? `${result.key}|${result.plane.axis}|${result.plane.orientation}` : null
@@ -422,6 +437,17 @@ function VoxelInteractionHandler({ managerRef, controlsRef }: {
   return null
 }
 
+/**
+ * Publishes the main camera's orientation to the brush-preview mini-canvas once per frame
+ * (see `brushViewSync.ts`). Mounted unconditionally — one quaternion copy per frame is free.
+ */
+function BrushViewSync() {
+  useFrame(({ camera }) => {
+    brushViewQuaternion.copy(camera.quaternion)
+  })
+  return null
+}
+
 export function Viewport3D() {
   const managerRef = useRef<InstancingManager | null>(null)
   const orbitControlsRef = useRef<OrbitControlsImpl | null>(null)
@@ -502,6 +528,7 @@ export function Viewport3D() {
             }}
           />
           <CompassTracker iconRef={compassNeedleRef} />
+          <BrushViewSync />
       </Canvas>
       <ViewOptionsOverlay
         onResetCamera={() => orbitControlsRef.current?.reset()}
@@ -510,6 +537,7 @@ export function Viewport3D() {
       />
       <SettingsPalette />
       {showExposure && <ExposureSlider />}
+      <BrushPreview />
       <div className="absolute left-5 top-5 z-40 flex items-center gap-2">
         <CompassIcon iconRef={compassNeedleRef} />
         <ViewportModeToggle />

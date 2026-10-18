@@ -1,5 +1,6 @@
 import type { StateCreator } from 'zustand'
 import { AO_DEFAULT_ENABLED } from '@/engine/ao/aoConstants'
+import { loadUiPrefs, saveUiPrefs } from '@/engine/persistence/uiPrefs'
 import type { AppState, ViewSlice } from './types'
 
 type Slice = StateCreator<AppState, [['zustand/immer', never]], [], ViewSlice>
@@ -17,6 +18,8 @@ let alertKey = 0
 
 export const createViewSlice: Slice = (set) => ({
   fullscreen: false,
+  // Restored from localStorage UI prefs (validated there); defaults to the 2D/3D split.
+  layoutMode: loadUiPrefs().layoutMode ?? 'split',
   edit3D: false,
   hoverCell: null,
   chamferHoverValid: null,
@@ -44,6 +47,11 @@ export const createViewSlice: Slice = (set) => ({
   exportIncludeMarkers: true,
 
   setFullscreen: (v) => set((state) => { state.fullscreen = v }),
+  setLayoutMode: (v) => {
+    // Read-modify-write so unrelated prefs (e.g. dontShowSplash) survive the update.
+    saveUiPrefs({ ...loadUiPrefs(), layoutMode: v })
+    set((state) => { state.layoutMode = v })
+  },
   setEdit3D: (v) => set((state) => { state.edit3D = v }),
   setWireframe: (v) => set((state) => { state.wireframe = v }),
   setTextureFaceMap: (v) => set((state) => { state.textureFaceMap = v }),

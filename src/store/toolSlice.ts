@@ -7,8 +7,11 @@ export const createToolSlice: Slice = (set) => ({
   activeTool: 'paint',
   activeVoxelKind: 'cube',
   activePaletteSlot: { kind: 'base', index: 0 },
+  brushRotation: 0,
 
   setActiveTool: (tool) => set((state) => { state.activeTool = tool }),
   setActiveVoxelKind: (kind) => set((state) => { state.activeVoxelKind = kind }),
   setActivePaletteSlot: (slot) => set((state) => { state.activePaletteSlot = slot }),
+  setBrushRotation: (r) => set((state) => { state.brushRotation = r }),
+  rotateBrush: (dir) => set((state) => { state.brushRotation = ((state.brushRotation + dir + 4) % 4) as typeof state.brushRotation }),
 })

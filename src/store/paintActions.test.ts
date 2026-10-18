@@ -777,3 +777,82 @@ describe('paintCell flat-wedge handling', () => {
     })
   })
 })
+
+/** Explicit corner kinds: frozen at paint time with the brush rotation, never autotiled. */
+describe.each(['convex', 'concave'] as const)('paintCell explicit %s handling', (kind) => {
+  beforeEach(() => {
+    const s = useAppStore.getState()
+    s.newProject('Test', 16)
+    s.setActiveVoxelKind(kind)
+    s.setBrushRotation(0)
+    s.setPlaneAxisOrientation('z', 1)
+    s.setPlaneOffset(0)
+  })
+
+  it('paints resolved at the brush rotation', () => {
+    const s = useAppStore.getState()
+    s.setBrushRotation(2)
+    s.beginStroke()
+    expect(s.paintCell(4, 4)).toBe(true)
+    s.commitStroke()
+
+    const after = useAppStore.getState()
+    expect(after.model.color.size).toBe(1)
+    expect(after.model.chamfer.get(keyFor(4, 4))).toEqual({
+      planeAxis: 'z',
+      planeOrientation: 1,
+      resolvedTo: { shapeKind: kind, rotation: 2 },
+    })
+  })
+
+  it('never autotiles, even surrounded by neighbors that would classify', () => {
+    // Ring the target with cubes: an autotile paint here would resolve, the explicit kind must not.
+    useAppStore.getState().setActiveVoxelKind('cube')
+    const s = useAppStore.getState()
+    s.beginStroke()
+    for (const [u, v] of [[3, 4], [5, 4], [4, 3], [4, 5]] as const) expect(s.paintCell(u, v)).toBe(true)
+    s.commitStroke()
+
+    useAppStore.getState().setActiveVoxelKind(kind)
+    useAppStore.getState().beginStroke()
+    expect(useAppStore.getState().paintCell(4, 4)).toBe(true)
+    useAppStore.getState().commitStroke()
+    expect(useAppStore.getState().model.chamfer.get(keyFor(4, 4))).toEqual({
+      planeAxis: 'z',
+      planeOrientation: 1,
+      resolvedTo: { shapeKind: kind, rotation: 0 },
+    })
+  })
+
+  it('re-clicking cycles the corner, wrapping after four', () => {
+    const s = useAppStore.getState()
+    s.beginStroke()
+    expect(s.paintCell(4, 4)).toBe(true)
+    s.commitStroke()
+
+    for (const rotation of [1, 2, 3, 0]) {
+      useAppStore.getState().beginStroke()
+      expect(useAppStore.getState().paintCell(4, 4)).toBe(true)
+      useAppStore.getState().commitStroke()
+      expect(useAppStore.getState().model.chamfer.get(keyFor(4, 4))).toEqual({
+        planeAxis: 'z',
+        planeOrientation: 1,
+        resolvedTo: { shapeKind: kind, rotation },
+      })
+    }
+  })
+
+  it('re-applying within the same stroke does not cycle it', () => {
+    const s = useAppStore.getState()
+    s.beginStroke()
+    expect(s.paintCell(4, 4)).toBe(true)
+    expect(s.paintCell(4, 4)).toBe(true)
+    s.commitStroke()
+
+    expect(useAppStore.getState().model.chamfer.get(keyFor(4, 4))).toEqual({
+      planeAxis: 'z',
+      planeOrientation: 1,
+      resolvedTo: { shapeKind: kind, rotation: 0 },
+    })
+  })
+})

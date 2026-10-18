@@ -3,6 +3,7 @@ import { ClipboardPaste, Copy, FlipHorizontal, FlipVertical, RotateCcw, RotateCw
 import { showToast } from '@/components/ui/toastBus'
 import { useAppStore } from '@/store/useAppStore'
 import type { SelectionTransformKind } from '@/store/types'
+import type { PaletteOrientation } from './FloatingPalette'
 
 type Action = {
   id: string
@@ -87,7 +88,7 @@ const ACTIONS: Action[] = [
  * Copy/cut need a selection; paste needs clipboard content — each button enables independently,
  * so paste stays available after the selection is cleared.
  */
-export function SelectionPalette() {
+export function SelectionPalette({ orientation = 'horizontal' }: { orientation?: PaletteOrientation } = {}) {
   const isTexture = useAppStore((s) => s.mode === 'texture')
   const hasSelection = useAppStore((s) => (s.mode === 'texture' ? s.textureSelection : s.selection) !== null)
   const hasClipboard = useAppStore((s) => (s.mode === 'texture' ? s.textureClipboard : s.clipboard) !== null)
@@ -106,6 +107,7 @@ export function SelectionPalette() {
   const textureClipboard = useAppStore((s) => s.textureClipboard)
 
   const faceDir = FACE_DIRS[plane.axis]?.[plane.orientation] ?? plane.axis
+  const vertical = orientation === 'vertical'
   const actions: SelectionActions = { transformFloat, deleteContents, clearSelection: () => setSelection(null), faceSelection, faceDir }
   const visible = ACTIONS.filter((a) => !a.modelOnly || !isTexture)
 
@@ -148,7 +150,7 @@ export function SelectionPalette() {
         </Tooltip.Trigger>
         <Tooltip.Portal>
           <Tooltip.Content
-            side="top"
+            side={vertical ? 'right' : 'top'}
             sideOffset={8}
             className="z-50 rounded-md border border-neutral-700 bg-neutral-900 px-2 py-1 text-xs text-neutral-200 shadow-lg"
           >
@@ -162,11 +164,13 @@ export function SelectionPalette() {
 
   return (
     <Tooltip.Provider delayDuration={300}>
-      <div className="flex items-center gap-1">
+      <div className={vertical ? 'flex flex-col items-center gap-1' : 'flex items-center gap-1'}>
         {renderButton('copy', 'Copy', Copy, 'copy the selection · ctrl/cmd+c', !hasSelection, copySelection)}
         {renderButton('cut', 'Cut', Scissors, 'cut the selection · ctrl/cmd+x', !hasSelection, cutSelection)}
         {renderButton('paste', 'Paste', ClipboardPaste, 'paste in place — drag inside the pasted selection to move it · ctrl/cmd+v', !hasClipboard, pasteInPlace)}
-        <div className="mx-0.5 h-6 w-px bg-neutral-700" />
+        {vertical
+          ? <div className="my-0.5 h-px w-6 bg-neutral-700" />
+          : <div className="mx-0.5 h-6 w-px bg-neutral-700" />}
         {visible.map(({ id, label, icon: Icon, hint, transform, run, danger }) => (
           renderButton(
             id,

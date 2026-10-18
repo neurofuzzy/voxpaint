@@ -20,7 +20,8 @@ export const createUiSlice: Slice = (set) => ({
   openSplash: () => set((s) => { s.splashOpen = true }),
   /** Closes the splash, persisting the "don't show again" choice when the user opted in. */
   closeSplash: (dontShowAgain: boolean) => {
-    if (dontShowAgain) saveUiPrefs({ dontShowSplash: true })
+    // Read-modify-write so unrelated prefs (e.g. layoutMode) survive the update.
+    if (dontShowAgain) saveUiPrefs({ ...loadUiPrefs(), dontShowSplash: true })
     set((s) => { s.splashOpen = false })
   },
 

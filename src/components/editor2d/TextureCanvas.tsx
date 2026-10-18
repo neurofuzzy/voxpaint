@@ -6,7 +6,6 @@ import { BOX_FACE_AXIS, EMPTY, faceSizeFor, GRAYSCALE, TEXEL_SCALE } from '@/eng
 import { useAppStore } from '@/store/useAppStore'
 import { TEXEL_BASE_PX, texWorldToScreen } from './textureCanvasConstants'
 import { vScaleForPlane } from './cameraTransform'
-import { useKeyboardShortcuts } from './useKeyboardShortcuts'
 import { useTextureCanvasTools } from './useTextureCanvasTools'
 
 function snapPx(v: number): number {
@@ -41,7 +40,6 @@ export function TextureCanvas() {
   // square on ±Y faces) — texels stay square in data, only their display stretches.
   const vScale = activeBoxFace ? vScaleForPlane(BOX_FACE_AXIS[activeBoxFace].axis, voxelScaleY) : 1
   const { onPointerDown, onPointerMove, onPointerUp, linePreview, selectPreview, size, pan, zoom } = useTextureCanvasTools(canvasRef)
-  useKeyboardShortcuts()
 
   // Model silhouette projected onto the active face — a paint-alignment guide behind the texels.
   // Recomputed only when the model/palette/face changes (not while painting), so strokes stay fast.

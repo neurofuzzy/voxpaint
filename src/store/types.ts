@@ -1,4 +1,4 @@
-import type { Axis, CellKey, ChamferCell, Coord, GridExtent, Orientation, VoxelModel, VoxelScaleY } from '@/engine/grid/types'
+import type { Axis, CellKey, ChamferCell, Coord, GridExtent, Orientation, Rotation, VoxelModel, VoxelScaleY } from '@/engine/grid/types'
 import type { Marker } from '@/engine/markers/types'
 import type { GltfExportAnchor } from '@/engine/export/gltfExport'
 import type { EmissiveAnimMode, PaletteSlotRef, PaletteState } from '@/engine/palette/types'
@@ -9,7 +9,7 @@ import type { TexelClip } from '@/engine/texture/texelOps'
 import type { AnimationSpeed, AnimationType, SliceAnimSettings, SliceKey } from '@/engine/animation/types'
 
 export type ToolId = 'paint' | 'erase' | 'eyedropper' | 'select' | 'fill' | 'clone' | 'move' | 'material' | 'pivot' | 'textureface' | 'marker'
-export type VoxelKind = 'cube' | 'ramp' | 'wedge' | 'thin' | 'half' | 'post' | 'quarter' | 'flat' | 'flatwedge'
+export type VoxelKind = 'cube' | 'ramp' | 'convex' | 'concave' | 'wedge' | 'thin' | 'half' | 'post' | 'quarter' | 'flat' | 'flatwedge'
 
 export type SelectionRegion = {
   originU: number
@@ -140,9 +140,15 @@ export type ToolSlice = {
   activeTool: ToolId
   activeVoxelKind: VoxelKind
   activePaletteSlot: PaletteSlotRef
+  /** Brush rotation in quarter-turns (0-3), applied additively at paint time for orientable
+   * kinds (ramp/wedge/quarter/flatwedge). 0 = legacy autotile/fresh-0 behavior exactly. */
+  brushRotation: Rotation
   setActiveTool: (tool: ToolId) => void
   setActiveVoxelKind: (kind: VoxelKind) => void
   setActivePaletteSlot: (slot: PaletteSlotRef) => void
+  setBrushRotation: (r: Rotation) => void
+  /** Steps the brush rotation ±1 quarter-turn (wraps mod 4). */
+  rotateBrush: (dir: 1 | -1) => void
 }
 
 export type FloatOrigin = { originU: number; originV: number }
@@ -169,6 +175,8 @@ export type NoiseScale = 1 | 2 | 4
 
 export type ViewSlice = {
   fullscreen: boolean
+  /** Pane layout: side-by-side 2D/3D split, or 3D-only (2D pane unmounted). Pure view pref. */
+  layoutMode: 'split' | '3d-only'
   /** 3D Edit mode: clicks/drags in the viewport dispatch the active paint/erase/eyedropper tool
    * directly on voxel faces instead of setting the construction plane (left-drag orbits only
    * outside Edit mode). Pure view pref — never persisted, never dirties. */
@@ -228,6 +236,7 @@ export type ViewSlice = {
    * (default true). Off exports voxels only. */
   exportIncludeMarkers: boolean
   setFullscreen: (v: boolean) => void
+  setLayoutMode: (v: 'split' | '3d-only') => void
   setEdit3D: (v: boolean) => void
   setHoverCell: (coord: Coord | null, chamferValid: boolean | null) => void
   setHoveredFace: (face: HoveredFace | null) => void
@@ -287,9 +296,11 @@ export type PaintActionsSlice = {
   /** Erases both color and chamfer layers at a cell. */
   eraseCell: (coord: Coord) => void
   /**
-   * Direct-3D paint at an explicit grid coordinate, using the clicked face's axis/orientation as
-   * the chamfer context (Edit mode). Same write path as `paintCell`, but with no 2D selection
-   * clip — the selection mask lives in the active plane's frame. Returns false if out of bounds.
+   * Direct-3D paint at an explicit grid coordinate, using the caller-supplied axis/orientation
+   * as the chamfer context (Edit mode taps pass the active construction plane, so orientation
+   * always matches the brush preview — never the raycast face). Same write path as `paintCell`,
+   * but with no 2D selection clip — the selection mask lives in the active plane's frame.
+   * Returns false if out of bounds.
    */
   paintCellAtCoord: (coord: Coord, faceAxis: Axis, faceOrientation: Orientation) => boolean
   /** Direct-3D erase at an explicit grid coordinate (Edit mode). No selection clip. */

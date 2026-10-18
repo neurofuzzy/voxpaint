@@ -1,0 +1,10 @@
+<svg viewBox="0 0 111 118" xmlns="http://www.w3.org/2000/svg">
+  <!-- Inner-corner voxel-kind toolbar icon. Edit freely — the toolbar picks up changes. -->
+  <g transform="matrix(1,0,0,1,-277,-300)">
+    <path d="M287,335 L332,360 L332,405 L287,380 Z" fill="rgb(184,184,184)" />
+    <path d="M377,335 L332,360 L332,405 L377,380 Z" fill="rgb(142,141,141)" />
+    <path d="M287,335 L332,310 L377,335 L332,360 Z" fill="rgb(223,223,223)" />
+    <path d="M313,349 L351,349 L332,368 Z" fill="rgb(105,105,105)" />
+    <path d="M313,349 L332,340 L332,368 Z" fill="rgb(142,141,141)" />
+  </g>
+</svg>
