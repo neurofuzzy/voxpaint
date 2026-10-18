@@ -1,8 +1,8 @@
 ```
 # Auto-generated project map
-# Last updated: 2026-10-17 18:48:21
-# Files: 213
-# Lines of code: ~27711
+# Last updated: 2026-10-17 21:03:27
+# Files: 214
+# Lines of code: ~27861
 ```
 - **/assets**
 - **/components**
@@ -608,7 +608,9 @@
       - Function: `makeEditTool` - `hooks` lets a caller redirect which undo stack...
     - [eraseTool.ts](../src/engine/tools/eraseTool.ts)
       - Variable: `eraseTool`
+    - [eyedropperTool.test.ts](../src/engine/tools/eyedropperTool.test.ts)
     - [eyedropperTool.ts](../src/engine/tools/eyedropperTool.ts)
+      - Function: `voxelKindForCell` - Maps a sampled cell's chamfer entry to the pain...
       - Variable: `eyedropperTool`
     - [fillTool.ts](../src/engine/tools/fillTool.ts)
       - Variable: `fillTool`

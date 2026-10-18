@@ -24,6 +24,7 @@ const KINDS: Array<{ id: VoxelKind; label: string; Icon: typeof CubeIcon; hint: 
 export function VoxelKindToggle() {
   const activeVoxelKind = useAppStore((s) => s.activeVoxelKind)
   const setActiveVoxelKind = useAppStore((s) => s.setActiveVoxelKind)
+  const setActiveTool = useAppStore((s) => s.setActiveTool)
   const setStatusMessage = useAppStore((s) => s.setStatusMessage)
   // Voxel kind (cube/chamfer) has no meaning while texturing or animating — disabled in Texture/Animate mode.
   const disabled = useAppStore((s) => s.mode === 'texture' || s.mode === 'animate')
@@ -53,7 +54,12 @@ export function VoxelKindToggle() {
                   disabled={disabled}
                   onPointerEnter={() => setStatusMessage(hint)}
                   onPointerLeave={() => setStatusMessage(null)}
-                  onClick={() => setActiveVoxelKind(id)}
+                  onClick={() => {
+                    setActiveVoxelKind(id)
+                    // Picking a kind drops into paint (the only tool that writes it), mirroring
+                    // how picking a palette color does.
+                    setActiveTool('paint')
+                  }}
                   className={
                     'flex h-9 w-9 items-center justify-center transition ' +
                     (active

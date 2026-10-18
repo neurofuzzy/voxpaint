@@ -7,7 +7,7 @@ import type { ToolId } from '@/store/types'
 const TOOLS: Array<{ id: ToolId; label: string; icon: typeof Brush; hint: string }> = [
   { id: 'paint', label: 'Paint', icon: Brush, hint: 'click or drag to paint · shift+drag: straight line' },
   { id: 'erase', label: 'Erase', icon: Eraser, hint: 'click or drag to erase · shift+drag: straight line' },
-  { id: 'eyedropper', label: 'Eyedropper', icon: Pipette, hint: 'click to pick a color from the model' },
+  { id: 'eyedropper', label: 'Eyedropper', icon: Pipette, hint: 'click to pick a color and voxel type from the model' },
   { id: 'material', label: 'Material', icon: Droplet, hint: 'click or drag to repaint occupied voxels · never adds or deletes' },
   { id: 'textureface', label: 'Texture Face', icon: SquareArrowOutDownLeft, hint: 'click or drag ramps, wedges + thin slabs to re-map their texture face to the current plane · geometry unchanged' },
   { id: 'select', label: 'Select', icon: SquareDashedMousePointer, hint: 'drag to select · alt+drag: lasso' },
