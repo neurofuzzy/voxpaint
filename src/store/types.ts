@@ -6,9 +6,10 @@ import type { ConstructionPlane } from '@/engine/plane/types'
 import type { ProjectMeta } from '@/engine/persistence/schema'
 import type { BoxFace, TexelScale, TextureModel } from '@/engine/texture/types'
 import type { TexelClip } from '@/engine/texture/texelOps'
+import type { WandMatch } from '@/engine/tools/wandTool'
 import type { AnimationSpeed, AnimationType, SliceAnimSettings, SliceKey } from '@/engine/animation/types'
 
-export type ToolId = 'paint' | 'erase' | 'eyedropper' | 'select' | 'fill' | 'clone' | 'move' | 'material' | 'pivot' | 'textureface' | 'marker'
+export type ToolId = 'paint' | 'erase' | 'eyedropper' | 'select' | 'fill' | 'clone' | 'move' | 'material' | 'pivot' | 'textureface' | 'marker' | 'wand'
 export type VoxelKind = 'cube' | 'ramp' | 'convex' | 'concave' | 'wedge' | 'thin' | 'half' | 'post' | 'quarter' | 'flat' | 'flatwedge'
 
 export type SelectionRegion = {
@@ -153,6 +154,14 @@ export type ToolSlice = {
 
 export type FloatOrigin = { originU: number; originV: number }
 
+/**
+ * Magic-wand anchor: the clicked cell plus the match rule in force when it was set
+ * (color-connected first tap, whole-component on rapid re-tap). Component-scoped ops (Delete,
+ * volumetric highlight) re-flood live from this — same rule, current model — so the component
+ * can never go stale no matter how the model changes afterward.
+ */
+export type WandAnchor = { cell: Coord; match: WandMatch }
+
 export type SelectionSlice = {
   selection: SelectionRegion | null
   clipboard: ClipboardData | null
@@ -160,7 +169,26 @@ export type SelectionSlice = {
   floatContent: ClipboardData | null
   /** Current placement of `floatContent`. Always non-null exactly when `floatContent` is. */
   floatOrigin: FloatOrigin | null
+  /**
+   * Wand anchor: the clicked cell plus the match rule that selected it. The wand's `selection`
+   * region covers exactly the flooded cells' footprint on the active plane (plain region
+   * semantics for copy/float/transform), while component-scoped ops (Delete, volumetric
+   * highlight) re-flood live from this anchor with the same rule — so the snapshot can never
+   * go stale no matter how the model changes afterward. Null for non-wand selections. Cleared
+   * by any `setSelection` and consumed (cleared) by a component delete, which reverts to plain
+   * region semantics.
+   */
+  wandAnchor: WandAnchor | null
   setSelection: (region: SelectionRegion | null) => void
+  /** Wand selection: region + anchor in one bake-guarded write (see `wandAnchor`). */
+  setWandSelection: (region: SelectionRegion, anchor: WandAnchor) => void
+  /**
+   * Two-stage wand click at a grid cell. First click (or any click >1s after the last, or on a
+   * chunk disconnected from the current anchor): color-connected bbox. Rapid re-tap on the SAME
+   * component: whole occupied component from the new cell. Empty clicks clear the selection and
+   * reset the stage. The wand tool stays active throughout (no handoff) so re-taps land on it.
+   */
+  applyWandAt: (start: Coord) => void
   setClipboard: (clipboard: ClipboardData | null) => void
 }
 

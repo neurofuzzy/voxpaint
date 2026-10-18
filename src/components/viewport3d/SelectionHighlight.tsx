@@ -11,7 +11,9 @@ const CAST_OPACITY = 0.35
 /**
  * Casts the 2D canvas's selection cyan over the actual voxels inside a (non-floating) selection,
  * so the 3D view shows which voxels a delete or transform is about to hit. Without it the
- * selection is a purely 2D concept and 3D gives no feedback at all.
+ * selection is a purely 2D concept and 3D gives no feedback at all. A live wand anchor extends
+ * the cast to the whole touching component at every depth (see `buildSelectionHighlightBatches`),
+ * so wand selections read volumetric.
  *
  * Skipped while content is floating — `FloatGhostPreview` already draws the float in full, and the
  * selection rectangle then just tracks it, so casting as well would double up on the same cells.
@@ -22,6 +24,7 @@ const CAST_OPACITY = 0.35
  */
 export function SelectionHighlight() {
   const selection = useAppStore((s) => s.selection)
+  const wandAnchor = useAppStore((s) => s.wandAnchor)
   const floatContent = useAppStore((s) => s.floatContent)
   const model = useAppStore((s) => s.model)
   const plane = useAppStore((s) => s.plane)
@@ -47,8 +50,8 @@ export function SelectionHighlight() {
   useEffect(() => () => material.dispose(), [material])
 
   const batches = useMemo(
-    () => (floatContent || !isModelMode ? [] : buildSelectionHighlightBatches(model, plane, selection, gridExtent)),
-    [model, plane, selection, gridExtent, floatContent, isModelMode],
+    () => (floatContent || !isModelMode ? [] : buildSelectionHighlightBatches(model, plane, selection, gridExtent, wandAnchor)),
+    [model, plane, selection, gridExtent, wandAnchor, floatContent, isModelMode],
   )
 
   const group = useGhostGroup(batches, material)

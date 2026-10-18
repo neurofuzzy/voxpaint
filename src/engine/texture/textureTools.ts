@@ -252,4 +252,6 @@ export const textureToolMap: Record<ToolId, TextureToolHandler> = {
   textureface: {},
   // Markers annotate voxel-grid cells, meaningless on texel grids — harmless no-op here.
   marker: {},
+  // Wand selects voxel components, meaningless on texel grids — harmless no-op here.
+  wand: {},
 }

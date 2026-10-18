@@ -10,6 +10,7 @@ import type { InstancingManager } from '@/engine/instancing/InstancingManager'
 import { planeFromFaceHit } from '@/engine/plane/constructionPlane'
 import { axisIndex, outwardNormal } from '@/engine/plane/planeGeometry'
 import { voxelKindForCell } from '@/engine/tools/eyedropperTool'
+import { marqueeSelection } from '@/engine/tools/select3D'
 import { useAppStore } from '@/store/useAppStore'
 import { usePlaneLayerScroll } from '@/components/usePlaneLayerScroll'
 import { AnimatedModelView } from './AnimatedModelView'
@@ -17,6 +18,8 @@ import { BoundingBoxFaceSelector } from './BoundingBoxFaceSelector'
 import { CompassIcon, CompassTracker } from './Compass'
 import { ViewportModeToggle } from './ViewportModeToggle'
 import { BrushPreview } from './BrushPreview'
+import { SelectMarqueeOverlay } from './SelectMarqueeOverlay'
+import type { MarqueeRect } from './SelectMarqueeOverlay'
 import { brushViewQuaternion } from './brushViewSync'
 import { ConstructionPlaneGizmo } from './ConstructionPlaneGizmo'
 import { ConstructionPlaneVisual } from './ConstructionPlaneVisual'
@@ -113,11 +116,14 @@ function ToneMappingController({ exposure }: { exposure: number }) {
  * When the cursor hits no voxel face, hover falls back to the construction-plane cell under the
  * cursor (`resolveEmptyCell`), so the ghost preview still marks what a click would paint.
  *
- * In 3D Edit mode (`edit3D`) with a paint/erase/eyedropper/material tool active, taps dispatch
- * the tool straight onto voxel faces — paint adds the neighbor cell across the face, erase deletes
- * the cell, eyedropper samples its color and voxel type, material recolors the cell. Paint/erase/eyedropper are
+ * In 3D Edit mode (`edit3D`) with a paint/erase/eyedropper/material/select/wand tool active,
+ * taps dispatch the tool straight onto voxel faces — paint adds the neighbor cell across the
+ * face, erase deletes the cell, eyedropper samples its color and voxel type, material recolors
+ * the cell, select takes a 1×1 plane-slice selection, wand selects connected color (whole
+ * touching component on rapid re-tap). Paint/erase/eyedropper/wand are
  * tap-only (drags orbit, so sweeps can't spray voxels); material recolors in place and is safe to
- * drag, bracketed as one undo stroke with orbit suppressed until pointer-up. Empty-space paint
+ * drag, bracketed as one undo stroke with orbit suppressed until pointer-up; select captures
+ * left-drag for a plane-slice marquee (tap = 1×1), right-drag still orbits. Empty-space paint
  * taps start a blob on the active slice. Every other tool keeps the plane-setting behavior in
  * both modes.
  */
@@ -125,16 +131,19 @@ const ORBIT_HINT = 'Orbit: left-drag to rotate · right-drag: pan · scroll: zoo
 const EDIT_ORBIT_HINT = 'Edit 3D: click a face to apply the tool · drag empty space to orbit · right-drag: orbit'
 
 /** Tools that apply straight onto voxel faces in 3D Edit mode (everything else keeps the
- * click-to-set-plane behavior there). Paint/erase/eyedropper are tap-only — drags orbit, so a
- * sweep can never spray voxels along the raycast. Material only recolors existing voxels (never
- * adds), so it is safe to drag. */
-const BLOCKING_TOOLS = ['paint', 'erase', 'eyedropper', 'material'] as const
+ * click-to-set-plane behavior there). Paint/erase/eyedropper/wand are tap-only — drags orbit, so
+ * a sweep can never spray voxels along the raycast. Material only recolors existing voxels
+ * (never adds), so it is safe to drag. Select captures left-drag for a plane-slice marquee
+ * (tap = 1×1); right-drag still orbits, per the Edit convention. */
+const BLOCKING_TOOLS = ['paint', 'erase', 'eyedropper', 'material', 'select', 'wand'] as const
 type BlockingTool = (typeof BLOCKING_TOOLS)[number]
 
 function editHint(tool: BlockingTool): string {
   if (tool === 'paint') return 'Click a face to paint a voxel · R rotates the brush'
   if (tool === 'erase') return 'Click a voxel to erase it'
   if (tool === 'material') return 'Click or drag to repaint · never adds voxels'
+  if (tool === 'select') return 'Drag to marquee-select the plane slice · click for one cell'
+  if (tool === 'wand') return 'Click a component for its color · re-tap it quickly for the whole component'
   return 'Click a voxel to pick its color and type'
 }
 
@@ -148,9 +157,11 @@ function voxelHint(axis: string, orientation: number): string {
 }
 const AGAIN_HINT = 'Click again to move the construction plane forward'
 
-function VoxelInteractionHandler({ managerRef, controlsRef }: {
+function VoxelInteractionHandler({ managerRef, controlsRef, onMarquee }: {
   managerRef: React.RefObject<InstancingManager | null>
   controlsRef: React.RefObject<OrbitControlsImpl | null>
+  /** Screen-space marquee overlay driver (stable setter): rect while dragging, null on release. */
+  onMarquee: (rect: MarqueeRect | null) => void
 }) {
   const { gl, camera } = useThree()
   const handleVoxelFaceClick = useAppStore((s) => s.handleVoxelFaceClick)
@@ -180,6 +191,10 @@ function VoxelInteractionHandler({ managerRef, controlsRef }: {
     // deletes cells — so sweeping across faces is safe, unlike paint/erase drags. One undo stroke
     // per drag, orbit suppressed until pointer-up; `lastKey` dedupes repeat hits on one cell.
     let materialDrag: { lastKey: string | null } | null = null
+    // Open select marquee (Edit mode only): drag start cell on the active plane. Committed as a
+    // plane-slice SelectionRegion on pointer-up (tap = identical corners = 1×1); cancelled on
+    // pointer-leave. Orbit suppressed until pointer-up, like the material drag.
+    let selectDrag: { start: Coord } | null = null
 
     /** True when the pointer should dispatch the active tool onto voxel faces instead of setting
      * the construction plane (Edit mode + a blocking tool). */
@@ -228,10 +243,12 @@ function VoxelInteractionHandler({ managerRef, controlsRef }: {
     }
 
     /** Applies the blocking tool once for a tap (Edit mode only): paint adds the neighbor cell
-     * across the face, erase deletes the cell, eyedropper samples its color and voxel type, material recolors the
-     * cell. Paint/erase/material bracket their own single-cell undo stroke; eyedropper mutates no
-     * model. Paint/erase/eyedropper drags never apply (every pointer crossing would spray voxels
-     * along the raycast), so movement always orbits — material alone drags (see onPointerMove).
+     * across the face, erase deletes the cell, eyedropper samples its color and voxel type,
+     * material recolors the cell, wand selects connected color (whole component on rapid
+     * re-tap; empty space clears the selection). Paint/erase/material bracket their own
+     * single-cell undo stroke; eyedropper and wand mutate no model. Paint/erase/eyedropper/wand
+     * drags never apply (every pointer crossing would spray voxels along the raycast), so movement always
+     * orbits — material alone drags (see onPointerMove); select commits via its own drag.
      *
      * Paint placement crosses the clicked face, but orientation ALWAYS inherits the active
      * construction plane — never the raycast face — so the write matches the brush preview. */
@@ -239,6 +256,14 @@ function VoxelInteractionHandler({ managerRef, controlsRef }: {
       const store = useAppStore.getState()
       const tool = activeToolRef.current
       const result = resolveFaceHit(clientX, clientY)
+      // Wand: two-stage tap (color-connected, then whole component on rapid re-tap); the wand
+      // stays active so the second tap lands here too. Empty space clears. Tap-only.
+      if (tool === 'wand') {
+        const coord = result ? decodeKey(result.key) : resolveEmptyCell(clientX, clientY)
+        if (!coord) return
+        store.applyWandAt(coord)
+        return
+      }
       if (result) {
         if (tool === 'eyedropper') {
           const cell = store.model.color.get(result.key)
@@ -265,7 +290,9 @@ function VoxelInteractionHandler({ managerRef, controlsRef }: {
         if (tool === 'paint') {
           const activePlane = planeRef.current
           store.paintCellAtCoord(target, activePlane.axis, activePlane.orientation)
-        } else store.eraseCellAtCoord(target)
+        } else if (tool === 'erase') store.eraseCellAtCoord(target)
+        // Any other tool (e.g. select, whose gestures commit via selectDrag) never reaches here,
+        // but must never erase — fail closed.
         store.commitStroke()
         return
       }
@@ -288,9 +315,53 @@ function VoxelInteractionHandler({ managerRef, controlsRef }: {
       if (controlsRef.current) controlsRef.current.enabled = true
     }
 
+    /** Cancels an open select marquee without committing (pointer left the canvas). */
+    function endSelectDrag() {
+      if (!selectDrag) return
+      selectDrag = null
+      onMarquee(null)
+      if (controlsRef.current) controlsRef.current.enabled = true
+    }
+
+    /** Screen rect for the marquee overlay, relative to the canvas element. */
+    function marqueeRectFor(clientX: number, clientY: number): MarqueeRect | null {
+      if (!down) return null
+      const rect = dom.getBoundingClientRect()
+      return {
+        x0: down.x - rect.left,
+        y0: down.y - rect.top,
+        x1: clientX - rect.left,
+        y1: clientY - rect.top,
+      }
+    }
+
     const onPointerDown = (e: PointerEvent) => {
       down = { x: e.clientX, y: e.clientY }
       if (!isBlocking() || e.button !== 0 || !e.isPrimary) return
+      // Select captures left-drag for the marquee (right-drag still orbits, per the Edit
+      // convention). Start cell: the hit voxel, else the plane cell under the cursor; a parallel
+      // ray leaves the gesture to orbit.
+      if (activeToolRef.current === 'select') {
+        const hit = resolveFaceHit(e.clientX, e.clientY)
+        const start: Coord | null = hit ? decodeKey(hit.key) : resolveEmptyCell(e.clientX, e.clientY)
+        if (!start) return
+        selectDrag = { start }
+        if (controlsRef.current) controlsRef.current.enabled = false
+        try {
+          dom.setPointerCapture(e.pointerId)
+        } catch {
+          // Pointer already released/implicit capture (touch) — the up handler still commits.
+        }
+        const rect = marqueeRectFor(e.clientX, e.clientY)
+        if (rect) onMarquee(rect)
+        // Hide the hover ghost while marqueeing so it can't disagree with the marquee.
+        lastCellKey = null
+        lastFaceKey = null
+        setHoverCell(null, null)
+        setHoveredFace(null)
+        setStatusMessage('Release to select the plane slice')
+        return
+      }
       // Material alone drags: open the stroke now (a tap = down+up with no move in between).
       if (activeToolRef.current !== 'material') return
       const result = resolveFaceHit(e.clientX, e.clientY)
@@ -310,6 +381,14 @@ function VoxelInteractionHandler({ managerRef, controlsRef }: {
     }
 
     const onPointerMove = (e: PointerEvent) => {
+      // Open marquee drag: track the screen rect only — hover stays cleared until release, and no
+      // store writes happen mid-drag (commit lands one SelectionRegion on pointer-up).
+      if (selectDrag) {
+        const rect = marqueeRectFor(e.clientX, e.clientY)
+        if (rect) onMarquee(rect)
+        return
+      }
+
       const result = resolveFaceHit(e.clientX, e.clientY)
 
       // No voxel face under the cursor: fall back to the construction plane, so the ghost
@@ -348,7 +427,8 @@ function VoxelInteractionHandler({ managerRef, controlsRef }: {
       }
       if (isBlocking()) {
         const tool = activeToolRef.current as BlockingTool
-        setStatusMessage(result ? editHint(tool) : EDIT_ORBIT_HINT)
+        // Select and wand both act from empty space too, so their hints show even with no hit.
+        setStatusMessage(tool === 'select' || tool === 'wand' ? editHint(tool) : result ? editHint(tool) : EDIT_ORBIT_HINT)
         return
       }
 
@@ -367,12 +447,28 @@ function VoxelInteractionHandler({ managerRef, controlsRef }: {
       setHoveredFace(null)
       setStatusMessage(null)
       endMaterialDrag()
+      endSelectDrag()
     }
 
     const onPointerUp = (e: PointerEvent) => {
       if (materialDrag) {
         endMaterialDrag()
         down = null
+        return
+      }
+      // Open marquee: commit the plane-slice region (tap = identical corners = 1×1, mirroring
+      // the 2D select tool). A genuinely new selection — bakes any pending float, like every
+      // other selection change. Tapping inside an existing selection does NOT lift it to a
+      // float here (that needs a 3D float drag — a follow-up); it starts a fresh selection.
+      if (selectDrag) {
+        const drag = selectDrag
+        selectDrag = null
+        onMarquee(null)
+        if (controlsRef.current) controlsRef.current.enabled = true
+        down = null
+        const hit = resolveFaceHit(e.clientX, e.clientY)
+        const end: Coord | null = hit ? decodeKey(hit.key) : resolveEmptyCell(e.clientX, e.clientY)
+        if (end) useAppStore.getState().setSelection(marqueeSelection(planeRef.current, drag.start, end))
         return
       }
       if (!down) return
@@ -432,7 +528,7 @@ function VoxelInteractionHandler({ managerRef, controlsRef }: {
       dom.removeEventListener('pointermove', onPointerMove)
       dom.removeEventListener('pointerleave', onPointerLeave)
     }
-  }, [gl, camera, managerRef, controlsRef, handleVoxelFaceClick, setHoverCell, setHoveredFace, setStatusMessage])
+  }, [gl, camera, managerRef, controlsRef, onMarquee, handleVoxelFaceClick, setHoverCell, setHoveredFace, setStatusMessage])
 
   return null
 }
@@ -464,6 +560,7 @@ export function Viewport3D() {
   const containerRef = useRef<HTMLDivElement>(null)
   usePlaneLayerScroll(containerRef)
   const [showExposure, setShowExposure] = useState(false)
+  const [marquee, setMarquee] = useState<MarqueeRect | null>(null)
   const compassNeedleRef = useRef<HTMLDivElement>(null)
 
   const textureMode = mode === 'texture'
@@ -509,7 +606,7 @@ export function Viewport3D() {
               <PivotGizmo />
               <MarkersView />
             </group>
-            <VoxelInteractionHandler managerRef={managerRef} controlsRef={orbitControlsRef} />
+            <VoxelInteractionHandler managerRef={managerRef} controlsRef={orbitControlsRef} onMarquee={setMarquee} />
           </>
         )}
           <OrbitControls
@@ -538,6 +635,7 @@ export function Viewport3D() {
       <SettingsPalette />
       {showExposure && <ExposureSlider />}
       <BrushPreview />
+      {marquee && <SelectMarqueeOverlay rect={marquee} />}
       <div className="absolute left-5 top-5 z-40 flex items-center gap-2">
         <CompassIcon iconRef={compassNeedleRef} />
         <ViewportModeToggle />

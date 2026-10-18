@@ -2,7 +2,7 @@ import type { StateCreator } from 'zustand'
 import { encodeKey, expandBounds, withinWorkingBounds } from '@/engine/grid/GridStore'
 import { gridCoordFromPixel } from '@/engine/plane/constructionPlane'
 import { rebaseChamferCell } from '@/engine/chamfer/faceBasis'
-import { fillLeaksToEdges, floodFillRegion, floodFillRegion3D } from '@/engine/tools/floodFill'
+import { fillLeaksToEdges, floodFillOccupied3D, floodFillRegion, floodFillRegion3D } from '@/engine/tools/floodFill'
 import { applyClipboardAt, clearRegion, copyRegionToClipboard, transformClipboardToPlane } from '@/engine/tools/clipboard'
 import { mirrorClipboard, rotateClipboard90 } from '@/engine/tools/transform'
 import { forEachSelectedCell, isCellSelected, mirrorRegion, rotateRegion90 } from '@/engine/tools/selectionMask'
@@ -132,14 +132,34 @@ export const createToolActionsSlice: Slice = (set, get) => ({
 
   deleteSelection: () => {
     get().bakeFloatIfAny()
-    const { selection } = get()
+    const { selection, wandAnchor, model, meta } = get()
     if (!selection) return
     get().beginStroke()
-    set((state) => {
-      clearRegion(state.model, state.plane, selection)
-      state.meta.modifiedAt = new Date().toISOString()
-      state.dirty = true
-    })
+    // Wand selection with a live anchor: erase the whole matching set at every depth
+    // (re-flooded now under the anchor's own match rule — color stays color-connected, so a
+    // first-tap selection deletes exactly what it showed). The anchor is consumed — a repeat
+    // press reverts to plain region semantics. A stale/empty anchor falls through to the slice.
+    if (wandAnchor && model.color.has(encodeKey(...wandAnchor.cell))) {
+      const keys = wandAnchor.match === 'color'
+        ? floodFillRegion3D(model, wandAnchor.cell, meta.gridExtent)
+        : floodFillOccupied3D(model, wandAnchor.cell, meta.gridExtent)
+      set((state) => {
+        for (const key of keys) {
+          state.model.color.delete(key)
+          state.model.chamfer.delete(key)
+        }
+        state.wandAnchor = null
+        state.meta.modifiedAt = new Date().toISOString()
+        state.dirty = true
+      })
+    } else {
+      set((state) => {
+        clearRegion(state.model, state.plane, selection)
+        state.wandAnchor = null
+        state.meta.modifiedAt = new Date().toISOString()
+        state.dirty = true
+      })
+    }
     get().commitStroke()
   },
 

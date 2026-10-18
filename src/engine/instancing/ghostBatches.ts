@@ -1,5 +1,5 @@
 import * as THREE from 'three'
-import { encodeKey, withinWorkingBounds } from '@/engine/grid/GridStore'
+import { decodeKey, encodeKey, withinWorkingBounds } from '@/engine/grid/GridStore'
 import type { ChamferCell, Coord, GridExtent, VoxelModel } from '@/engine/grid/types'
 import type { ConstructionPlane } from '@/engine/plane/types'
 import { gridCoordFromPixel } from '@/engine/plane/constructionPlane'
@@ -7,7 +7,8 @@ import { axisIndex } from '@/engine/plane/planeGeometry'
 import { resolveSlotColor } from '@/engine/palette/palette'
 import type { PaletteState } from '@/engine/palette/types'
 import { forEachSelectedCell } from '@/engine/tools/selectionMask'
-import type { ClipboardData, FloatOrigin, SelectionRegion } from '@/store/types'
+import { floodFillOccupied3D, floodFillRegion3D } from '@/engine/tools/floodFill'
+import type { ClipboardData, FloatOrigin, SelectionRegion, WandAnchor } from '@/store/types'
 import { chamferInstanceMatrix, cubeInstanceMatrix } from './basis'
 import { poolIdFor, type PoolId } from './pools'
 
@@ -84,8 +85,12 @@ export function buildFloatGhostBatches(
  * voxels a delete or transform is about to hit.
  *
  * Only cells that actually hold a voxel are included: the selection is a rectangle-or-lasso mask
- * over the plane, and casting empty space would read as a floating cyan slab. Since a selection
- * lives on one construction-plane slice, only that slice ever lights up.
+ * over the plane, and casting empty space would read as a floating cyan slab. A plain selection
+ * lights the occupied cells of its slice — except for a live wand anchor, which lights ONLY its
+ * matching flood at every depth: a mask bit means "a flooded cell projects into this column",
+ * so lighting the plane cell under it would catch disconnected voxels that merely share the
+ * column (the projected-bbox false positive). The wand selection therefore reads volumetric
+ * in 3D even though its region ops stay plane-scoped.
  *
  * No per-instance colors — the whole overlay is one flat tint, so the caller's material carries it.
  */
@@ -94,16 +99,34 @@ export function buildSelectionHighlightBatches(
   plane: ConstructionPlane,
   selection: SelectionRegion | null,
   gridExtent: GridExtent,
+  wandAnchor: WandAnchor | null = null,
 ): GhostBatch[] {
   if (!selection) return []
   const byPool = new Map<PoolId, GhostBatch>()
+  const lit = new Set<string>()
 
-  forEachSelectedCell(selection, (u, v) => {
-    const coord = gridCoordFromPixel(plane, u, v)
+  const pushCell = (coord: Coord) => {
     if (!withinWorkingBounds(coord, gridExtent)) return
     const key = encodeKey(...coord)
-    if (!model.color.has(key)) return
+    if (lit.has(key) || !model.color.has(key)) return
+    lit.add(key)
     pushInto(byPool, coord, model.chamfer.get(key))
+  }
+
+  // Live wand anchor: light the matching flood ONLY — never the plane cells under the mask,
+  // which may hold disconnected voxels sharing those columns (see docblock).
+  if (wandAnchor && model.color.has(encodeKey(...wandAnchor.cell))) {
+    const flooded = wandAnchor.match === 'color'
+      ? floodFillRegion3D(model, wandAnchor.cell, gridExtent)
+      : floodFillOccupied3D(model, wandAnchor.cell, gridExtent)
+    for (const key of flooded) {
+      pushCell(decodeKey(key))
+    }
+    return [...byPool.values()]
+  }
+
+  forEachSelectedCell(selection, (u, v) => {
+    pushCell(gridCoordFromPixel(plane, u, v))
   })
 
   return [...byPool.values()]

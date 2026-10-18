@@ -8,6 +8,7 @@ const TOOL_HINTS: Record<ToolId, string> = {
   eyedropper: 'click to pick a color and voxel type · 3D Edit: click a voxel to pick its color and type',
   material: 'click or drag to repaint occupied voxels · never adds or deletes · 3D Edit: drag across faces',
   select: 'drag to select · alt+drag: lasso · drag inside to move (alt: full depth)',
+  wand: 'click a component for its color · re-tap it quickly for the whole component · delete removes it at every depth',
   fill: 'click to flood-fill connected cells in 2d, ALT-click to flood fill in 3d',
   clone: 'alt+click to set a clone source, then drag to stamp',
   move: 'drag to shift every pixel on this slice',

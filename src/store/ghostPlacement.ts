@@ -33,7 +33,8 @@ export type GhostPlacement =
  * preview (`BrushPreview`), and — by contract — what `applyPaintCell` writes. One function so
  * the three can never disagree about basis, reflection, or autotile context.
  *
- * Rules (kept verbatim from the original ghost memo): hidden for the material tool; in 3D Edit
+ * Rules (kept verbatim from the original ghost memo): hidden for the material tool and for
+ * the select tool in 3D Edit mode (no paint preview while selecting); in 3D Edit
  * with paint, the placement cell is the neighbor across the hovered face (face must belong to
  * the hovered cell — 2D hover sets `hoverCell` without a face), but orientation ALWAYS inherits
  * the active construction plane, never the raycast face — matching the paint write (see
@@ -46,7 +47,9 @@ export type GhostPlacement =
 export function resolveGhostPlacement(input: GhostPlacementInput): GhostPlacement | null {
   const { model, plane, hoverCell, hoveredFace, activeVoxelKind, brushRotation, activeTool, edit3D, gridExtent, layoutMode } = input
   const verbatim = layoutMode === '3d-only'
-  if (edit3D && activeTool === 'material') return null
+  // Material recolors on hover-blink alone; select shows no paint preview (the marquee overlay
+  // and cyan selection cast cover feedback instead, like the 2D canvas while selecting).
+  if (edit3D && (activeTool === 'material' || activeTool === 'select')) return null
   let target: Coord | null = null
   let faceAxis: Axis | null = null
   let faceOrientation: Orientation | null = null

@@ -275,6 +275,8 @@ export function usePixelCanvasTools(canvasRef: React.RefObject<HTMLCanvasElement
     setActiveVoxelKind: store.setActiveVoxelKind,
     setActiveTool: store.setActiveTool,
     setSelection: store.setSelection,
+    setWandSelection: store.setWandSelection,
+    applyWandAt: store.applyWandAt,
     liftSelectionToFloat: store.liftSelectionToFloat,
     moveFloatTo: store.moveFloatTo,
     transformFloat: store.transformFloat,

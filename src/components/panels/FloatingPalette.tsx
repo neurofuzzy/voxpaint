@@ -67,6 +67,9 @@ function Swatch({ kind, index, hex }: { kind: PaletteSlotKind; index: number; he
  * The special-material row (emissive/metal/glass) is laid out as spacer + 4 + spacer + 4 + spacer +
  * 4 + spacer — 4 spacer slots + 12 swatches = 16 slots, exactly matching the 16-wide base row
  * above, so both rows share the same total width and center perfectly on top of each other.
+ *
+ * The wand is a select subtool living in that same pill (marquee/wand switch up front, not
+ * on the primary toolbar): with the wand armed it shows the selection subtools too.
  */
 /** Texture-mode palette: the (currently 5) grayscale values a texel can hold, bound to
  * `activeGrayIndex`. */
@@ -143,7 +146,10 @@ export function FloatingPalette({ orientation = 'horizontal' }: { orientation?: 
 
   // The Select tool takes over the pill with the selection's own subtools — there's nothing to
   // pick a color for while selecting. Animate mode is exempt: it has no selection to act on.
-  const showSelectionTools = activeTool === 'select' && mode !== 'animate'
+  // The wand is a select subtool living in that same pill (marquee/wand switch up front), so it
+  // takes over identically — including with no selection yet, where the buttons sit disabled
+  // exactly like the select tool's do.
+  const showSelectionTools = (activeTool === 'select' || activeTool === 'wand') && mode !== 'animate'
   // The Move tool likewise never paints: the pill hosts whole-model rotate/flip instead of
   // colors. Model mode only — in Texture mode Move still translates texels, which takes no color
   // either, but whole-model voxel transforms don't apply there, so the gray palette stays.

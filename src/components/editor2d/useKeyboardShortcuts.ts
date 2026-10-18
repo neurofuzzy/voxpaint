@@ -16,6 +16,7 @@ const TOOL_KEYS: Record<string, ToolId> = {
   c: 'clone',
   v: 'move',
   d: 'marker',
+  w: 'wand',
 }
 
 /**

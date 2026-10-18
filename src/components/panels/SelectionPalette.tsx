@@ -1,5 +1,5 @@
 import * as Tooltip from '@radix-ui/react-tooltip'
-import { ClipboardPaste, Copy, FlipHorizontal, FlipVertical, RotateCcw, RotateCw, Scissors, SquareArrowOutDownLeft, SquareDashed, Trash2 } from 'lucide-react'
+import { ClipboardPaste, Copy, FlipHorizontal, FlipVertical, RotateCcw, RotateCw, Scissors, SquareArrowOutDownLeft, SquareDashed, SquareDashedMousePointer, Trash2, WandSparkles } from 'lucide-react'
 import { showToast } from '@/components/ui/toastBus'
 import { useAppStore } from '@/store/useAppStore'
 import type { SelectionTransformKind } from '@/store/types'
@@ -90,6 +90,8 @@ const ACTIONS: Action[] = [
  */
 export function SelectionPalette({ orientation = 'horizontal' }: { orientation?: PaletteOrientation } = {}) {
   const isTexture = useAppStore((s) => s.mode === 'texture')
+  const activeTool = useAppStore((s) => s.activeTool)
+  const setActiveTool = useAppStore((s) => s.setActiveTool)
   const hasSelection = useAppStore((s) => (s.mode === 'texture' ? s.textureSelection : s.selection) !== null)
   const hasClipboard = useAppStore((s) => (s.mode === 'texture' ? s.textureClipboard : s.clipboard) !== null)
   const setStatusMessage = useAppStore((s) => s.setStatusMessage)
@@ -128,7 +130,7 @@ export function SelectionPalette({ orientation = 'horizontal' }: { orientation?:
     onClick: () => void,
     danger = false,
   ) {
-    return (
+  return (
       <Tooltip.Root key={id}>
         <Tooltip.Trigger asChild>
           <button
@@ -162,9 +164,71 @@ export function SelectionPalette({ orientation = 'horizontal' }: { orientation?:
     )
   }
 
+  function renderModeButton(
+    id: string,
+    label: string,
+    Icon: typeof RotateCw,
+    hint: string,
+    dimmed: boolean,
+    onClick: () => void,
+  ) {
+    return (
+      <Tooltip.Root key={id}>
+        <Tooltip.Trigger asChild>
+          <button
+            aria-label={label}
+            aria-pressed={!dimmed}
+            onPointerEnter={() => setStatusMessage(hint)}
+            onPointerLeave={() => setStatusMessage(null)}
+            onClick={onClick}
+            className={
+              'flex h-9 w-9 items-center justify-center rounded-xl border transition-colors ' +
+              (dimmed
+                ? 'border-neutral-700 bg-neutral-800/60 text-neutral-500 hover:text-neutral-200'
+                : 'border-violet-400/60 bg-violet-500/25 text-violet-200')
+            }
+          >
+            <Icon size={17} />
+          </button>
+        </Tooltip.Trigger>
+        <Tooltip.Portal>
+          <Tooltip.Content
+            side={vertical ? 'right' : 'top'}
+            sideOffset={8}
+            className="z-50 rounded-md border border-neutral-700 bg-neutral-900 px-2 py-1 text-xs text-neutral-200 shadow-lg"
+          >
+            {label}
+            <Tooltip.Arrow className="fill-neutral-700" />
+          </Tooltip.Content>
+        </Tooltip.Portal>
+      </Tooltip.Root>
+    )
+  }
+
   return (
     <Tooltip.Provider delayDuration={300}>
       <div className={vertical ? 'flex flex-col items-center gap-1' : 'flex items-center gap-1'}>
+        {/* Select-mode switch (model only — the wand is meaningless on texel grids): marquee vs
+          magic wand. The wand lives here as a select subtool, not on the primary toolbar. */}
+        {!isTexture && renderModeButton(
+          'marquee',
+          'Marquee select',
+          SquareDashedMousePointer,
+          'drag to marquee-select the plane slice · click for one cell',
+          activeTool === 'wand',
+          () => setActiveTool('select'),
+        )}
+        {!isTexture && renderModeButton(
+          'wand',
+          'Wand select',
+          WandSparkles,
+          'click a component for its color · re-tap it quickly for the whole component',
+          activeTool !== 'wand',
+          () => setActiveTool('wand'),
+        )}
+        {!isTexture && (vertical
+          ? <div className="my-0.5 h-px w-6 bg-neutral-700" />
+          : <div className="mx-0.5 h-6 w-px bg-neutral-700" />)}
         {renderButton('copy', 'Copy', Copy, 'copy the selection · ctrl/cmd+c', !hasSelection, copySelection)}
         {renderButton('cut', 'Cut', Scissors, 'cut the selection · ctrl/cmd+x', !hasSelection, cutSelection)}
         {renderButton('paste', 'Paste', ClipboardPaste, 'paste in place — drag inside the pasted selection to move it · ctrl/cmd+v', !hasClipboard, pasteInPlace)}

@@ -24,6 +24,7 @@ export function shortcutGroups(mod: string): ShortcutGroup[] {
         { keys: ['M'], label: 'Material' },
         { keys: ['T'], label: 'Texture Face' },
         { keys: ['S'], label: 'Select' },
+        { keys: ['W'], label: 'Wand (connected color · again fast: component)' },
         { keys: ['K'], label: 'Fill' },
         { keys: ['C'], label: 'Clone' },
         { keys: ['V'], label: 'Move' },

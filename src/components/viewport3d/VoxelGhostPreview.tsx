@@ -17,7 +17,8 @@ import { useAppStore } from '@/store/useAppStore'
  * ghost, the HUD, and the paint write itself resolve basis, reflection, and autotile identically.
  *
  * When a voxel already exists at the hover cell, InstancingManager's own hover blink handles the
- * feedback instead — this component stays hidden (checked via `model.color`).
+ * feedback instead — this component stays hidden (checked via `model.color`). It also stays
+ * hidden for the select tool in 3D Edit mode (see `resolveGhostPlacement`).
  */
 export function VoxelGhostPreview() {
   const hoverCell = useAppStore((s) => s.hoverCell)
