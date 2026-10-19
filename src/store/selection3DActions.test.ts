@@ -97,6 +97,22 @@ describe('3D selection store + exact-set actions', () => {
     expect(after.model.color.size).toBe(2)
   })
 
+  it('moving an off-plane volume preserves absolute depths (no collapse to the plane)', () => {
+    // Wand-selected volume floating at z=2..3 while the plane sits at z=0: dw runs off the
+    // set bbox-min, so dw==0 does NOT mean "on the plane" — the move must not re-anchor it.
+    paintAt([0, 0, 2], SLOT_A)
+    paintAt([1, 0, 3], SLOT_B)
+    useAppStore.getState().liftCellsToFloat(new Set([encodeKey(0, 0, 2), encodeKey(1, 0, 3)]))
+    // (u,v) of (0,0,2) on the z-plane is (0,-1); shift +2u like a drag would.
+    useAppStore.getState().moveFloatCellsTo(2, -1)
+    useAppStore.getState().bakeFloatIfAny()
+    const after = useAppStore.getState()
+    expect(after.floatContent).toBeNull()
+    expect(after.model.color.get(encodeKey(2, 0, 2))?.paletteSlot).toEqual(SLOT_A)
+    expect(after.model.color.get(encodeKey(3, 0, 3))?.paletteSlot).toEqual(SLOT_B)
+    expect(after.model.color.size).toBe(2)
+  })
+
   it('deleteCells3D erases the exact set at every depth, keeping loners', () => {
     paintAt([0, 0, 0])
     paintAt([0, 0, 1])

@@ -16,6 +16,7 @@ let lastWandCell: Coord | null = null
 
 export const createSelection3DSlice: Slice = (set, get) => ({
   selectedCells: new Set<CellKey>(),
+  selectedCellsPreview: null,
 
   // A fresh 3D selection bakes any pending float first, mirroring setSelection's rule — a
   // pending float never survives a selection change. Always replace wholesale (never mutate in
@@ -27,6 +28,9 @@ export const createSelection3DSlice: Slice = (set, get) => ({
   },
   clearSelectedCells: () => {
     set((state) => { state.selectedCells = new Set<CellKey>() })
+  },
+  setSelectedCellsPreview: (cells) => {
+    set((state) => { state.selectedCellsPreview = cells ? new Set(cells) : null })
   },
 
   applyWandAt: (start) => {

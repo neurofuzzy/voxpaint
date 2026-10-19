@@ -57,6 +57,8 @@ export function buildFloatGhostBatches(
   if (!floatContent || !floatOrigin) return []
   const byPool = new Map<PoolId, GhostBatch>()
   const ai = axisIndex(plane.axis)
+  const samePlane =
+    floatContent.copyPlaneAxis === plane.axis && floatContent.copyPlaneOrientation === plane.orientation
 
   for (const cell of floatContent.cells) {
     // A cell with no color paints nothing when baked, so it has nothing to ghost either.
@@ -64,18 +66,51 @@ export function buildFloatGhostBatches(
     if (!cell.color) continue
     const coord = gridCoordFromPixel(plane, floatOrigin.originU + cell.du, floatOrigin.originV + cell.dv)
     // Deep-lifted cells ride at their depth offset off the float slice, mirroring
-    // `applyClipboardAt` (same-plane drops re-anchor to the lift slice recorded in the content).
-    if (cell.dw !== 0) {
-      const samePlane =
-        floatContent.copyPlaneAxis === plane.axis && floatContent.copyPlaneOrientation === plane.orientation
-      coord[ai] = (samePlane ? (floatContent.copyPlaneOffset ?? plane.offset) : plane.offset) + cell.dw
-    }
+    // `applyClipboardAt` (same-plane drops re-anchor to the lift slice recorded in the
+    // content). The re-anchor is unconditional: exact-set lifts anchor dw off the set
+    // bbox-min rather than the plane, so dw==0 does NOT mean "on the plane" for them and
+    // skipping it would collapse the bottom layer onto the construction plane.
+    coord[ai] = (samePlane ? (floatContent.copyPlaneOffset ?? plane.offset) : plane.offset) + cell.dw
     // Cells dragged off-grid are dropped by `applyClipboardAt` on bake — don't promise them here.
     if (!withinWorkingBounds(coord, gridExtent)) continue
     pushInto(byPool, coord, cell.chamfer, new THREE.Color(resolveSlotColor(palette, cell.color.paletteSlot)))
   }
 
   return [...byPool.values()]
+}
+
+/**
+ * Current grid-space footprint of a pending float: every placed cell coordinate within working
+ * bounds. Placement mirrors `buildFloatGhostBatches` (and therefore `applyClipboardAt`) exactly —
+ * same plane mapping, same depth re-anchoring, same bounds rejection — so the box and the ghost
+ * agree on where the drag is. Only cells with color are included, matching what the ghost renders
+ * (colorless cells clear on bake but paint nothing, so they contribute no visible drag).
+ *
+ * Used by the 3D selection bounding box to track a dragged selection: a lift deletes the cells
+ * out of the model, leaving the selection set stale, but the float knows where its cells live
+ * right now and `floatOrigin` follows the pointer every frame.
+ */
+export function placedFloatCoords(
+  floatContent: ClipboardData | null,
+  floatOrigin: FloatOrigin | null,
+  plane: ConstructionPlane,
+  gridExtent: GridExtent,
+): Coord[] {
+  if (!floatContent || !floatOrigin) return []
+  const ai = axisIndex(plane.axis)
+  const samePlane =
+    floatContent.copyPlaneAxis === plane.axis && floatContent.copyPlaneOrientation === plane.orientation
+  const out: Coord[] = []
+  for (const cell of floatContent.cells) {
+    if (!cell.color) continue
+    const coord = gridCoordFromPixel(plane, floatOrigin.originU + cell.du, floatOrigin.originV + cell.dv)
+    // Unconditional re-anchor like the ghost and the bake: exact-set lifts anchor dw off the
+    // set bbox-min rather than the plane, so dw==0 does NOT mean "on the plane" for them.
+    coord[ai] = (samePlane ? (floatContent.copyPlaneOffset ?? plane.offset) : plane.offset) + cell.dw
+    if (!withinWorkingBounds(coord, gridExtent)) continue
+    out.push(coord)
+  }
+  return out
 }
 
 /**

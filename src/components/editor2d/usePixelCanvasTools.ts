@@ -9,7 +9,6 @@ import { animateToolMap, toolMap } from '@/engine/tools'
 import type { ToolContext, ToolDragState } from '@/engine/tools/types'
 import type { ConstructionPlane } from '@/engine/plane/types'
 import { useAppStore } from '@/store/useAppStore'
-import type { SelectionRegion } from '@/store/types'
 import type { CanvasPan, CanvasSize } from './cameraTransform'
 import { clampPan, screenToWorld, touchDistance, touchMidpoint, vScaleForPlane } from './cameraTransform'
 import {
@@ -108,7 +107,10 @@ export function usePixelCanvasTools(canvasRef: React.RefObject<HTMLCanvasElement
   }, [gridExtent, voxelScaleY])
 
   const [linePreview, setLinePreview] = useState<{ anchor: [number, number]; end: [number, number] } | null>(null)
-  const [selectPreview, setSelectPreview] = useState<SelectionRegion | null>(null)
+  // Store-backed (not local) so the 3D selection box can mirror the live marquee while it is
+  // being dragged — the 2D canvas renders `selectPreview ?? selection` for the same reason.
+  const selectPreview = useAppStore((s) => s.selectPreview)
+  const setSelectPreview = useAppStore((s) => s.setSelectPreview)
 
   useEffect(() => {
     const canvas = canvasRef.current

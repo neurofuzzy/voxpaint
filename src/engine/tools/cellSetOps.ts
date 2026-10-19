@@ -1,11 +1,11 @@
-import { decodeKey, withinWorkingBounds } from '@/engine/grid/GridStore'
+import { decodeKey, encodeKey, withinWorkingBounds } from '@/engine/grid/GridStore'
 import type { CellKey, ChamferCell, Coord, GridExtent, VoxelModel } from '@/engine/grid/types'
 import type { PaletteSlotRef } from '@/engine/palette/types'
 import { gridCoordFromPixel, pixelFromGridCoord } from '@/engine/plane/constructionPlane'
 import { axisIndex } from '@/engine/plane/planeGeometry'
 import type { ConstructionPlane } from '@/engine/plane/types'
 import { mirrorChamferCell, rotateChamferCell } from '@/engine/chamfer/chamferTransform'
-import type { ClipboardCell, ClipboardData, SelectionTransformKind } from '@/store/types'
+import type { ClipboardCell, ClipboardData, SelectionRegion, SelectionTransformKind } from '@/store/types'
 
 /** One live voxel snapshot: absolute coord plus both layers (chamfer deep-copied). */
 export type CellSnapshot = {
@@ -31,15 +31,32 @@ export function bboxOfCoords(coords: Coord[]): { min: Coord; max: Coord } | null
 }
 
 /**
- * Occupied cells under a plane-rectangle marquee (the 3D marquee gesture): every model voxel
- * whose plane projection falls in the dragged (u,v) range, at any depth. Callers snap the
- * result to the 3D selection as-is (already minimal — empty margins never enter).
+ * Grid-space bounds of a plane-frame selection window: the (u,v) rect mapped onto the
+ * construction plane at its offset. The window is one slice thick, so both corners share the
+ * plane-axis coordinate — the result is a slab lying on the plane. Opposite corners suffice
+ * because the plane mapping is axis-aligned (possibly flipped per orientation); min/max absorbs
+ * the flip. Mirrors the rect the 2D canvas outlines with marching ants, in 3D.
  */
-export function footprintOccupiedCells(
-  model: VoxelModel,
+export function windowSlabBounds(region: SelectionRegion, plane: ConstructionPlane): { min: Coord; max: Coord } {
+  const a = gridCoordFromPixel(plane, region.originU, region.originV)
+  const b = gridCoordFromPixel(plane, region.originU + region.width - 1, region.originV + region.height - 1)
+  const min: Coord = [Math.min(a[0], b[0]), Math.min(a[1], b[1]), Math.min(a[2], b[2])]
+  const max: Coord = [Math.max(a[0], b[0]), Math.max(a[1], b[1]), Math.max(a[2], b[2])]
+  return { min, max }
+}
+
+/**
+ * Every cell of the construction-plane slice under a plane-rectangle marquee (the 3D window
+ * select): occupied or empty, the full dragged rect at the plane offset. The selection is the
+ * window itself — the box reads the dragged rect and later edits apply window-wide — so empty
+ * cells are included, not just occupied voxels. Out-of-grid corners are dropped. Callers snap
+ * the result to the 3D selection as-is.
+ */
+export function windowSliceCells(
   plane: ConstructionPlane,
   from: Coord,
   to: Coord,
+  gridExtent: GridExtent,
 ): CellKey[] {
   const a = pixelFromGridCoord(plane, from)
   const b = pixelFromGridCoord(plane, to)
@@ -48,9 +65,12 @@ export function footprintOccupiedCells(
   const minV = Math.min(a.v, b.v)
   const maxV = Math.max(a.v, b.v)
   const keys: CellKey[] = []
-  for (const key of model.color.keys()) {
-    const { u, v } = pixelFromGridCoord(plane, decodeKey(key))
-    if (u >= minU && u <= maxU && v >= minV && v <= maxV) keys.push(key)
+  for (let u = minU; u <= maxU; u++) {
+    for (let v = minV; v <= maxV; v++) {
+      const coord = gridCoordFromPixel(plane, u, v)
+      if (!withinWorkingBounds(coord, gridExtent)) continue
+      keys.push(encodeKey(...coord))
+    }
   }
   return keys
 }

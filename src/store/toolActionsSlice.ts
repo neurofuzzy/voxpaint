@@ -1,7 +1,7 @@
 import type { StateCreator } from 'zustand'
 import { encodeKey, expandBounds, withinWorkingBounds } from '@/engine/grid/GridStore'
 import type { CellKey } from '@/engine/grid/types'
-import { gridCoordFromPixel } from '@/engine/plane/constructionPlane'
+import { gridCoordFromPixel, pixelFromGridCoord } from '@/engine/plane/constructionPlane'
 import { rebaseChamferCell } from '@/engine/chamfer/faceBasis'
 import { fillLeaksToEdges, floodFillRegion, floodFillRegion3D } from '@/engine/tools/floodFill'
 import { applyClipboardAt, clearRegion, copyRegionToClipboard, transformClipboardToPlane } from '@/engine/tools/clipboard'
@@ -69,6 +69,69 @@ export const createToolActionsSlice: Slice = (set, get) => ({
     set((state) => {
       for (const key of keys) {
         state.model.color.set(key, { paletteSlot: activePaletteSlot })
+      }
+      state.meta.modifiedAt = new Date().toISOString()
+      state.dirty = true
+    })
+    get().commitStroke()
+  },
+
+  floodFillCellsAt: (coord, alt) => {
+    get().bakeFloatIfAny()
+    const { model, plane, activePaletteSlot, selectedCells, meta } = get()
+    // The 3D selection is planar (window select never leaves the slice), so the set reads as
+    // a UV mask on the active plane for the slice fill below.
+    const inSet = (cu: number, cv: number) => selectedCells.has(encodeKey(...gridCoordFromPixel(plane, cu, cv)))
+    if (alt) {
+      if (!model.color.has(encodeKey(...coord))) return // only fills from an existing voxel
+      let keys = floodFillRegion3D(model, coord, meta.gridExtent)
+      if (selectedCells.size > 0) {
+        keys = keys.filter((key) => selectedCells.has(key))
+        if (keys.length === 0) {
+          get().flashSelectionBlocked()
+          return
+        }
+      }
+      if (keys.length === 0) return
+      get().beginStroke()
+      set((state) => {
+        for (const key of keys) {
+          state.model.color.set(key, { paletteSlot: activePaletteSlot })
+        }
+        state.meta.modifiedAt = new Date().toISOString()
+        state.dirty = true
+      })
+      get().commitStroke()
+      return
+    }
+    const { u, v } = pixelFromGridCoord(plane, coord)
+    // Same contract as the 2D `floodFill`, masked by the 3D set: a tap inside the window
+    // treats the window itself as the bound (no leak guard needed); otherwise the leak
+    // guard applies and the result clips to the window.
+    const inSelection = selectedCells.size > 0 && inSet(u, v)
+    let cells = inSelection
+      ? floodFillRegion(model, plane, u, v, meta.gridExtent, inSet)
+      : floodFillRegion(model, plane, u, v, meta.gridExtent)
+    if (!inSelection) {
+      if (fillLeaksToEdges(cells, meta.gridExtent)) {
+        if (selectedCells.size > 0) get().flashSelectionBlocked()
+        return
+      }
+      if (selectedCells.size > 0) {
+        cells = cells.filter(([cu, cv]) => inSet(cu, cv))
+        if (cells.length === 0) {
+          get().flashSelectionBlocked()
+          return
+        }
+      }
+    }
+    if (cells.length === 0) return
+    get().beginStroke()
+    set((state) => {
+      for (const [cu, cv] of cells) {
+        const c = gridCoordFromPixel(state.plane, cu, cv)
+        state.model.color.set(encodeKey(...c), { paletteSlot: activePaletteSlot })
+        state.model.bounds = expandBounds(state.model.bounds, c)
       }
       state.meta.modifiedAt = new Date().toISOString()
       state.dirty = true

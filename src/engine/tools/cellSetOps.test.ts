@@ -1,17 +1,21 @@
 import { describe, expect, it } from 'vitest'
 import { encodeKey } from '@/engine/grid/GridStore'
-import type { Coord, VoxelModel } from '@/engine/grid/types'
+import type { Axis, Coord, Orientation, VoxelModel } from '@/engine/grid/types'
 import type { PaletteSlotRef } from '@/engine/palette/types'
 import type { ConstructionPlane } from '@/engine/plane/types'
+import { gridCoordFromPixel } from '@/engine/plane/constructionPlane'
+import { axisIndex } from '@/engine/plane/planeGeometry'
 import {
   bboxOfCoords,
   copyCellsToClipboard,
-  footprintOccupiedCells,
   rotateCellsInPlane,
   snapshotCells,
+  windowSliceCells,
+  windowSlabBounds,
 } from './cellSetOps'
 
 const PLANE: ConstructionPlane = { axis: 'z', orientation: 1, offset: 0 }
+const EXTENT = 16 // working bounds [-8, 8)
 const SLOT = { kind: 'base', index: 0 } as PaletteSlotRef
 
 function emptyModel(): VoxelModel {
@@ -31,26 +35,77 @@ describe('bboxOfCoords', () => {
   })
 })
 
-describe('footprintOccupiedCells', () => {
-  it('collects occupied cells in the dragged (u,v) range at any depth, nothing else', () => {
-    const model = emptyModel()
-    paintBox(model, 0, 0, 0, 1, 1, 2) // 2x2 footprint, 3 deep
-    paintBox(model, 5, 5, 5, 5, 5, 5) // outside
-    // z-plane: u=x, v=-y-1. Drag (u 0..1, v -2..-1) == x 0..1, y 0..1.
-    const from: Coord = [0, 0, 0]
-    const to: Coord = [1, 1, 0]
-    const found = footprintOccupiedCells(model, PLANE, from, to)
-    expect(found).toHaveLength(12)
-    expect(found).not.toContain(encodeKey(5, 5, 5))
+describe('windowSlabBounds', () => {
+  const ALL_PLANES: ConstructionPlane[] = (['x', 'y', 'z'] as const).flatMap((axis: Axis) =>
+    ([1, -1] as const).map((orientation: Orientation) => ({ axis, orientation, offset: 3 })),
+  )
+  const region = { originU: 1, originV: 2, width: 3, height: 2, mask: new Uint8Array(6).fill(1) }
+
+  it('lays the window flat on the plane slice, on every plane and orientation', () => {
+    for (const plane of ALL_PLANES) {
+      const { min, max } = windowSlabBounds(region, plane)
+      // One slice thick, sitting exactly on the plane offset.
+      expect(min[axisIndex(plane.axis)]).toBe(3)
+      expect(max[axisIndex(plane.axis)]).toBe(3)
+      // Both mapped corners inside the bounds (orientation flips absorbed by min/max).
+      for (const [u, v] of [[1, 2], [3, 3]] as const) {
+        const c = gridCoordFromPixel(plane, u, v)
+        for (let i = 0; i < 3; i++) {
+          expect(c[i]).toBeGreaterThanOrEqual(min[i])
+          expect(c[i]).toBeLessThanOrEqual(max[i])
+        }
+      }
+    }
   })
 
-  it('is direction-independent and empty when nothing is under the rect', () => {
-    const model = emptyModel()
-    paintBox(model, 0, 0, 0, 0, 0, 0)
-    const fwd = footprintOccupiedCells(model, PLANE, [0, 0, 0], [3, 3, 0])
-    const back = footprintOccupiedCells(model, PLANE, [3, 3, 0], [0, 0, 0])
+  it('matches the known z-plane mapping and collapses a 1x1 window to one cell', () => {
+    // z-plane: u=x, v=-y-1.
+    const slab = windowSlabBounds(
+      { originU: 0, originV: -2, width: 2, height: 2, mask: new Uint8Array(4).fill(1) },
+      { axis: 'z', orientation: 1, offset: 0 },
+    )
+    expect(slab).toEqual({ min: [0, 0, 0], max: [1, 1, 0] })
+
+    const single = windowSlabBounds(
+      { originU: 4, originV: 5, width: 1, height: 1, mask: new Uint8Array(1).fill(1) },
+      { axis: 'z', orientation: 1, offset: 0 },
+    )
+    expect(single.min).toEqual(single.max)
+  })
+})
+
+describe('windowSliceCells', () => {
+  it('collects the full slice rect — occupied or empty — at the plane offset', () => {
+    // z-plane: u=x, v=-y-1. Drag (u 0..1, v -2..-1) == x 0..1, y 0..1, z=0.
+    const from: Coord = [0, 0, 0]
+    const to: Coord = [1, 1, 0]
+    const found = windowSliceCells(PLANE, from, to, EXTENT)
+    expect(found).toHaveLength(4)
+    expect(new Set(found)).toEqual(
+      new Set([encodeKey(0, 0, 0), encodeKey(0, 1, 0), encodeKey(1, 0, 0), encodeKey(1, 1, 0)]),
+    )
+  })
+
+  it('is direction-independent and drops out-of-grid corners', () => {
+    const fwd = windowSliceCells(PLANE, [0, 0, 0], [3, 3, 0], EXTENT)
+    const back = windowSliceCells(PLANE, [3, 3, 0], [0, 0, 0], EXTENT)
     expect([...fwd].sort()).toEqual([...back].sort())
-    expect(footprintOccupiedCells(model, PLANE, [4, 4, 0], [6, 6, 0])).toEqual([])
+    // Far corner outside the 16-grid: only the in-bounds overlap survives.
+    const clipped = windowSliceCells(PLANE, [6, 6, 0], [900, 900, 0], EXTENT)
+    expect(clipped.length).toBeGreaterThan(0)
+    expect(clipped.length).toBeLessThan(900 * 900)
+    for (const key of clipped) {
+      const [x, y, z] = key.split(',').map(Number)
+      expect(z).toBe(0)
+      expect(x).toBeGreaterThanOrEqual(-8)
+      expect(x).toBeLessThan(8)
+      expect(y).toBeGreaterThanOrEqual(-8)
+      expect(y).toBeLessThan(8)
+    }
+  })
+
+  it('collapses a tap to the single slice cell, even when empty', () => {
+    expect(windowSliceCells(PLANE, [4, 4, 0], [4, 4, 0], EXTENT)).toEqual([encodeKey(4, 4, 0)])
   })
 })
 

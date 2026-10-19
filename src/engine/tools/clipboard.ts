@@ -89,9 +89,10 @@ export function clearRegion(
  * the destination's neighbors, so the pasted result exactly matches the source. (A chamfer only ever
  * (re)resolves when the user edits that specific voxel.) Cells with neither `color` nor `chamfer`
  * are explicitly empty voxels: they delete whatever they land on, so every drop replaces its
- * footprint instead of merging into it. Deep-lifted cells (`dw !== 0`) land at their depth offset
- * off the destination slice — same-plane drops re-anchor to the lift slice, cross-plane pastes to
- * the destination slice. Mutates the given (draft) model directly.
+ * footprint instead of merging into it. Every cell lands at its depth offset off the
+ * destination slice — same-plane drops re-anchor to the recorded lift slice (or the set
+ * bbox-min for exact-set lifts), cross-plane pastes to the destination slice. Mutates the
+ * given (draft) model directly.
  */
 export function applyClipboardAt(
   model: VoxelModel,
@@ -105,9 +106,11 @@ export function applyClipboardAt(
   const samePlane = clipboard.copyPlaneAxis === plane.axis && clipboard.copyPlaneOrientation === plane.orientation
   for (const cell of clipboard.cells) {
     const coord = gridCoordFromPixel(plane, destOriginU + cell.du, destOriginV + cell.dv)
-    if (cell.dw !== 0) {
-      coord[ai] = (samePlane ? (clipboard.copyPlaneOffset ?? plane.offset) : plane.offset) + cell.dw
-    }
+    // The depth re-anchor is unconditional: exact-set lifts (wand volumes) anchor dw off the
+    // set bbox-min rather than the plane, so dw==0 does NOT mean "on the plane" for them and
+    // skipping it would collapse the bottom layer onto the construction plane. For region
+    // lifts dw==0 already means the lift slice, so this changes nothing there.
+    coord[ai] = (samePlane ? (clipboard.copyPlaneOffset ?? plane.offset) : plane.offset) + cell.dw
     if (!withinWorkingBounds(coord, gridExtent)) continue
 
     const key = encodeKey(...coord)

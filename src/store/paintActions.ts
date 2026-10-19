@@ -8,7 +8,7 @@ import { spinSlabAboutLocalY } from '@/engine/chamfer/chamferTransform'
 import { findDualRampRotation, findWedgeRampDual } from '@/engine/chamfer/rampDual'
 import { gridCoordFromPixel, pixelFromGridCoord } from '@/engine/plane/constructionPlane'
 import { axisIndex } from '@/engine/plane/planeGeometry'
-import { isCellSelected } from '@/engine/tools/selectionMask'
+import { isCellSelected, forEachSelectedCell } from '@/engine/tools/selectionMask'
 import type { AppState, PaintActionsSlice, VoxelKind } from './types'
 
 type Slice = StateCreator<AppState, [['zustand/immer', never]], [], PaintActionsSlice>
@@ -41,6 +41,11 @@ export function endFreshChamferTracking() {
  * direct blocking) passes the active construction plane at the target's slice. One
  * implementation, so chamfer classification, wedge retry, and tracking behave identically from
  * either view.
+ *
+ * `stamp` switches from click semantics to fill semantics: every cell lands the brush shape
+ * deterministically (fresh classification at the brush rotation, verbatim in 3D-only) instead
+ * of applying re-click rotation/spin/cycle to already-matching cells — bulk-filling a window
+ * must stamp, never spin what it just wrote. Tracking sets are left alone in stamp mode.
  */
 function applyPaintCell(
   state: AppState,
@@ -50,6 +55,7 @@ function applyPaintCell(
   plane: ConstructionPlane,
   kind: VoxelKind,
   slot: PaletteSlotRef,
+  stamp = false,
 ) {
   const key = encodeKey(...coord)
   state.model.color.set(key, { paletteSlot: slot })
@@ -68,7 +74,7 @@ function applyPaintCell(
     if (!verbatim && resolvedTo && brush) resolvedTo.rotation = ((resolvedTo.rotation + brush) % 4) as Rotation
     state.model.chamfer.set(key, { planeAxis: plane.axis, planeOrientation: plane.orientation, resolvedTo })
 
-    if (!verbatim && freshChamferKeys) {
+    if (!stamp && !verbatim && freshChamferKeys) {
       freshChamferKeys.add(key)
       const pi = axisIndex(plane.axis)
       for (const freshKey of freshChamferKeys) {
@@ -83,7 +89,7 @@ function applyPaintCell(
     }
   } else if (kind === 'wedge') {
     const existing = state.model.chamfer.get(key)
-    const alreadyFinalized = existing?.resolvedTo?.shapeKind === 'wedge' && !pendingWedgeKeys?.has(key)
+    const alreadyFinalized = !stamp && existing?.resolvedTo?.shapeKind === 'wedge' && !pendingWedgeKeys?.has(key)
 
     if (alreadyFinalized) {
       // Re-clicking a wedge that's already locked in (this stroke or a prior one) manually
@@ -95,7 +101,7 @@ function applyPaintCell(
       const rotation = (((resolved?.shapeKind === 'convex' ? resolved.rotation : 0) + brush) % 4) as Rotation
       state.model.chamfer.set(key, { planeAxis: plane.axis, planeOrientation: plane.orientation, resolvedTo: { shapeKind: 'wedge', rotation } })
 
-      if (!verbatim && pendingWedgeKeys) {
+      if (!stamp && !verbatim && pendingWedgeKeys) {
         if (resolved?.shapeKind === 'convex') pendingWedgeKeys.delete(key)
         else pendingWedgeKeys.add(key)
 
@@ -123,9 +129,9 @@ function applyPaintCell(
     // cycles the corner 90° (the wedge-style manual rotation). Revisits within the same stroke
     // are left untouched so a drag's interpolation can't spin what the stroke just wrote.
     const existing = state.model.chamfer.get(key)
-    if (strokeSlabKeys?.has(key)) {
+    if (!stamp && strokeSlabKeys?.has(key)) {
       // Already touched this stroke — leave the chamfer entry exactly as the stroke left it.
-    } else if (existing?.resolvedTo?.shapeKind === kind) {
+    } else if (!stamp && existing?.resolvedTo?.shapeKind === kind) {
       const rotation = ((existing.resolvedTo.rotation + 1) % 4) as Rotation
       existing.resolvedTo = { shapeKind: kind, rotation }
     } else {
@@ -143,7 +149,7 @@ function applyPaintCell(
     const existing = state.model.chamfer.get(key)
     if (strokeSlabKeys?.has(key)) {
       // Already touched this stroke — leave the chamfer entry exactly as the stroke left it.
-    } else if (existing?.resolvedTo?.shapeKind === 'thin') {
+    } else if (!stamp && existing?.resolvedTo?.shapeKind === 'thin') {
       state.model.chamfer.set(key, spinSlabAboutLocalY(existing))
     } else {
       // A thin slab is a normal color cell plus a fixed chamfer entry recording only the
@@ -164,7 +170,7 @@ function applyPaintCell(
     const existing = state.model.chamfer.get(key)
     if (strokeSlabKeys?.has(key)) {
       // Already touched this stroke — leave the chamfer entry exactly as the stroke left it.
-    } else if (existing?.resolvedTo?.shapeKind === 'half') {
+    } else if (!stamp && existing?.resolvedTo?.shapeKind === 'half') {
       state.model.chamfer.set(key, spinSlabAboutLocalY(existing))
     } else {
       // A half slab is the flush sibling of the centered thin slab — but recessed, not proud:
@@ -184,7 +190,7 @@ function applyPaintCell(
     const existing = state.model.chamfer.get(key)
     if (strokeSlabKeys?.has(key)) {
       // Already touched this stroke — leave the chamfer entry exactly as the stroke left it.
-    } else if (existing?.resolvedTo?.shapeKind === 'post') {
+    } else if (!stamp && existing?.resolvedTo?.shapeKind === 'post') {
       state.model.chamfer.set(key, spinSlabAboutLocalY(existing))
     } else {
       // A post is a centered 0.5×0.5 column running the full unit length along the outward
@@ -204,7 +210,7 @@ function applyPaintCell(
     const existing = state.model.chamfer.get(key)
     if (strokeSlabKeys?.has(key)) {
       // Already touched this stroke — leave the chamfer entry exactly as the stroke left it.
-    } else if (existing?.resolvedTo?.shapeKind === 'quarter') {
+    } else if (!stamp && existing?.resolvedTo?.shapeKind === 'quarter') {
       const rotation = ((existing.resolvedTo.rotation + 1) % 4) as Rotation
       existing.resolvedTo = { shapeKind: 'quarter', rotation }
     } else {
@@ -224,7 +230,7 @@ function applyPaintCell(
     const existing = state.model.chamfer.get(key)
     if (strokeSlabKeys?.has(key)) {
       // Already touched this stroke — leave the chamfer entry exactly as the stroke left it.
-    } else if (existing?.resolvedTo?.shapeKind === 'flat') {
+    } else if (!stamp && existing?.resolvedTo?.shapeKind === 'flat') {
       state.model.chamfer.set(key, spinSlabAboutLocalY(existing))
     } else {
       // A flat is thin's centre plane as a bare quad — frozen at paint time with rotation 0,
@@ -244,7 +250,7 @@ function applyPaintCell(
     const existing = state.model.chamfer.get(key)
     if (strokeSlabKeys?.has(key)) {
       // Already touched this stroke — leave the chamfer entry exactly as the stroke left it.
-    } else if (existing?.resolvedTo?.shapeKind === 'flatwedge') {
+    } else if (!stamp && existing?.resolvedTo?.shapeKind === 'flatwedge') {
       const rotation = ((existing.resolvedTo.rotation + 1) % 4) as Rotation
       existing.resolvedTo = { shapeKind: 'flatwedge', rotation }
     } else {
@@ -263,6 +269,24 @@ function applyPaintCell(
 
   state.meta.modifiedAt = new Date().toISOString()
   state.dirty = true
+}
+
+/**
+ * Bulk-fill write: stamps the brush onto a cell exactly as a fresh paint would (same
+ * autotile/verbatim resolution from the live model), but never applies re-click
+ * rotation/spin/cycle semantics — filling a window must stamp every cell deterministically,
+ * never spin what the fill just wrote. Used by `fillSelection`; single-cell tools keep using
+ * `applyPaintCell` directly.
+ */
+export function applyFillCell(
+  state: AppState,
+  coord: Coord,
+  plane: ConstructionPlane,
+  kind: VoxelKind,
+  slot: PaletteSlotRef,
+) {
+  const { u, v } = pixelFromGridCoord(plane, coord)
+  applyPaintCell(state, coord, u, v, plane, kind, slot, true)
 }
 
 /** Shared erase write (both layers, no selection concept) — `eraseCell` clips first, 3D skips it. */
@@ -405,6 +429,31 @@ export const createPaintActionsSlice: Slice = (set, get) => ({
     set((state) => {
       applyEraseCell(state, coord)
     })
+  },
+
+  fillSelection: () => {
+    get().bakeFloatIfAny()
+    const { plane, activeVoxelKind, activePaletteSlot, selectedCells, selection, meta } = get()
+    const coords: Coord[] = []
+    if (selectedCells.size > 0) {
+      for (const key of selectedCells) {
+        const coord = decodeKey(key)
+        if (!withinWorkingBounds(coord, meta.gridExtent)) continue
+        coords.push(coord)
+      }
+    } else if (selection) {
+      forEachSelectedCell(selection, (u, v) => {
+        const coord = gridCoordFromPixel(plane, u, v)
+        if (!withinWorkingBounds(coord, meta.gridExtent)) return
+        coords.push(coord)
+      })
+    } else return
+    if (coords.length === 0) return
+    get().beginStroke()
+    set((state) => {
+      for (const coord of coords) applyFillCell(state, coord, plane, activeVoxelKind, activePaletteSlot)
+    })
+    get().commitStroke()
   },
 
   paintMaterialCell: (u: number, v: number) => {

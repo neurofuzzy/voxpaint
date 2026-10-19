@@ -4,6 +4,7 @@ import type { Coord } from '@/engine/grid/types'
 import { gridCoordFromPixel, pixelFromGridCoord } from '@/engine/plane/constructionPlane'
 import { paintTool } from '@/engine/tools/paintTool'
 import type { ToolContext, ToolDragState } from '@/engine/tools/types'
+import { rectRegion } from '@/engine/tools/selectionMask'
 import { useAppStore } from './useAppStore'
 
 const PLANE = { axis: 'z' as const, orientation: 1 as const, offset: 0 }
@@ -854,5 +855,104 @@ describe.each(['convex', 'concave'] as const)('paintCell explicit %s handling', 
       planeOrientation: 1,
       resolvedTo: { shapeKind: kind, rotation: 0 },
     })
+  })
+})
+
+/** Clicking the yellow 3D selection box stamps the whole selection with the brush. */
+describe('fillSelection (box click fills the window with the brush)', () => {
+  const SLOT_A = { kind: 'base', index: 0 } as const
+  const SLOT_B = { kind: 'base', index: 3 } as const
+
+  beforeEach(() => {
+    const s = useAppStore.getState()
+    s.newProject('Test', 16)
+    s.setActiveVoxelKind('cube')
+    s.setActivePaletteSlot(SLOT_A)
+  })
+
+  function paintAt(coord: Coord) {
+    const s = useAppStore.getState()
+    s.beginStroke()
+    expect(s.paintCellAtCoord(coord, 'z', 1)).toBe(true)
+    s.commitStroke()
+  }
+
+  it('fills a 3D set including empty cells, in one undo stroke', () => {
+    paintAt([0, 0, 0])
+    useAppStore.getState().setSelectedCells(new Set([encodeKey(0, 0, 0), encodeKey(1, 0, 0)]))
+    useAppStore.getState().setActivePaletteSlot(SLOT_B)
+    const strokes = useAppStore.getState().past.length
+    useAppStore.getState().fillSelection()
+
+    const after = useAppStore.getState()
+    expect(after.model.color.get(encodeKey(0, 0, 0))?.paletteSlot).toEqual(SLOT_B)
+    // The empty window cell gains a voxel too — the area fills, not just recolors.
+    expect(after.model.color.get(encodeKey(1, 0, 0))?.paletteSlot).toEqual(SLOT_B)
+    expect(after.model.chamfer.size).toBe(0) // cube brush writes no chamfers
+    expect(after.past.length).toBe(strokes + 1)
+  })
+
+  it('stamps the brush kind verbatim in 3D-only (ramp keeps its plane basis)', () => {
+    const s = useAppStore.getState()
+    s.setLayoutMode('3d-only')
+    s.setActiveVoxelKind('ramp')
+    s.setSelectedCells(new Set([encodeKey(0, 0, 0)]))
+    s.fillSelection()
+
+    expect(useAppStore.getState().model.chamfer.get(encodeKey(0, 0, 0))).toEqual({
+      planeAxis: 'z',
+      planeOrientation: 1,
+      resolvedTo: { shapeKind: 'ramp', rotation: s.brushRotation },
+    })
+  })
+
+  it('fills every cell of a split-layout window, including empty space', () => {
+    const s = useAppStore.getState()
+    s.setLayoutMode('split')
+    // 2x2 window on the z=0 slice (u,v -1..0 == x -1..0, y 0..-1).
+    s.setSelection(rectRegion(-1, -1, 0, 0))
+    s.setActivePaletteSlot(SLOT_B)
+    const strokes = useAppStore.getState().past.length
+    useAppStore.getState().fillSelection()
+
+    const after = useAppStore.getState()
+    expect(after.model.color.size).toBe(4)
+    for (const key of after.model.color.keys()) {
+      expect(after.model.color.get(key)?.paletteSlot).toEqual(SLOT_B)
+    }
+    expect(after.past.length).toBe(strokes + 1)
+  })
+
+  it('stamps instead of cycling: no re-click rotation on matching chamfers', () => {
+    // A settled wedge at rotation 2: a real click would rotate it to 3, but a fill must
+    // stamp the brush rotation (0) like a fresh paint.
+    useAppStore.setState((s) => {
+      s.model.color.set(encodeKey(0, 0, 0), { paletteSlot: { ...SLOT_A } })
+      s.model.chamfer.set(encodeKey(0, 0, 0), {
+        planeAxis: 'z',
+        planeOrientation: 1,
+        resolvedTo: { shapeKind: 'wedge', rotation: 2 },
+      })
+    })
+    useAppStore.getState().setActiveVoxelKind('wedge')
+    useAppStore.getState().setSelectedCells(new Set([encodeKey(0, 0, 0)]))
+    useAppStore.getState().fillSelection()
+
+    expect(useAppStore.getState().model.chamfer.get(encodeKey(0, 0, 0))?.resolvedTo).toEqual({
+      shapeKind: 'wedge',
+      rotation: 0,
+    })
+  })
+
+  it('no-ops with no selection and drops out-of-grid keys', () => {
+    useAppStore.getState().fillSelection()
+    expect(useAppStore.getState().past.length).toBe(0)
+
+    paintAt([0, 0, 0])
+    useAppStore.getState().setSelectedCells(new Set([encodeKey(0, 0, 0), encodeKey(900, 0, 0)]))
+    const strokes = useAppStore.getState().past.length
+    useAppStore.getState().fillSelection()
+    expect(useAppStore.getState().model.color.size).toBe(1)
+    expect(useAppStore.getState().past.length).toBe(strokes + 1)
   })
 })

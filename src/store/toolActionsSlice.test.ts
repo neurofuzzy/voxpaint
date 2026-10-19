@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it } from 'vitest'
 import { encodeKey } from '@/engine/grid/GridStore'
+import type { Coord } from '@/engine/grid/types'
 import { gridCoordFromPixel } from '@/engine/plane/constructionPlane'
 import { rectRegion } from '@/engine/tools/selectionMask'
 import { useAppStore } from './useAppStore'
@@ -247,5 +248,82 @@ describe('faceSelection', () => {
 
   it('returns zeros with no selection', () => {
     expect(useAppStore.getState().faceSelection()).toEqual({ faced: 0, skipped: 0 })
+  })
+})
+
+describe('floodFillCellsAt (3D viewport fill, 3D-selection aware)', () => {
+  beforeEach(() => {
+    const s = useAppStore.getState()
+    s.newProject('Test', 16)
+    s.setLayoutMode('3d-only')
+    s.setPlaneAxisOrientation('z', 1)
+    s.setPlaneOffset(0)
+    s.setActiveVoxelKind('cube')
+  })
+
+  function paintAt(coord: Coord, slot = SLOT_A) {
+    const s = useAppStore.getState()
+    s.setActivePaletteSlot(slot)
+    s.beginStroke()
+    expect(s.paintCellAtCoord(coord, 'z', 1)).toBe(true)
+    s.commitStroke()
+  }
+
+  it('Alt-tap recolors the 3D-connected volume, clipped to the selection', () => {
+    paintAt([0, 0, 0])
+    paintAt([1, 0, 0])
+    paintAt([0, 0, 1]) // stacked above — same connected volume
+    paintAt([5, 0, 0]) // disconnected loner, same color
+    useAppStore.getState().setSelectedCells(new Set([encodeKey(0, 0, 0), encodeKey(1, 0, 0)]))
+    useAppStore.getState().setActivePaletteSlot(SLOT_B)
+    const strokesBefore = useAppStore.getState().past.length
+    useAppStore.getState().floodFillCellsAt([1, 0, 0], true)
+
+    const after = useAppStore.getState()
+    expect(after.model.color.get(encodeKey(0, 0, 0))?.paletteSlot).toEqual(SLOT_B)
+    expect(after.model.color.get(encodeKey(1, 0, 0))?.paletteSlot).toEqual(SLOT_B)
+    expect(after.model.color.get(encodeKey(0, 0, 1))?.paletteSlot).toEqual(SLOT_A) // outside set
+    expect(after.model.color.get(encodeKey(5, 0, 0))?.paletteSlot).toEqual(SLOT_A) // disconnected
+    expect(after.past.length).toBe(strokesBefore + 1)
+  })
+
+  it('Alt-tap outside the selection with no overlap is blocked without a stroke', () => {
+    paintAt([0, 0, 0])
+    useAppStore.getState().setSelectedCells(new Set([encodeKey(5, 5, 0)]))
+    useAppStore.getState().setActivePaletteSlot(SLOT_B)
+    const strokesBefore = useAppStore.getState().past.length
+    useAppStore.getState().floodFillCellsAt([0, 0, 0], true)
+
+    const after = useAppStore.getState()
+    expect(after.model.color.get(encodeKey(0, 0, 0))?.paletteSlot).toEqual(SLOT_A)
+    expect(after.past.length).toBe(strokesBefore)
+  })
+
+  it('Alt-tap on empty space no-ops', () => {
+    useAppStore.getState().setActivePaletteSlot(SLOT_B)
+    useAppStore.getState().floodFillCellsAt([0, 0, 0], true)
+    expect(useAppStore.getState().model.color.size).toBe(0)
+    expect(useAppStore.getState().past.length).toBe(0)
+  })
+
+  it('plain tap fills an empty selected window without needing painted bounds', () => {
+    useAppStore.getState().setActivePaletteSlot(SLOT_B)
+    // 2x2 window on the z=0 slice (u 0..1, v -1..0 == x 0..1, y 0..-1).
+    useAppStore.getState().setSelectedCells(
+      new Set([encodeKey(0, 0, 0), encodeKey(1, 0, 0), encodeKey(0, -1, 0), encodeKey(1, -1, 0)]),
+    )
+    useAppStore.getState().floodFillCellsAt([0, 0, 0], false)
+
+    const after = useAppStore.getState()
+    expect(after.model.color.size).toBe(4)
+    expect(after.model.color.get(encodeKey(1, -1, 0))?.paletteSlot).toEqual(SLOT_B)
+    expect(after.past.length).toBe(1)
+  })
+
+  it('plain tap on an empty plane without selection is leak-guarded', () => {
+    useAppStore.getState().setActivePaletteSlot(SLOT_B)
+    useAppStore.getState().floodFillCellsAt([0, 0, 0], false)
+    expect(useAppStore.getState().model.color.size).toBe(0)
+    expect(useAppStore.getState().past.length).toBe(0)
   })
 })

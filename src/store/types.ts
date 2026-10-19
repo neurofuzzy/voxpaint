@@ -155,12 +155,20 @@ export type FloatOrigin = { originU: number; originV: number }
 
 export type SelectionSlice = {
   selection: SelectionRegion | null
+  /**
+   * Live marquee/lasso window while it is being dragged — the committed `selection`
+   * only lands on pointer-up, so the 2D canvas renders `selectPreview ?? selection` to keep its
+   * marching ants live, the 3D marquee writes it every move so the selection box tracks the
+   * drag, and the box reads the same. Null when no drag is in progress.
+   */
+  selectPreview: SelectionRegion | null
   clipboard: ClipboardData | null
   /** Non-null while a Move-lift or paste is pending, uncommitted, and still movable/transformable. */
   floatContent: ClipboardData | null
   /** Current placement of `floatContent`. Always non-null exactly when `floatContent` is. */
   floatOrigin: FloatOrigin | null
   setSelection: (region: SelectionRegion | null) => void
+  setSelectPreview: (region: SelectionRegion | null) => void
   setClipboard: (clipboard: ClipboardData | null) => void
 }
 
@@ -173,10 +181,25 @@ export type SelectionSlice = {
  * Always replace the set wholesale (`new Set`) so subscribers see the change.
  */
 export type Selection3DSlice = {
-  /** Explicitly selected voxels. May hold absent keys after edits (skipped benignly). */
+  /**
+   * Explicitly selected voxels. Window selections cover their full slice rect, so the set may
+   * hold keys for empty cells alongside occupied ones — every consumer already skips missing
+   * keys benignly, and the bounding box reads the whole window. May also hold absent keys
+   * after edits (skipped the same way).
+   */
   selectedCells: Set<CellKey>
+  /**
+   * Live marquee window while it is being dragged in 3D-only layout: the provisional slice
+   * window (occupied or empty) under the drag, refreshed every move so the selection box
+   * tracks it. Cleared on commit (the real set takes over) or cancel. The split-layout marquee
+   * previews through the shared `selectPreview` window instead — the 3D view never renders a
+   * flat 2D window slab for an exact-set drag.
+   */
+  selectedCellsPreview: Set<CellKey> | null
   /** Replace the set (bakes any pending float first, like `setSelection`). */
   setSelectedCells: (cells: Set<CellKey>) => void
+  /** Replace the live marquee preview (no bake — the drag commits or cancels it). */
+  setSelectedCellsPreview: (cells: Set<CellKey> | null) => void
   /** Clear the set. */
   clearSelectedCells: () => void
   /**
@@ -331,6 +354,14 @@ export type PaintActionsSlice = {
   /** Direct-3D erase at an explicit grid coordinate (Edit mode). No selection clip. */
   eraseCellAtCoord: (coord: Coord) => void
   /**
+   * Stamps the active brush (voxel kind + palette slot) over the whole active selection in one
+   * undo stroke — the 3D selection set in 3D-only layout, the 2D window's cells in split layout
+   * (empty cells gain voxels; out-of-grid keys are dropped). Chamfers resolve exactly as a
+   * fresh paint would, but re-click rotation/spin/cycle never applies. No-op without a
+   * selection. Bakes any pending float first, like every other selection change.
+   */
+  fillSelection: () => void
+  /**
    * Recolors the voxel at plane-space (u,v) with the active palette slot — existing voxels only,
    * never adds or deletes cells, never touches chamfer. No-op (false) on empty/out-of-bounds
    * cells or when the slot already matches (so drags don't record junk undo steps).
@@ -364,6 +395,14 @@ export type ToolActionsSlice = {
   /** 6-connected flood fill through the full 3D model (not just the current plane), color layer
    * only. No-op unless (u,v) lands on an already-occupied voxel. One undo stroke. */
   floodFill3D: (u: number, v: number) => void
+  /** Fill from a 3D-viewport tap (both layouts — the split 3D view calls this too, not the
+   * 2D `floodFill` actions, so the tapped voxel itself is the seed). A tap on a voxel floods
+   * its volume: the color-connected region normally, the whole touching component on Alt
+   * (mirroring the wand's two stages). A tap on empty space fills the plane slice at that UV
+   * instead; Alt on empty space does nothing. Floods clip to the active selection (exact keys
+   * in 3D-only, UV membership in the 2D region in split) with a blocked-toast when nothing
+   * overlaps, and slice fills keep the 2D leak guard. One undo stroke. */
+  floodFillCellsAt: (coord: Coord, alt: boolean) => void
   /** Clones whatever is at (srcU,srcV) onto (destU,destV), both layers, re-validating chamfer. */
   cloneStampCell: (srcU: number, srcV: number, destU: number, destV: number) => void
   copySelection: () => void
