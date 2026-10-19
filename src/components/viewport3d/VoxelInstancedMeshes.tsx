@@ -4,7 +4,8 @@ import { encodeKey } from '@/engine/grid/GridStore'
 import { InstancingManager } from '@/engine/instancing/InstancingManager'
 import { useAppStore } from '@/store/useAppStore'
 
-export const VoxelInstancedMeshes = forwardRef<InstancingManager>((_props, ref) => {
+export const VoxelInstancedMeshes = forwardRef<InstancingManager, { visible: boolean }>((props, ref) => {
+  const { visible } = props
   const manager = useMemo(() => new InstancingManager(), [])
   const model = useAppStore((s) => s.model)
   const palette = useAppStore((s) => s.palette)
@@ -37,9 +38,12 @@ export const VoxelInstancedMeshes = forwardRef<InstancingManager>((_props, ref) 
   }, [manager])
 
   useFrame((state) => {
+    // The manager stays mounted across mode switches (hidden) — skip its per-frame tick there.
+    // `sync` needs no gating: the voxel model/palette never change outside Model mode.
+    if (!visible) return
     manager.tick(state.clock.elapsedTime)
   })
 
-  return <primitive object={manager.group} />
+  return <primitive object={manager.group} visible={visible} />
 })
 VoxelInstancedMeshes.displayName = 'VoxelInstancedMeshes'

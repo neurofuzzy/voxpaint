@@ -952,6 +952,18 @@ export function Viewport3D() {
   const textureMode = mode === 'texture'
   const animateMode = mode === 'animate'
   const hasAnimations = animateMode && hasActiveAnimations(animSettings)
+  // Exactly one model view is live at a time; the others stay mounted but hidden with frozen
+  // builds (see useActiveMemo), so mode switches never tear down GPU resources.
+  // (textureMode and hasAnimations are mutually exclusive — hasAnimations requires animateMode.)
+  const voxelViewsActive = !textureMode && !hasAnimations
+  const animatedModelActive = !textureMode && hasAnimations
+  // The off-mode views mount on first visit, then stay mounted: startup never pays for views
+  // never opened (the app always boots into Model mode), and later tab switches are free.
+  // Monotonic latches — safe to set during render.
+  const seenTexture = useRef(textureMode)
+  const seenAnimated = useRef(animatedModelActive)
+  if (textureMode) seenTexture.current = true
+  if (animatedModelActive) seenAnimated.current = true
 
   return (
     <div
@@ -969,21 +981,19 @@ export function Viewport3D() {
         <SceneEnvironment />
         {/* All working-volume contents live under the Y-scale group so voxels render flat/tall
           while every consumer keeps speaking unit-cube grid coordinates (picking resolves through
-          the scaled parent back to grid-space cell keys). */}
-        {textureMode ? (
-          <group scale={[1, voxelScaleY, 1]}>
-            <TexturedModelView />
-            <TextureFaceHighlight />
-            <BoundingBoxFaceSelector />
-          </group>
-        ) : (
-          <>
-            <group scale={[1, voxelScaleY, 1]}>
+          the scaled parent back to grid-space cell keys). The heavy model views stay mounted
+          across mode switches (visibility-toggled, builds frozen while hidden) so tabbing between
+          Model/Animate/Texture never disposes and rebuilds their GPU resources — only the
+          lightweight per-mode chrome mounts conditionally. */}
+        <group scale={[1, voxelScaleY, 1]}>
+          <VoxelInstancedMeshes ref={managerRef} visible={voxelViewsActive} />
+          <OptimizedMeshView active={voxelViewsActive} />
+          {seenAnimated.current && <AnimatedModelView active={animatedModelActive} />}
+          {seenTexture.current && <TexturedModelView active={textureMode} />}
+          {!textureMode && (
+            <>
               <ConstructionPlaneVisual />
               <ProjectBoundsBox />
-              {!hasAnimations && <VoxelInstancedMeshes ref={managerRef} />}
-              {!hasAnimations && <OptimizedMeshView />}
-              {hasAnimations && <AnimatedModelView />}
               <VoxelFaceHighlight />
               <VoxelGhostPreview />
               <FloatGhostPreview />
@@ -992,9 +1002,17 @@ export function Viewport3D() {
               <ConstructionPlaneGizmo />
               <PivotGizmo />
               <MarkersView />
-            </group>
-            <VoxelInteractionHandler managerRef={managerRef} controlsRef={orbitControlsRef} />
-          </>
+            </>
+          )}
+          {textureMode && (
+            <>
+              <TextureFaceHighlight />
+              <BoundingBoxFaceSelector />
+            </>
+          )}
+        </group>
+        {!textureMode && (
+          <VoxelInteractionHandler managerRef={managerRef} controlsRef={orbitControlsRef} />
         )}
           <OrbitControls
             ref={orbitControlsRef}
