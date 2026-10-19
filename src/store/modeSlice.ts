@@ -28,5 +28,13 @@ export const createModeSlice: Slice = (set, get) => ({
         state.activeTool = 'paint'
       }
     })
+    // Animate and Texture modes have no 3D-only editing surface — leaving Model mode drops the
+    // live layout to split (without touching Model's remembered layout), and coming back to
+    // Model restores what it was.
+    if (mode !== 'model') {
+      if (get().layoutMode !== 'split') get().setLayoutMode('split')
+    } else if (get().layoutMode !== get().modelLayout) {
+      get().setLayoutMode(get().modelLayout)
+    }
   },
 })

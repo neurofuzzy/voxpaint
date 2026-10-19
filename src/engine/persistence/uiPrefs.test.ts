@@ -55,4 +55,11 @@ describe('construction-plane prefs', () => {
   it('reads unset as undefined (store default applies)', () => {
     expect(loadUiPrefs().plane).toBeUndefined()
   })
+
+  it('round-trips the model layout and sanitizes bad values', () => {
+    saveUiPrefs({ dontShowSplash: false, modelLayout: '3d-only' })
+    expect(loadUiPrefs().modelLayout).toBe('3d-only')
+    localStorage.setItem('voxpaint:ui-prefs:v1', JSON.stringify({ modelLayout: 'fullscreen' }))
+    expect(loadUiPrefs().modelLayout).toBeUndefined()
+  })
 })

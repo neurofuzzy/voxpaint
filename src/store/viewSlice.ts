@@ -16,10 +16,14 @@ const ALERT_TTL_MS = 2600
 let alertTimer: ReturnType<typeof setTimeout> | null = null
 let alertKey = 0
 
-export const createViewSlice: Slice = (set) => ({
+export const createViewSlice: Slice = (set, get) => ({
   fullscreen: false,
   // Restored from localStorage UI prefs (validated there); defaults to the 2D/3D split.
-  layoutMode: loadUiPrefs().layoutMode ?? 'split',
+  // The app always boots into Model mode, so the boot layout is Model's remembered one
+  // (falling back to the live pref for pre-existing installs without it).
+  layoutMode: loadUiPrefs().modelLayout ?? loadUiPrefs().layoutMode ?? 'split',
+  // Model's own layout, remembered across tab switches and refreshes (see modelLayout pref).
+  modelLayout: loadUiPrefs().modelLayout ?? loadUiPrefs().layoutMode ?? 'split',
   hoverCell: null,
   chamferHoverValid: null,
   hoveredFace: null,
@@ -47,9 +51,18 @@ export const createViewSlice: Slice = (set) => ({
 
   setFullscreen: (v) => set((state) => { state.fullscreen = v }),
   setLayoutMode: (v) => {
-    // Read-modify-write so unrelated prefs (e.g. dontShowSplash) survive the update.
-    saveUiPrefs({ ...loadUiPrefs(), layoutMode: v })
-    set((state) => { state.layoutMode = v })
+    // Animate and Texture modes edit on the 2D canvas — 3D-only has no editing surface there,
+    // so the layout is pinned to split outside Model mode (the collapse button hides there too;
+    // this guard keeps the invariant airtight for any other caller).
+    const effective = v === '3d-only' && get().mode !== 'model' ? 'split' : v
+    // Read-modify-write so unrelated prefs (e.g. dontShowSplash) survive the update. Model-mode
+    // changes also record Model's remembered layout (forced splits elsewhere leave it alone).
+    const inModel = get().mode === 'model'
+    saveUiPrefs({ ...loadUiPrefs(), layoutMode: effective, ...(inModel ? { modelLayout: effective } : {}) })
+    set((state) => {
+      state.layoutMode = effective
+      if (inModel) state.modelLayout = effective
+    })
   },
   setWireframe: (v) => set((state) => { state.wireframe = v }),
   setTextureFaceMap: (v) => set((state) => { state.textureFaceMap = v }),

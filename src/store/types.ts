@@ -233,8 +233,13 @@ export type NoiseScale = 1 | 2 | 4
 
 export type ViewSlice = {
   fullscreen: boolean
-  /** Pane layout: side-by-side 2D/3D split, or 3D-only (2D pane unmounted). Pure view pref. */
+  /** Pane layout: side-by-side 2D/3D split, or 3D-only (2D pane unmounted — Model mode only;
+   * Animate/Texture pin this to split, since 3D-only has no editing surface there). Pure view pref. */
   layoutMode: 'split' | '3d-only'
+  /** The layout Model mode uses, remembered across tab switches (and refreshes): recorded on
+   * every Model-mode layout change, restored when returning to Model. Animate/Texture force
+   * the live layout to split without touching this. */
+  modelLayout: 'split' | '3d-only'
   hoverCell: Coord | null
   chamferHoverValid: boolean | null
   hoveredFace: HoveredFace | null
@@ -290,6 +295,9 @@ export type ViewSlice = {
    * (default true). Off exports voxels only. */
   exportIncludeMarkers: boolean
   setFullscreen: (v: boolean) => void
+  /** Sets the pane layout. Requests for 3D-only outside Model mode land on split instead —
+   * Animate/Texture have no 3D-only editing surface. Model-mode changes also record Model's
+   * remembered layout (restored when returning to Model). */
   setLayoutMode: (v: 'split' | '3d-only') => void
   setHoverCell: (coord: Coord | null, chamferValid: boolean | null) => void
   setHoveredFace: (face: HoveredFace | null) => void

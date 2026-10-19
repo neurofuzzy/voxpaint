@@ -16,6 +16,10 @@ export type UiPrefs = {
   /** Persisted pane layout (2D/3D split vs 3D-only). Optional so pre-existing stored prefs
    * without the key still parse; absent/invalid reads as 'split'. */
   layoutMode?: 'split' | '3d-only'
+  /** The layout Model mode uses. Recorded on every Model-mode layout change and restored when
+   * returning to Model (Animate/Texture pin the live layout to split without touching this).
+   * Absent/invalid falls back to `layoutMode`. */
+  modelLayout?: 'split' | '3d-only'
   /** Persisted construction-plane pose (axis/orientation/offset). Written on every plane
    * change so a refresh keeps the current slice; cleared back to the grounded default by
    * project switches (new/import reset it — one project's slice must never leak into the
@@ -34,6 +38,7 @@ export function loadUiPrefs(): UiPrefs {
     const prefs: UiPrefs = { ...DEFAULT_UI_PREFS, ...parsed }
     // Sanitize: only the two known layout values survive (hand-edited/corrupt storage falls back).
     if (prefs.layoutMode !== 'split' && prefs.layoutMode !== '3d-only') delete prefs.layoutMode
+    if (prefs.modelLayout !== 'split' && prefs.modelLayout !== '3d-only') delete prefs.modelLayout
     // Sanitize the plane the same way: known axes, ±1 orientations, integer offsets only.
     const p = parsed.plane
     if (
