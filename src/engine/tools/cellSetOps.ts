@@ -200,3 +200,48 @@ export function rotateCellsInPlane(
   })
   return out
 }
+
+/**
+ * Whether an explicit voxel set frames the given clipboard exactly: the set's bounding box,
+ * measured in the plane's (u,v) + depth frame, matches the clipboard's width/height/depth
+ * span. Used by 3D paste to recognize an empty selection as a paste destination ("paste into
+ * the selection") rather than floating in place.
+ *
+ * Returns the destination frame — the selection bbox's min corner plus the clipboard's own
+ * min depth offset — or null when the frames differ (or either side is empty). Sizes are
+ * flip-invariant, so plane orientation never matters.
+ */
+export function selectionMatchesClipboard(
+  keys: Iterable<CellKey>,
+  clipboard: ClipboardData,
+  plane: ConstructionPlane,
+): { originU: number; originV: number; minW: number; minDw: number } | null {
+  const coords: Coord[] = []
+  for (const key of keys) coords.push(decodeKey(key))
+  if (coords.length === 0 || clipboard.cells.length === 0) return null
+  const bbox = bboxOfCoords(coords)
+  if (!bbox) return null
+  const { min, max } = bbox
+  const a = pixelFromGridCoord(plane, min)
+  const b = pixelFromGridCoord(plane, max)
+  const ai = axisIndex(plane.axis)
+  let minDw = Infinity
+  let maxDw = -Infinity
+  for (const cell of clipboard.cells) {
+    if (cell.dw < minDw) minDw = cell.dw
+    if (cell.dw > maxDw) maxDw = cell.dw
+  }
+  if (
+    Math.abs(a.u - b.u) + 1 !== clipboard.width ||
+    Math.abs(a.v - b.v) + 1 !== clipboard.height ||
+    Math.abs(max[ai] - min[ai]) + 1 !== maxDw - minDw + 1
+  ) {
+    return null
+  }
+  return {
+    originU: Math.min(a.u, b.u),
+    originV: Math.min(a.v, b.v),
+    minW: Math.min(min[ai], max[ai]),
+    minDw,
+  }
+}

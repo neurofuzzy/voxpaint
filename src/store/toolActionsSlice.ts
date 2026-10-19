@@ -5,7 +5,8 @@ import { gridCoordFromPixel, pixelFromGridCoord } from '@/engine/plane/construct
 import { rebaseChamferCell } from '@/engine/chamfer/faceBasis'
 import { fillLeaksToEdges, floodFillRegion, floodFillRegion3D } from '@/engine/tools/floodFill'
 import { applyClipboardAt, clearRegion, copyRegionToClipboard, transformClipboardToPlane } from '@/engine/tools/clipboard'
-import { copyCellsToClipboard, rotateCellsInPlane, snapshotCells } from '@/engine/tools/cellSetOps'
+import { copyCellsToClipboard, rotateCellsInPlane, selectionMatchesClipboard, snapshotCells } from '@/engine/tools/cellSetOps'
+import { placedFloatCoords } from '@/engine/instancing/ghostBatches'
 import { mirrorClipboard, rotateClipboard90 } from '@/engine/tools/transform'
 import { forEachSelectedCell, isCellSelected, mirrorRegion, rotateRegion90 } from '@/engine/tools/selectionMask'
 import type { AppState, SelectionTransformKind, ToolActionsSlice } from './types'
@@ -361,6 +362,55 @@ export const createToolActionsSlice: Slice = (set, get) => ({
     if (get().selectedCells.size === 0) return
     get().copyCells3D()
     get().deleteCells3D()
+  },
+
+  pasteCells3D: () => {
+    get().bakeFloatIfAny()
+    const { clipboard, plane, meta, model, selectedCells } = get()
+    if (!clipboard || clipboard.cells.length === 0) return
+    // Same rebase as the 2D paste path so cross-plane pastes land on screen correctly.
+    const transformed = transformClipboardToPlane(clipboard, plane)
+    const originU = transformed.originU ?? 0
+    const originV = transformed.originV ?? 0
+
+    // Targeted paste: a selection holding no live voxels whose frame matches the clipboard's
+    // dimensions is a paste destination, not something to preserve — stamp into it directly
+    // (one undo step; an empty frame has nothing to stomp) and keep the selection.
+    const hasLive = [...selectedCells].some((key) => model.color.has(key))
+    const match = !hasLive ? selectionMatchesClipboard(selectedCells, transformed, plane) : null
+    if (match) {
+      const base =
+        transformed.copyPlaneAxis === plane.axis && transformed.copyPlaneOrientation === plane.orientation
+          ? (transformed.copyPlaneOffset ?? plane.offset)
+          : plane.offset
+      // Re-anchor the depth profile onto the selection frame's min depth: applyClipboardAt
+      // lands `base + dw`, so shift every cell so its min-dw sits on the frame.
+      const shifted = {
+        ...transformed,
+        cells: transformed.cells.map((cell) => ({ ...cell, dw: cell.dw - match.minDw + match.minW - base })),
+      }
+      get().beginStroke()
+      set((state) => {
+        applyClipboardAt(state.model, state.plane, shifted, match.originU, match.originV, meta.gridExtent)
+        state.meta.modifiedAt = new Date().toISOString()
+        state.dirty = true
+      })
+      get().commitStroke()
+      return
+    }
+
+    // Floating paste: pull the content out as a pending float — nothing is written yet, so
+    // copy+paste+drag duplicates instead of stomping the source — and select its footprint.
+    // The 3D view ghosts the float and select/wand drags inside its footprint move it; the
+    // drop (or any bake trigger) stamps it. Opens an undo stroke like every other lift/paste.
+    const footprint = placedFloatCoords(transformed, { originU, originV }, plane, meta.gridExtent)
+    get().beginStroke()
+    set((state) => {
+      state.floatContent = transformed
+      state.floatOrigin = { originU, originV }
+      state.selectedCells = new Set(footprint.map((c) => encodeKey(...c)))
+    })
+    // Deliberately no commitStroke() — this stroke stays open until bakeFloatIfAny().
   },
 
   deleteCells3D: () => {

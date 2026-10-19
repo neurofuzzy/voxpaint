@@ -7,6 +7,8 @@ import { decodeKey, encodeKey, effectiveExtent, viewOriginShift, withinWorkingBo
 import type { CellKey, Coord } from '@/engine/grid/types'
 import { hasActiveAnimations } from '@/engine/animation/animationLayers'
 import type { InstancingManager } from '@/engine/instancing/InstancingManager'
+import { placedFloatCoords } from '@/engine/instancing/ghostBatches'
+import type { ClipboardData, FloatOrigin } from '@/store/types'
 import { gridCoordFromPixel, pixelFromGridCoord, planeFromFaceHit } from '@/engine/plane/constructionPlane'
 import { axisIndex, outwardNormal } from '@/engine/plane/planeGeometry'
 import { voxelKindForCell } from '@/engine/tools/eyedropperTool'
@@ -163,6 +165,21 @@ function voxelHint(axis: string, orientation: number): string {
   return `Click to set the construction plane to this voxel facing ${dir[axis]?.[orientation] ?? ''}`
 }
 const AGAIN_HINT = 'Click again to move the construction plane forward'
+
+/**
+ * Whether a plane-space (u,v) lands inside a pending float's footprint rect — the 3D answer
+ * to the 2D tool's `isCellSelected(selection, u, v)` check. Used to grab a paste float: its
+ * ghost is display-only for picking (`useGhostGroup` disables raycast), so the press ray
+ * falls through to whatever model voxel — or empty plane cell — sits behind it.
+ */
+function uvInFloatRect(floatContent: ClipboardData, floatOrigin: FloatOrigin, u: number, v: number): boolean {
+  return (
+    u >= floatOrigin.originU &&
+    u < floatOrigin.originU + floatContent.width &&
+    v >= floatOrigin.originV &&
+    v < floatOrigin.originV + floatContent.height
+  )
+}
 
 function VoxelInteractionHandler({ managerRef, controlsRef }: {
   managerRef: React.RefObject<InstancingManager | null>
@@ -375,20 +392,42 @@ function VoxelInteractionHandler({ managerRef, controlsRef }: {
         const hit = resolveFaceHit(e.clientX, e.clientY)
         const is3D = store.layoutMode === '3d-only'
         // Grab test: explicit-set membership in 3D-only, plane-region containment in split.
-        // (A pending 2D float keeps tracking the selection region, so the split branch also
-        // continues a float dragged earlier rather than lifting twice. The 3D branch only ever
-        // lifts fresh — a pending float there belongs to a 2D paste, so a press falls through
-        // to the marquee, whose commit bakes it first.)
+        // A pending float keeps tracking its own footprint, so pressing inside one continues
+        // the drag rather than lifting twice: the split float follows the 2D selection region,
+        // while a 3D paste float is tested against its own rect (its ghost never intercepts the
+        // ray — after a cut it hangs in empty model space, hence the plane-cell fallback below).
+        // Anything else falls through to the marquee, whose commit bakes a pending float first.
         let grabUV: { u: number; v: number } | null = null
+        // Live footprint of a continued paste float, for the drop's selection-follow. Recomputed
+        // (never read off selectedCells) so a cleared-while-pending set can't strand the ghost:
+        // the plane can't change out from under a float — every plane write bakes first.
+        let grabFloatCells: Set<CellKey> | null = null
+        const continuePasteFloat = (cell: Coord): boolean => {
+          if (!store.floatContent || !store.floatOrigin) return false
+          const uv = pixelFromGridCoord(activePlane, cell)
+          if (!uvInFloatRect(store.floatContent, store.floatOrigin, uv.u, uv.v)) return false
+          grabUV = uv
+          grabFloatCells = new Set(
+            placedFloatCoords(store.floatContent, store.floatOrigin, activePlane, store.meta.gridExtent).map((c) => encodeKey(...c)),
+          )
+          return true
+        }
         if (hit) {
           if (is3D) {
             if (!store.floatContent && store.selectedCells.has(hit.key)) {
               grabUV = pixelFromGridCoord(activePlane, decodeKey(hit.key))
+            } else {
+              continuePasteFloat(decodeKey(hit.key))
             }
           } else {
             const uv = pixelFromGridCoord(activePlane, decodeKey(hit.key))
             if ((store.floatContent || store.selection) && store.selection && isCellSelected(store.selection, uv.u, uv.v)) grabUV = uv
           }
+        } else if (is3D) {
+          // A cut-paste ghost hangs in empty model space — the press falls through to the
+          // plane — so test the plane cell too, the same frame move-drags already steer by.
+          const empty = resolveEmptyCell(e.clientX, e.clientY)
+          if (empty) continuePasteFloat(empty)
         }
         if (grabUV) {
           const { u, v } = grabUV
@@ -402,7 +441,7 @@ function VoxelInteractionHandler({ managerRef, controlsRef }: {
                 startV: v,
                 originU: origin.originU,
                 originV: origin.originV,
-                cells3D: is3D ? new Set(store.selectedCells) : null,
+                cells3D: is3D ? (grabFloatCells ?? new Set(store.selectedCells)) : null,
               }
               if (controlsRef.current) controlsRef.current.enabled = false
               try {
@@ -472,17 +511,20 @@ function VoxelInteractionHandler({ managerRef, controlsRef }: {
         const store = useAppStore.getState()
         const hit = resolveFaceHit(e.clientX, e.clientY)
         // Grab test mirrors select's: explicit-set membership in 3D-only, region containment
-        // in split. Either arms the deferred drag; anything else falls through to the tap path.
-        const grabbed = hit && (store.layoutMode === '3d-only'
-          ? (!store.floatContent && store.selectedCells.has(hit.key)
-            ? pixelFromGridCoord(planeRef.current, decodeKey(hit.key))
-            : null)
-          : store.selection
-            ? (() => {
-              const { u, v } = pixelFromGridCoord(planeRef.current, decodeKey(hit.key))
-              return isCellSelected(store.selection!, u, v) ? { u, v } : null
-            })()
-            : null)
+        // in split — plus a pending 3D paste float's own footprint rect (its ghost never
+        // intercepts the ray). Either arms the deferred drag; anything else falls through to
+        // the tap path.
+        let grabbed: { u: number; v: number } | null = null
+        if (hit) {
+          if (store.layoutMode === '3d-only') {
+            const uv = pixelFromGridCoord(planeRef.current, decodeKey(hit.key))
+            if (!store.floatContent && store.selectedCells.has(hit.key)) grabbed = uv
+            else if (store.floatContent && store.floatOrigin && uvInFloatRect(store.floatContent, store.floatOrigin, uv.u, uv.v)) grabbed = uv
+          } else if (store.selection) {
+            const { u, v } = pixelFromGridCoord(planeRef.current, decodeKey(hit.key))
+            if (isCellSelected(store.selection, u, v)) grabbed = { u, v }
+          }
+        }
         if (grabbed) {
           pendingWandDrag = { startU: grabbed.u, startV: grabbed.v }
             if (controlsRef.current) controlsRef.current.enabled = false
@@ -526,18 +568,29 @@ function VoxelInteractionHandler({ managerRef, controlsRef }: {
         if (down && Math.hypot(e.clientX - down.x, e.clientY - down.y) > CLICK_DRAG_THRESHOLD_PX) {
           const store = useAppStore.getState()
           const is3D = store.layoutMode === '3d-only'
+          // A pending 3D paste float converts straight to a drag (no lift — nothing was taken
+          // out of the model); anything else lifts fresh like before.
+          const continuingFloat = is3D && !!store.floatContent
           if (!store.floatContent) {
             if (is3D) store.liftCellsToFloat(store.selectedCells)
             else store.liftSelectionToFloat(e.altKey)
           }
           const origin = useAppStore.getState().floatOrigin
           if (origin) {
+            const st = useAppStore.getState()
             floatDrag = {
               startU: pendingWandDrag.startU,
               startV: pendingWandDrag.startV,
               originU: origin.originU,
               originV: origin.originV,
-              cells3D: is3D ? new Set(store.selectedCells) : null,
+              // Live footprint for a continued paste float (the set was never lifted from and
+              // may have cleared since); the lifted keys for a fresh lift, empties included.
+              // The drop shifts this by the drag delta, so the selection follows the bake.
+              cells3D: !is3D
+                ? null
+                : continuingFloat && st.floatContent
+                  ? new Set(placedFloatCoords(st.floatContent, origin, planeRef.current, st.meta.gridExtent).map((c) => encodeKey(...c)))
+                  : new Set(st.selectedCells),
             }
           }
           pendingWandDrag = null
@@ -693,9 +746,10 @@ function VoxelInteractionHandler({ managerRef, controlsRef }: {
         down = null
         return
       }
-      // Open float drag: drop it. 2D floats stay pending (Escape/tap bakes); 3D exact-set moves
-      // bake immediately (one undo step, zanpo-style) and the 3D set follows to the placed cells.
-      // Float drags only open past the tap threshold, so an unmoved release can never land here.
+      // Open float drag: drop it. 2D floats stay pending (Escape/tap bakes); 3D floats —
+      // exact-set moves and paste ghosts alike — bake immediately (one undo step, zanpo-style)
+      // and the 3D set follows to the placed cells. A tap (no move) on a paste ghost lands here
+      // too and simply drops it in place. Move drags only open past the tap threshold otherwise.
       if (floatDrag) {
         const drag = floatDrag
         endFloatDrag()

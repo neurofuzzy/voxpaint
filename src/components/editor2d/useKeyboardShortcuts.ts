@@ -101,8 +101,10 @@ export function useKeyboardShortcuts() {
         } else if (key === 'v' && clipboard) {
           // Paste-in-place. In voxel mode "in place" means the same spot *on screen*, so the store
           // rebases the origin for the active plane; texture mode has no planes and pastes at the
-          // literal copied origin.
+          // literal copied origin. 3D-only stamps directly (no 2D float to drag there) and
+          // selects the pasted cells.
           if (isTexture) store.texturePasteAt(clipboard.originU ?? 0, clipboard.originV ?? 0)
+          else if (is3D) store.pasteCells3D()
           else store.pasteClipboardInPlace()
           e.preventDefault()
         }

@@ -9,6 +9,7 @@ import {
   bboxOfCoords,
   copyCellsToClipboard,
   rotateCellsInPlane,
+  selectionMatchesClipboard,
   snapshotCells,
   windowSliceCells,
   windowSlabBounds,
@@ -207,5 +208,32 @@ describe('rotateCellsInPlane', () => {
         [2, 0, 0],
       ].sort(),
     )
+  })
+})
+
+describe('selectionMatchesClipboard', () => {
+  function barClipboard() {
+    const model = emptyModel()
+    paintBox(model, 0, 0, 0, 1, 0, 0) // 2x1 bar on the slice
+    return copyCellsToClipboard(model, new Set([encodeKey(0, 0, 0), encodeKey(1, 0, 0)]), PLANE)
+  }
+
+  it('matches a same-size frame anywhere, reporting its min corner', () => {
+    const match = selectionMatchesClipboard(new Set([encodeKey(5, 0, 0), encodeKey(6, 0, 0)]), barClipboard(), PLANE)
+    expect(match).toEqual({ originU: 5, originV: -1, minW: 0, minDw: 0 })
+  })
+
+  it('rejects mismatched sizes and empty inputs', () => {
+    const clip = barClipboard()
+    expect(selectionMatchesClipboard(new Set([encodeKey(5, 0, 0)]), clip, PLANE)).toBeNull() // 1-wide
+    expect(
+      selectionMatchesClipboard(new Set([encodeKey(5, 0, 0), encodeKey(6, 0, 0), encodeKey(7, 0, 0)]), clip, PLANE),
+    ).toBeNull() // 3-wide
+    // Same footprint but stacked a second layer deep: depth 2 vs 1.
+    expect(
+      selectionMatchesClipboard(new Set([encodeKey(5, 0, 0), encodeKey(5, 0, 1), encodeKey(6, 0, 0), encodeKey(6, 0, 1)]), clip, PLANE),
+    ).toBeNull()
+    expect(selectionMatchesClipboard(new Set(), clip, PLANE)).toBeNull()
+    expect(selectionMatchesClipboard(new Set([encodeKey(5, 0, 0), encodeKey(6, 0, 0)]), { ...clip, cells: [] }, PLANE)).toBeNull()
   })
 })

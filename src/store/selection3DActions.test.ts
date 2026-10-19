@@ -179,6 +179,120 @@ describe('3D selection store + exact-set actions', () => {
     expect(after.clipboard!.cells).toHaveLength(2)
   })
 
+  it('pasteCells3D floats the clipboard without touching the model', () => {
+    paintAt([0, 0, 0], SLOT_A)
+    paintAt([1, 0, 0], SLOT_B)
+    useAppStore.getState().setSelectedCells(new Set([encodeKey(0, 0, 0), encodeKey(1, 0, 0)]))
+    useAppStore.getState().copyCells3D()
+    const strokesBefore = useAppStore.getState().past.length
+    useAppStore.getState().pasteCells3D()
+    const after = useAppStore.getState()
+    // Nothing written yet (the source is intact — dragging the ghost duplicates, not moves),
+    // but the float is pending and the selection tracks its footprint.
+    expect(after.floatContent!.cells).toHaveLength(2)
+    expect(after.model.color.get(encodeKey(0, 0, 0))?.paletteSlot).toEqual(SLOT_A)
+    expect(after.model.color.get(encodeKey(1, 0, 0))?.paletteSlot).toEqual(SLOT_B)
+    expect(after.selectedCells).toEqual(new Set([encodeKey(0, 0, 0), encodeKey(1, 0, 0)]))
+    expect(after.past.length).toBe(strokesBefore) // stroke opened, not committed
+  })
+
+  it('paste-move-bake duplicates instead of stomping the source', () => {
+    paintAt([0, 0, 0], SLOT_A)
+    paintAt([1, 0, 0], SLOT_B)
+    useAppStore.getState().setSelectedCells(new Set([encodeKey(0, 0, 0), encodeKey(1, 0, 0)]))
+    useAppStore.getState().copyCells3D()
+    const strokesBefore = useAppStore.getState().past.length
+    useAppStore.getState().pasteCells3D()
+    // (u,v) of (0,0,0) on the z=0 plane is (0,-1): shift +2u like a viewport drag would.
+    useAppStore.getState().moveFloatCellsTo(2, -1)
+    useAppStore.getState().bakeFloatIfAny()
+    const after = useAppStore.getState()
+    expect(after.floatContent).toBeNull()
+    expect(after.model.color.get(encodeKey(0, 0, 0))?.paletteSlot).toEqual(SLOT_A)
+    expect(after.model.color.get(encodeKey(1, 0, 0))?.paletteSlot).toEqual(SLOT_B)
+    expect(after.model.color.get(encodeKey(2, 0, 0))?.paletteSlot).toEqual(SLOT_A)
+    expect(after.model.color.get(encodeKey(3, 0, 0))?.paletteSlot).toEqual(SLOT_B)
+    expect(after.model.color.size).toBe(4)
+    expect(after.past.length).toBe(strokesBefore + 1) // one undo step for paste+move+bake
+  })
+
+  it('cut-paste restores in place — the emptied selection is a matching destination', () => {
+    paintAt([0, 0, 0], SLOT_A)
+    useAppStore.getState().setSelectedCells(new Set([encodeKey(0, 0, 0)]))
+    useAppStore.getState().cutCells3D()
+    expect(useAppStore.getState().model.color.size).toBe(0)
+    useAppStore.getState().pasteCells3D()
+    const after = useAppStore.getState()
+    // The cut emptied the selection but kept it, and its 1-wide frame matches: direct stamp.
+    expect(after.floatContent).toBeNull()
+    expect(after.model.color.get(encodeKey(0, 0, 0))?.paletteSlot).toEqual(SLOT_A)
+    expect(after.selectedCells).toEqual(new Set([encodeKey(0, 0, 0)]))
+    // …and the restored selection drags like any other: lift, move, bake.
+    useAppStore.getState().liftCellsToFloat(after.selectedCells)
+    useAppStore.getState().moveFloatCellsTo(2, -1)
+    useAppStore.getState().bakeFloatIfAny()
+    const moved = useAppStore.getState()
+    expect(moved.model.color.get(encodeKey(2, 0, 0))?.paletteSlot).toEqual(SLOT_A)
+    expect(moved.model.color.size).toBe(1)
+  })
+
+  it('paste re-anchors to the lift slice when the plane moved', () => {
+    paintAt([0, 0, 2], SLOT_A)
+    useAppStore.getState().setSelectedCells(new Set([encodeKey(0, 0, 2)]))
+    useAppStore.getState().copyCells3D()
+    // Move the plane away — a same-plane float still ghosts the recorded lift slice.
+    useAppStore.getState().setPlaneOffset(5)
+    useAppStore.getState().pasteCells3D()
+    const after = useAppStore.getState()
+    expect(after.floatContent).not.toBeNull()
+    expect(after.selectedCells).toEqual(new Set([encodeKey(0, 0, 2)]))
+    after.bakeFloatIfAny()
+    expect(useAppStore.getState().model.color.get(encodeKey(0, 0, 2))?.paletteSlot).toEqual(SLOT_A)
+  })
+
+  it('paste into an empty matching selection stamps directly with no float', () => {
+    paintAt([0, 0, 0], SLOT_A)
+    paintAt([1, 0, 0], SLOT_B)
+    useAppStore.getState().setSelectedCells(new Set([encodeKey(0, 0, 0), encodeKey(1, 0, 0)]))
+    useAppStore.getState().copyCells3D()
+    // A fresh empty 2-wide frame elsewhere takes the paste directly.
+    const frame = new Set([encodeKey(5, 0, 0), encodeKey(6, 0, 0)])
+    useAppStore.getState().setSelectedCells(frame)
+    const strokesBefore = useAppStore.getState().past.length
+    useAppStore.getState().pasteCells3D()
+    const after = useAppStore.getState()
+    expect(after.floatContent).toBeNull()
+    expect(after.model.color.get(encodeKey(5, 0, 0))?.paletteSlot).toEqual(SLOT_A)
+    expect(after.model.color.get(encodeKey(6, 0, 0))?.paletteSlot).toEqual(SLOT_B)
+    expect(after.selectedCells).toEqual(frame)
+    expect(after.past.length).toBe(strokesBefore + 1)
+  })
+
+  it('a mismatched empty selection floats instead of stamping', () => {
+    paintAt([0, 0, 0], SLOT_A)
+    paintAt([1, 0, 0], SLOT_B)
+    useAppStore.getState().setSelectedCells(new Set([encodeKey(0, 0, 0), encodeKey(1, 0, 0)]))
+    useAppStore.getState().copyCells3D()
+    // 3-wide frame vs a 2-wide clipboard: no destination, so float in place.
+    useAppStore.getState().setSelectedCells(new Set([encodeKey(5, 0, 0), encodeKey(6, 0, 0), encodeKey(7, 0, 0)]))
+    useAppStore.getState().pasteCells3D()
+    const after = useAppStore.getState()
+    expect(after.floatContent).not.toBeNull()
+    expect(after.model.color.size).toBe(2) // nothing written
+  })
+
+  it('pasteCells3D no-ops without clipboard content and without opening a stroke', () => {
+    paintAt([0, 0, 0])
+    // Clipboards survive newProject (cross-project paste), so clear explicitly.
+    useAppStore.getState().setClipboard(null)
+    expect(useAppStore.getState().clipboard).toBeNull()
+    const before = useAppStore.getState().model
+    const strokesBefore = useAppStore.getState().past.length
+    useAppStore.getState().pasteCells3D()
+    expect(useAppStore.getState().model).toBe(before)
+    expect(useAppStore.getState().past.length).toBe(strokesBefore)
+  })
+
   it('faceCells3D reports zeros with no selection, skips cubes silently', () => {
     expect(useAppStore.getState().faceCells3D()).toEqual({ faced: 0, skipped: 0 })
     paintAt([0, 0, 0])

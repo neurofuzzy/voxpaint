@@ -39,6 +39,9 @@ export const createSelection3DSlice: Slice = (set, get) => ({
     if (!model.color.has(startKey)) {
       lastWandAt = null
       lastWandCell = null
+      // Bake first: an empty tap clears the selection, which would otherwise strand a pending
+      // paste float with no set to follow it (the split branch bakes via setSelection too).
+      get().bakeFloatIfAny()
       if (layoutMode === '3d-only') get().clearSelectedCells()
       else get().setSelection(null)
       return

@@ -115,6 +115,7 @@ export function SelectionPalette({ orientation = 'horizontal' }: { orientation?:
   const cutSelection = useAppStore((s) => (isTexture ? s.textureCut : s.cutSelection))
   const cutCells3D = useAppStore((s) => s.cutCells3D)
   const pasteClipboard = useAppStore((s) => s.pasteClipboardInPlace)
+  const pasteCells3D = useAppStore((s) => s.pasteCells3D)
   const texturePasteAt = useAppStore((s) => s.texturePasteAt)
   const textureClipboard = useAppStore((s) => s.textureClipboard)
 
@@ -133,8 +134,10 @@ export function SelectionPalette({ orientation = 'horizontal' }: { orientation?:
   function pasteInPlace() {
     // Same origins as the Cmd+V path in useKeyboardShortcuts.ts: voxel paste re-anchors to the
     // same spot on screen (the active plane may have changed since the copy); texel paste lands
-    // at the literal copied origin.
+    // at the literal copied origin. 3D-only stamps directly (no 2D float to drag there) and
+    // selects the pasted cells so a follow-up drag moves them.
     if (isTexture) texturePasteAt(textureClipboard?.originU ?? 0, textureClipboard?.originV ?? 0)
+    else if (is3D) pasteCells3D()
     else pasteClipboard()
   }
 
@@ -248,9 +251,7 @@ export function SelectionPalette({ orientation = 'horizontal' }: { orientation?:
           : <div className="mx-0.5 h-6 w-px bg-neutral-700" />)}
         {renderButton('copy', 'Copy', Copy, 'copy the selection · ctrl/cmd+c', !canAct, is3D ? copyCells3D : copySelection)}
         {renderButton('cut', 'Cut', Scissors, 'cut the selection · ctrl/cmd+x', !canAct, is3D ? cutCells3D : cutSelection)}
-        {is3D
-          ? renderButton('paste', 'Paste', ClipboardPaste, 'paste into 3D is not supported yet — paste in the 2D editor', true, pasteInPlace)
-          : renderButton('paste', 'Paste', ClipboardPaste, 'paste in place — drag inside the pasted selection to move it · ctrl/cmd+v', !hasClipboard, pasteInPlace)}
+        {renderButton('paste', 'Paste', ClipboardPaste, 'paste as a floating ghost — drag it to move, tap to drop · an empty matching selection takes it directly · ctrl/cmd+v', !hasClipboard, pasteInPlace)}
         {vertical
           ? <div className="my-0.5 h-px w-6 bg-neutral-700" />
           : <div className="mx-0.5 h-6 w-px bg-neutral-700" />}

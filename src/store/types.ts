@@ -443,6 +443,15 @@ export type ToolActionsSlice = {
   copyCells3D: () => void
   /** Cut for the 3D selection: copy then erase, as two undo steps like `cutSelection`. */
   cutCells3D: () => void
+  /** Paste in 3D-only layout. An empty selection whose frame matches the clipboard's
+   * dimensions is a paste destination: stamp into it directly (one undo step, nothing to
+   * stomp) and keep the selection. Otherwise float the clipboard in place without writing —
+   * the 3D view ghosts it, dragging inside its footprint moves it, and the drop (or any
+   * bake trigger) stamps it — so copy+paste+drag duplicates instead of moving. Content
+   * copied off a different plane is re-expressed first, like `pasteClipboardAt`. Opens an
+   * undo stroke either way (committed immediately for a targeted stamp, on bake for a
+   * float). No-op without clipboard content. Never touches the 2D selection. */
+  pasteCells3D: () => void
   /** Erases the 3D selection's live cells at every depth (missing keys skipped). One undo step. */
   deleteCells3D: () => void
   /** Rotates/mirrors the 3D selection about its bbox center in the active plane, direct
