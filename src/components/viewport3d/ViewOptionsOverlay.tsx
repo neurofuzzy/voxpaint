@@ -33,7 +33,7 @@ function ToggleButton({ on, onClick, label, children, onPointerEnter, onPointerL
 /**
  * Frosted overlay pinned to the top-right of the 3D preview. Two clusters, divider-separated:
  * construction-plane controls (cycle axis, flip orientation) and view toggles (Wireframe, Texture
- * face map, Optimized mesh). Viewport Orbit/3D-Edit mode lives top-left next to the compass (`ViewportModeToggle`).
+ * face map, Optimized mesh).
  * Collapsing the 2D pane lives on the 2D pane itself (its X button) and the collapsed rail.
  * `stopPropagation` keeps clicks/drags off the OrbitControls underneath.
  */

@@ -51,7 +51,6 @@ export function BrushPreview() {
   const activePaletteSlot = useAppStore((s) => s.activePaletteSlot)
   const brushRotation = useAppStore((s) => s.brushRotation)
   const activeTool = useAppStore((s) => s.activeTool)
-  const edit3D = useAppStore((s) => s.edit3D)
   const gridExtent = useAppStore((s) => s.meta.gridExtent)
   const rotateBrush = useAppStore((s) => s.rotateBrush)
   const setStatusMessage = useAppStore((s) => s.setStatusMessage)
@@ -63,7 +62,7 @@ export function BrushPreview() {
   }, [pools])
 
   const preview = useMemo(() => {
-    const placement = resolveGhostPlacement({ model, plane, hoverCell, hoveredFace, activeVoxelKind, brushRotation, activeTool, edit3D, gridExtent, layoutMode })
+    const placement = resolveGhostPlacement({ model, plane, hoverCell, hoveredFace, activeVoxelKind, brushRotation, activeTool, directEdit: layoutMode === '3d-only', gridExtent, layoutMode })
     if (placement?.kind === 'chamfer') {
       const matrix = placement.matrix.clone().setPosition(0, 0, 0)
       return { pool: placement.pool, matrix, flat: placement.flat }
@@ -81,7 +80,7 @@ export function BrushPreview() {
       : shape.shapeKind
     const matrix = chamferInstanceMatrix(ORIGIN_CELL, plane.axis, plane.orientation, shape.rotation).setPosition(0, 0, 0)
     return { pool, matrix, flat: shape.shapeKind === 'flat' || shape.shapeKind === 'flatwedge' }
-  }, [model, plane, hoverCell, hoveredFace, activeVoxelKind, brushRotation, activeTool, edit3D, gridExtent, layoutMode])
+  }, [model, plane, hoverCell, hoveredFace, activeVoxelKind, brushRotation, activeTool, gridExtent, layoutMode])
 
   if (layoutMode !== '3d-only' || mode !== 'model') return null
 

@@ -77,7 +77,6 @@ function makeCtx(): ToolContext & {
     beginMove: () => {},
     updateMove: () => {},
     endMove: () => {},
-    cloneStampCell: () => {},
     setActivePaletteSlot: () => {},
     setActiveTool: () => {},
     setSelection: () => {},
@@ -89,8 +88,6 @@ function makeCtx(): ToolContext & {
     selectPreview: null,
     setSelectPreview: () => {},
     drag: { current: { kind: 'idle' } },
-    cloneSourceRef: { current: null },
-    cloneOffsetRef: { current: null },
   } as unknown as ToolContext & { live: Marker[]; strokes: number; commits: number }
 }
 

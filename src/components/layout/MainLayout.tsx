@@ -1,4 +1,3 @@
-import { useEffect, useRef } from 'react'
 import { Editor2D } from '@/components/editor2d/Editor2D'
 import { PlaneEdgeSlider } from '@/components/editor2d/PlaneEdgeSlider'
 import { useKeyboardShortcuts } from '@/components/editor2d/useKeyboardShortcuts'
@@ -18,25 +17,13 @@ export function MainLayout() {
   // Global shortcuts live here (not in the 2D canvases) so they stay active when the 2D pane
   // is collapsed. The canvases must not call this hook themselves.
   useKeyboardShortcuts()
-  // A layoutMode restored from localStorage as 3D-only starts in 3D Edit, matching collapse().
-  useEffect(() => {
-    if (useAppStore.getState().layoutMode === '3d-only') useAppStore.getState().setEdit3D(true)
-  }, [])
-  // Stash of the pre-collapse Edit choice, restored on re-expand.
-  const prevEditRef = useRef<boolean | null>(null)
 
   function collapseEditor() {
-    const s = useAppStore.getState()
-    prevEditRef.current = s.edit3D
-    s.setEdit3D(true)
-    s.setLayoutMode('3d-only')
+    useAppStore.getState().setLayoutMode('3d-only')
   }
 
   function expandEditor() {
-    const s = useAppStore.getState()
-    s.setLayoutMode('split')
-    if (prevEditRef.current === false) s.setEdit3D(false)
-    prevEditRef.current = null
+    useAppStore.getState().setLayoutMode('split')
   }
 
   return (

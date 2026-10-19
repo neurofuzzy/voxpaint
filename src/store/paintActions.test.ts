@@ -155,8 +155,9 @@ describe('bevel drag correction on release', () => {
   })
 })
 
-/** Direct-3D blocking (`paintCellAtCoord`/`eraseCellAtCoord`, Edit mode): coordinate-level writes
- * that bake the clicked face's axis/orientation as chamfer context instead of the active plane. */
+/** Direct-3D taps (`paintCellAtCoord`/`eraseCellAtCoord`, 3D-only layout): coordinate-level
+ * writes that bake the clicked face's axis/orientation as chamfer context instead of the
+ * active plane. */
 describe('direct 3D blocking', () => {
   beforeEach(() => {
     useAppStore.getState().newProject('Test', 16)
@@ -230,12 +231,6 @@ describe('direct 3D blocking', () => {
     s.commitStroke()
     expect(useAppStore.getState().past.length).toBe(before + 1)
     expect(useAppStore.getState().model.color.size).toBe(3)
-  })
-
-  it('3D Edit mode defaults off', () => {
-    expect(useAppStore.getState().edit3D).toBe(false)
-    useAppStore.getState().setEdit3D(true)
-    expect(useAppStore.getState().edit3D).toBe(true)
   })
 })
 

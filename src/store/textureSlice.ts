@@ -182,17 +182,6 @@ export const createTextureSlice: Slice = (set, get) => {
       get().textureCommitStroke()
     },
 
-    cloneStampTexel: (srcU, srcV, destU, destV) => {
-      const face = get().activeBoxFace
-      const faceSize = projectFaceSize()
-      if (!face || !withinFace(destU, destV, faceSize)) return
-      const arr = get().texture.faces[face]
-      const value = withinFace(srcU, srcV, faceSize) ? arr[texelIndex(srcU, srcV, faceSize)] : EMPTY
-      const next = cloneTextureModel(get().texture, face)
-      next.faces[face][texelIndex(destU, destV, faceSize)] = value
-      commit(next)
-    },
-
     // --- live Move of the whole active face -----------------------------------------------------
     beginTextureMove: () => {
       get().textureBakeFloatIfAny()

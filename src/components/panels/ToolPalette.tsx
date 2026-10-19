@@ -1,6 +1,6 @@
 import * as ToggleGroup from '@radix-ui/react-toggle-group'
 import * as Tooltip from '@radix-ui/react-tooltip'
-import { Brush, Copy, Droplet, Eraser, MapPin, Move, Pin, Pipette, SquareArrowOutDownLeft, SquareDashedMousePointer, PaintBucket } from 'lucide-react'
+import { Brush, Droplet, Eraser, MapPin, Move, Pin, Pipette, SquareArrowOutDownLeft, SquareDashedMousePointer, PaintBucket } from 'lucide-react'
 import { useAppStore } from '@/store/useAppStore'
 import type { ToolId } from '@/store/types'
 
@@ -12,7 +12,6 @@ const TOOLS: Array<{ id: ToolId; label: string; icon: typeof Brush; hint: string
   { id: 'textureface', label: 'Texture Face', icon: SquareArrowOutDownLeft, hint: 'click or drag ramps, wedges + thin slabs to re-map their texture face to the current plane · geometry unchanged' },
   { id: 'select', label: 'Select', icon: SquareDashedMousePointer, hint: 'drag to select · alt+drag: lasso' },
   { id: 'fill', label: 'Fill', icon: PaintBucket, hint: 'click to flood-fill connected cells · alt+click an existing voxel: fill in 3D' },
-  { id: 'clone', label: 'Clone', icon: Copy, hint: 'alt+click to set a clone source, then drag to stamp' },
   { id: 'move', label: 'Move / Transform', icon: Move, hint: 'drag to shift the current slice' },
   { id: 'marker', label: 'Marker', icon: MapPin, hint: 'click empty space to place a marker · tap a marker to recolor it, tap again to delete · drag to move · right-click: delete' },
 ]

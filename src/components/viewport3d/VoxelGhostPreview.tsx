@@ -18,7 +18,7 @@ import { useAppStore } from '@/store/useAppStore'
  *
  * When a voxel already exists at the hover cell, InstancingManager's own hover blink handles the
  * feedback instead — this component stays hidden (checked via `model.color`). It also stays
- * hidden for the select tool in 3D Edit mode (see `resolveGhostPlacement`).
+ * hidden for the select tool in 3D-only layout (see `resolveGhostPlacement`).
  */
 export function VoxelGhostPreview() {
   const hoverCell = useAppStore((s) => s.hoverCell)
@@ -29,7 +29,6 @@ export function VoxelGhostPreview() {
   const activeVoxelKind = useAppStore((s) => s.activeVoxelKind)
   const brushRotation = useAppStore((s) => s.brushRotation)
   const activeTool = useAppStore((s) => s.activeTool)
-  const edit3D = useAppStore((s) => s.edit3D)
   const plane = useAppStore((s) => s.plane)
   const gridExtent = useAppStore((s) => s.meta.gridExtent)
   const layoutMode = useAppStore((s) => s.layoutMode)
@@ -41,8 +40,8 @@ export function VoxelGhostPreview() {
   }, [pools])
 
   const ghost = useMemo(
-    () => resolveGhostPlacement({ model, plane, hoverCell, hoveredFace, activeVoxelKind, brushRotation, activeTool, edit3D, gridExtent, layoutMode }),
-    [model, plane, hoverCell, hoveredFace, activeVoxelKind, brushRotation, activeTool, edit3D, gridExtent, layoutMode],
+    () => resolveGhostPlacement({ model, plane, hoverCell, hoveredFace, activeVoxelKind, brushRotation, activeTool, directEdit: layoutMode === '3d-only', gridExtent, layoutMode }),
+    [model, plane, hoverCell, hoveredFace, activeVoxelKind, brushRotation, activeTool, gridExtent, layoutMode],
   )
 
   if (!ghost) return null

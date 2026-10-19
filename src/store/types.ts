@@ -8,7 +8,7 @@ import type { BoxFace, TexelScale, TextureModel } from '@/engine/texture/types'
 import type { TexelClip } from '@/engine/texture/texelOps'
 import type { AnimationSpeed, AnimationType, SliceAnimSettings, SliceKey } from '@/engine/animation/types'
 
-export type ToolId = 'paint' | 'erase' | 'eyedropper' | 'select' | 'fill' | 'clone' | 'move' | 'material' | 'pivot' | 'textureface' | 'marker' | 'wand'
+export type ToolId = 'paint' | 'erase' | 'eyedropper' | 'select' | 'fill' | 'move' | 'material' | 'pivot' | 'textureface' | 'marker' | 'wand'
 export type VoxelKind = 'cube' | 'ramp' | 'convex' | 'concave' | 'wedge' | 'thin' | 'half' | 'post' | 'quarter' | 'flat' | 'flatwedge'
 
 export type SelectionRegion = {
@@ -225,10 +225,6 @@ export type ViewSlice = {
   fullscreen: boolean
   /** Pane layout: side-by-side 2D/3D split, or 3D-only (2D pane unmounted). Pure view pref. */
   layoutMode: 'split' | '3d-only'
-  /** 3D Edit mode: clicks/drags in the viewport dispatch the active paint/erase/eyedropper tool
-   * directly on voxel faces instead of setting the construction plane (left-drag orbits only
-   * outside Edit mode). Pure view pref — never persisted, never dirties. */
-  edit3D: boolean
   hoverCell: Coord | null
   chamferHoverValid: boolean | null
   hoveredFace: HoveredFace | null
@@ -285,7 +281,6 @@ export type ViewSlice = {
   exportIncludeMarkers: boolean
   setFullscreen: (v: boolean) => void
   setLayoutMode: (v: 'split' | '3d-only') => void
-  setEdit3D: (v: boolean) => void
   setHoverCell: (coord: Coord | null, chamferValid: boolean | null) => void
   setHoveredFace: (face: HoveredFace | null) => void
   setWireframe: (v: boolean) => void
@@ -345,13 +340,13 @@ export type PaintActionsSlice = {
   eraseCell: (coord: Coord) => void
   /**
    * Direct-3D paint at an explicit grid coordinate, using the caller-supplied axis/orientation
-   * as the chamfer context (Edit mode taps pass the active construction plane, so orientation
+   * as the chamfer context (3D-only taps pass the active construction plane, so orientation
    * always matches the brush preview — never the raycast face). Same write path as `paintCell`,
    * but with no 2D selection clip — the selection mask lives in the active plane's frame.
    * Returns false if out of bounds.
    */
   paintCellAtCoord: (coord: Coord, faceAxis: Axis, faceOrientation: Orientation) => boolean
-  /** Direct-3D erase at an explicit grid coordinate (Edit mode). No selection clip. */
+  /** Direct-3D erase at an explicit grid coordinate (3D-only taps). No selection clip. */
   eraseCellAtCoord: (coord: Coord) => void
   /**
    * Stamps the active brush (voxel kind + palette slot) over the whole active selection in one
@@ -367,7 +362,7 @@ export type PaintActionsSlice = {
    * cells or when the slot already matches (so drags don't record junk undo steps).
    */
   paintMaterialCell: (u: number, v: number) => boolean
-  /** Direct-3D recolor at an explicit grid coordinate (Edit mode). No selection clip. */
+  /** Direct-3D recolor at an explicit grid coordinate (3D-only taps). No selection clip. */
   paintMaterialAtCoord: (coord: Coord) => boolean
   /**
    * Re-authors the ramp, wedge, or thin slab at plane-space (u,v) onto the active construction
@@ -403,8 +398,6 @@ export type ToolActionsSlice = {
    * in 3D-only, UV membership in the 2D region in split) with a blocked-toast when nothing
    * overlaps, and slice fills keep the 2D leak guard. One undo stroke. */
   floodFillCellsAt: (coord: Coord, alt: boolean) => void
-  /** Clones whatever is at (srcU,srcV) onto (destU,destV), both layers, re-validating chamfer. */
-  cloneStampCell: (srcU: number, srcV: number, destU: number, destV: number) => void
   copySelection: () => void
   cutSelection: () => void
   deleteSelection: () => void
@@ -541,7 +534,6 @@ export type TextureSlice = {
   paintTexel: (u: number, v: number) => void
   eraseTexel: (u: number, v: number) => void
   floodFillTexel: (u: number, v: number) => void
-  cloneStampTexel: (srcU: number, srcV: number, destU: number, destV: number) => void
 
   /** Live Move of the whole active-face texel grid (one undo stroke). */
   beginTextureMove: () => void

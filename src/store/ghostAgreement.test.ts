@@ -17,7 +17,6 @@ function setup(kind: VoxelKind, brush: Rotation, tool: ToolId = 'paint') {
   s.setActiveVoxelKind(kind)
   s.setBrushRotation(brush)
   s.setActiveTool(tool)
-  s.setEdit3D(false)
   s.setPlaneAxisOrientation('z', 1)
   s.setPlaneOffset(0)
 }
@@ -46,7 +45,7 @@ function ghostFor(target: Coord, axis: Axis = 'z', orientation: Orientation = 1)
     activeVoxelKind: s.activeVoxelKind,
     brushRotation: s.brushRotation,
     activeTool: s.activeTool,
-    edit3D: false,
+    directEdit: false,
     gridExtent: s.meta.gridExtent,
     layoutMode: s.layoutMode,
   })
@@ -217,7 +216,7 @@ describe('orientation inherits the construction plane, never the raycast face', 
       activeVoxelKind: s.activeVoxelKind,
       brushRotation: s.brushRotation,
       activeTool: 'paint',
-      edit3D: true,
+      directEdit: true,
       gridExtent: s.meta.gridExtent,
       layoutMode: s.layoutMode,
     })
@@ -230,7 +229,6 @@ describe('orientation inherits the construction plane, never the raycast face', 
     s.setActiveVoxelKind('wedge')
     s.setBrushRotation(0)
     s.setActiveTool('paint')
-    s.setEdit3D(true)
     s.setPlaneAxisOrientation('z', 1)
     s.setPlaneOffset(0)
   })

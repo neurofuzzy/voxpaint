@@ -19,7 +19,9 @@ export type GhostPlacementInput = {
   activeVoxelKind: VoxelKind
   brushRotation: Rotation
   activeTool: ToolId
-  edit3D: boolean
+  /** Direct-manipulation 3D (3D-only layout): taps apply tools on voxel faces. Callers pass
+   * `layoutMode === '3d-only'` — split layout is orbit/navigate only, so this is false there. */
+  directEdit: boolean
   gridExtent: GridExtent
   layoutMode: 'split' | '3d-only'
 }
@@ -34,8 +36,8 @@ export type GhostPlacement =
  * the three can never disagree about basis, reflection, or autotile context.
  *
  * Rules (kept verbatim from the original ghost memo): hidden for the material tool and for
- * the select tool in 3D Edit mode (no paint preview while selecting); in 3D Edit
- * with paint, the placement cell is the neighbor across the hovered face (face must belong to
+ * the select tool in direct-manipulation 3D (3D-only layout, no paint preview while
+ * selecting); there with paint, the placement cell is the neighbor across the hovered face (face must belong to
  * the hovered cell — 2D hover sets `hoverCell` without a face), but orientation ALWAYS inherits
  * the active construction plane, never the raycast face — matching the paint write (see
  * `applyBlockingTap`); otherwise the hover cell itself in the active plane's frame. Hidden when
@@ -45,15 +47,15 @@ export type GhostPlacement =
  * every other kind resolves from the brush alone (explicit corners never autotile).
  */
 export function resolveGhostPlacement(input: GhostPlacementInput): GhostPlacement | null {
-  const { model, plane, hoverCell, hoveredFace, activeVoxelKind, brushRotation, activeTool, edit3D, gridExtent, layoutMode } = input
+  const { model, plane, hoverCell, hoveredFace, activeVoxelKind, brushRotation, activeTool, directEdit, gridExtent, layoutMode } = input
   const verbatim = layoutMode === '3d-only'
   // Material recolors on hover-blink alone; select shows no paint preview (the marquee overlay
   // and cyan selection cast cover feedback instead, like the 2D canvas while selecting).
-  if (edit3D && (activeTool === 'material' || activeTool === 'select')) return null
+  if (directEdit && (activeTool === 'material' || activeTool === 'select')) return null
   let target: Coord | null = null
   let faceAxis: Axis | null = null
   let faceOrientation: Orientation | null = null
-  if (edit3D && activeTool === 'paint' && hoverCell && hoveredFace && hoveredFace.cellKey === encodeKey(...hoverCell)) {
+  if (directEdit && activeTool === 'paint' && hoverCell && hoveredFace && hoveredFace.cellKey === encodeKey(...hoverCell)) {
     const normal = outwardNormal(hoveredFace.axis, hoveredFace.orientation)
     const t: Coord = [hoverCell[0] + normal[0], hoverCell[1] + normal[1], hoverCell[2] + normal[2]]
     if (!withinWorkingBounds(t, gridExtent)) return null

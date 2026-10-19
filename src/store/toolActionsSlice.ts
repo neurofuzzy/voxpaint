@@ -1,5 +1,5 @@
 import type { StateCreator } from 'zustand'
-import { encodeKey, expandBounds, withinWorkingBounds } from '@/engine/grid/GridStore'
+import { encodeKey, expandBounds } from '@/engine/grid/GridStore'
 import type { CellKey } from '@/engine/grid/types'
 import { gridCoordFromPixel, pixelFromGridCoord } from '@/engine/plane/constructionPlane'
 import { rebaseChamferCell } from '@/engine/chamfer/faceBasis'
@@ -138,44 +138,6 @@ export const createToolActionsSlice: Slice = (set, get) => ({
       state.dirty = true
     })
     get().commitStroke()
-  },
-
-  cloneStampCell: (srcU, srcV, destU, destV) => {
-    get().bakeFloatIfAny()
-    const { model, plane, meta } = get()
-    const destCoord = gridCoordFromPixel(plane, destU, destV)
-    if (!withinWorkingBounds(destCoord, meta.gridExtent)) return
-    const srcKey = encodeKey(...gridCoordFromPixel(plane, srcU, srcV))
-    const srcColor = model.color.get(srcKey)
-    const srcChamfer = model.chamfer.get(srcKey)
-
-    set((state) => {
-      const destKey = encodeKey(...destCoord)
-      if (!srcColor) {
-        state.model.color.delete(destKey)
-        state.model.chamfer.delete(destKey)
-        state.meta.modifiedAt = new Date().toISOString()
-        state.dirty = true
-        return
-      }
-
-      state.model.color.set(destKey, { paletteSlot: srcColor.paletteSlot })
-      // Clone/stamp reproduces the source voxel — its chamfer shape is copied verbatim, never
-      // reclassified against the destination's neighbors (a chamfer only (re)resolves when the user
-      // edits that specific voxel).
-      if (srcChamfer) {
-        state.model.chamfer.set(destKey, {
-          planeAxis: srcChamfer.planeAxis,
-          planeOrientation: srcChamfer.planeOrientation,
-          resolvedTo: srcChamfer.resolvedTo ? { ...srcChamfer.resolvedTo } : null,
-        })
-      } else {
-        state.model.chamfer.delete(destKey)
-      }
-      state.model.bounds = expandBounds(state.model.bounds, destCoord)
-      state.meta.modifiedAt = new Date().toISOString()
-      state.dirty = true
-    })
   },
 
   copySelection: () => {

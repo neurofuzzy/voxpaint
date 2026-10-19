@@ -56,8 +56,6 @@ function pixelToCell(
  */
 export function usePixelCanvasTools(canvasRef: React.RefObject<HTMLCanvasElement | null>) {
   const drag = useRef<ToolDragState>({ kind: 'idle' })
-  const cloneSourceRef = useRef<[number, number] | null>(null)
-  const cloneOffsetRef = useRef<[number, number] | null>(null)
   const hoverCellRef = useRef<[number, number] | null>(null)
   const panDragRef = useRef<{ startX: number; startY: number; lastX: number; lastY: number; hasMoved: boolean } | null>(null)
 
@@ -269,7 +267,6 @@ export function usePixelCanvasTools(canvasRef: React.RefObject<HTMLCanvasElement
     clearPivotForCurrentSlice: store.clearPivotForCurrentSlice,
     animBeginStroke: store.animBeginStroke,
     animCommitStroke: store.animCommitStroke,
-    cloneStampCell: store.cloneStampCell,
     beginMove: store.beginMove,
     updateMove: store.updateMove,
     endMove: store.endMove,
@@ -290,8 +287,6 @@ export function usePixelCanvasTools(canvasRef: React.RefObject<HTMLCanvasElement
     selectPreview,
     setSelectPreview,
     drag,
-    cloneSourceRef,
-    cloneOffsetRef,
   }
   const ctxRef = useRef(ctx)
   ctxRef.current = ctx

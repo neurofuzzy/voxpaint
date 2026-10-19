@@ -45,7 +45,6 @@ export interface ToolContext {
   beginMove: (wholeModel: boolean) => void
   updateMove: (du: number, dv: number) => void
   endMove: () => void
-  cloneStampCell: (srcU: number, srcV: number, destU: number, destV: number) => void
   setActivePaletteSlot: (slot: PaletteSlotRef) => void
   setActiveVoxelKind: (kind: VoxelKind) => void
   setActiveTool: (tool: ToolId) => void
@@ -94,12 +93,6 @@ export interface ToolContext {
   /** Mutable drag-gesture scratch state, one shared ref per tool-context instance. Resets to
    * `idle` between gestures. */
   drag: { current: ToolDragState }
-
-  /** Clone tool's source anchor, set by alt-click and persisting *across* separate drag gestures
-   * (aligned clone-stamp behavior) — lives outside `drag` because `drag` resets to idle on every
-   * pointer-up, but the source/offset must survive until a new alt-click resets them. */
-  cloneSourceRef: { current: [number, number] | null }
-  cloneOffsetRef: { current: [number, number] | null }
 }
 
 export type ToolDragState =
@@ -107,7 +100,6 @@ export type ToolDragState =
   | { kind: 'paint'; anchor: [number, number]; last: [number, number] }
   | { kind: 'selectRect'; anchor: [number, number] }
   | { kind: 'selectLasso'; points: Array<[number, number]> }
-  | { kind: 'clone'; last: [number, number] }
   | { kind: 'moveFloat'; startU: number; startV: number; originAtStart: FloatOrigin }
   | { kind: 'moveGrid'; startU: number; startV: number; lastU: number; lastV: number }
   | { kind: 'marker'; id: string }

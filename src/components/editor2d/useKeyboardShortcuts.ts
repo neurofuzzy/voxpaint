@@ -13,7 +13,6 @@ const TOOL_KEYS: Record<string, ToolId> = {
   t: 'textureface',
   s: 'select',
   k: 'fill',
-  c: 'clone',
   v: 'move',
   d: 'marker',
   w: 'wand',

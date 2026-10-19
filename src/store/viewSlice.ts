@@ -20,7 +20,6 @@ export const createViewSlice: Slice = (set) => ({
   fullscreen: false,
   // Restored from localStorage UI prefs (validated there); defaults to the 2D/3D split.
   layoutMode: loadUiPrefs().layoutMode ?? 'split',
-  edit3D: false,
   hoverCell: null,
   chamferHoverValid: null,
   hoveredFace: null,
@@ -52,7 +51,6 @@ export const createViewSlice: Slice = (set) => ({
     saveUiPrefs({ ...loadUiPrefs(), layoutMode: v })
     set((state) => { state.layoutMode = v })
   },
-  setEdit3D: (v) => set((state) => { state.edit3D = v }),
   setWireframe: (v) => set((state) => { state.wireframe = v }),
   setTextureFaceMap: (v) => set((state) => { state.textureFaceMap = v }),
   setOptimizedMesh: (v) => set((state) => { state.optimizedMesh = v }),

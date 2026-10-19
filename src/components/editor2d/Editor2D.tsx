@@ -10,7 +10,7 @@ import { TextureOverlay } from './TextureOverlay'
 
 /**
  * The 2D editor pane. The X button top-right collapses the pane into the slim `CollapsedRail`
- * (3D-only modeling, auto-enabling 3D Edit — see MainLayout). It sits below the texture overlay
+ * (3D-only modeling — see MainLayout). It sits below the texture overlay
  * in Texture mode, where the top-right slot is already taken.
  */
 export function Editor2D({ onCollapse }: { onCollapse: () => void }) {
@@ -40,7 +40,7 @@ export function Editor2D({ onCollapse }: { onCollapse: () => void }) {
           onClick={onCollapse}
           aria-label="Collapse 2D editor"
           title="Collapse the 2D editor (3D-only mode)"
-          onPointerEnter={() => setStatusMessage('Collapse the 2D editor — full-width 3D modeling (auto-enables 3D Edit)')}
+          onPointerEnter={() => setStatusMessage('Collapse the 2D editor — full-width 3D modeling')}
           onPointerLeave={() => setStatusMessage(null)}
           className={
             'absolute right-3 z-40 flex h-8 w-8 items-center justify-center rounded-md border border-neutral-800 ' +

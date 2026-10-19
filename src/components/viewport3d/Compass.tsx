@@ -25,7 +25,7 @@ export function CompassTracker({ iconRef }: { iconRef: RefObject<HTMLDivElement 
 }
 
 /** Plain DOM overlay — render as a sibling of `<Canvas>`, not inside it (see `CompassTracker`).
- * Positioning is owned by the parent (currently composed next to `ViewportModeToggle`). */
+ * Positioning is owned by the parent (currently composed top-left of the viewport). */
 export function CompassIcon({ iconRef }: { iconRef: RefObject<HTMLDivElement | null> }) {
   return (
     <div className="pointer-events-none select-none">

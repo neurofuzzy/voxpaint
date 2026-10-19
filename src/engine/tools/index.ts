@@ -6,7 +6,6 @@ import { eyedropperTool } from './eyedropperTool'
 import { materialTool } from './materialTool'
 import { selectTool } from './selectTool'
 import { fillTool } from './fillTool'
-import { cloneTool } from './cloneTool'
 import { moveTool } from './moveTool'
 import { maskPaintTool, maskEraseTool } from './maskTools'
 import { markerTool } from './markerTool'
@@ -23,7 +22,6 @@ export const toolMap: Record<ToolId, ToolHandler> = {
   material: materialTool,
   select: selectTool,
   fill: fillTool,
-  clone: cloneTool,
   move: moveTool,
   textureface: textureFaceTool,
   marker: markerTool,

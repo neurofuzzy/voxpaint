@@ -68,7 +68,7 @@ void main() {
  * disabled on the wireframes so they never intercept voxel picking; the fill volume raycasts
  * (cheap single-box test) purely to drive the hover highlight below.
  *
- * With the fill tool active in Edit mode, hovering the box turns it yellow: a tap then fills
+ * With the fill tool active in 3D-only layout, hovering the box turns it yellow: a tap then fills
  * the whole selection with the brush (voxel type + color) in one undo stroke — the 3D-view
  * answer to the 2D bucket. Only committed selections arm this: marquee previews and floating
  * drags stay purely visual. The tap itself is handled by the viewport interaction handler
@@ -85,7 +85,7 @@ export function SelectionBox3D() {
   const floatOrigin = useAppStore((s) => s.floatOrigin)
   const plane = useAppStore((s) => s.plane)
   const isModelMode = useAppStore((s) => s.mode === 'model')
-  const edit3D = useAppStore((s) => s.edit3D)
+  const is3DOnly = useAppStore((s) => s.layoutMode === '3d-only')
   const activeTool = useAppStore((s) => s.activeTool)
   const [hovered, setHovered] = useState(false)
 
@@ -128,7 +128,7 @@ export function SelectionBox3D() {
   // transient boxes (marquee preview, float drag) and other tools keep it passive. Taps
   // themselves are handled by the viewport interaction (fill first, then land the plane).
   const interactive =
-    edit3D &&
+    is3DOnly &&
     activeTool === 'fill' &&
     isModelMode &&
     !floatContent &&

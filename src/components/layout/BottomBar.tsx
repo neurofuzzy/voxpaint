@@ -3,18 +3,25 @@ import { useAppStore } from '@/store/useAppStore'
 import type { ToolId } from '@/store/types'
 
 const TOOL_HINTS: Record<ToolId, string> = {
-  paint: 'click or drag to paint · shift+drag: straight line · right-click: quick erase · 3D Edit: click faces to block',
-  erase: 'click or drag to erase · shift+drag: straight line · 3D Edit: click voxels to erase',
-  eyedropper: 'click to pick a color and voxel type · 3D Edit: click a voxel to pick its color and type',
-  material: 'click or drag to repaint occupied voxels · never adds or deletes · 3D Edit: drag across faces',
+  paint: 'click or drag to paint · shift+drag: straight line · right-click: quick erase',
+  erase: 'click or drag to erase · shift+drag: straight line',
+  eyedropper: 'click to pick a color and voxel type',
+  material: 'click or drag to repaint occupied voxels · never adds or deletes',
   select: 'drag to select · alt+drag: lasso · drag inside to move (alt: full depth)',
   wand: 'click a component for its color · re-tap it quickly for the whole component · drag inside to move · delete removes it at every depth',
   fill: 'click to flood-fill connected cells in 2d, ALT-click to flood fill in 3d',
-  clone: 'alt+click to set a clone source, then drag to stamp',
   move: 'drag to shift every pixel on this slice',
   marker: 'click empty space to place a marker · tap a marker to recolor it, tap again to delete · drag to move',
   pivot: 'click to pin the rotation/pendulum pivot for this slice · right-click: clear',
   textureface: 'click or drag ramps, wedges + thin slabs to re-map their texture face to the current plane · geometry unchanged',
+}
+
+/** Appended to the tool hint in 3D-only layout (model mode), where the viewport edits directly. */
+const LAYOUT_3D_HINTS: Partial<Record<ToolId, string>> = {
+  paint: '3D: click faces to block',
+  erase: '3D: click voxels to erase',
+  eyedropper: '3D: click a voxel to pick its color and type',
+  material: '3D: drag across faces',
 }
 
 /**
@@ -38,6 +45,8 @@ export function BottomBar() {
   const selectHint = layoutMode === '3d-only' && mode === 'model' && activeTool === 'select'
     ? 'drag to marquee-select occupied voxels · drag inside to move · click for one voxel'
     : TOOL_HINTS[activeTool]
+  // 3D-only model mode edits directly in the viewport — append the 3D gesture to the hint.
+  const suffix = layoutMode === '3d-only' && mode === 'model' ? LAYOUT_3D_HINTS[activeTool] : undefined
 
   const defaultHint = mode === 'animate'
     ? (activeTool === 'paint'
@@ -45,7 +54,9 @@ export function BottomBar() {
         : activeTool === 'erase'
           ? 'erase mask cells · right-click: quick erase · unmark all to animate the whole slice again'
           : 'assign animation to the current slice · use construction plane to navigate')
-    : selectHint
+    : suffix
+      ? `${selectHint} · ${suffix}`
+      : selectHint
 
   return (
     <div className="flex h-11 items-center gap-3 border-t border-neutral-800 bg-neutral-900 px-2 py-0 text-xs text-neutral-300">

@@ -27,7 +27,6 @@ export interface TextureToolContext {
   paintTexel: (u: number, v: number) => void
   eraseTexel: (u: number, v: number) => void
   floodFillTexel: (u: number, v: number) => void
-  cloneStampTexel: (srcU: number, srcV: number, destU: number, destV: number) => void
   beginTextureMove: () => void
   updateTextureMove: (du: number, dv: number) => void
   endTextureMove: () => void
@@ -45,8 +44,6 @@ export interface TextureToolContext {
   selectPreview: SelectionRegion | null
   setSelectPreview: (v: SelectionRegion | null) => void
   drag: { current: TextureDragState }
-  cloneSourceRef: { current: [number, number] | null }
-  cloneOffsetRef: { current: [number, number] | null }
 }
 
 export type TextureDragState =
@@ -54,7 +51,6 @@ export type TextureDragState =
   | { kind: 'paint'; anchor: [number, number]; last: [number, number] }
   | { kind: 'selectRect'; anchor: [number, number] }
   | { kind: 'selectLasso'; points: Array<[number, number]> }
-  | { kind: 'clone'; last: [number, number] }
   | { kind: 'moveFloat'; startU: number; startV: number; originAtStart: FloatOrigin }
   | { kind: 'moveGrid'; startU: number; startV: number; lastU: number; lastV: number }
 
@@ -182,41 +178,6 @@ const selectTool: TextureToolHandler = {
   },
 }
 
-function stampClone(ctx: TextureToolContext, u: number, v: number): void {
-  const offset = ctx.cloneOffsetRef.current
-  if (!offset) return
-  ctx.cloneStampTexel(u - offset[0], v - offset[1], u, v)
-}
-
-const cloneTool: TextureToolHandler = {
-  onDown(ctx, e) {
-    if (e.altKey) {
-      ctx.cloneSourceRef.current = [e.u, e.v]
-      ctx.cloneOffsetRef.current = null
-      ctx.drag.current = { kind: 'idle' }
-      return
-    }
-    if (!ctx.cloneSourceRef.current) return
-    ctx.bakeFloatIfAny()
-    ctx.cloneOffsetRef.current = [e.u - ctx.cloneSourceRef.current[0], e.v - ctx.cloneSourceRef.current[1]]
-    ctx.beginStroke()
-    stampClone(ctx, e.u, e.v)
-    ctx.drag.current = { kind: 'clone', last: [e.u, e.v] }
-  },
-  onMove(ctx, e) {
-    if (ctx.drag.current.kind !== 'clone') return
-    const [lu0, lv0] = ctx.drag.current.last
-    if (lu0 === e.u && lv0 === e.v) return
-    for (const [lu, lv] of bresenhamLine(lu0, lv0, e.u, e.v)) stampClone(ctx, lu, lv)
-    ctx.drag.current = { kind: 'clone', last: [e.u, e.v] }
-  },
-  onUp(ctx) {
-    if (ctx.drag.current.kind !== 'clone') return
-    ctx.drag.current = { kind: 'idle' }
-    ctx.commitStroke()
-  },
-}
-
 const moveTool: TextureToolHandler = {
   onDown(ctx, e) {
     ctx.beginTextureMove()
@@ -242,7 +203,6 @@ export const textureToolMap: Record<ToolId, TextureToolHandler> = {
   eyedropper: eyedropperTool,
   select: selectTool,
   fill: fillTool,
-  clone: cloneTool,
   move: moveTool,
   // Pivot is Animate-mode-only (see ToolPalette.tsx's ANIMATE_TOOLS) — harmless no-op here.
   pivot: {},
