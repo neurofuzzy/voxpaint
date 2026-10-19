@@ -18,6 +18,8 @@ describe('paintCell wedge handling', () => {
   beforeEach(() => {
     useAppStore.getState().newProject('Test', 16)
     useAppStore.getState().setActiveVoxelKind('wedge')
+    useAppStore.getState().setPlaneAxisOrientation('z', 1)
+    useAppStore.getState().setPlaneOffset(0)
   })
 
   it('paints a lone wedge on empty ground at rotation 0 instead of no-op', () => {
@@ -162,6 +164,8 @@ describe('direct 3D blocking', () => {
   beforeEach(() => {
     useAppStore.getState().newProject('Test', 16)
     useAppStore.getState().setActiveVoxelKind('cube')
+    useAppStore.getState().setPlaneAxisOrientation('z', 1)
+    useAppStore.getState().setPlaneOffset(0)
   })
 
   it('paints with the face plane as chamfer context, leaving the active plane untouched', () => {
@@ -863,6 +867,8 @@ describe('fillSelection (box click fills the window with the brush)', () => {
     s.newProject('Test', 16)
     s.setActiveVoxelKind('cube')
     s.setActivePaletteSlot(SLOT_A)
+    s.setPlaneAxisOrientation('z', 1)
+    s.setPlaneOffset(0)
   })
 
   function paintAt(coord: Coord) {

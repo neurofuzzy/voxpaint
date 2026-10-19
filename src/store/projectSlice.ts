@@ -329,11 +329,13 @@ export const createProjectSlice: Slice = (set, get) => ({
       state.markers = []
       state.selectedMarkerId = null
       state.dirty = true
-      // A stale plane offset from a larger project would start out of bounds — pull it back in.
-      // (Axis/orientation carry over; only the offset is range-bound.)
-      state.plane.offset = clampPlaneOffset(state.plane.offset, extent)
+      // A new project starts on the ground: Y-up plane at the lowest layer, so the first
+      // paint lands on the floor instead of inheriting a stale mid-air slice.
+      state.plane.axis = 'y'
+      state.plane.orientation = 1
+      state.plane.offset = -effectiveExtent(extent) / 2
       state.objectModeTarget = null
-      // View/tool prefs (active tool, palette slot, plane axis) carry over deliberately — but a
+      // View/tool prefs (active tool, palette slot) carry over deliberately — but a
       // stale voxel selection would clip painting on the fresh canvas via an invisible mask, and
       // hover state references dead cells, so both reset. (Clipboards are kept: pasting across
       // projects is safe — paste clips to the new bounds.)

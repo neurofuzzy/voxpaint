@@ -1,10 +1,19 @@
 import { useRef, useState } from 'react'
-import { ChevronDown, ChevronUp } from 'lucide-react'
+import { ChevronDown, ChevronUp, FlipHorizontal } from 'lucide-react'
 import { effectiveExtent } from '@/engine/grid/GridStore'
+import type { Axis } from '@/engine/grid/types'
 import { useAppStore } from '@/store/useAppStore'
 
 /** Finger travel per construction-plane layer — ~40 layers fit in a full-height iPad drag. */
 const PX_PER_LAYER = 20
+
+const AXES: Axis[] = ['x', 'y', 'z']
+
+/** Round translucent button shared by the plane cluster (matches the steppers below). */
+const ROUND_BTN =
+  'flex h-9 w-9 items-center justify-center rounded-full border border-neutral-700/60 ' +
+  'bg-neutral-900/40 text-neutral-300 transition-colors disabled:cursor-not-allowed disabled:opacity-30 ' +
+  'enabled:hover:border-neutral-500 enabled:hover:bg-neutral-900/70 enabled:hover:text-neutral-100'
 
 /**
  * Touch strip pinned to the far right edge of the window (over the 3D viewport's right edge —
@@ -19,9 +28,13 @@ const PX_PER_LAYER = 20
  * bottom-right overlays (z-30 vs z-40) so those buttons stay tappable where they overlap.
  * Stepper buttons directly above (+1) and below (−1) the grip replace the old 2D overlay
  * steppers; the whole cluster is vertically centered, clear of the corner overlays.
+ * Plane axis (cycle) and orientation (flip) buttons sit above the steppers, so the full
+ * plane pose is driven from this one cluster.
  */
 export function PlaneEdgeSlider() {
   const offset = useAppStore((s) => s.plane.offset)
+  const planeAxis = useAppStore((s) => s.plane.axis)
+  const planeOrientation = useAppStore((s) => s.plane.orientation)
   const gridExtent = useAppStore((s) => s.meta.gridExtent)
   const setStatusMessage = useAppStore((s) => s.setStatusMessage)
   const [dragging, setDragging] = useState(false)
@@ -60,15 +73,43 @@ export function PlaneEdgeSlider() {
         onClick={() => useAppStore.getState().setPlaneOffset(offset + direction)}
         onPointerEnter={() => setStatusMessage(hint)}
         onPointerLeave={() => setStatusMessage(null)}
-        className={
-          'flex h-9 w-9 items-center justify-center rounded-full border border-neutral-700/60 ' +
-          'bg-neutral-900/40 text-neutral-300 transition-colors disabled:cursor-not-allowed disabled:opacity-30 ' +
-          'enabled:hover:border-neutral-500 enabled:hover:bg-neutral-900/70 enabled:hover:text-neutral-100'
-        }
+        className={ROUND_BTN}
       >
         <Icon size={17} />
       </button>
     )
+  }
+
+  function planeButton(
+    label: string,
+    title: string,
+    hint: string,
+    onClick: () => void,
+    children: React.ReactNode,
+  ) {
+    // onPointerDown stops propagation so pressing these never starts an offset drag.
+    return (
+      <button
+        aria-label={label}
+        title={title}
+        onPointerDown={(e) => e.stopPropagation()}
+        onClick={onClick}
+        onPointerEnter={() => setStatusMessage(hint)}
+        onPointerLeave={() => setStatusMessage(null)}
+        className={`${ROUND_BTN} font-mono text-sm font-semibold uppercase`}
+      >
+        {children}
+      </button>
+    )
+  }
+
+  const cycleAxis = () => {
+    const { plane, setPlaneAxisOrientation } = useAppStore.getState()
+    setPlaneAxisOrientation(AXES[(AXES.indexOf(plane.axis) + 1) % 3], plane.orientation)
+  }
+  const flipOrientation = () => {
+    const { plane, setPlaneAxisOrientation } = useAppStore.getState()
+    setPlaneAxisOrientation(plane.axis, plane.orientation === 1 ? -1 : 1)
   }
 
   return (
@@ -121,6 +162,21 @@ export function PlaneEdgeSlider() {
       className="absolute bottom-0 right-0 top-0 z-30 flex w-12 touch-none select-none flex-col items-center justify-center outline-none"
     >
       <div className="flex flex-col items-center gap-2">
+        {planeButton(
+          'Construction plane axis',
+          'Construction plane axis (click to cycle)',
+          'Click to cycle the construction plane axis',
+          cycleAxis,
+          planeAxis,
+        )}
+        {planeButton(
+          'Flip plane orientation',
+          `Flip plane orientation (currently ${planeOrientation === 1 ? '+' : '−'})`,
+          'Click to flip the construction plane orientation',
+          flipOrientation,
+          <FlipHorizontal size={16} />,
+        )}
+        <div className="h-px w-6 bg-neutral-700/60" />
         {stepperButton(1, 'Increase offset', 'Click to move the plane forward one layer', atTop, ChevronUp)}
         {/* Grip hint — translucent until hovered/dragged so it reads as chrome, not canvas. */}
         <div

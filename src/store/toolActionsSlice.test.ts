@@ -13,6 +13,8 @@ const SLOT_B = { kind: 'base', index: 1 } as const
 describe('floodFill (2D, edge-leak guard)', () => {
   beforeEach(() => {
     useAppStore.getState().newProject('Test', 16)
+    useAppStore.getState().setPlaneAxisOrientation('z', 1)
+    useAppStore.getState().setPlaneOffset(0)
   })
 
   it('fills an enclosed empty pocket normally', () => {
@@ -75,6 +77,8 @@ describe('floodFill (2D, edge-leak guard)', () => {
 describe('floodFill3D (alt-click, 3D connected fill)', () => {
   beforeEach(() => {
     useAppStore.getState().newProject('Test', 16)
+    useAppStore.getState().setPlaneAxisOrientation('z', 1)
+    useAppStore.getState().setPlaneOffset(0)
   })
 
   it('no-ops when the clicked cell has no voxel', () => {
@@ -130,6 +134,8 @@ describe('floodFill3D (alt-click, 3D connected fill)', () => {
 describe('liftSelectionToFloat (deep alt-drag)', () => {
   beforeEach(() => {
     useAppStore.getState().newProject('Test', 16)
+    useAppStore.getState().setPlaneAxisOrientation('z', 1)
+    useAppStore.getState().setPlaneOffset(0)
   })
 
   /** (u,v) = (0,0) on z/1/offset-0 is [0,-1,0]; depth +1 is [0,-1,1]. */
@@ -179,6 +185,8 @@ describe('liftSelectionToFloat (deep alt-drag)', () => {
 describe('faceSelection', () => {
   beforeEach(() => {
     useAppStore.getState().newProject('Test', 16)
+    useAppStore.getState().setPlaneAxisOrientation('z', 1)
+    useAppStore.getState().setPlaneOffset(0)
   })
 
   it('re-faces a thin slab onto the flipped plane orientation and ignores cubes', () => {

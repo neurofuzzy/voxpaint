@@ -107,6 +107,8 @@ describe('applyWandAt per layout', () => {
     const s = useAppStore.getState()
     s.newProject('Test', 16)
     s.setLayoutMode('split')
+    s.setPlaneAxisOrientation('z', 1)
+    s.setPlaneOffset(0)
     vi.useFakeTimers()
     // Jump far past any prior click so every test starts at the color stage.
     vi.setSystemTime(Date.now() + 60_000)

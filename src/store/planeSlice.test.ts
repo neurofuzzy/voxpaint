@@ -44,9 +44,9 @@ describe('plane offset bounds', () => {
     expect(useAppStore.getState().plane.offset).toBe(7)
   })
 
-  it('a new smaller project pulls a stale offset back into range', () => {
+  it('a new project starts grounded regardless of the old offset', () => {
     useAppStore.getState().setPlaneOffset(7)
     useAppStore.getState().newProject('Small', 8)
-    expect(useAppStore.getState().plane.offset).toBe(3)
+    expect(useAppStore.getState().plane).toEqual({ axis: 'y', orientation: 1, offset: -4 })
   })
 })
