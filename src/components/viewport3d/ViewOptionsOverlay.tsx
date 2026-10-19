@@ -30,7 +30,8 @@ function ToggleButton({ on, onClick, label, children, onPointerEnter, onPointerL
 /**
  * Frosted overlay pinned to the top-right of the 3D preview: view toggles (Wireframe, Texture
  * face map, Optimized mesh), camera reset, and exposure. The construction-plane pose (axis,
- * orientation, offset) lives on the far-right edge slider (`PlaneEdgeSlider`).
+ * orientation, offset) lives on the far-right edge slider (`PlaneEdgeSlider`), along with the
+ * 3D paint plane lock (3D-only model mode).
  * Collapsing the 2D pane lives on the 2D pane itself (its X button) and the collapsed rail.
  * `stopPropagation` keeps clicks/drags off the OrbitControls underneath.
  */

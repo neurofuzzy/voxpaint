@@ -14,6 +14,7 @@ import {
 } from '@/engine/grid/GridStore'
 import { RESCALE_FACTOR, rescaleCoord, rescaleTargetExtent, rescaleVoxelModel } from '@/engine/grid/rescale'
 import { axisIndex } from '@/engine/plane/planeGeometry'
+import { savePlanePref } from '@/engine/persistence/uiPrefs'
 import { DEFAULT_PALETTE } from '@/engine/palette/defaultPalette'
 import { TEXEL_SCALE } from '@/engine/texture/types'
 import { emptyTextureModel, normalizeTexelScale, resampleTextureModel, rescaleTextureModel2x, resizeTextureModel } from '@/engine/texture/TextureStore'
@@ -174,6 +175,8 @@ export const createProjectSlice: Slice = (set, get) => ({
         }
       }
     })
+    // A resize can clamp the offset — persist the pose it settled on.
+    savePlanePref(get().plane)
   },
 
   rescaleProject: () => {
@@ -271,6 +274,8 @@ export const createProjectSlice: Slice = (set, get) => ({
       // Same slice on screen is twice as far out after doubling.
       state.plane.offset = clampPlaneOffset(RESCALE_FACTOR * state.plane.offset, extent)
     })
+    // A rescale moves the offset — persist the pose it settled on.
+    savePlanePref(get().plane)
   },
 
   randomizeNoiseSeed: () =>
@@ -329,11 +334,8 @@ export const createProjectSlice: Slice = (set, get) => ({
       state.markers = []
       state.selectedMarkerId = null
       state.dirty = true
-      // A new project starts on the ground: Y-up plane at the lowest layer, so the first
-      // paint lands on the floor instead of inheriting a stale mid-air slice.
-      state.plane.axis = 'y'
-      state.plane.orientation = 1
-      state.plane.offset = -effectiveExtent(extent) / 2
+      // A new project starts grounded (see resetPlaneToGround) instead of inheriting a stale
+      // mid-air slice — applied after this block so it reads the fresh extent.
       state.objectModeTarget = null
       // View/tool prefs (active tool, palette slot) carry over deliberately — but a
       // stale voxel selection would clip painting on the fresh canvas via an invisible mask, and
@@ -347,5 +349,6 @@ export const createProjectSlice: Slice = (set, get) => ({
       state.chamferHoverValid = null
       state.hoveredFace = null
     })
+    get().resetPlaneToGround()
   },
 })

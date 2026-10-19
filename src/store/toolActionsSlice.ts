@@ -3,7 +3,7 @@ import { encodeKey, expandBounds } from '@/engine/grid/GridStore'
 import type { CellKey } from '@/engine/grid/types'
 import { gridCoordFromPixel, pixelFromGridCoord } from '@/engine/plane/constructionPlane'
 import { rebaseChamferCell } from '@/engine/chamfer/faceBasis'
-import { fillLeaksToEdges, floodFillRegion, floodFillRegion3D } from '@/engine/tools/floodFill'
+import { fillLeaksToEdges, floodFillOccupied3D, floodFillRegion, floodFillRegion3D } from '@/engine/tools/floodFill'
 import { applyClipboardAt, clearRegion, copyRegionToClipboard, transformClipboardToPlane } from '@/engine/tools/clipboard'
 import { copyCellsToClipboard, rotateCellsInPlane, selectionMatchesClipboard, snapshotCells } from '@/engine/tools/cellSetOps'
 import { placedFloatCoords } from '@/engine/instancing/ghostBatches'
@@ -79,13 +79,15 @@ export const createToolActionsSlice: Slice = (set, get) => ({
 
   floodFillCellsAt: (coord, alt) => {
     get().bakeFloatIfAny()
-    const { model, plane, activePaletteSlot, selectedCells, meta } = get()
-    // The 3D selection is planar (window select never leaves the slice), so the set reads as
-    // a UV mask on the active plane for the slice fill below.
-    const inSet = (cu: number, cv: number) => selectedCells.has(encodeKey(...gridCoordFromPixel(plane, cu, cv)))
-    if (alt) {
-      if (!model.color.has(encodeKey(...coord))) return // only fills from an existing voxel
-      let keys = floodFillRegion3D(model, coord, meta.gridExtent)
+    const { model, activePaletteSlot, selectedCells, meta } = get()
+    // Voxel tap: material-only volume fill — recolors, never touches geometry (chamfer) and
+    // never moves the plane (the 3D tap path returns before plane-setting). Plain floods the
+    // color-connected volume; Alt takes the whole touching component regardless of color,
+    // mirroring the wand's two stages.
+    if (model.color.has(encodeKey(...coord))) {
+      let keys = alt
+        ? floodFillOccupied3D(model, coord, meta.gridExtent)
+        : floodFillRegion3D(model, coord, meta.gridExtent)
       if (selectedCells.size > 0) {
         keys = keys.filter((key) => selectedCells.has(key))
         if (keys.length === 0) {
@@ -105,6 +107,13 @@ export const createToolActionsSlice: Slice = (set, get) => ({
       get().commitStroke()
       return
     }
+    // Empty-space tap: Alt does nothing; otherwise the planar slice fill at the plane UV
+    // (leak-guarded), same contract as the 2D `floodFill`.
+    if (alt) return
+    const { plane } = get()
+    // The 3D selection is planar (window select never leaves the slice), so the set reads as
+    // a UV mask on the active plane for the slice fill below.
+    const inSet = (cu: number, cv: number) => selectedCells.has(encodeKey(...gridCoordFromPixel(plane, cu, cv)))
     const { u, v } = pixelFromGridCoord(plane, coord)
     // Same contract as the 2D `floodFill`, masked by the 3D set: a tap inside the window
     // treats the window itself as the bound (no leak guard needed); otherwise the leak

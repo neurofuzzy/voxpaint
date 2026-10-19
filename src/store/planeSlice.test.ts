@@ -50,3 +50,34 @@ describe('plane offset bounds', () => {
     expect(useAppStore.getState().plane).toEqual({ axis: 'y', orientation: 1, offset: -4 })
   })
 })
+
+/** The project-switch reset: one project's slice never leaks into the next. */
+describe('resetPlaneToGround', () => {
+  beforeEach(() => {
+    useAppStore.getState().newProject('Test', 16)
+  })
+
+  it('grounds the plane for the current extent and clears the face-click target', () => {
+    const s = useAppStore.getState()
+    s.setPlaneAxisOrientation('x', -1)
+    s.setPlaneOffset(5)
+    s.handleVoxelFaceClick('5,0,0', 'x', -1, 5)
+    expect(useAppStore.getState().objectModeTarget).not.toBeNull()
+
+    useAppStore.getState().resetPlaneToGround()
+
+    const after = useAppStore.getState()
+    expect(after.plane).toEqual({ axis: 'y', orientation: 1, offset: -8 })
+    expect(after.objectModeTarget).toBeNull()
+  })
+
+  it('grounds relative to a resized project', () => {
+    useAppStore.getState().newProject('Small', 8)
+    useAppStore.getState().setPlaneAxisOrientation('z', 1)
+    useAppStore.getState().setPlaneOffset(3)
+
+    useAppStore.getState().resetPlaneToGround()
+
+    expect(useAppStore.getState().plane).toEqual({ axis: 'y', orientation: 1, offset: -4 })
+  })
+})

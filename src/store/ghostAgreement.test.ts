@@ -3,7 +3,7 @@ import { encodeKey } from '@/engine/grid/GridStore'
 import type { Axis, Coord, Orientation, Rotation } from '@/engine/grid/types'
 import { poolIdFor } from '@/engine/instancing/pools'
 import { useAppStore } from './useAppStore'
-import { resolveGhostPlacement } from './ghostPlacement'
+import { resolveDirectPaintTarget, resolveGhostPlacement } from './ghostPlacement'
 import type { ToolId, VoxelKind } from './types'
 
 /**
@@ -257,5 +257,110 @@ describe('orientation inherits the construction plane, never the raycast face', 
     } else {
       expect.unreachable('verbatim wedge ghost must be a chamfer')
     }
+  })
+})
+
+/**
+ * 3D plane lock (`planeLocked3D`): unlocked stacks the neighbor across the clicked face
+ * (Zanpo-builder behavior); locked replaces the hovered voxel on the active slice.
+ */
+describe('3d plane lock', () => {
+  const SLOT_A = { kind: 'base', index: 0 } as const
+  const SLOT_B = { kind: 'base', index: 1 } as const
+
+  function lockedFaceInput(locked: boolean, hover: Coord = [0, 0, 0]) {
+    const s = useAppStore.getState()
+    return {
+      model: s.model,
+      plane: s.plane,
+      hoverCell: hover,
+      hoveredFace: { cellKey: encodeKey(...hover), axis: 'x' as const, orientation: 1 as const },
+      activeVoxelKind: s.activeVoxelKind,
+      brushRotation: s.brushRotation,
+      activeTool: 'paint' as const,
+      directEdit: true,
+      gridExtent: s.meta.gridExtent,
+      layoutMode: s.layoutMode,
+      planeLocked3D: locked,
+    }
+  }
+
+  beforeEach(() => {
+    const s = useAppStore.getState()
+    s.newProject('Test', 16)
+    s.setLayoutMode('3d-only')
+    s.setActiveVoxelKind('cube')
+    s.setActivePaletteSlot(SLOT_A)
+    s.setBrushRotation(0)
+    s.setActiveTool('paint')
+    s.setPlaneAxisOrientation('z', 1)
+    s.setPlaneOffset(0)
+    s.setPlaneLocked3D(false)
+  })
+
+  it('defaults to unlocked (Zanpo-style stacking)', () => {
+    useAppStore.getState().newProject('Test', 16)
+    expect(useAppStore.getState().planeLocked3D).toBe(false)
+  })
+
+  it('unlocked face hit targets the neighbor across the face', () => {
+    const s = useAppStore.getState()
+    expect(resolveDirectPaintTarget(s.model, s.plane, [0, 0, 0],
+      { cellKey: encodeKey(0, 0, 0), axis: 'x', orientation: 1 }, s.meta.gridExtent, false))
+      .toEqual([1, 0, 0])
+    expect(resolveGhostPlacement(lockedFaceInput(false))?.target).toEqual([1, 0, 0])
+  })
+
+  it('locked face hit targets the hovered voxel itself, even when occupied', () => {
+    const s = useAppStore.getState()
+    s.beginStroke()
+    expect(s.paintCellAtCoord([0, 0, 0], 'z', 1)).toBe(true)
+    expect(s.paintCellAtCoord([1, 0, 0], 'z', 1)).toBe(true)
+    s.commitStroke()
+    // Hover cell and its across-the-face neighbor both occupied: unlocked is blocked (its
+    // target is taken), locked replaces the hovered voxel.
+    expect(resolveGhostPlacement(lockedFaceInput(false))).toBeNull()
+    const placement = resolveGhostPlacement(lockedFaceInput(true))
+    expect(placement?.target).toEqual([0, 0, 0])
+  })
+
+  it('locked face hit off the active slice paints nothing', () => {
+    const s = useAppStore.getState()
+    expect(resolveDirectPaintTarget(s.model, s.plane, [0, 0, 1],
+      { cellKey: encodeKey(0, 0, 1), axis: 'x', orientation: 1 }, s.meta.gridExtent, true))
+      .toBeNull()
+    expect(resolveGhostPlacement(lockedFaceInput(true, [0, 0, 1]))).toBeNull()
+    // Same hit unlocked stacks onto the slice-adjacent neighbor.
+    expect(resolveDirectPaintTarget(s.model, s.plane, [0, 0, 1],
+      { cellKey: encodeKey(0, 0, 1), axis: 'x', orientation: 1 }, s.meta.gridExtent, false))
+      .toEqual([1, 0, 1])
+  })
+
+  it('locked empty-space hover on an occupied plane cell replaces it', () => {
+    const s = useAppStore.getState()
+    s.beginStroke()
+    expect(s.paintCellAtCoord([2, 2, 0], 'z', 1)).toBe(true)
+    s.commitStroke()
+    const after = useAppStore.getState()
+    // No face: the plane cell under the cursor. Occupied blocks unlocked, replaces locked.
+    expect(resolveDirectPaintTarget(after.model, after.plane, [2, 2, 0], null, after.meta.gridExtent, false)).toBeNull()
+    expect(resolveDirectPaintTarget(after.model, after.plane, [2, 2, 0], null, after.meta.gridExtent, true)).toEqual([2, 2, 0])
+  })
+
+  it('locked paint write replaces the voxel color in place', () => {
+    const s = useAppStore.getState()
+    s.beginStroke()
+    expect(s.paintCellAtCoord([0, 0, 0], 'z', 1)).toBe(true)
+    s.commitStroke()
+    useAppStore.getState().setActivePaletteSlot(SLOT_B)
+    useAppStore.getState().setPlaneLocked3D(true)
+    const st = useAppStore.getState()
+    st.beginStroke()
+    // The locked tap target is the hovered cell itself — the write overwrites it.
+    expect(st.paintCellAtCoord([0, 0, 0], st.plane.axis, st.plane.orientation)).toBe(true)
+    st.commitStroke()
+    const after = useAppStore.getState()
+    expect(after.model.color.get(encodeKey(0, 0, 0))?.paletteSlot).toEqual(SLOT_B)
+    expect(after.model.color.size).toBe(1)
   })
 })

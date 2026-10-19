@@ -126,8 +126,18 @@ export type ObjectModeTarget = { cellKey: CellKey; axis: Axis; orientation: Orie
 export type PlaneSlice = {
   plane: ConstructionPlane
   objectModeTarget: ObjectModeTarget | null
+  /** 3D-only paint constraint: when true, paint taps in the 3D view replace the hovered voxel
+   * on the active construction-plane slice instead of stacking a new voxel in front of the
+   * clicked face (zanpo-style). False = unlocked, Zanpo-builder behavior. Paint-only; every
+   * other 3D tool ignores it. Session state, never persisted. */
+  planeLocked3D: boolean
+  setPlaneLocked3D: (v: boolean) => void
   setPlaneAxisOrientation: (axis: ConstructionPlane['axis'], orientation: ConstructionPlane['orientation']) => void
   setPlaneOffset: (offset: number) => void
+  /** Grounds the plane (Y-up at the lowest layer for the current extent) and persists it —
+   * the project-switch reset, so one project's slice never leaks into the next. Used by
+   * new-project and project-import. */
+  resetPlaneToGround: () => void
   /**
    * Handles a 3D face-click on a voxel (spec: first click lands the construction plane on the
    * clicked voxel's own slice; clicking the SAME voxel again advances the plane one step forward
@@ -390,13 +400,13 @@ export type ToolActionsSlice = {
   /** 6-connected flood fill through the full 3D model (not just the current plane), color layer
    * only. No-op unless (u,v) lands on an already-occupied voxel. One undo stroke. */
   floodFill3D: (u: number, v: number) => void
-  /** Fill from a 3D-viewport tap (both layouts — the split 3D view calls this too, not the
-   * 2D `floodFill` actions, so the tapped voxel itself is the seed). A tap on a voxel floods
-   * its volume: the color-connected region normally, the whole touching component on Alt
-   * (mirroring the wand's two stages). A tap on empty space fills the plane slice at that UV
-   * instead; Alt on empty space does nothing. Floods clip to the active selection (exact keys
-   * in 3D-only, UV membership in the 2D region in split) with a blocked-toast when nothing
-   * overlaps, and slice fills keep the 2D leak guard. One undo stroke. */
+  /** Fill from a 3D-viewport tap in 3D-only layout (the split 3D view only ever sets the
+   * construction plane — it never calls this). A tap on a voxel floods its volume, color layer
+   * only (geometry untouched, like the material tool): the color-connected region normally, the
+   * whole touching component on Alt (mirroring the wand's two stages). A tap on empty space
+   * fills the plane slice at that UV instead; Alt on empty space does nothing. Volume floods
+   * clip to the 3D selection set with a blocked-toast when nothing overlaps, and slice fills
+   * keep the 2D leak guard. One undo stroke. The tap path never moves the construction plane. */
   floodFillCellsAt: (coord: Coord, alt: boolean) => void
   copySelection: () => void
   cutSelection: () => void

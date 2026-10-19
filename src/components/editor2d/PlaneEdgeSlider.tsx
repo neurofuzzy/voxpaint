@@ -1,5 +1,5 @@
 import { useRef, useState } from 'react'
-import { ChevronDown, ChevronUp, FlipHorizontal } from 'lucide-react'
+import { ChevronDown, ChevronUp, FlipHorizontal, Lock, LockOpen } from 'lucide-react'
 import { effectiveExtent } from '@/engine/grid/GridStore'
 import type { Axis } from '@/engine/grid/types'
 import { useAppStore } from '@/store/useAppStore'
@@ -29,13 +29,19 @@ const ROUND_BTN =
  * Stepper buttons directly above (+1) and below (−1) the grip replace the old 2D overlay
  * steppers; the whole cluster is vertically centered, clear of the corner overlays.
  * Plane axis (cycle) and orientation (flip) buttons sit above the steppers, so the full
- * plane pose is driven from this one cluster.
+ * plane pose is driven from this one cluster. In 3D-only model mode a lock toggle sits above
+ * the axis button: locked, 3D paint replaces the voxel on the active slice; unlocked, it
+ * stacks in front of the clicked face (Zanpo-style).
  */
 export function PlaneEdgeSlider() {
   const offset = useAppStore((s) => s.plane.offset)
   const planeAxis = useAppStore((s) => s.plane.axis)
   const planeOrientation = useAppStore((s) => s.plane.orientation)
   const gridExtent = useAppStore((s) => s.meta.gridExtent)
+  const mode = useAppStore((s) => s.mode)
+  const layoutMode = useAppStore((s) => s.layoutMode)
+  const planeLocked3D = useAppStore((s) => s.planeLocked3D)
+  const setPlaneLocked3D = useAppStore((s) => s.setPlaneLocked3D)
   const setStatusMessage = useAppStore((s) => s.setStatusMessage)
   const [dragging, setDragging] = useState(false)
   // Drag anchor: the touch point and plane offset the gesture started from. Steps accumulate
@@ -111,6 +117,8 @@ export function PlaneEdgeSlider() {
     const { plane, setPlaneAxisOrientation } = useAppStore.getState()
     setPlaneAxisOrientation(plane.axis, plane.orientation === 1 ? -1 : 1)
   }
+  // The plane lock only constrains 3D paint, which only exists in 3D-only model mode.
+  const showLock = mode === 'model' && layoutMode === '3d-only'
 
   return (
     <div
@@ -162,6 +170,30 @@ export function PlaneEdgeSlider() {
       className="absolute bottom-0 right-0 top-0 z-30 flex w-12 touch-none select-none flex-col items-center justify-center outline-none"
     >
       <div className="flex flex-col items-center gap-2">
+        {showLock && (
+          <>
+            <button
+              aria-label={planeLocked3D ? 'Unlock construction plane' : 'Lock construction plane'}
+              aria-pressed={planeLocked3D}
+              title={planeLocked3D ? 'Unlock construction plane (paint stacks off faces)' : 'Lock construction plane (paint replaces on-slice)'}
+              onPointerDown={(e) => e.stopPropagation()}
+              onClick={() => setPlaneLocked3D(!planeLocked3D)}
+              onPointerEnter={() => setStatusMessage(planeLocked3D
+                ? 'Plane locked: paint clicks replace the voxel on the active slice'
+                : 'Plane unlocked: paint clicks stack a voxel in front of the face (Zanpo-style)')}
+              onPointerLeave={() => setStatusMessage(null)}
+              className={
+                'flex h-9 w-9 items-center justify-center rounded-full border transition-colors ' +
+                (planeLocked3D
+                  ? 'border-violet-500/70 bg-violet-500/15 text-violet-300 hover:border-violet-400 hover:text-violet-200'
+                  : 'border-neutral-700/60 bg-neutral-900/40 text-neutral-300 hover:border-neutral-500 hover:bg-neutral-900/70 hover:text-neutral-100')
+              }
+            >
+              {planeLocked3D ? <Lock size={16} /> : <LockOpen size={16} />}
+            </button>
+            <div className="h-px w-6 bg-neutral-700/60" />
+          </>
+        )}
         {planeButton(
           'Construction plane axis',
           'Construction plane axis (click to cycle)',
