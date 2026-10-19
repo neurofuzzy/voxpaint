@@ -10,6 +10,7 @@ import { showToast } from '@/components/ui/toastBus'
 import { ExportGltfDialog } from './ExportGltfDialog'
 import { ExportStlDialog } from './ExportStlDialog'
 import { NewProjectDialog } from './NewProjectDialog'
+import type { CellKey } from '@/engine/grid/types'
 
 export function FileMenu() {
   const fileInputRef = useRef<HTMLInputElement>(null)
@@ -44,6 +45,7 @@ export function FileMenu() {
         s.objectModeTarget = null
         // Stale selection/float/hover reference the old project's cells — reset (clipboards kept).
         s.selection = null
+        s.selectedCells = new Set<CellKey>()
         s.floatContent = null
         s.floatOrigin = null
         s.hoverCell = null

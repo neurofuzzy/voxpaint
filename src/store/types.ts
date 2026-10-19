@@ -6,7 +6,6 @@ import type { ConstructionPlane } from '@/engine/plane/types'
 import type { ProjectMeta } from '@/engine/persistence/schema'
 import type { BoxFace, TexelScale, TextureModel } from '@/engine/texture/types'
 import type { TexelClip } from '@/engine/texture/texelOps'
-import type { WandMatch } from '@/engine/tools/wandTool'
 import type { AnimationSpeed, AnimationType, SliceAnimSettings, SliceKey } from '@/engine/animation/types'
 
 export type ToolId = 'paint' | 'erase' | 'eyedropper' | 'select' | 'fill' | 'clone' | 'move' | 'material' | 'pivot' | 'textureface' | 'marker' | 'wand'
@@ -154,14 +153,6 @@ export type ToolSlice = {
 
 export type FloatOrigin = { originU: number; originV: number }
 
-/**
- * Magic-wand anchor: the clicked cell plus the match rule in force when it was set
- * (color-connected first tap, whole-component on rapid re-tap). Component-scoped ops (Delete,
- * volumetric highlight) re-flood live from this — same rule, current model — so the component
- * can never go stale no matter how the model changes afterward.
- */
-export type WandAnchor = { cell: Coord; match: WandMatch }
-
 export type SelectionSlice = {
   selection: SelectionRegion | null
   clipboard: ClipboardData | null
@@ -169,27 +160,33 @@ export type SelectionSlice = {
   floatContent: ClipboardData | null
   /** Current placement of `floatContent`. Always non-null exactly when `floatContent` is. */
   floatOrigin: FloatOrigin | null
-  /**
-   * Wand anchor: the clicked cell plus the match rule that selected it. The wand's `selection`
-   * region covers exactly the flooded cells' footprint on the active plane (plain region
-   * semantics for copy/float/transform), while component-scoped ops (Delete, volumetric
-   * highlight) re-flood live from this anchor with the same rule — so the snapshot can never
-   * go stale no matter how the model changes afterward. Null for non-wand selections. Cleared
-   * by any `setSelection` and consumed (cleared) by a component delete, which reverts to plain
-   * region semantics.
-   */
-  wandAnchor: WandAnchor | null
   setSelection: (region: SelectionRegion | null) => void
-  /** Wand selection: region + anchor in one bake-guarded write (see `wandAnchor`). */
-  setWandSelection: (region: SelectionRegion, anchor: WandAnchor) => void
+  setClipboard: (clipboard: ClipboardData | null) => void
+}
+
+/**
+ * The 3D selection store: an explicit set of voxel keys in grid space (zanpo-shaped — no plane
+ * frame, no mask). Fully independent from the 2D `SelectionSlice`: 3D gestures write only here
+ * in 3D-only layout (2D gestures write only there in split), so the two can never desync into
+ * each other the way a shared region did. Selections are transient session state (never
+ * persisted, never undoable — same as the 2D selection); only model mutations take undo steps.
+ * Always replace the set wholesale (`new Set`) so subscribers see the change.
+ */
+export type Selection3DSlice = {
+  /** Explicitly selected voxels. May hold absent keys after edits (skipped benignly). */
+  selectedCells: Set<CellKey>
+  /** Replace the set (bakes any pending float first, like `setSelection`). */
+  setSelectedCells: (cells: Set<CellKey>) => void
+  /** Clear the set. */
+  clearSelectedCells: () => void
   /**
    * Two-stage wand click at a grid cell. First click (or any click >1s after the last, or on a
-   * chunk disconnected from the current anchor): color-connected bbox. Rapid re-tap on the SAME
+   * chunk disconnected from the previous click): color-connected flood. Rapid re-tap on the SAME
    * component: whole occupied component from the new cell. Empty clicks clear the selection and
    * reset the stage. The wand tool stays active throughout (no handoff) so re-taps land on it.
+   * Writes the 3D voxel set in 3D-only layout, the 2D footprint region in split layout.
    */
   applyWandAt: (start: Coord) => void
-  setClipboard: (clipboard: ClipboardData | null) => void
 }
 
 /** The specific voxel face currently under the pointer in the 3D view — live, updates on every
@@ -396,6 +393,27 @@ export type ToolActionsSlice = {
   liftSelectionToFloat: (deep?: boolean) => void
   /** Repositions the pending float. Pure — no model writes, no undo-stroke activity. */
   moveFloatTo: (originU: number, originV: number) => void
+  /** Repositions the pending float without touching the 2D selection (3D exact-set moves). */
+  moveFloatCellsTo: (originU: number, originV: number) => void
+  /** Lifts an explicit voxel set into the float buffer (3D selection moves): snapshots the live
+   * cells anchored at their bbox-min, clears them from the model, and opens an undo stroke that
+   * stays uncommitted until `bakeFloatIfAny()`. Missing keys are skipped; no-op on an empty set
+   * or a pending float. Never touches the 2D selection. */
+  liftCellsToFloat: (cells: Set<CellKey>) => void
+  /** Copies an explicit voxel set to the shared clipboard (3D copy — 2D-pasteable). */
+  copyCells3D: () => void
+  /** Cut for the 3D selection: copy then erase, as two undo steps like `cutSelection`. */
+  cutCells3D: () => void
+  /** Erases the 3D selection's live cells at every depth (missing keys skipped). One undo step. */
+  deleteCells3D: () => void
+  /** Rotates/mirrors the 3D selection about its bbox center in the active plane, direct
+   * (remove→transform→add, zanpo-style) as one undo step — no float involved. Chamfers renumber
+   * via the same duals as float transforms, so no square constraint is needed. Out-of-bounds
+   * cells are skipped (matching paste's drop rule); overlapping destinations replace. */
+  rotateCells3D: (kind: SelectionTransformKind) => void
+  /** Re-faces every chamfer cell in the 3D selection onto the active plane (same rules and
+   * return counts as `faceSelection`). */
+  faceCells3D: () => { faced: number; skipped: number }
   /** Rotates/mirrors the pending float in place (auto-lifting first if nothing is floating yet).
    * Pure — no model writes. */
   transformFloat: (kind: SelectionTransformKind) => void
@@ -610,6 +628,7 @@ export type AppState = ProjectSlice &
   PlaneSlice &
   ToolSlice &
   SelectionSlice &
+  Selection3DSlice &
   ViewSlice &
   PersistenceSlice &
   PaintActionsSlice &

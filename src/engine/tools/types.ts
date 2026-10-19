@@ -3,7 +3,7 @@ import type { Marker } from '@/engine/markers/types'
 import type { ConstructionPlane } from '@/engine/plane/types'
 import type { PaletteSlotRef } from '@/engine/palette/types'
 import type { NormalizedPointerEvent } from '@/engine/input/PointerInputController'
-import type { ClipboardData, FloatOrigin, SelectionRegion, SelectionTransformKind, ToolId, VoxelKind, WandAnchor } from '@/store/types'
+import type { ClipboardData, FloatOrigin, SelectionRegion, SelectionTransformKind, ToolId, VoxelKind } from '@/store/types'
 
 /**
  * Everything a tool module needs, bundled into one object rebuilt fresh every render by the
@@ -50,8 +50,6 @@ export interface ToolContext {
   setActiveVoxelKind: (kind: VoxelKind) => void
   setActiveTool: (tool: ToolId) => void
   setSelection: (region: SelectionRegion | null) => void
-  /** Wand selection: bbox region + live-flood anchor, one bake-guarded write (see `wandAnchor`). */
-  setWandSelection: (region: SelectionRegion, anchor: WandAnchor) => void
   /** Two-stage wand click (color, then whole-component on rapid re-tap). Wand stays active. */
   applyWandAt: (start: [number, number, number]) => void
   /** Alt-drag passes `deep` to lift the full cuboid under the selection window (see

@@ -177,54 +177,21 @@ describe('buildSelectionHighlightBatches', () => {
     expect(buildSelectionHighlightBatches(modelWith([[0, 0]]), plane, rect(900, 900, 2, 2), EXTENT)).toEqual([])
   })
 
-  it('without an anchor, off-slice voxels under the footprint stay dark', () => {
+  it('extraCells lights an explicit set at every depth alongside the slice cast', () => {
     const model = modelWith([[0, 0]])
     model.color.set(encodeKey(0, -1, 1), { paletteSlot: slot }) // stacked above the slice cell
-    expect(count(buildSelectionHighlightBatches(model, plane, rect(0, 0, 1, 1), EXTENT))).toBe(1)
-  })
-
-  it('a live wand anchor extends the cast through the whole component', () => {
-    const model = modelWith([[0, 0]])
-    model.color.set(encodeKey(0, -1, 1), { paletteSlot: slot }) // stacked above: one component
     model.color.set(encodeKey(4, 4, 4), { paletteSlot: slot }) // disconnected loner
-    const anchor = { cell: [0, -1, 1] as [number, number, number], match: 'occupied' as const }
-    expect(count(buildSelectionHighlightBatches(model, plane, rect(0, 0, 1, 1), EXTENT, anchor))).toBe(2)
+    // Slice cast alone: just the plane cell.
+    expect(count(buildSelectionHighlightBatches(model, plane, rect(0, 0, 1, 1), EXTENT))).toBe(1)
+    // Plus the explicit set: stacked cell joins, loner joins, nothing doubles.
+    const extra = [encodeKey(0, -1, 1), encodeKey(0, -1, 0), encodeKey(4, 4, 4)]
+    expect(count(buildSelectionHighlightBatches(model, plane, rect(0, 0, 1, 1), EXTENT, extra))).toBe(3)
   })
 
-  it('a stale (now empty) anchor changes nothing, and slice cells are never double-lit', () => {
+  it('extraCells works with no region and skips missing/out-of-grid keys', () => {
     const model = modelWith([[0, 0]])
-    model.color.set(encodeKey(0, -1, 1), { paletteSlot: slot })
-    // Stale anchor: empty coordinate.
-    expect(count(buildSelectionHighlightBatches(model, plane, rect(0, 0, 1, 1), EXTENT, { cell: [7, 7, 7], match: 'occupied' }))).toBe(1)
-    // Live anchor whose flood includes the slice cell: still exactly 2 instances, not 3.
-    expect(count(buildSelectionHighlightBatches(model, plane, rect(0, 0, 1, 1), EXTENT, { cell: [0, -1, 0], match: 'occupied' }))).toBe(2)
-  })
-
-  it('a color anchor lights only its color set, even inside the footprint', () => {
-    const model = modelWith([[0, 0]])
-    // Same-slice neighbor in the same slot value (indistinguishable color): control.
-    model.color.set(encodeKey(0, -1, 1), { paletteSlot: { kind: 'glass', index: 0 } })
-    const colorAnchor = { cell: [0, -1, 0] as [number, number, number], match: 'color' as const }
-    // Only the anchor's own color lights: 1, not 2.
-    expect(count(buildSelectionHighlightBatches(model, plane, rect(0, 0, 1, 1), EXTENT, colorAnchor))).toBe(1)
-    // Same anchor as occupied lights both.
-    const occupiedAnchor = { cell: [0, -1, 0] as [number, number, number], match: 'occupied' as const }
-    expect(count(buildSelectionHighlightBatches(model, plane, rect(0, 0, 1, 1), EXTENT, occupiedAnchor))).toBe(2)
-  })
-
-  it('never lights a disconnected plane voxel merely sharing the flooded column', () => {
-    // Red above the plane, blue on the plane in the same column (touching, other color), green
-    // loner elsewhere. The footprint 1x1 covers the column; only flooded cells may light.
-    const model = emptyModel()
-    model.color.set(encodeKey(0, 0, 1), { paletteSlot: slot })
-    model.color.set(encodeKey(0, 0, 0), { paletteSlot: { kind: 'glass', index: 0 } })
-    model.color.set(encodeKey(5, 0, 0), { paletteSlot: slot })
-    const region = rect(0, -1, 1, 1)
-    // Color stage: just the red cell — the blue plane voxel under it stays dark.
-    const colorAnchor = { cell: [0, 0, 1] as [number, number, number], match: 'color' as const }
-    expect(count(buildSelectionHighlightBatches(model, plane, region, EXTENT, colorAnchor))).toBe(1)
-    // Occupied stage: red + blue (touching) light; the green loner stays dark.
-    const occupiedAnchor = { cell: [0, 0, 1] as [number, number, number], match: 'occupied' as const }
-    expect(count(buildSelectionHighlightBatches(model, plane, region, EXTENT, occupiedAnchor))).toBe(2)
+    const extra = [encodeKey(0, -1, 0), encodeKey(7, 7, 7), encodeKey(900, 0, 0)]
+    expect(count(buildSelectionHighlightBatches(model, plane, null, EXTENT, extra))).toBe(1)
+    expect(buildSelectionHighlightBatches(model, plane, null, EXTENT)).toEqual([])
   })
 })

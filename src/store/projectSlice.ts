@@ -18,6 +18,7 @@ import { DEFAULT_PALETTE } from '@/engine/palette/defaultPalette'
 import { TEXEL_SCALE } from '@/engine/texture/types'
 import { emptyTextureModel, normalizeTexelScale, resampleTextureModel, rescaleTextureModel2x, resizeTextureModel } from '@/engine/texture/TextureStore'
 import type { TexelScale } from '@/engine/texture/types'
+import type { CellKey } from '@/engine/grid/types'
 import type { AppState, ProjectSlice } from './types'
 
 type Slice = StateCreator<AppState, [['zustand/immer', never]], [], ProjectSlice>
@@ -151,6 +152,7 @@ export const createProjectSlice: Slice = (set, get) => ({
       state.animPast = []
       state.animFuture = []
       state.selection = null
+      state.selectedCells = new Set<CellKey>()
       state.floatContent = null
       state.floatOrigin = null
       state.textureSelection = null
@@ -256,6 +258,7 @@ export const createProjectSlice: Slice = (set, get) => ({
       state.animPast = []
       state.animFuture = []
       state.selection = null
+      state.selectedCells = new Set<CellKey>()
       state.floatContent = null
       state.floatOrigin = null
       state.textureSelection = null
@@ -335,6 +338,7 @@ export const createProjectSlice: Slice = (set, get) => ({
       // hover state references dead cells, so both reset. (Clipboards are kept: pasting across
       // projects is safe — paste clips to the new bounds.)
       state.selection = null
+      state.selectedCells = new Set<CellKey>()
       state.floatContent = null
       state.floatOrigin = null
       state.hoverCell = null

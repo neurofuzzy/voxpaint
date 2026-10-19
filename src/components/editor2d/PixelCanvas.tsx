@@ -81,7 +81,6 @@ export function PixelCanvas() {
   const palette = useAppStore((s) => s.palette)
   const plane = useAppStore((s) => s.plane)
   const selection = useAppStore((s) => s.selection)
-  const wandAnchorLive = useAppStore((s) => s.wandAnchor !== null)
   const floatContent = useAppStore((s) => s.floatContent)
   const floatOrigin = useAppStore((s) => s.floatOrigin)
   const mode = useAppStore((s) => s.mode)
@@ -363,20 +362,14 @@ export function PixelCanvas() {
     }
 
     // selection overlay — cyan tint + animated marching-ants outline (live drag preview takes
-    // precedence over the committed selection). The fill tints plane cells under the mask, so it
-    // is skipped for a live wand selection: a mask bit means "a flooded cell projects into this
-    // column", and filling the plane cell would catch disconnected voxels sharing the column.
-    // The ants outline traces the mask boundary itself, so it stays exact and always draws.
+    // precedence over the committed selection).
     const activeRegion = selectPreview ?? selection
-    const fillRegion = selectPreview ?? (wandAnchorLive ? null : selection)
     if (activeRegion) {
-      if (fillRegion) {
-        ctx.fillStyle = 'rgba(34, 211, 238, 0.25)'
-        forEachSelectedCell(fillRegion, (u, v) => {
-          const [sx, sy] = worldToScreen(toDisplayU(plane, u), toDisplayV(plane, v), size, pan, zoom, vScale)
-          ctx.fillRect(sx, sy, cellPx, cellH)
-        })
-      }
+      ctx.fillStyle = 'rgba(34, 211, 238, 0.25)'
+      forEachSelectedCell(activeRegion, (u, v) => {
+        const [sx, sy] = worldToScreen(toDisplayU(plane, u), toDisplayV(plane, v), size, pan, zoom, vScale)
+        ctx.fillRect(sx, sy, cellPx, cellH)
+      })
 
       ctx.strokeStyle = 'rgb(34, 211, 238)'
       ctx.lineWidth = 1.5
@@ -429,7 +422,7 @@ export function PixelCanvas() {
       ctx.strokeStyle = selected ? '#ffffff' : 'rgba(0, 0, 0, 0.55)'
       ctx.stroke()
     }
-  }, [model, palette, plane, linePreview, selection, wandAnchorLive, selectPreview, floatContent, floatOrigin, antPhase, size, pan, zoom, vScale, mode, sliceMasks, slicePivots, gridExtent, markers, selectedMarkerId])
+  }, [model, palette, plane, linePreview, selection, selectPreview, floatContent, floatOrigin, antPhase, size, pan, zoom, vScale, mode, sliceMasks, slicePivots, gridExtent, markers, selectedMarkerId])
 
   useEffect(() => {
     draw()

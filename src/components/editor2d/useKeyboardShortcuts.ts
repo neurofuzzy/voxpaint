@@ -57,6 +57,9 @@ export function useKeyboardShortcuts() {
       // handler reads the same regardless of mode.
       const isTexture = store.mode === 'texture'
       const isAnimate = store.mode === 'animate'
+      // 3D-only layout routes shared selection actions at the independent 3D voxel set;
+      // split keeps the plane-framed 2D selection (see Selection3DSlice).
+      const is3D = !isTexture && !isAnimate && store.layoutMode === '3d-only'
       const undo = isTexture ? store.textureUndo : isAnimate ? store.animUndo : store.undo
       const redo = isTexture ? store.textureRedo : isAnimate ? store.animRedo : store.redo
       const selection = isTexture ? store.textureSelection : isAnimate ? null : store.selection
@@ -79,16 +82,21 @@ export function useKeyboardShortcuts() {
           if (isTexture) {
             const faceSize = faceSizeFor(store.meta.gridExtent, store.meta.texelScale ?? TEXEL_SCALE)
             store.setTextureSelection(rectRegion(0, 0, faceSize - 1, faceSize - 1))
+          } else if (is3D) {
+            // 3D-only: every occupied voxel, as an explicit set (no plane frame involved).
+            store.setSelectedCells(new Set(store.model.color.keys()))
           } else {
             const half = effectiveExtent(store.meta.gridExtent) / 2
             store.setSelection(rectRegion(-half, -half, half - 1, half - 1))
           }
           e.preventDefault()
-        } else if (key === 'c' && selection) {
-          copy()
+        } else if (key === 'c' && (is3D ? store.selectedCells.size > 0 : selection)) {
+          if (is3D) store.copyCells3D()
+          else copy()
           e.preventDefault()
-        } else if (key === 'x' && selection) {
-          cut()
+        } else if (key === 'x' && (is3D ? store.selectedCells.size > 0 : selection)) {
+          if (is3D) store.cutCells3D()
+          else cut()
           e.preventDefault()
         } else if (key === 'v' && clipboard) {
           // Paste-in-place. In voxel mode "in place" means the same spot *on screen*, so the store
@@ -104,6 +112,9 @@ export function useKeyboardShortcuts() {
       if (e.key === 'Escape') {
         bakeFloat()
         clearSelection()
+        // The 3D store is independent — clear it too (no-op when empty, which is always the
+        // case outside model-mode 3D gestures).
+        store.clearSelectedCells()
         if (!isTexture && !isAnimate) store.selectMarker(null)
         e.preventDefault()
         return
@@ -135,8 +146,9 @@ export function useKeyboardShortcuts() {
         }
       }
 
-      if ((key === 'delete' || key === 'backspace') && selection) {
-        deleteSelection()
+      if ((key === 'delete' || key === 'backspace') && (is3D ? store.selectedCells.size > 0 : selection)) {
+        if (is3D) store.deleteCells3D()
+        else deleteSelection()
         e.preventDefault()
         return
       }

@@ -3,14 +3,16 @@ import { OrbitControls } from '@react-three/drei'
 import { useEffect, useRef, useState } from 'react'
 import * as THREE from 'three'
 import type { OrbitControls as OrbitControlsImpl } from 'three-stdlib'
-import { decodeKey, encodeKey, effectiveExtent, viewOriginShift } from '@/engine/grid/GridStore'
-import type { Coord } from '@/engine/grid/types'
+import { decodeKey, encodeKey, effectiveExtent, viewOriginShift, withinWorkingBounds } from '@/engine/grid/GridStore'
+import type { CellKey, Coord } from '@/engine/grid/types'
 import { hasActiveAnimations } from '@/engine/animation/animationLayers'
 import type { InstancingManager } from '@/engine/instancing/InstancingManager'
-import { planeFromFaceHit } from '@/engine/plane/constructionPlane'
+import { gridCoordFromPixel, pixelFromGridCoord, planeFromFaceHit } from '@/engine/plane/constructionPlane'
 import { axisIndex, outwardNormal } from '@/engine/plane/planeGeometry'
 import { voxelKindForCell } from '@/engine/tools/eyedropperTool'
 import { marqueeSelection } from '@/engine/tools/select3D'
+import { footprintOccupiedCells } from '@/engine/tools/cellSetOps'
+import { isCellSelected } from '@/engine/tools/selectionMask'
 import { useAppStore } from '@/store/useAppStore'
 import { usePlaneLayerScroll } from '@/components/usePlaneLayerScroll'
 import { AnimatedModelView } from './AnimatedModelView'
@@ -120,21 +122,25 @@ function ToneMappingController({ exposure }: { exposure: number }) {
  * taps dispatch the tool straight onto voxel faces — paint adds the neighbor cell across the
  * face, erase deletes the cell, eyedropper samples its color and voxel type, material recolors
  * the cell, select takes a 1×1 plane-slice selection, wand selects connected color (whole
- * touching component on rapid re-tap). Paint/erase/eyedropper/wand are
+ * touching component on rapid re-tap). Paint/erase/eyedropper are
  * tap-only (drags orbit, so sweeps can't spray voxels); material recolors in place and is safe to
- * drag, bracketed as one undo stroke with orbit suppressed until pointer-up; select captures
- * left-drag for a plane-slice marquee (tap = 1×1), right-drag still orbits. Empty-space paint
- * taps start a blob on the active slice. Every other tool keeps the plane-setting behavior in
- * both modes.
+ * drag, bracketed as one undo stroke with orbit suppressed until pointer-up; select and wand
+ * capture left-drag on a selected voxel to lift and move it in the plane's UV axes (Alt: full
+ * depth) — wand defers the lift past the tap threshold so taps keep working, otherwise select
+ * opens a plane-slice marquee (tap = 1×1) — right-drag still orbits.
+ * Empty-space paint taps start a blob on the active slice. Every other tool keeps the
+ * plane-setting behavior in both modes.
  */
 const ORBIT_HINT = 'Orbit: left-drag to rotate · right-drag: pan · scroll: zoom'
 const EDIT_ORBIT_HINT = 'Edit 3D: click a face to apply the tool · drag empty space to orbit · right-drag: orbit'
 
 /** Tools that apply straight onto voxel faces in 3D Edit mode (everything else keeps the
- * click-to-set-plane behavior there). Paint/erase/eyedropper/wand are tap-only — drags orbit, so
- * a sweep can never spray voxels along the raycast. Material only recolors existing voxels
- * (never adds), so it is safe to drag. Select captures left-drag for a plane-slice marquee
- * (tap = 1×1); right-drag still orbits, per the Edit convention. */
+ * click-to-set-plane behavior there). Paint/erase/eyedropper are tap-only — drags orbit, so a
+ * sweep can never spray voxels along the raycast. Material only recolors existing voxels
+ * (never adds), so it is safe to drag. Select and wand capture left-drag on a selected voxel
+ * to lift and move it in the plane's UV axes (Alt: full depth) — wand defers the lift until
+ * past the tap threshold so taps keep their two-stage click behavior; otherwise select opens a
+ * plane-slice marquee (tap = 1×1). Right-drag still orbits, per the Edit convention. */
 const BLOCKING_TOOLS = ['paint', 'erase', 'eyedropper', 'material', 'select', 'wand'] as const
 type BlockingTool = (typeof BLOCKING_TOOLS)[number]
 
@@ -142,8 +148,8 @@ function editHint(tool: BlockingTool): string {
   if (tool === 'paint') return 'Click a face to paint a voxel · R rotates the brush'
   if (tool === 'erase') return 'Click a voxel to erase it'
   if (tool === 'material') return 'Click or drag to repaint · never adds voxels'
-  if (tool === 'select') return 'Drag to marquee-select the plane slice · click for one cell'
-  if (tool === 'wand') return 'Click a component for its color · re-tap it quickly for the whole component'
+  if (tool === 'select') return 'Drag to marquee-select · drag inside to move · click for one cell'
+  if (tool === 'wand') return 'Click a component for its color · re-tap it quickly for the whole component · drag inside to move'
   return 'Click a voxel to pick its color and type'
 }
 
@@ -195,6 +201,14 @@ function VoxelInteractionHandler({ managerRef, controlsRef, onMarquee }: {
     // plane-slice SelectionRegion on pointer-up (tap = identical corners = 1×1); cancelled on
     // pointer-leave. Orbit suppressed until pointer-up, like the material drag.
     let selectDrag: { start: Coord } | null = null
+    // Open select float-drag (Edit mode only): pointer went down on a selected voxel, so the
+    // selection is lifted (Alt: full depth) and follows the pointer in the plane's UV axes.
+    // Release keeps the float pending, exactly like the 2D tool — orbit suppressed throughout.
+    let floatDrag: { startU: number; startV: number; originU: number; originV: number; cells3D: Set<CellKey> | null } | null = null
+    // Pending wand grab (Edit mode only): pointer went down on a selected voxel with the wand.
+    // Unlike select it must NOT lift yet — a tap here is a two-stage wand click, so the lift
+    // waits until the pointer actually moves past the tap threshold, then converts to floatDrag.
+    let pendingWandDrag: { startU: number; startV: number } | null = null
 
     /** True when the pointer should dispatch the active tool onto voxel faces instead of setting
      * the construction plane (Edit mode + a blocking tool). */
@@ -338,11 +352,62 @@ function VoxelInteractionHandler({ managerRef, controlsRef, onMarquee }: {
     const onPointerDown = (e: PointerEvent) => {
       down = { x: e.clientX, y: e.clientY }
       if (!isBlocking() || e.button !== 0 || !e.isPrimary) return
-      // Select captures left-drag for the marquee (right-drag still orbits, per the Edit
-      // convention). Start cell: the hit voxel, else the plane cell under the cursor; a parallel
-      // ray leaves the gesture to orbit.
+      // Select captures left-drag (right-drag still orbits, per the Edit convention). A press
+      // on a selected voxel lifts the selection and drags it in the plane's UV axes instead of
+      // marqueeing — mirroring the 2D tool. Otherwise the marquee opens from the hit voxel (else
+      // the plane cell under the cursor); a parallel ray leaves the gesture to orbit. In 3D-only
+      // layout the grab tests the independent voxel set and lifts exact cells; in split it tests
+      // the plane region and lifts that (Alt: full depth).
       if (activeToolRef.current === 'select') {
+        const store = useAppStore.getState()
+        const activePlane = planeRef.current
         const hit = resolveFaceHit(e.clientX, e.clientY)
+        const is3D = store.layoutMode === '3d-only'
+        // Grab test: explicit-set membership in 3D-only, plane-region containment in split.
+        // (A pending 2D float keeps tracking the selection region, so the split branch also
+        // continues a float dragged earlier rather than lifting twice. The 3D branch only ever
+        // lifts fresh — a pending float there belongs to a 2D paste, so a press falls through
+        // to the marquee, whose commit bakes it first.)
+        let grabUV: { u: number; v: number } | null = null
+        if (hit) {
+          if (is3D) {
+            if (!store.floatContent && store.selectedCells.has(hit.key)) {
+              grabUV = pixelFromGridCoord(activePlane, decodeKey(hit.key))
+            }
+          } else {
+            const uv = pixelFromGridCoord(activePlane, decodeKey(hit.key))
+            if ((store.floatContent || store.selection) && store.selection && isCellSelected(store.selection, uv.u, uv.v)) grabUV = uv
+          }
+        }
+        if (grabUV) {
+          const { u, v } = grabUV
+          if (!store.floatContent) {
+            if (is3D) store.liftCellsToFloat(store.selectedCells)
+            else store.liftSelectionToFloat(e.altKey)
+          }
+          const origin = useAppStore.getState().floatOrigin
+          if (origin) {
+            floatDrag = {
+              startU: u,
+              startV: v,
+              originU: origin.originU,
+              originV: origin.originV,
+              cells3D: is3D ? new Set(store.selectedCells) : null,
+            }
+            if (controlsRef.current) controlsRef.current.enabled = false
+            try {
+              dom.setPointerCapture(e.pointerId)
+            } catch {
+              // Pointer already released/implicit capture (touch) — the up handler still ends it.
+            }
+            lastCellKey = null
+            lastFaceKey = null
+            setHoverCell(null, null)
+            setHoveredFace(null)
+            setStatusMessage('Dragging selection in the plane — release to drop it (still pending)')
+            return
+          }
+        }
         const start: Coord | null = hit ? decodeKey(hit.key) : resolveEmptyCell(e.clientX, e.clientY)
         if (!start) return
         selectDrag = { start }
@@ -362,6 +427,40 @@ function VoxelInteractionHandler({ managerRef, controlsRef, onMarquee }: {
         setStatusMessage('Release to select the plane slice')
         return
       }
+      // Wand grab: a press on a selected voxel arms a deferred float-drag — deferred (unlike
+      // select) because a tap here is a two-stage wand click and must not lift. The lift waits
+      // until the pointer moves past the tap threshold (see onPointerMove); anything else falls
+      // through to the normal tap path below, and drags from anywhere else orbit as usual.
+      if (activeToolRef.current === 'wand') {
+        const store = useAppStore.getState()
+        const hit = resolveFaceHit(e.clientX, e.clientY)
+        // Grab test mirrors select's: explicit-set membership in 3D-only, region containment
+        // in split. Either arms the deferred drag; anything else falls through to the tap path.
+        const grabbed = hit && (store.layoutMode === '3d-only'
+          ? (!store.floatContent && store.selectedCells.has(hit.key)
+            ? pixelFromGridCoord(planeRef.current, decodeKey(hit.key))
+            : null)
+          : store.selection
+            ? (() => {
+              const { u, v } = pixelFromGridCoord(planeRef.current, decodeKey(hit.key))
+              return isCellSelected(store.selection!, u, v) ? { u, v } : null
+            })()
+            : null)
+        if (grabbed) {
+          pendingWandDrag = { startU: grabbed.u, startV: grabbed.v }
+            if (controlsRef.current) controlsRef.current.enabled = false
+            try {
+              dom.setPointerCapture(e.pointerId)
+            } catch {
+              // Pointer already released/implicit capture (touch) — the up handler still ends it.
+            }
+            lastCellKey = null
+            lastFaceKey = null
+            setHoverCell(null, null)
+            setHoveredFace(null)
+            setStatusMessage('Dragging selection in the plane — release to drop it (still pending)')
+          }
+        }
       // Material alone drags: open the stroke now (a tap = down+up with no move in between).
       if (activeToolRef.current !== 'material') return
       const result = resolveFaceHit(e.clientX, e.clientY)
@@ -381,6 +480,49 @@ function VoxelInteractionHandler({ managerRef, controlsRef, onMarquee }: {
     }
 
     const onPointerMove = (e: PointerEvent) => {
+      // Pending wand grab: sub-threshold movement holds the press (a tap resolves via the normal
+      // tap path on release); crossing the threshold lifts and converts to a float drag, flowing
+      // into the branch below so the first over-threshold move displaces. Split lifts the plane
+      // region (Alt: full depth); 3D-only lifts the exact voxel set (Alt ignored — the set already
+      // spans every depth it covers).
+      if (pendingWandDrag) {
+        if (down && Math.hypot(e.clientX - down.x, e.clientY - down.y) > CLICK_DRAG_THRESHOLD_PX) {
+          const store = useAppStore.getState()
+          const is3D = store.layoutMode === '3d-only'
+          if (!store.floatContent) {
+            if (is3D) store.liftCellsToFloat(store.selectedCells)
+            else store.liftSelectionToFloat(e.altKey)
+          }
+          const origin = useAppStore.getState().floatOrigin
+          if (origin) {
+            floatDrag = {
+              startU: pendingWandDrag.startU,
+              startV: pendingWandDrag.startV,
+              originU: origin.originU,
+              originV: origin.originV,
+              cells3D: is3D ? new Set(store.selectedCells) : null,
+            }
+          }
+          pendingWandDrag = null
+        } else {
+          return
+        }
+      }
+      // Open float drag: reposition the pending float from the plane cell under the cursor, in
+      // the plane's UV axes. 3D exact-set moves skip the 2D selection rewrite. The float ghost
+      // is the live feedback; hover stays cleared.
+      if (floatDrag) {
+        const cell = resolveEmptyCell(e.clientX, e.clientY)
+        if (cell) {
+          const { u, v } = pixelFromGridCoord(planeRef.current, cell)
+          const st = useAppStore.getState()
+          const nu = floatDrag.originU + (u - floatDrag.startU)
+          const nv = floatDrag.originV + (v - floatDrag.startV)
+          if (floatDrag.cells3D) st.moveFloatCellsTo(nu, nv)
+          else st.moveFloatTo(nu, nv)
+        }
+        return
+      }
       // Open marquee drag: track the screen rect only — hover stays cleared until release, and no
       // store writes happen mid-drag (commit lands one SelectionRegion on pointer-up).
       if (selectDrag) {
@@ -440,6 +582,14 @@ function VoxelInteractionHandler({ managerRef, controlsRef, onMarquee }: {
       setStatusMessage(result ? (again ? AGAIN_HINT : voxelHint(result.plane.axis, result.plane.orientation)) : ORBIT_HINT)
     }
 
+    /** Ends an open float drag, handing orbit control back. The float stays pending, exactly
+     * like the 2D tool — a later tap bakes it, Escape bakes it, further drags keep moving it. */
+    function endFloatDrag() {
+      if (!floatDrag) return
+      floatDrag = null
+      if (controlsRef.current) controlsRef.current.enabled = true
+    }
+
     const onPointerLeave = () => {
       lastCellKey = null
       lastFaceKey = null
@@ -448,6 +598,10 @@ function VoxelInteractionHandler({ managerRef, controlsRef, onMarquee }: {
       setStatusMessage(null)
       endMaterialDrag()
       endSelectDrag()
+      endFloatDrag()
+      // An unmoved wand grab is just a press — hand orbit control back; release resolves as a tap.
+      pendingWandDrag = null
+      if (controlsRef.current) controlsRef.current.enabled = true
     }
 
     const onPointerUp = (e: PointerEvent) => {
@@ -456,10 +610,44 @@ function VoxelInteractionHandler({ managerRef, controlsRef, onMarquee }: {
         down = null
         return
       }
-      // Open marquee: commit the plane-slice region (tap = identical corners = 1×1, mirroring
-      // the 2D select tool). A genuinely new selection — bakes any pending float, like every
-      // other selection change. Tapping inside an existing selection does NOT lift it to a
-      // float here (that needs a 3D float drag — a follow-up); it starts a fresh selection.
+      // Open float drag: drop it. 2D floats stay pending (Escape/tap bakes); 3D exact-set moves
+      // bake immediately (one undo step, zanpo-style) and the 3D set follows to the placed cells.
+      if (floatDrag) {
+        const drag = floatDrag
+        endFloatDrag()
+        down = null
+        if (drag.cells3D) {
+          const st = useAppStore.getState()
+          const originNow = st.floatOrigin
+          st.bakeFloatIfAny()
+          if (originNow) {
+            const du = originNow.originU - drag.originU
+            const dv = originNow.originV - drag.originV
+            const plane = planeRef.current
+            const extent = st.meta.gridExtent
+            const next = new Set<CellKey>()
+            for (const key of drag.cells3D) {
+              const c = decodeKey(key)
+              const { u, v } = pixelFromGridCoord(plane, c)
+              const nc = gridCoordFromPixel(plane, u + du, v + dv)
+              nc[axisIndex(plane.axis)] = c[axisIndex(plane.axis)]
+              if (withinWorkingBounds(nc, extent)) next.add(encodeKey(...nc))
+            }
+            st.setSelectedCells(next)
+          }
+        }
+        return
+      }
+      // Unmoved wand grab: clear it and fall through — a sub-threshold release resolves as a
+      // normal wand tap below (two-stage timing intact).
+      if (pendingWandDrag) {
+        pendingWandDrag = null
+        if (controlsRef.current) controlsRef.current.enabled = true
+      }
+      // Open marquee: commit the selection. Split: plane-slice region, mirroring the 2D
+      // select tool (tap = identical corners = 1×1). 3D-only: occupied cells in the dragged
+      // footprint as an explicit set (tap = single cell if occupied, else clear) — constrained
+      // to the occupied bounding box, never empty space. Both bake any pending float first.
       if (selectDrag) {
         const drag = selectDrag
         selectDrag = null
@@ -468,7 +656,15 @@ function VoxelInteractionHandler({ managerRef, controlsRef, onMarquee }: {
         down = null
         const hit = resolveFaceHit(e.clientX, e.clientY)
         const end: Coord | null = hit ? decodeKey(hit.key) : resolveEmptyCell(e.clientX, e.clientY)
-        if (end) useAppStore.getState().setSelection(marqueeSelection(planeRef.current, drag.start, end))
+        if (!end) return
+        const st = useAppStore.getState()
+        if (st.layoutMode === '3d-only') {
+          const keys = footprintOccupiedCells(st.model, planeRef.current, drag.start, end)
+          if (keys.length > 0) st.setSelectedCells(new Set(keys))
+          else st.clearSelectedCells()
+        } else {
+          st.setSelection(marqueeSelection(planeRef.current, drag.start, end))
+        }
         return
       }
       if (!down) return

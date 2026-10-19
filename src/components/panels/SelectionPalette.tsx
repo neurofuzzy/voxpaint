@@ -92,26 +92,43 @@ export function SelectionPalette({ orientation = 'horizontal' }: { orientation?:
   const isTexture = useAppStore((s) => s.mode === 'texture')
   const activeTool = useAppStore((s) => s.activeTool)
   const setActiveTool = useAppStore((s) => s.setActiveTool)
+  // 3D-only layout routes shared actions at the independent 3D voxel set; split keeps the
+  // plane-framed 2D selection (see Selection3DSlice). Texture mode keeps its texel stack.
+  const is3D = useAppStore((s) => s.layoutMode === '3d-only' && s.mode === 'model' && !isTexture)
   const hasSelection = useAppStore((s) => (s.mode === 'texture' ? s.textureSelection : s.selection) !== null)
+  const hasSelection3D = useAppStore((s) => s.selectedCells.size > 0)
   const hasClipboard = useAppStore((s) => (s.mode === 'texture' ? s.textureClipboard : s.clipboard) !== null)
   const setStatusMessage = useAppStore((s) => s.setStatusMessage)
   const plane = useAppStore((s) => s.plane)
 
   const transformFloat = useAppStore((s) => (isTexture ? s.textureTransformFloat : s.transformFloat))
+  const rotateCells3D = useAppStore((s) => s.rotateCells3D)
   const deleteContents = useAppStore((s) => (isTexture ? s.textureDelete : s.deleteSelection))
+  const deleteCells3D = useAppStore((s) => s.deleteCells3D)
   // Both setters bake any pending float first, so clearing never strands lifted content.
   const setSelection = useAppStore((s) => (isTexture ? s.setTextureSelection : s.setSelection))
+  const clearSelectedCells = useAppStore((s) => s.clearSelectedCells)
   const faceSelection = useAppStore((s) => s.faceSelection)
+  const faceCells3D = useAppStore((s) => s.faceCells3D)
   const copySelection = useAppStore((s) => (isTexture ? s.textureCopy : s.copySelection))
+  const copyCells3D = useAppStore((s) => s.copyCells3D)
   const cutSelection = useAppStore((s) => (isTexture ? s.textureCut : s.cutSelection))
+  const cutCells3D = useAppStore((s) => s.cutCells3D)
   const pasteClipboard = useAppStore((s) => s.pasteClipboardInPlace)
   const texturePasteAt = useAppStore((s) => s.texturePasteAt)
   const textureClipboard = useAppStore((s) => s.textureClipboard)
 
   const faceDir = FACE_DIRS[plane.axis]?.[plane.orientation] ?? plane.axis
   const vertical = orientation === 'vertical'
-  const actions: SelectionActions = { transformFloat, deleteContents, clearSelection: () => setSelection(null), faceSelection, faceDir }
+  const actions: SelectionActions = {
+    transformFloat: is3D ? rotateCells3D : transformFloat,
+    deleteContents: is3D ? deleteCells3D : deleteContents,
+    clearSelection: is3D ? clearSelectedCells : () => setSelection(null),
+    faceSelection: is3D ? faceCells3D : faceSelection,
+    faceDir,
+  }
   const visible = ACTIONS.filter((a) => !a.modelOnly || !isTexture)
+  const canAct = is3D ? hasSelection3D : hasSelection
 
   function pasteInPlace() {
     // Same origins as the Cmd+V path in useKeyboardShortcuts.ts: voxel paste re-anchors to the
@@ -229,9 +246,11 @@ export function SelectionPalette({ orientation = 'horizontal' }: { orientation?:
         {!isTexture && (vertical
           ? <div className="my-0.5 h-px w-6 bg-neutral-700" />
           : <div className="mx-0.5 h-6 w-px bg-neutral-700" />)}
-        {renderButton('copy', 'Copy', Copy, 'copy the selection · ctrl/cmd+c', !hasSelection, copySelection)}
-        {renderButton('cut', 'Cut', Scissors, 'cut the selection · ctrl/cmd+x', !hasSelection, cutSelection)}
-        {renderButton('paste', 'Paste', ClipboardPaste, 'paste in place — drag inside the pasted selection to move it · ctrl/cmd+v', !hasClipboard, pasteInPlace)}
+        {renderButton('copy', 'Copy', Copy, 'copy the selection · ctrl/cmd+c', !canAct, is3D ? copyCells3D : copySelection)}
+        {renderButton('cut', 'Cut', Scissors, 'cut the selection · ctrl/cmd+x', !canAct, is3D ? cutCells3D : cutSelection)}
+        {is3D
+          ? renderButton('paste', 'Paste', ClipboardPaste, 'paste into 3D is not supported yet — paste in the 2D editor', true, pasteInPlace)
+          : renderButton('paste', 'Paste', ClipboardPaste, 'paste in place — drag inside the pasted selection to move it · ctrl/cmd+v', !hasClipboard, pasteInPlace)}
         {vertical
           ? <div className="my-0.5 h-px w-6 bg-neutral-700" />
           : <div className="mx-0.5 h-6 w-px bg-neutral-700" />}
@@ -241,7 +260,7 @@ export function SelectionPalette({ orientation = 'horizontal' }: { orientation?:
             label,
             Icon,
             hint,
-            !hasSelection,
+            !canAct,
             () => {
               if (transform) actions.transformFloat(transform)
               else run?.(actions)
