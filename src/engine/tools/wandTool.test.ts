@@ -50,7 +50,7 @@ describe('regionForFloodedCells', () => {
     const model = emptyModel()
     paintBox(model, 0, 0, 0, 2, 1, 3, SLOT_B) // mixed colors, 3 deep
     const keys = floodFillOccupied3D(model, [1, 1, 2], 16)
-    const region = regionForFloodedCells(PLANE, keys)
+    const region = regionForFloodedCells(PLANE, keys)!
     // z-plane: u=x, v spans −y — footprint covers x 0..2 and the y range either way.
     expect(region.width).toBe(3)
     expect(region.height).toBe(2)
@@ -60,12 +60,26 @@ describe('regionForFloodedCells', () => {
   it('mask covers only flooded cells, leaving bbox holes empty', () => {
     // L-shape: the bbox corner (0,-2) in (u,v) holds no flooded cell.
     const keys = [encodeKey(0, 0, 0), encodeKey(1, 0, 0), encodeKey(1, 1, 0)]
-    const region = regionForFloodedCells(PLANE, keys)
+    const region = regionForFloodedCells(PLANE, keys)!
     expect(region.originU).toBe(0)
     expect(region.originV).toBe(-2)
     expect(region.width).toBe(2)
     expect(region.height).toBe(2)
     expect(region.mask).toEqual(new Uint8Array([0, 1, 1, 1]))
+  })
+
+  it('excludes flooded cells off the active slice from the 2D mask', () => {
+    // A full-volume flood flattened onto the plane: the z=1 cell at a new (u,v) must not
+    // stretch the mask — downstream consumers would select voxels that share its (u,v).
+    const keys = [encodeKey(0, 0, 0), encodeKey(1, 0, 0), encodeKey(2, 0, 1)]
+    const region = regionForFloodedCells(PLANE, keys)!
+    expect(region.width).toBe(2)
+    expect(region.height).toBe(1)
+    expect(region.mask).toEqual(new Uint8Array([1, 1]))
+  })
+
+  it('returns null when no flooded cell lies on the slice', () => {
+    expect(regionForFloodedCells(PLANE, [encodeKey(0, 0, 1)])).toBeNull()
   })
 
   it('color floods stay within one palette slot', () => {
@@ -167,6 +181,31 @@ describe('applyWandAt per layout', () => {
     paintRow()
     useAppStore.getState().applyWandAt([0, 0, 0])
     useAppStore.getState().applyWandAt([3, 3, 3]) // empty, fast — clears
+    expect(useAppStore.getState().selection).toBeNull()
+  })
+
+  it('split: wand over a 3D volume selects only the active-slice footprint', () => {
+    // One color-connected volume spilling off the slice at a new (u,v): the 2D mask must
+    // cover the slice cells only, not the off-slice cell's projection.
+    paintAt([0, 0, 0])
+    paintAt([1, 0, 0])
+    paintAt([1, 0, 1])
+    paintAt([2, 0, 1])
+    useAppStore.getState().applyWandAt([0, 0, 0])
+    const after = useAppStore.getState()
+    expect(after.selection?.width).toBe(2)
+    expect(after.selection?.height).toBe(1)
+    expect(after.selectedCells.size).toBe(0)
+  })
+
+  it('split: wand tap on an occupied off-slice voxel clears the selection', () => {
+    // A 3D tap can seed the flood off the active slice (see Viewport3D's wand tap path): the
+    // flood is real but nothing lies on the slice, so there is no footprint to store.
+    paintAt([0, 0, 0])
+    paintAt([5, 5, 1]) // disconnected loner, entirely off the z=0 slice
+    useAppStore.getState().applyWandAt([0, 0, 0])
+    expect(useAppStore.getState().selection).not.toBeNull()
+    useAppStore.getState().applyWandAt([5, 5, 1])
     expect(useAppStore.getState().selection).toBeNull()
   })
 

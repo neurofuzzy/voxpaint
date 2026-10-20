@@ -163,6 +163,33 @@ describe('placedFloatCoords', () => {
     expect(re[0]).toBe(3 + 2)
   })
 
+  it('ghost and footprint follow the active slice for region content after the plane moved', () => {
+    // Ordinary copy (lift slice 4), then the plane moved to 6 before the paste: all three
+    // placements must agree on the live slice, not the stale recorded offset.
+    const plane: ConstructionPlane = { axis: 'z', orientation: 1, offset: 6 }
+    const content: ClipboardData = {
+      width: 1,
+      height: 1,
+      originU: 0,
+      originV: 0,
+      cells: [{ du: 0, dv: 0, dw: 0, color: { paletteSlot: slot } }],
+      copyPlaneAxis: 'z',
+      copyPlaneOrientation: 1,
+      copyPlaneOffset: 4,
+    }
+    const baked = emptyModel()
+    applyClipboardAt(baked, plane, content, origin.originU, origin.originV, EXTENT)
+    const expected = [encodeKey(...gridCoordFromPixel(plane, origin.originU, origin.originV))]
+    expect([...baked.color.keys()]).toEqual(expected)
+
+    expect(placedFloatCoords(content, origin, plane, EXTENT).map((c) => encodeKey(...c))).toEqual(expected)
+
+    const ghosted = buildFloatGhostBatches(content, origin, plane, palette, EXTENT)
+      .flatMap((b) => b.matrices.map(positionOf))
+      .map(([x, y, z]) => encodeKey(Math.floor(x), Math.floor(y), Math.floor(z)))
+    expect(ghosted).toEqual(expected)
+  })
+
   it('keeps an exact-set lift at absolute depths when the set sits off the plane', () => {
     // Exact-set lifts (wand volumes) anchor dw off the set bbox-min, not the plane — unlike
     // region lifts, dw==0 does NOT mean "on the plane". Ghost, box, and bake must all

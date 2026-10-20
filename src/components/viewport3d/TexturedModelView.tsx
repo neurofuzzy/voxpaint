@@ -45,6 +45,10 @@ export function TexturedModelView({ active }: { active: boolean }) {
   )
   useEffect(() => () => { for (const g of groups) g.geometry.dispose() }, [groups])
 
+  // The occlusion bake reads the model the frozen build was made from — not the live one — so
+  // voxel painting in Model mode never re-bakes this hidden view's AO atlas on every edit.
+  const frozenModel = useActiveMemo(active, () => model, [model])
+
   // Emissive materials skip AO/noise baking entirely (see OptimizedMeshView) — excluded from the
   // unwrap atlas; they still occlude everything else, since occlusion sampling reads the 3D model.
   const geometries = useMemo(
@@ -52,7 +56,7 @@ export function TexturedModelView({ active }: { active: boolean }) {
     [groups],
   )
   const { aoTexture, metalnessTexture, roughnessTexture } = usePreviewAOMaps(
-    model,
+    frozenModel,
     geometries,
     false,
     { ambientOcclusion, noiseLevel, specularNoiseLevel, aoStrength, noiseSeed, noiseScale },

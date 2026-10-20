@@ -22,12 +22,12 @@ export type SelectionRegion = {
 export type ClipboardCell = {
   du: number
   dv: number
-  /** Depth offset along the copy plane's axis, relative to `ClipboardData.copyPlaneOffset` — 0 for
-   * the lift slice itself. Set on every cell (including empty ones) by deep (Alt-drag) lifts, which
-   * project the selection window through the whole model; shallow lifts record 0. Bakes/peeks that
-   * don't understand depth treat 0 as "the destination slice" and place nonzero-`dw` cells at
-   * `offset + dw`. A cell with neither `color` nor `chamfer` is an explicitly empty voxel: dropping
-   * it clears whatever it lands on (replace, not merge). */
+  /** Depth offset along the copy plane's axis, relative to the depth anchor (`ClipboardData`
+   * `copyPlaneOffset` for bbox-anchored exact-set content, the destination slice for
+   * slice-anchored region content) — 0 for the lift slice / bbox-min itself. Set on every cell
+   * (including empty ones) by deep (Alt-drag) lifts, which project the selection window through
+   * the whole model; shallow lifts record 0. A cell with neither `color` nor `chamfer` is an
+   * explicitly empty voxel: dropping it clears whatever it lands on (replace, not merge). */
   dw: number
   color?: { paletteSlot: PaletteSlotRef }
   /** The source cell's full chamfer data (plane basis + resolved shape), copied verbatim and
@@ -52,11 +52,20 @@ export type ClipboardData = {
    * content that was never copied off a plane. */
   copyPlaneAxis?: Axis
   copyPlaneOrientation?: Orientation
-  /** The copy plane's offset at lift time — the depth anchor every cell's `dw` is relative to.
-   * Same-plane bakes land `dw` cells at `copyPlaneOffset + dw` (which equals the live offset: the
-   * plane can't change while a float is pending); pastes onto a different plane re-anchor the
-   * depth profile to the destination slice instead. */
+  /** The copy plane's offset at lift time — the depth anchor every cell's `dw` is relative to
+   * for bbox-anchored exact-set content (see `depthAnchor`). The plane can't change while a float
+   * is pending, so at bake time this equals the live offset for same-plane floats; region pastes
+   * ignore it and land on the destination slice instead. Reset (with `depthAnchor`) whenever
+   * `transformClipboardToPlane` re-expresses the content onto a different plane, where the
+   * source-axis depth is meaningless. */
   copyPlaneOffset?: number
+  /** How cells' `dw` re-anchors at bake time. Region copies (`copyRegionToClipboard`) are
+   * slice-anchored: `dw` runs off the lift slice, so pastes land on the destination (active)
+   * slice. Exact-set copies (`copyCellsToClipboard`) are bbox-anchored: `dw` runs off the set's
+   * bbox-min depth (`copyPlaneOffset`), so same-plane drops preserve absolute depth (moving a
+   * lifted 3D volume in UV must not collapse it onto the construction plane). Omitted means
+   * slice-anchored. Cross-plane rebases always reset to slice-anchored. */
+  depthAnchor?: 'slice' | 'bbox'
 }
 
 export type ProjectSlice = {

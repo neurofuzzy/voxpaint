@@ -3,7 +3,7 @@ import { decodeKey, encodeKey, withinWorkingBounds } from '@/engine/grid/GridSto
 import type { CellKey, ChamferCell, Coord, GridExtent, VoxelModel } from '@/engine/grid/types'
 import type { ConstructionPlane } from '@/engine/plane/types'
 import { gridCoordFromPixel } from '@/engine/plane/constructionPlane'
-import { axisIndex } from '@/engine/plane/planeGeometry'
+import { placeClipboardCell } from '@/engine/tools/clipboard'
 import { resolveSlotColor } from '@/engine/palette/palette'
 import type { PaletteState } from '@/engine/palette/types'
 import { forEachSelectedCell } from '@/engine/tools/selectionMask'
@@ -44,8 +44,8 @@ function pushInto(byPool: Map<PoolId, GhostBatch>, coord: Coord, chamfer: Chamfe
  * `FloatGhostPreview.tsx`), grouped into the same instancing pools the live `InstancingManager`
  * uses so a float and the model it bakes into agree on every cell's shape.
  *
- * Deliberately mirrors `applyClipboardAt`'s placement exactly — same plane mapping, same bounds
- * rejection — so the ghost is a truthful preview of the bake rather than an approximation of it.
+ * Placement goes through the shared `placeClipboardCell`, so the ghost is a truthful preview of
+ * the bake rather than an approximation of it.
  */
 export function buildFloatGhostBatches(
   floatContent: ClipboardData | null,
@@ -56,21 +56,12 @@ export function buildFloatGhostBatches(
 ): GhostBatch[] {
   if (!floatContent || !floatOrigin) return []
   const byPool = new Map<PoolId, GhostBatch>()
-  const ai = axisIndex(plane.axis)
-  const samePlane =
-    floatContent.copyPlaneAxis === plane.axis && floatContent.copyPlaneOrientation === plane.orientation
 
   for (const cell of floatContent.cells) {
     // A cell with no color paints nothing when baked, so it has nothing to ghost either.
     // (It still clears on bake — replace semantics — but clearing renders as absence.)
     if (!cell.color) continue
-    const coord = gridCoordFromPixel(plane, floatOrigin.originU + cell.du, floatOrigin.originV + cell.dv)
-    // Deep-lifted cells ride at their depth offset off the float slice, mirroring
-    // `applyClipboardAt` (same-plane drops re-anchor to the lift slice recorded in the
-    // content). The re-anchor is unconditional: exact-set lifts anchor dw off the set
-    // bbox-min rather than the plane, so dw==0 does NOT mean "on the plane" for them and
-    // skipping it would collapse the bottom layer onto the construction plane.
-    coord[ai] = (samePlane ? (floatContent.copyPlaneOffset ?? plane.offset) : plane.offset) + cell.dw
+    const coord = placeClipboardCell(plane, floatContent, floatOrigin.originU, floatOrigin.originV, cell)
     // Cells dragged off-grid are dropped by `applyClipboardAt` on bake — don't promise them here.
     if (!withinWorkingBounds(coord, gridExtent)) continue
     pushInto(byPool, coord, cell.chamfer, new THREE.Color(resolveSlotColor(palette, cell.color.paletteSlot)))
@@ -81,8 +72,7 @@ export function buildFloatGhostBatches(
 
 /**
  * Current grid-space footprint of a pending float: every placed cell coordinate within working
- * bounds. Placement mirrors `buildFloatGhostBatches` (and therefore `applyClipboardAt`) exactly —
- * same plane mapping, same depth re-anchoring, same bounds rejection — so the box and the ghost
+ * bounds. Placement goes through the shared `placeClipboardCell`, so the box and the ghost
  * agree on where the drag is. Only cells with color are included, matching what the ghost renders
  * (colorless cells clear on bake but paint nothing, so they contribute no visible drag).
  *
@@ -97,16 +87,10 @@ export function placedFloatCoords(
   gridExtent: GridExtent,
 ): Coord[] {
   if (!floatContent || !floatOrigin) return []
-  const ai = axisIndex(plane.axis)
-  const samePlane =
-    floatContent.copyPlaneAxis === plane.axis && floatContent.copyPlaneOrientation === plane.orientation
   const out: Coord[] = []
   for (const cell of floatContent.cells) {
     if (!cell.color) continue
-    const coord = gridCoordFromPixel(plane, floatOrigin.originU + cell.du, floatOrigin.originV + cell.dv)
-    // Unconditional re-anchor like the ghost and the bake: exact-set lifts anchor dw off the
-    // set bbox-min rather than the plane, so dw==0 does NOT mean "on the plane" for them.
-    coord[ai] = (samePlane ? (floatContent.copyPlaneOffset ?? plane.offset) : plane.offset) + cell.dw
+    const coord = placeClipboardCell(plane, floatContent, floatOrigin.originU, floatOrigin.originV, cell)
     if (!withinWorkingBounds(coord, gridExtent)) continue
     out.push(coord)
   }

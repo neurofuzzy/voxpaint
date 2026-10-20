@@ -167,6 +167,18 @@ describe('3D selection store + exact-set actions', () => {
     expect(after.selectedCells).toEqual(new Set([encodeKey(4, 4, 0)]))
   })
 
+  it('rotateCells3D expands the model bounds over the placed cells', () => {
+    paintAt([0, 0, 0], SLOT_A)
+    paintAt([1, 0, 0], SLOT_B)
+    useAppStore.getState().setSelectedCells(new Set([encodeKey(0, 0, 0), encodeKey(1, 0, 0)]))
+    useAppStore.getState().rotateCells3D('rotate')
+    const after = useAppStore.getState()
+    // Same origin-corner math as the turn test: (1,0,0) swings to (0,-1,0), outside the
+    // pre-rotation bounds — like every other write path, the rotation must expand them.
+    expect(after.model.bounds?.min).toEqual([0, -1, 0])
+    expect(after.model.bounds?.max).toEqual([1, 0, 0])
+  })
+
   it('copyCells3D snapshots to the shared clipboard; cut also erases', () => {
     paintAt([0, 0, 0], SLOT_A)
     paintAt([0, 0, 1], SLOT_B)

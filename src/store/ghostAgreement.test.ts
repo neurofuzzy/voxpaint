@@ -347,6 +347,29 @@ describe('3d plane lock', () => {
     expect(resolveDirectPaintTarget(after.model, after.plane, [2, 2, 0], null, after.meta.gridExtent, true)).toEqual([2, 2, 0])
   })
 
+  it('direct-edit 3D shows no place-here ghost for tools that place nothing', () => {
+    const s = useAppStore.getState()
+    // Empty hover cell on the active slice: paint promises a voxel and marker a marker there;
+    // nothing else places anything at the hover cell.
+    const input = (tool: ToolId) => ({
+      model: s.model,
+      plane: s.plane,
+      hoverCell: [2, 2, 0] as Coord,
+      hoveredFace: null,
+      activeVoxelKind: s.activeVoxelKind,
+      brushRotation: s.brushRotation,
+      activeTool: tool,
+      directEdit: true,
+      gridExtent: s.meta.gridExtent,
+      layoutMode: s.layoutMode,
+    })
+    expect(resolveGhostPlacement(input('paint'))?.target).toEqual([2, 2, 0])
+    expect(resolveGhostPlacement(input('marker'))?.target).toEqual([2, 2, 0])
+    for (const tool of ['erase', 'eyedropper', 'wand', 'fill', 'move', 'material', 'select'] as const) {
+      expect(resolveGhostPlacement(input(tool))).toBeNull()
+    }
+  })
+
   it('locked paint write replaces the voxel color in place', () => {
     const s = useAppStore.getState()
     s.beginStroke()

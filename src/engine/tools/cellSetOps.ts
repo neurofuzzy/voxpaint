@@ -5,6 +5,7 @@ import { gridCoordFromPixel, pixelFromGridCoord } from '@/engine/plane/construct
 import { axisIndex } from '@/engine/plane/planeGeometry'
 import type { ConstructionPlane } from '@/engine/plane/types'
 import { mirrorChamferCell, rotateChamferCell } from '@/engine/chamfer/chamferTransform'
+import { cloneChamfer } from './clipboard'
 import type { ClipboardCell, ClipboardData, SelectionRegion, SelectionTransformKind } from '@/store/types'
 
 /** One live voxel snapshot: absolute coord plus both layers (chamfer deep-copied). */
@@ -85,9 +86,7 @@ export function snapshotCells(model: VoxelModel, keys: Iterable<CellKey>): CellS
     out.push({
       coord: decodeKey(key),
       paletteSlot: color.paletteSlot,
-      chamfer: chamfer
-        ? { planeAxis: chamfer.planeAxis, planeOrientation: chamfer.planeOrientation, resolvedTo: chamfer.resolvedTo ? { ...chamfer.resolvedTo } : null }
-        : undefined,
+      chamfer: chamfer ? cloneChamfer(chamfer) : undefined,
     })
   }
   return out
@@ -105,7 +104,7 @@ export function copyCellsToClipboard(
   plane: ConstructionPlane,
 ): ClipboardData {
   const entries = snapshotCells(model, keys)
-  if (entries.length === 0) return { width: 0, height: 0, cells: [], copyPlaneAxis: plane.axis, copyPlaneOrientation: plane.orientation, copyPlaneOffset: plane.offset }
+  if (entries.length === 0) return { width: 0, height: 0, cells: [], copyPlaneAxis: plane.axis, copyPlaneOrientation: plane.orientation, copyPlaneOffset: plane.offset, depthAnchor: 'bbox' as const }
   let minU = Infinity
   let minV = Infinity
   let maxU = -Infinity
@@ -138,6 +137,7 @@ export function copyCellsToClipboard(
     copyPlaneAxis: plane.axis,
     copyPlaneOrientation: plane.orientation,
     copyPlaneOffset: minW,
+    depthAnchor: 'bbox' as const,
   }
 }
 
@@ -156,17 +156,22 @@ export function rotateCellsInPlane(
 ): CellSnapshot[] {
   if (entries.length === 0) return []
   const ai = axisIndex(plane.axis)
+  // Bounding box without spreading per-cell arrays into Math.min/Math.max (RangeError past
+  // ~200k cells): the plane mapping is axis-aligned, so projecting the xyz bbox corners
+  // yields the exact (u,v) span.
+  const bbox = bboxOfCoords(entries.map((e) => e.coord))
+  if (!bbox) return []
+  const cornerA = pixelFromGridCoord(plane, bbox.min)
+  const cornerB = pixelFromGridCoord(plane, bbox.max)
+  const minU = Math.min(cornerA.u, cornerB.u)
+  const maxU = Math.max(cornerA.u, cornerB.u)
+  const minV = Math.min(cornerA.v, cornerB.v)
+  const maxV = Math.max(cornerA.v, cornerB.v)
   type UVW = { u: number; v: number; w: number }
   const uvs: UVW[] = entries.map((e) => {
     const { u, v } = pixelFromGridCoord(plane, e.coord)
     return { u, v, w: e.coord[ai] }
   })
-  const us = uvs.map((p) => p.u)
-  const vs = uvs.map((p) => p.v)
-  const minU = Math.min(...us)
-  const maxU = Math.max(...us)
-  const minV = Math.min(...vs)
-  const maxV = Math.max(...vs)
   const spin = kind === 'rotate' ? 'cw' : kind === 'rotate-ccw' ? 'ccw' : null
 
   const out: CellSnapshot[] = []

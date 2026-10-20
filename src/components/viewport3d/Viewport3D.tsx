@@ -316,18 +316,23 @@ function VoxelInteractionHandler({ managerRef, controlsRef }: {
     }
 
     /** Cell on the active construction plane under the cursor when no voxel was hit (painting
-     * into empty space starts a blob on the current slice). Null when the ray runs parallel. */
+     * into empty space starts a blob on the current slice). Null when the ray runs parallel.
+     * Y-scale aware: the scene group stretches world Y by `voxelScaleY` on every plane (mirroring
+     * `pressOutsideCube`), so the y-plane's slice meets the ray at (offset + 0.5) * sy while
+     * x/z-plane slices sit at their unscaled offset — but the intersection's world Y is stretched
+     * in all three cases, so grid Y is always point.y / sy. */
     function resolveEmptyCell(clientX: number, clientY: number): Coord | null {
       const activePlane = planeRef.current
       raycaster.setFromCamera(ndcFor(clientX, clientY), camera)
       const ai = axisIndex(activePlane.axis)
+      const sy = useAppStore.getState().meta.voxelScaleY
       const normal = new THREE.Vector3()
       normal.setComponent(ai, 1)
       const coplanar = new THREE.Vector3()
-      coplanar.setComponent(ai, activePlane.offset + 0.5)
+      coplanar.setComponent(ai, activePlane.axis === 'y' ? (activePlane.offset + 0.5) * sy : activePlane.offset + 0.5)
       const point = raycaster.ray.intersectPlane(new THREE.Plane().setFromNormalAndCoplanarPoint(normal, coplanar), new THREE.Vector3())
       if (!point) return null
-      const coord: Coord = [Math.floor(point.x), Math.floor(point.y), Math.floor(point.z)]
+      const coord: Coord = [Math.floor(point.x), Math.floor(point.y / sy), Math.floor(point.z)]
       coord[ai] = activePlane.offset
       return coord
     }

@@ -71,6 +71,9 @@ export const createSelection3DSlice: Slice = (set, get) => ({
     if (layoutMode === '3d-only') {
       get().setSelectedCells(new Set(keys))
     } else {
+      // A 3D tap can seed the flood off the active slice (see Viewport3D's wand tap): with no
+      // flooded cell on the slice there is no footprint to show, so clear instead of storing
+      // a zero-size region.
       get().setSelection(regionForFloodedCells(plane, keys))
     }
     // Report the stage: without this the two stages are indistinguishable on screen and a

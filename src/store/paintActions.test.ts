@@ -155,6 +155,71 @@ describe('bevel drag correction on release', () => {
     expect(useAppStore.getState().model.chamfer.get(keyFor(4, 5))!.resolvedTo).toBeNull()
     expect(useAppStore.getState().model.chamfer.get(keyFor(6, 5))!.resolvedTo).toBeNull()
   })
+
+  it('release correction re-applies the brush rotation instead of un-rotating the ramp', () => {
+    // Same drag as the first test, but with the R-rotated brush: mid-drag C resolves convex
+    // with the offset (paint time already applied it), and the release pass must keep it.
+    useAppStore.getState().setLayoutMode('split')
+    useAppStore.getState().setBrushRotation(2)
+    const ctx = storeCtx()
+    paintTool.onDown!(ctx, evt(4, 5))
+    paintTool.onMove!(ctx, evt(5, 4))
+    paintTool.onMove!(ctx, evt(5, 5))
+    expect(useAppStore.getState().model.chamfer.get(keyFor(5, 5))!.resolvedTo).toEqual({
+      shapeKind: 'convex',
+      rotation: 3, // autotile 1 + brush 2
+    })
+    paintTool.onMove!(ctx, evt(6, 5))
+    paintTool.onUp!(ctx, evt(6, 5))
+
+    // Autotile verdict is ramp rotation 1 (open S); the brush offset survives correction.
+    expect(useAppStore.getState().model.chamfer.get(keyFor(5, 5))!.resolvedTo).toEqual({
+      shapeKind: 'ramp',
+      rotation: 3,
+    })
+    useAppStore.getState().setBrushRotation(0)
+  })
+
+  it('wedge upgrade keeps the brush offset through the in-stroke retry and the release pass', () => {
+    // Target painted first (unresolved fallback), neighbors land later in the same stroke:
+    // both the in-stroke retry loop and correctChamferStroke must add the brush offset.
+    const runWithBrush = (brush: 0 | 2) => {
+      useAppStore.getState().newProject('Test', 16)
+      const s = useAppStore.getState()
+      s.setLayoutMode('split')
+      s.setActiveVoxelKind('wedge')
+      s.setPlaneAxisOrientation('z', 1)
+      s.setPlaneOffset(0)
+      s.setBrushRotation(brush)
+      s.beginStroke()
+      s.paintCell(5, 5) // lone wedge: fallback rotation (0 + brush), pending upgrade
+      expect(useAppStore.getState().model.chamfer.get(keyFor(5, 5))!.resolvedTo).toEqual({
+        shapeKind: 'wedge',
+        rotation: brush,
+      })
+      // Neighbors painted as wedges: each wedge paint runs the in-stroke retry loop over all
+      // pending cells (cube paints would not — the loop lives in the wedge branch).
+      s.paintCell(4, 5) // west neighbor — corner still incomplete
+      expect(useAppStore.getState().model.chamfer.get(keyFor(5, 5))!.resolvedTo).toEqual({
+        shapeKind: 'wedge',
+        rotation: brush,
+      })
+      s.paintCell(5, 4) // north neighbor — completes a true W+N corner
+      const mid = useAppStore.getState().model.chamfer.get(keyFor(5, 5))!.resolvedTo
+      s.correctChamferStroke()
+      s.commitStroke()
+      useAppStore.getState().setBrushRotation(0)
+      return { mid, final: useAppStore.getState().model.chamfer.get(keyFor(5, 5))!.resolvedTo }
+    }
+    const plain = runWithBrush(0)
+    expect(plain.mid!.shapeKind).toBe('wedge')
+    const base = plain.mid!.rotation
+    const rotated = runWithBrush(2)
+    const expected = { shapeKind: 'wedge', rotation: ((base + 2) % 4) as 0 | 1 | 2 | 3 }
+    // The in-stroke retry already upgraded with the offset, before the release pass ran.
+    expect(rotated.mid).toEqual(expected)
+    expect(rotated.final).toEqual(expected)
+  })
 })
 
 /** Direct-3D taps (`paintCellAtCoord`/`eraseCellAtCoord`, 3D-only layout): coordinate-level

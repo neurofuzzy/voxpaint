@@ -1,4 +1,4 @@
-import type { ChamferCell, GridExtent, VoxelModel } from '@/engine/grid/types'
+import type { ChamferCell, Coord, GridExtent, VoxelModel } from '@/engine/grid/types'
 import type { ConstructionPlane } from '@/engine/plane/types'
 import { effectiveExtent, encodeKey, expandBounds, withinWorkingBounds } from '@/engine/grid/GridStore'
 import { gridCoordFromPixel } from '@/engine/plane/constructionPlane'
@@ -9,7 +9,7 @@ import { mirrorClassification } from './transform'
 import type { ClipboardCell, ClipboardData, SelectionRegion } from '@/store/types'
 
 /** Deep-copy a chamfer cell so the clipboard never shares references with the live model. */
-function cloneChamfer(c: ChamferCell): ChamferCell {
+export function cloneChamfer(c: ChamferCell): ChamferCell {
   return { planeAxis: c.planeAxis, planeOrientation: c.planeOrientation, resolvedTo: c.resolvedTo ? { ...c.resolvedTo } : null }
 }
 
@@ -84,15 +84,46 @@ export function clearRegion(
 }
 
 /**
+ * Depth base for a clipboard cell on a destination plane: bbox-anchored exact-set content
+ * (`copyCellsToClipboard` — wand volumes, 3D moves) preserves its absolute depth on same-plane
+ * drops by re-anchoring `dw` off the recorded bbox-min, since `dw == 0` does NOT mean "on the
+ * plane" for it; everything else lands on the destination (active) slice, so ordinary pastes
+ * follow the plane even when it moved since the copy. Shared by the bake, the float ghost, and
+ * the float footprint so all three agree on every cell.
+ */
+export function clipboardDepthBase(plane: ConstructionPlane, clipboard: ClipboardData): number {
+  const samePlane = clipboard.copyPlaneAxis === plane.axis && clipboard.copyPlaneOrientation === plane.orientation
+  if (samePlane && clipboard.depthAnchor === 'bbox') return clipboard.copyPlaneOffset ?? plane.offset
+  return plane.offset
+}
+
+/**
+ * Grid-space placement of one clipboard cell at a destination origin — the single source of
+ * truth for the bake (`applyClipboardAt`), the float ghost (`buildFloatGhostBatches`), and the
+ * float footprint (`placedFloatCoords`). Bounds rejection stays with the callers (the ghost
+ * additionally skips colorless cells, which clear on bake but render nothing).
+ */
+export function placeClipboardCell(
+  plane: ConstructionPlane,
+  clipboard: ClipboardData,
+  originU: number,
+  originV: number,
+  cell: ClipboardCell,
+): Coord {
+  const coord = gridCoordFromPixel(plane, originU + cell.du, originV + cell.dv)
+  coord[axisIndex(plane.axis)] = clipboardDepthBase(plane, clipboard) + cell.dw
+  return coord
+}
+
+/**
  * Stamps clipboard data at a destination origin. Chamfer cells are restored **verbatim** — their
  * copied plane basis and resolved shape are written back unchanged, with no reclassification against
  * the destination's neighbors, so the pasted result exactly matches the source. (A chamfer only ever
  * (re)resolves when the user edits that specific voxel.) Cells with neither `color` nor `chamfer`
  * are explicitly empty voxels: they delete whatever they land on, so every drop replaces its
- * footprint instead of merging into it. Every cell lands at its depth offset off the
- * destination slice — same-plane drops re-anchor to the recorded lift slice (or the set
- * bbox-min for exact-set lifts), cross-plane pastes to the destination slice. Mutates the
- * given (draft) model directly.
+ * footprint instead of merging into it. Depth lands per `clipboardDepthBase`: ordinary region
+ * pastes land on the destination slice, while bbox-anchored exact-set lifts preserve absolute
+ * depth on same-plane drops. Mutates the given (draft) model directly.
  */
 export function applyClipboardAt(
   model: VoxelModel,
@@ -102,15 +133,8 @@ export function applyClipboardAt(
   destOriginV: number,
   gridExtent: GridExtent,
 ): void {
-  const ai = axisIndex(plane.axis)
-  const samePlane = clipboard.copyPlaneAxis === plane.axis && clipboard.copyPlaneOrientation === plane.orientation
   for (const cell of clipboard.cells) {
-    const coord = gridCoordFromPixel(plane, destOriginU + cell.du, destOriginV + cell.dv)
-    // The depth re-anchor is unconditional: exact-set lifts (wand volumes) anchor dw off the
-    // set bbox-min rather than the plane, so dw==0 does NOT mean "on the plane" for them and
-    // skipping it would collapse the bottom layer onto the construction plane. For region
-    // lifts dw==0 already means the lift slice, so this changes nothing there.
-    coord[ai] = (samePlane ? (clipboard.copyPlaneOffset ?? plane.offset) : plane.offset) + cell.dw
+    const coord = placeClipboardCell(plane, clipboard, destOriginU, destOriginV, cell)
     if (!withinWorkingBounds(coord, gridExtent)) continue
 
     const key = encodeKey(...coord)
@@ -200,6 +224,11 @@ function rebaseOrigin(
  * empty across a pure axis change (+Z -> +X mirrors neither), which is the point — the content
  * stays put on screen and only the chamfers' baked plane moves.
  *
+ * The depth anchor does not survive the rebase: `copyPlaneOffset`/`dw` are depths along the
+ * *source* axis, meaningless in the destination frame, so the result is slice-anchored onto the
+ * destination slice (same-plane drops of bbox-anchored content keep their anchor — that early
+ * return above).
+ *
  * Returns the input untouched for content with no recorded source plane (transformed float
  * content) or when the destination is the plane it was copied from.
  */
@@ -217,6 +246,8 @@ export function transformClipboardToPlane(clipboard: ClipboardData, toPlane: Con
     ...rebaseOrigin(clipboard, fromPlane, toPlane),
     copyPlaneAxis: toPlane.axis,
     copyPlaneOrientation: toPlane.orientation,
+    copyPlaneOffset: undefined,
+    depthAnchor: undefined,
     cells: clipboard.cells.map((cell) => ({
       ...cell,
       du: mirrorU ? width - 1 - cell.du : cell.du,

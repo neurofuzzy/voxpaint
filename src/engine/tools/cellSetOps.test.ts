@@ -191,6 +191,24 @@ describe('rotateCellsInPlane', () => {
     expect(out.map((e) => e.coord)).toEqual([[7, 0, 0]])
   })
 
+  it('rotates a selection far past the spread-argument limit without throwing', () => {
+    // Regression: the old min/max spread (`Math.min(...us)`) threw RangeError past ~200k
+    // cells. BBox math handles any size; only the in-grid survivors are placed.
+    const model = emptyModel()
+    const N = 200_000
+    const keys: string[] = new Array(N)
+    for (let x = 0; x < N; x++) {
+      const key = encodeKey(x, 0, 0)
+      model.color.set(key, { paletteSlot: { ...SLOT } })
+      keys[x] = key
+    }
+    const out = rotateCellsInPlane(snapshotCells(model, keys), PLANE, 'rotate', EXTENT)
+    // cw on the z-plane: (u=x, v=-1) -> nu=0, nv=x-1 -> grid [0,-x,0]; survivors in ±8.
+    expect(out).toHaveLength(9)
+    expect(out.map((e) => e.coord)).toContainEqual([0, 0, 0])
+    expect(out.map((e) => e.coord)).toContainEqual([0, -8, 0])
+  })
+
   it('mirrors horizontally about the bbox center', () => {
     const model = emptyModel()
     paintBox(model, 0, 0, 0, 0, 0, 0)

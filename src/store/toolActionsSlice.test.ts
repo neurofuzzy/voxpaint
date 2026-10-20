@@ -132,6 +132,31 @@ describe('floodFill3D (alt-click, 3D connected fill)', () => {
   })
 })
 
+describe('copy/paste depth anchoring', () => {
+  beforeEach(() => {
+    useAppStore.getState().newProject('Test', 16)
+    useAppStore.getState().setPlaneAxisOrientation('z', 1)
+    useAppStore.getState().setPlaneOffset(5)
+    useAppStore.getState().setActiveVoxelKind('cube')
+  })
+
+  it('paste-in-place after a plane move lands on the active slice', () => {
+    const s = useAppStore.getState()
+    s.beginStroke()
+    expect(s.paintCell(0, 0)).toBe(true) // (0,0) on z/5 is [0,-1,5]
+    s.commitStroke()
+    s.setSelection({ originU: 0, originV: 0, width: 1, height: 1, mask: new Uint8Array([1]) })
+    s.copySelection()
+    expect(useAppStore.getState().clipboard?.copyPlaneOffset).toBe(5)
+    // Moving the plane bakes nothing (no float pending) and clears the selection.
+    useAppStore.getState().setPlaneOffset(6)
+    useAppStore.getState().pasteClipboardInPlace()
+    useAppStore.getState().bakeFloatIfAny()
+    // dw=0 lands on the live slice, not the copy-time one.
+    expect([...useAppStore.getState().model.color.keys()]).toEqual([encodeKey(0, -1, 5), encodeKey(0, -1, 6)])
+  })
+})
+
 describe('liftSelectionToFloat (deep alt-drag)', () => {
   beforeEach(() => {
     useAppStore.getState().newProject('Test', 16)

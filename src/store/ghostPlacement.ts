@@ -86,15 +86,19 @@ export function resolveDirectPaintTarget(
  * preview (`BrushPreview`), and — by contract — what `applyPaintCell` writes. One function so
  * the three can never disagree about basis, reflection, or autotile context.
  *
- * Rules (kept verbatim from the original ghost memo): hidden for the material tool and for
- * the select tool in direct-manipulation 3D (3D-only layout, no paint preview while
- * selecting); there with paint, the placement cell comes from `resolveDirectPaintTarget`
+ * Rules (kept verbatim from the original ghost memo): hidden for every direct-manipulation 3D
+ * tool (3D-only layout) except paint and marker — erase/eyedropper/wand/fill/move/material/
+ * select act on existing voxels or whole regions, never a place-here cube (marker drops a new
+ * marker on the hover cell, so its cube preview stays); with paint, the placement cell
+ * comes from `resolveDirectPaintTarget`
  * (unlocked: the neighbor across the hovered face — face must belong to the hovered cell —
  * 2D hover sets `hoverCell` without a face; locked: the hovered voxel itself on the active
  * slice, replacing it), but orientation ALWAYS inherits
  * the active construction plane, never the raycast face — matching the paint write (see
- * `applyBlockingTap`); otherwise the hover cell itself in the active plane's frame. Hidden when
- * blocked (occupied-unlocked/out of bounds/off-slice-locked). Non-paint tools get the legacy cube. `ramp`/`wedge` sample live
+ * `applyBlockingTap`); otherwise (split layout, or non-direct paint) the hover cell itself in
+ * the active plane's frame. Hidden when
+ * blocked (occupied-unlocked/out of bounds/off-slice-locked). Non-paint tools in split layout
+ * get the legacy cube. `ramp`/`wedge` sample live
  * autotile neighbors, except in 3D-only mode, which is
  * verbatim (no classification — the preview is exactly the paint write, see `applyPaintCell`);
  * every other kind resolves from the brush alone (explicit corners never autotile).
@@ -102,9 +106,12 @@ export function resolveDirectPaintTarget(
 export function resolveGhostPlacement(input: GhostPlacementInput): GhostPlacement | null {
   const { model, plane, hoverCell, hoveredFace, activeVoxelKind, brushRotation, activeTool, directEdit, gridExtent, layoutMode, planeLocked3D = false } = input
   const verbatim = layoutMode === '3d-only'
-  // Material recolors on hover-blink alone; select shows no paint preview (the marquee overlay
-  // and cyan selection cast cover feedback instead, like the 2D canvas while selecting).
-  if (directEdit && (activeTool === 'material' || activeTool === 'select')) return null
+  // Direct-manipulation 3D (3D-only layout) shows a ghost only for tools that place something
+  // at the hover cell — paint, plus marker (which drops a marker there). Material recolors on
+  // hover-blink; select/wand show their own overlays; erase/eyedropper/fill/move act on
+  // existing voxels or whole regions, so a place-here cube would promise a paint that never
+  // comes.
+  if (directEdit && activeTool !== 'paint' && activeTool !== 'marker') return null
   let target: Coord | null = null
   let faceAxis: Axis | null = null
   let faceOrientation: Orientation | null = null

@@ -85,7 +85,9 @@ function applyPaintCell(
         if (fc[pi] !== plane.offset) continue
         const { u: fu, v: fv } = pixelFromGridCoord(plane, fc)
         const rt = classify(sampleNeighbors(state.model, plane, fu, fv))
-        if (rt) cell.resolvedTo = rt
+        // Same brush offset as the fresh paint above, or the retry would silently un-rotate
+        // the preview/ghost's promised shape.
+        if (rt) cell.resolvedTo = brush ? { ...rt, rotation: ((rt.rotation + brush) % 4) as Rotation } : rt
       }
     }
   } else if (kind === 'wedge') {
@@ -118,7 +120,9 @@ function applyPaintCell(
           const { u: pu, v: pv } = pixelFromGridCoord(plane, pc)
           const rt = classify(sampleNeighbors(state.model, plane, pu, pv))
           if (rt?.shapeKind === 'convex') {
-            cell.resolvedTo = { shapeKind: 'wedge', rotation: rt.rotation }
+            // Same brush offset as the fresh paint above (which falls back to rotation 0 +
+            // brush until the corner completes).
+            cell.resolvedTo = { shapeKind: 'wedge', rotation: ((rt.rotation + brush) % 4) as Rotation }
             pendingWedgeKeys.delete(pendingKey)
           }
         }
@@ -321,6 +325,12 @@ export const createPaintActionsSlice: Slice = (set, get) => ({
     // Outside an open stroke there is nothing stroke-local to correct (both tracking sets are
     // only non-null between beginStroke/commitStroke).
     if (!freshChamferKeys && !pendingWedgeKeys) return
+    // The manual brush rotation (R key) is additive on every fresh paint, so the correction
+    // pass must re-apply it to its fresh verdicts — otherwise it silently un-rotates the shape
+    // the ghost/HUD preview promised.
+    const strokeBrush = (get().brushRotation ?? 0) as Rotation
+    const withBrush = <T extends { rotation: Rotation }>(rt: T | null): T | null =>
+      rt && strokeBrush ? { ...rt, rotation: ((rt.rotation + strokeBrush) % 4) as Rotation } : rt
     let changed = false
     set((state) => {
       if (freshChamferKeys) {
@@ -336,7 +346,7 @@ export const createPaintActionsSlice: Slice = (set, get) => ({
             offset: coord[axisIndex(cell.planeAxis)],
           }
           const { u: fu, v: fv } = pixelFromGridCoord(cellPlane, coord)
-          const rt = classify(sampleNeighbors(state.model, cellPlane, fu, fv))
+          const rt = withBrush(classify(sampleNeighbors(state.model, cellPlane, fu, fv)))
           // Overwrite even when already resolved: a mid-stroke verdict read partial neighbors
           // (this stroke's own later paints completed them). Still-null stays null.
           if (JSON.stringify(cell.resolvedTo) !== JSON.stringify(rt)) {
@@ -363,7 +373,7 @@ export const createPaintActionsSlice: Slice = (set, get) => ({
           // Wedges only upgrade: an unresolved fallback takes its true corner once the stroke
           // completes it, but a locked-in wedge never flips (freeze + click-to-rotate intact).
           if (rt?.shapeKind === 'convex') {
-            cell.resolvedTo = { shapeKind: 'wedge', rotation: rt.rotation }
+            cell.resolvedTo = { shapeKind: 'wedge', rotation: ((rt.rotation + strokeBrush) % 4) as Rotation }
             pendingWedgeKeys.delete(pendingKey)
             changed = true
           }

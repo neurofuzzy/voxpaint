@@ -4,7 +4,7 @@ import type { CellKey } from '@/engine/grid/types'
 import { gridCoordFromPixel, pixelFromGridCoord } from '@/engine/plane/constructionPlane'
 import { rebaseChamferCell } from '@/engine/chamfer/faceBasis'
 import { fillLeaksToEdges, floodFillOccupied3D, floodFillRegion, floodFillRegion3D } from '@/engine/tools/floodFill'
-import { applyClipboardAt, clearRegion, copyRegionToClipboard, transformClipboardToPlane } from '@/engine/tools/clipboard'
+import { applyClipboardAt, clipboardDepthBase, clearRegion, copyRegionToClipboard, transformClipboardToPlane } from '@/engine/tools/clipboard'
 import { copyCellsToClipboard, rotateCellsInPlane, selectionMatchesClipboard, snapshotCells } from '@/engine/tools/cellSetOps'
 import { placedFloatCoords } from '@/engine/instancing/ghostBatches'
 import { mirrorClipboard, rotateClipboard90 } from '@/engine/tools/transform'
@@ -350,10 +350,8 @@ export const createToolActionsSlice: Slice = (set, get) => ({
     const hasLive = [...selectedCells].some((key) => model.color.has(key))
     const match = !hasLive ? selectionMatchesClipboard(selectedCells, transformed, plane) : null
     if (match) {
-      const base =
-        transformed.copyPlaneAxis === plane.axis && transformed.copyPlaneOrientation === plane.orientation
-          ? (transformed.copyPlaneOffset ?? plane.offset)
-          : plane.offset
+      // Same depth base `applyClipboardAt` will land on, so the min-dw shift below is exact.
+      const base = clipboardDepthBase(plane, transformed)
       // Re-anchor the depth profile onto the selection frame's min depth: applyClipboardAt
       // lands `base + dw`, so shift every cell so its min-dw sits on the frame.
       const shifted = {
@@ -417,6 +415,7 @@ export const createToolActionsSlice: Slice = (set, get) => ({
       for (const e of moved) {
         const key = encodeKey(...e.coord)
         state.model.color.set(key, { paletteSlot: e.paletteSlot })
+        state.model.bounds = expandBounds(state.model.bounds, e.coord)
         if (e.chamfer) state.model.chamfer.set(key, e.chamfer)
         else state.model.chamfer.delete(key)
         placed.push(key)
