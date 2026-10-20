@@ -1,10 +1,10 @@
-<svg viewBox="0 0 111 118" xmlns="http://www.w3.org/2000/svg">
-  <!-- Inner-corner voxel-kind toolbar icon. Edit freely — the toolbar picks up changes. -->
-  <g transform="matrix(1,0,0,1,-277,-300)">
-    <path d="M287,335 L332,360 L332,405 L287,380 Z" fill="rgb(184,184,184)" />
-    <path d="M377,335 L332,360 L332,405 L377,380 Z" fill="rgb(142,141,141)" />
-    <path d="M287,335 L332,310 L377,335 L332,360 Z" fill="rgb(223,223,223)" />
-    <path d="M313,349 L351,349 L332,368 Z" fill="rgb(105,105,105)" />
-    <path d="M313,349 L332,340 L332,368 Z" fill="rgb(142,141,141)" />
+<svg viewBox="0 0 111 128" xmlns="http://www.w3.org/2000/svg">
+  <!-- Inner-corner voxel-kind toolbar icon: the outer corner's inverse — a cube whose front-top
+       corner drops to the base. Same frame as cube.svg / chamfer.svg. -->
+  <g transform="matrix(1,0,0,1,-277.128,-512)">
+    <path d="M277.128,608L332.554,640L277.128,544L277.128,608Z" fill="rgb(201,201,201)" />
+    <path d="M387.979,608L332.554,640L387.979,544L387.979,608Z" fill="rgb(142,141,141)" />
+    <path d="M332.554,640L277.128,544L332.554,512L332.554,640Z" fill="rgb(184,184,184)" />
+    <path d="M332.554,640L332.554,512L387.979,544L332.554,640Z" fill="rgb(223,223,223)" />
   </g>
 </svg>

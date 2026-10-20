@@ -64,5 +64,7 @@ export function FlatIcon({ size = 18 }: IconProps) {
 }
 
 export function FlatWedgeIcon({ size = 18 }: IconProps) {
-  return <FileIcon url={flatwedgeUrl} size={size} />
+  // 120×137 frame (the pane's top edge sits at full cell height): scale height so it draws at
+  // the same size/128 scale as the 120×128 icons.
+  return <FileIcon url={flatwedgeUrl} size={size} height={size * (137 / 128)} />
 }
