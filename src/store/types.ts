@@ -153,12 +153,19 @@ export type ToolSlice = {
   /** Brush rotation in quarter-turns (0-3), applied additively at paint time for orientable
    * kinds (ramp/wedge/quarter/flatwedge). 0 = legacy autotile/fresh-0 behavior exactly. */
   brushRotation: Rotation
+  /** 3D shift-paint line anchor: the last 3D-painted cell plus the plane frame it was painted
+   * in. Every 3D paint tap re-establishes it (fast chaining); a shift-tap draws the
+   * dominant-axis line from it. Null until the first tap; stale frames (plane axis/orientation
+   * changed since) fall back to a single paint. Session state, never persisted. */
+  paintLineAnchor: { coord: Coord; axis: Axis; orientation: Orientation } | null
   setActiveTool: (tool: ToolId) => void
   setActiveVoxelKind: (kind: VoxelKind) => void
   setActivePaletteSlot: (slot: PaletteSlotRef) => void
   setBrushRotation: (r: Rotation) => void
   /** Steps the brush rotation ±1 quarter-turn (wraps mod 4). */
   rotateBrush: (dir: 1 | -1) => void
+  setPaintLineAnchor: (anchor: { coord: Coord; axis: Axis; orientation: Orientation }) => void
+  clearPaintLineAnchor: () => void
 }
 
 export type FloatOrigin = { originU: number; originV: number }
@@ -220,6 +227,15 @@ export type Selection3DSlice = {
    * Writes the 3D voxel set in 3D-only layout, the 2D footprint region in split layout.
    */
   applyWandAt: (start: Coord) => void
+  /**
+   * Plane-constrained wand for the 3D-only window-select tool's double-click: selects the
+   * color-connected region on the seed voxel's own slice (same frame as the active plane,
+   * which is never moved). Single-stage and idempotent; empty seeds are a no-op. With
+   * `union` (shift-double-click) the region merges into the existing selection instead of
+   * replacing it. Writes the 3D voxel set in 3D-only layout, the 2D footprint region in
+   * split layout.
+   */
+  applySliceWandAt: (start: Coord, union?: boolean) => void
 }
 
 /** The specific voxel face currently under the pointer in the 3D view — live, updates on every
@@ -364,6 +380,17 @@ export type PaintActionsSlice = {
    * Returns false if out of bounds.
    */
   paintCellAtCoord: (coord: Coord, faceAxis: Axis, faceOrientation: Orientation) => boolean
+  /**
+   * 3D paint-tap gesture (3D-only layout): plain taps paint one cell, shift-taps paint the
+   * dominant-axis line in the construction plane from the line anchor (Zanpo-style lock —
+   * anchor-excluded, endpoint-included; same-cell re-taps paint once with re-click semantics).
+   * Every call re-establishes the anchor at the tap (fast chaining). Without a usable anchor
+   * (none yet, or the plane frame changed since) — or when the target sits off the active
+   * slice (out-of-plane stacking) — it paints one cell. Unlocked taps never overwrite occupied
+   * cells (matching single-tap semantics); locked taps replace on-slice. One undo stroke;
+   * fully-skipped lines record nothing. Returns false if out of bounds.
+   */
+  paintLineAtCoord: (coord: Coord, extend: boolean) => boolean
   /** Direct-3D erase at an explicit grid coordinate (3D-only taps). No selection clip. */
   eraseCellAtCoord: (coord: Coord) => void
   /**

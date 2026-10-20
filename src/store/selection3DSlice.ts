@@ -1,7 +1,10 @@
 import type { StateCreator } from 'zustand'
 import { encodeKey } from '@/engine/grid/GridStore'
 import type { CellKey, Coord } from '@/engine/grid/types'
-import { floodFillOccupied3D, floodFillRegion3D } from '@/engine/tools/floodFill'
+import { axisIndex } from '@/engine/plane/planeGeometry'
+import type { ConstructionPlane } from '@/engine/plane/types'
+import { gridCoordFromPixel, pixelFromGridCoord } from '@/engine/plane/constructionPlane'
+import { floodFillOccupied3D, floodFillRegion, floodFillRegion3D } from '@/engine/tools/floodFill'
 import { WAND_DOUBLE_TAP_MS, regionForFloodedCells } from '@/engine/tools/wandTool'
 import { showToast } from '@/components/ui/toastBus'
 import type { AppState, Selection3DSlice } from './types'
@@ -76,5 +79,33 @@ export const createSelection3DSlice: Slice = (set, get) => ({
     else showToast(`Wand: ${keys.length} voxel${keys.length === 1 ? '' : 's'} (color-connected) — re-tap quickly for the whole component`)
     // No tool handoff: the wand stays active so a rapid re-tap can expand the selection, and
     // the rail treats wand-with-selection as a select subtool (see FloatingPalette).
+  },
+
+  /**
+   * Plane-constrained wand for the 3D-only window-select tool's double-click: selects the
+   * color-connected region on the seed voxel's own slice (same frame as the active plane),
+   * never other depths (the full-volume equivalent is the wand tool itself). The committed
+   * plane is never moved — shift gestures rely on this, since the seed may sit off it.
+   * Single-stage — repeat double-clicks idempotently re-select the same region. Empty seeds
+   * leave the selection alone (the tap path only calls this on face hits). No leak guard: the
+   * seed is occupied, so an edge-touching same-color region (e.g. a floor plate) is a
+   * legitimate grab, not a spill. With `union`, the flood merges into the existing selection
+   * (shift-double-click) instead of replacing it.
+   */
+  applySliceWandAt: (start, union = false) => {
+    const { model, plane, meta, layoutMode } = get()
+    const startKey = encodeKey(...start)
+    if (!model.color.has(startKey)) return
+    const slice: ConstructionPlane = { axis: plane.axis, orientation: plane.orientation, offset: start[axisIndex(plane.axis)] }
+    const { u, v } = pixelFromGridCoord(slice, start)
+    const keys = floodFillRegion(model, slice, u, v, meta.gridExtent)
+      .map(([cu, cv]) => encodeKey(...gridCoordFromPixel(slice, cu, cv)))
+    if (keys.length === 0) return
+    if (layoutMode === '3d-only') {
+      get().setSelectedCells(union ? new Set([...get().selectedCells, ...keys]) : new Set(keys))
+    } else {
+      get().setSelection(regionForFloodedCells(slice, keys))
+    }
+    showToast(`Selected ${keys.length} voxel${keys.length === 1 ? '' : 's'} on this slice (color-connected)`)
   },
 })

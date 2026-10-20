@@ -7,6 +7,7 @@ import { classify, sampleNeighbors } from '@/engine/chamfer/chamferResolver'
 import { spinSlabAboutLocalY } from '@/engine/chamfer/chamferTransform'
 import { findDualRampRotation, findWedgeRampDual } from '@/engine/chamfer/rampDual'
 import { gridCoordFromPixel, pixelFromGridCoord } from '@/engine/plane/constructionPlane'
+import { dominantAxisLine } from '@/engine/tools/lineUtils'
 import { axisIndex } from '@/engine/plane/planeGeometry'
 import { isCellSelected, forEachSelectedCell } from '@/engine/tools/selectionMask'
 import type { AppState, PaintActionsSlice, VoxelKind } from './types'
@@ -407,6 +408,40 @@ export const createPaintActionsSlice: Slice = (set, get) => ({
       applyPaintCell(state, coord, u, v, facePlane, activeVoxelKind, activePaletteSlot)
     })
     return true
+  },
+
+  paintLineAtCoord: (coord: Coord, extend: boolean) => {
+    get().bakeFloatIfAny()
+    const { plane, activeVoxelKind, activePaletteSlot, meta, planeLocked3D, paintLineAnchor } = get()
+    // Every tap re-establishes the anchor — chaining for the next shift-click.
+    get().setPaintLineAnchor({ coord, axis: plane.axis, orientation: plane.orientation })
+    // Without a usable anchor (none yet, or the plane frame changed since) — or when the
+    // target sits off the active slice (out-of-plane stacking has no in-plane line) — paint one.
+    const anchorUsable = extend && paintLineAnchor !== null
+      && paintLineAnchor.axis === plane.axis
+      && paintLineAnchor.orientation === plane.orientation
+    const onSlice = coord[axisIndex(plane.axis)] === plane.offset
+    // One stroke for the whole gesture (the primitive below never brackets itself — the
+    // 3D tap path brackets it instead — so bracketing here nests nothing).
+    get().beginStroke()
+    let ok = true
+    if (paintLineAnchor && anchorUsable && onSlice) {
+      const a = pixelFromGridCoord(plane, paintLineAnchor.coord)
+      const b = pixelFromGridCoord(plane, coord)
+      set((state) => {
+        for (const [lu, lv] of dominantAxisLine(a.u, a.v, b.u, b.v)) {
+          const c = gridCoordFromPixel(plane, lu, lv)
+          if (!withinWorkingBounds(c, meta.gridExtent)) continue
+          // Unlocked taps never overwrite (matching single-tap semantics); locked taps replace.
+          if (!planeLocked3D && state.model.color.has(encodeKey(...c))) continue
+          applyPaintCell(state, c, lu, lv, plane, activeVoxelKind, activePaletteSlot)
+        }
+      })
+    } else {
+      ok = get().paintCellAtCoord(coord, plane.axis, plane.orientation)
+    }
+    get().commitStroke()
+    return ok
   },
 
   eraseCell: (coord: Coord) => {

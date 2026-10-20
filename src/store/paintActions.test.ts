@@ -957,3 +957,130 @@ describe('fillSelection (box click fills the window with the brush)', () => {
     expect(useAppStore.getState().past.length).toBe(strokes + 1)
   })
 })
+
+/** 3D shift-paint (`paintLineAtCoord`, 3D-only layout): plain taps paint one cell and anchor;
+ * shift-taps paint the dominant-axis line from the anchor in one undo stroke. */
+describe('3D shift-paint lines', () => {
+  const SLOT_A = { kind: 'base', index: 0 } as const
+  const SLOT_B = { kind: 'base', index: 1 } as const
+
+  beforeEach(() => {
+    const s = useAppStore.getState()
+    s.newProject('Test', 16)
+    s.setLayoutMode('3d-only')
+    s.setActiveVoxelKind('cube')
+    s.setActivePaletteSlot(SLOT_A)
+    s.setPlaneAxisOrientation('z', 1)
+    s.setPlaneOffset(0)
+    s.setPlaneLocked3D(false)
+  })
+
+  it('plain tap paints one cell and sets the anchor', () => {
+    expect(useAppStore.getState().paintLineAtCoord([0, 0, 0], false)).toBe(true)
+
+    const after = useAppStore.getState()
+    expect(after.model.color.size).toBe(1)
+    expect(after.paintLineAnchor).toEqual({ coord: [0, 0, 0], axis: 'z', orientation: 1 })
+    expect(after.past.length).toBe(1)
+  })
+
+  it('shift-tap draws the dominant-axis line in one stroke', () => {
+    const s = useAppStore.getState()
+    expect(s.paintLineAtCoord([0, 0, 0], false)).toBe(true)
+    expect(s.paintLineAtCoord([3, 0, 0], true)).toBe(true)
+
+    const after = useAppStore.getState()
+    for (const x of [0, 1, 2, 3]) {
+      expect(after.model.color.has(encodeKey(x, 0, 0))).toBe(true)
+    }
+    expect(after.model.color.size).toBe(4)
+    expect(after.past.length).toBe(2)
+    // The tap re-anchors for chaining.
+    expect(after.paintLineAnchor?.coord).toEqual([3, 0, 0])
+  })
+
+  it('locks to the farther plane axis', () => {
+    const s = useAppStore.getState()
+    expect(s.paintLineAtCoord([0, 0, 0], false)).toBe(true)
+    // |du| = 1, |dv| = 2 on the z plane → v line at the anchor's u.
+    expect(s.paintLineAtCoord([1, 2, 0], true)).toBe(true)
+
+    const after = useAppStore.getState()
+    expect(after.model.color.size).toBe(3)
+    const ys = [...after.model.color.keys()].map((k) => k.split(',').map(Number))
+    expect(ys.every(([x, , z]) => x === 0 && z === 0)).toBe(true)
+    expect(ys.map(([, y]) => y).sort()).toEqual([0, 1, 2])
+  })
+
+  it('shift-tap without an anchor paints one and anchors', () => {
+    useAppStore.getState().clearPaintLineAnchor()
+    expect(useAppStore.getState().paintLineAtCoord([2, 2, 0], true)).toBe(true)
+
+    const after = useAppStore.getState()
+    expect(after.model.color.size).toBe(1)
+    expect(after.paintLineAnchor?.coord).toEqual([2, 2, 0])
+  })
+
+  it('unlocked lines skip occupied cells', () => {
+    const s = useAppStore.getState()
+    expect(s.paintLineAtCoord([2, 0, 0], false)).toBe(true)
+    expect(s.paintLineAtCoord([0, 0, 0], false)).toBe(true)
+    expect(s.paintLineAtCoord([3, 0, 0], true)).toBe(true)
+
+    const after = useAppStore.getState()
+    for (const x of [0, 1, 2, 3]) {
+      expect(after.model.color.has(encodeKey(x, 0, 0))).toBe(true)
+    }
+    expect(after.model.color.size).toBe(4)
+    expect(after.past.length).toBe(3)
+  })
+
+  it('locked lines replace occupied cells without growing the model', () => {
+    const s = useAppStore.getState()
+    expect(s.paintLineAtCoord([1, 0, 0], false)).toBe(true)
+    expect(s.paintLineAtCoord([2, 0, 0], false)).toBe(true)
+    useAppStore.getState().setPlaneLocked3D(true)
+    useAppStore.getState().setActivePaletteSlot(SLOT_B)
+    expect(useAppStore.getState().paintLineAtCoord([0, 0, 0], false)).toBe(true)
+    expect(useAppStore.getState().paintLineAtCoord([3, 0, 0], true)).toBe(true)
+
+    const after = useAppStore.getState()
+    expect(after.model.color.size).toBe(4)
+    for (const x of [0, 1, 2, 3]) {
+      expect(after.model.color.get(encodeKey(x, 0, 0))?.paletteSlot).toEqual(SLOT_B)
+    }
+    useAppStore.getState().setPlaneLocked3D(false)
+  })
+
+  it('a changed plane frame falls back to a single paint', () => {
+    const s = useAppStore.getState()
+    expect(s.paintLineAtCoord([0, 0, 0], false)).toBe(true)
+    s.setPlaneAxisOrientation('x', 1)
+
+    expect(useAppStore.getState().paintLineAtCoord([0, 0, 0], true)).toBe(true)
+    const after = useAppStore.getState()
+    expect(after.model.color.size).toBe(1)
+    expect(after.paintLineAnchor).toEqual({ coord: [0, 0, 0], axis: 'x', orientation: 1 })
+  })
+
+  it('an off-slice target falls back to a single paint', () => {
+    const s = useAppStore.getState()
+    expect(s.paintLineAtCoord([0, 0, 0], false)).toBe(true)
+    // z = 2 leaves the z/offset-0 slice — no in-plane line exists.
+    expect(s.paintLineAtCoord([0, 1, 2], true)).toBe(true)
+
+    const after = useAppStore.getState()
+    expect(after.model.color.size).toBe(2)
+    expect(after.model.color.has(encodeKey(0, 1, 2))).toBe(true)
+  })
+
+  it('same-cell shift-tap repaints once', () => {
+    const s = useAppStore.getState()
+    expect(s.paintLineAtCoord([0, 0, 0], false)).toBe(true)
+    expect(s.paintLineAtCoord([0, 0, 0], true)).toBe(true)
+
+    const after = useAppStore.getState()
+    expect(after.model.color.size).toBe(1)
+    expect(after.paintLineAnchor?.coord).toEqual([0, 0, 0])
+  })
+})

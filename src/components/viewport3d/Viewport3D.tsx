@@ -10,6 +10,7 @@ import type { InstancingManager } from '@/engine/instancing/InstancingManager'
 import { placedFloatCoords } from '@/engine/instancing/ghostBatches'
 import type { ClipboardData, FloatOrigin } from '@/store/types'
 import { gridCoordFromPixel, pixelFromGridCoord, planeFromFaceHit } from '@/engine/plane/constructionPlane'
+import { WAND_DOUBLE_TAP_MS } from '@/engine/tools/wandTool'
 import { axisIndex } from '@/engine/plane/planeGeometry'
 import { resolveDirectPaintTarget } from '@/store/ghostPlacement'
 import { voxelKindForCell } from '@/engine/tools/eyedropperTool'
@@ -122,9 +123,12 @@ function ToneMappingController({ exposure }: { exposure: number }) {
  * cell across the face, Zanpo-style; locked via the plane-lock toggle: the active slice under
  * the cursor, replacing whatever sits there — off-slice voxels are never even highlighted),
  * erase deletes the cell, eyedropper samples its color and voxel type, material recolors
- * the cell, wand selects connected color (whole touching component on rapid re-tap). A select
- * tap only reorients the construction plane like a plain model click — taps never select and
- * never lift; selection (and moves) need a real drag. Paint/erase/eyedropper are
+ * the cell, wand selects connected color (whole touching component on rapid re-tap). Select
+ * taps work like the 2D tool: a tap replaces the selection with the tapped voxel (reorienting
+ * first, like a plain model click), a rapid second tap flood-selects the plane slice instead,
+ * and shift variants union rather than replace (shift-taps never move the plane); taps on
+ * already-selected voxels keep everything; drags marquee or move. Explicit wheel/UI plane
+ * changes clear the selection instead of fighting it. Paint/erase/eyedropper are
  * tap-only (drags orbit, so sweeps can't spray voxels); material recolors in place and is safe to
  * drag, bracketed as one undo stroke with orbit suppressed until pointer-up; select and wand
  * capture left-drag on a selected voxel to lift and move it in the plane's UV axes (Alt: full
@@ -150,12 +154,12 @@ type BlockingTool = (typeof BLOCKING_TOOLS)[number]
 function editHint(tool: BlockingTool, planeLocked3D = false): string {
   if (tool === 'paint') {
     return planeLocked3D
-      ? 'Locked to the plane: click a voxel to replace it · R rotates the brush'
-      : 'Click a face to paint a voxel · R rotates the brush'
+      ? 'Locked to the plane: click to replace · Shift-click draws a line · R rotates the brush'
+      : 'Click a face to paint · Shift-click draws a line · R rotates the brush'
   }
   if (tool === 'erase') return 'Click a voxel to erase it'
   if (tool === 'material') return 'Click or drag to repaint · never adds voxels'
-  if (tool === 'select') return 'Drag to marquee-select · drag inside to move · click sets the plane'
+  if (tool === 'select') return 'Drag to marquee-select · click selects the voxel and sets the plane · double-click selects the slice region · Shift adds to the selection'
   if (tool === 'wand') return 'Click a component for its color · re-tap it quickly for the whole component · drag inside to move'
   return 'Click a voxel to pick its color and type'
 }
@@ -219,8 +223,9 @@ function VoxelInteractionHandler({ managerRef, controlsRef }: {
     let materialDrag: { lastKey: string | null } | null = null
     // Open select marquee (3D-only layout only): drag start cell on the active plane. Committed on
     // pointer-up — a plane-slice SelectionRegion in split, the full slice window (occupied or
-    // empty) as an exact set in 3D-only; cancelled on pointer-leave. A tap (no drag) only
-    // reorients the plane like a plain click — selection needs a real drag. Window selection
+    // empty) as an exact set in 3D-only; cancelled on pointer-leave. A tap (no drag) replaces
+    // the selection with the tapped voxel (reorienting first); taps on already-selected voxels
+    // keep everything. Window selection
     // is strictly planar (volumetric selection belongs to the wand). Orbit suppressed until
     // pointer-up, like the material drag. The pending selection is mirrored to the store
     // preview every move so the 3D selection box tracks the drag live (`selectPreview` window
@@ -235,14 +240,20 @@ function VoxelInteractionHandler({ managerRef, controlsRef }: {
     // float drag that follows the pointer in the plane's UV axes. Release drops it (baked),
     // exactly like the drop below — orbit suppressed throughout.
     let floatDrag: { startU: number; startV: number; originU: number; originV: number; cells3D: Set<CellKey> } | null = null
-    // Armed select grab (3D-only layout only): pointer went down on a selected voxel with no live
-    // float, lift still pending. A tap releases through the normal tap path (reorienting the
-    // plane like a plain click); movement past the threshold converts to `floatDrag` above.
-    let pendingSelectGrab: { startU: number; startV: number; alt: boolean } | null = null
+        // Armed select grab (3D-only layout only): pointer went down on a selected voxel with no live
+        // float, lift still pending. A tap releases as a no-op through the normal tap path (the
+        // selection owns the plane — only double-clicks act from there); movement past the
+        // threshold converts to `floatDrag` above.
+        let pendingSelectGrab: { startU: number; startV: number; alt: boolean } | null = null
     // Pending wand grab (3D-only layout only): pointer went down on a selected voxel with the wand.
     // Unlike select it must NOT lift yet — a tap here is a two-stage wand click, so the lift
     // waits until the pointer actually moves past the tap threshold, then converts to floatDrag.
     let pendingWandDrag: { startU: number; startV: number } | null = null
+    // Last select-tool tap (3D-only layout only) for double-click detection: a rapid second tap
+    // on the same voxel flood-selects the plane slice instead of re-landing the plane (see the
+    // tap commit below). Stale entries self-expire via the timing check; drags and canvas-leave
+    // clear it outright.
+    let lastSelectTap: { time: number; key: string } | null = null
 
     /** True when the pointer should dispatch the active tool onto voxel faces instead of
      * setting the construction plane (3D-only layout + a blocking tool). Split layout is
@@ -309,7 +320,8 @@ function VoxelInteractionHandler({ managerRef, controlsRef }: {
      * deletes the cell, eyedropper samples its color and voxel type,
      * material recolors the cell, select reorients the plane without touching the selection,
      * wand selects connected color (whole component on rapid re-tap; empty space clears the
-     * selection). Paint/erase/material bracket their own single-cell undo stroke; eyedropper,
+     * selection). Paint/erase bracket their own undo stroke (paint's gesture action covers both
+     * single taps and shift-lines); eyedropper,
      * select and wand mutate no model. Paint/erase/eyedropper/wand drags never apply (every
      * pointer crossing would spray voxels along the raycast), so movement always
      * orbits — material alone drags (see onPointerMove); select commits via its own drag.
@@ -318,7 +330,7 @@ function VoxelInteractionHandler({ managerRef, controlsRef }: {
      * the active construction plane — never the raycast face — so the write matches the brush
      * preview. The target itself resolves through the shared `resolveDirectPaintTarget`
      * helper, so tap and ghost preview always agree. */
-    function applyBlockingTap(clientX: number, clientY: number) {
+    function applyBlockingTap(clientX: number, clientY: number, shiftKey: boolean, wasSelectGrab = false) {
       const store = useAppStore.getState()
       const tool = activeToolRef.current
       // Locked paint never sees off-slice voxels (see applyPlaneLockFilter) — the tap falls
@@ -332,10 +344,26 @@ function VoxelInteractionHandler({ managerRef, controlsRef }: {
         store.applyWandAt(coord)
         return
       }
-      // Select: a tap only reorients the plane like a plain model click — taps never select
-      // (and never lift); selection needs a real drag.
+      // Select taps (3D-only layout only — the split viewport never reaches here with the
+      // select tool): a press that armed a grab started inside the selection, so a tap keeps
+      // everything (2D parity — the selection owns the plane); a press that hit nothing
+      // committable (parallel ray at press time) behaves like a plain Path-A tap instead.
+      // Double-clicks flood-select either way.
       if (tool === 'select') {
-        if (result) store.handleVoxelFaceClick(result.key, result.plane.axis, result.plane.orientation, result.plane.offset)
+        if (result) {
+          const now = Date.now()
+          if (lastSelectTap && now - lastSelectTap.time <= WAND_DOUBLE_TAP_MS && lastSelectTap.key === result.key) {
+            lastSelectTap = null
+            store.applySliceWandAt(decodeKey(result.key), shiftKey)
+            useAppStore.setState((s) => { s.objectModeTarget = null })
+          } else {
+            lastSelectTap = { time: now, key: result.key }
+            if (!wasSelectGrab) {
+              store.handleVoxelFaceClick(result.key, result.plane.axis, result.plane.orientation, result.plane.offset)
+              store.setSelectedCells(new Set([result.key]))
+            }
+          }
+        }
         return
       }
       if (result) {
@@ -360,7 +388,9 @@ function VoxelInteractionHandler({ managerRef, controlsRef }: {
         // Paint resolves through the shared helper (locked: replace on-slice — off-slice hits
         // never reach here, filtered above; unlocked: stack across the face) so the write
         // matches the ghost preview. A null target (occupied neighbor) paints nothing.
-        let target: Coord = cell
+        // Plain taps paint one cell; shift-taps extend the dominant-axis line from the anchor —
+        // every tap re-establishes the anchor, so lines chain. The gesture action brackets its
+        // own undo stroke either way.
         if (tool === 'paint') {
           const activePlane = planeRef.current
           const t = resolveDirectPaintTarget(
@@ -372,14 +402,13 @@ function VoxelInteractionHandler({ managerRef, controlsRef }: {
             store.planeLocked3D,
           )
           if (!t) return
-          target = t
+          store.paintLineAtCoord(t, shiftKey)
+          return
         }
+        const target: Coord = cell
         store.bakeFloatIfAny()
         store.beginStroke()
-        if (tool === 'paint') {
-          const activePlane = planeRef.current
-          store.paintCellAtCoord(target, activePlane.axis, activePlane.orientation)
-        } else if (tool === 'erase') store.eraseCellAtCoord(target)
+        if (tool === 'erase') store.eraseCellAtCoord(target)
         // Any other tool (e.g. select, whose gestures commit via selectDrag) never reaches here,
         // but must never erase — fail closed.
         store.commitStroke()
@@ -389,11 +418,8 @@ function VoxelInteractionHandler({ managerRef, controlsRef }: {
       if (tool !== 'paint') return
       const coord = resolveEmptyCell(clientX, clientY)
       if (!coord) return
-      const activePlane = planeRef.current
-      store.bakeFloatIfAny()
-      store.beginStroke()
-      store.paintCellAtCoord(coord, activePlane.axis, activePlane.orientation)
-      store.commitStroke()
+      // Empty-space paint taps join the line gesture too (shift extends from the anchor).
+      store.paintLineAtCoord(coord, shiftKey)
     }
 
     /** Ends an open material drag stroke and hands orbit control back. */
@@ -508,10 +534,12 @@ function VoxelInteractionHandler({ managerRef, controlsRef }: {
         selectDrag = { start }
         selectPreviewEnd = null
         // Seed the live preview so the box appears the moment the drag starts: the full
-        // slice window (occupied or empty), mirroring the commit below.
+        // slice window (occupied or empty), mirroring the commit below — unioned when shift
+        // is held, so the preview already shows the expanded box.
         {
           const st = useAppStore.getState()
-          st.setSelectedCellsPreview(new Set(windowSliceCells(planeRef.current, start, start, st.meta.gridExtent)))
+          const seed = new Set(windowSliceCells(planeRef.current, start, start, st.meta.gridExtent))
+          st.setSelectedCellsPreview(e.shiftKey ? new Set([...st.selectedCells, ...seed]) : seed)
         }
         if (controlsRef.current) controlsRef.current.enabled = false
         try {
@@ -665,7 +693,8 @@ function VoxelInteractionHandler({ managerRef, controlsRef }: {
         ) {
           selectPreviewEnd = end
           const st = useAppStore.getState()
-          st.setSelectedCellsPreview(new Set(windowSliceCells(planeRef.current, selectDrag.start, end, st.meta.gridExtent)))
+          const cells = windowSliceCells(planeRef.current, selectDrag.start, end, st.meta.gridExtent)
+          st.setSelectedCellsPreview(e.shiftKey ? new Set([...st.selectedCells, ...cells]) : new Set(cells))
         }
         return
       }
@@ -749,6 +778,7 @@ function VoxelInteractionHandler({ managerRef, controlsRef }: {
     const onPointerLeave = () => {
       lastCellKey = null
       lastFaceKey = null
+      lastSelectTap = null
       setHoverCell(null, null)
       setHoveredFace(null)
       setStatusMessage(null)
@@ -800,22 +830,24 @@ function VoxelInteractionHandler({ managerRef, controlsRef }: {
         pendingWandDrag = null
         if (controlsRef.current) controlsRef.current.enabled = true
       }
-      // Unmoved select grab: clear it and fall through — the tap below reorients the plane.
+      // Unmoved select grab: clear it and note the press started inside the selection (a tap
+      // there keeps everything — 2D parity — instead of reselecting; double-clicks still flood).
+      const wasSelectGrab = pendingSelectGrab !== null
       if (pendingSelectGrab) {
         pendingSelectGrab = null
         if (controlsRef.current) controlsRef.current.enabled = true
       }
       // Open marquee: commit the drag as the full slice window (occupied or empty) as an
-      // explicit set — never other depths. (Taps with a face hit return above having reoriented
-      // the plane.) Bakes any pending float first.
+      // explicit set — never other depths. (Taps select the voxel instead — see below.)
+      // Bakes any pending float first.
       if (selectDrag) {
         const drag = selectDrag
         selectDrag = null
         selectPreviewEnd = null
         if (controlsRef.current) controlsRef.current.enabled = true
-        // A select tap (no drag) reorients the construction plane exactly like a plain
-        // model click — so the tap always lands visibly instead of going dead on an
-        // already-placed plane.
+        // A select tap (no drag) replaces the selection with the tapped voxel (reorienting
+        // first, like a plain model click) — 2D parity, so the tap always lands visibly
+        // instead of going dead on an already-placed plane.
         const tapped = down !== null && Math.hypot(e.clientX - down.x, e.clientY - down.y) <= CLICK_DRAG_THRESHOLD_PX
         down = null
         const hit = resolveFaceHit(e.clientX, e.clientY)
@@ -824,15 +856,42 @@ function VoxelInteractionHandler({ managerRef, controlsRef }: {
         // The live preview made the box track the drag; the commit below takes over from here.
         st.setSelectedCellsPreview(null)
         if (!end) return
-        // A select tap (no drag) only reorients the plane like a plain click — selection
-        // needs a real drag, so no 1×1 is ever committed here.
+        // Select taps (selectDrag only ever opens in 3D-only with the select tool): 2D parity —
+        // a tap replaces the selection with the tapped voxel. Plain taps reorient first, like a
+        // plain model click (the reorient clears stale selections via the plane setters; the
+        // fresh single-voxel set lands after); shift-taps union and never move the plane; a rapid
+        // second tap flood-selects the plane slice instead.
         if (tapped && hit) {
+          const now = Date.now()
+          if (lastSelectTap && now - lastSelectTap.time <= WAND_DOUBLE_TAP_MS && lastSelectTap.key === hit.key) {
+            lastSelectTap = null
+            // Shift-double-click unions the flood region instead of replacing.
+            st.applySliceWandAt(decodeKey(hit.key), e.shiftKey)
+            // Kill the same-face-click-again memory (set by the first tap's reorient) so the
+            // next same-face tap re-lands instead of advancing the plane off the selection —
+            // repeat double-clicks then idempotently re-select it.
+            useAppStore.setState((s) => { s.objectModeTarget = null })
+            return
+          }
+          lastSelectTap = { time: now, key: hit.key }
+          if (e.shiftKey) {
+            st.setSelectedCells(new Set([...st.selectedCells, hit.key]))
+            return
+          }
           st.handleVoxelFaceClick(hit.key, hit.plane.axis, hit.plane.orientation, hit.plane.offset)
+          st.setSelectedCells(new Set([hit.key]))
           return
         }
+        // A real drag commits (not a tap): any pending double-click tap is void.
+        lastSelectTap = null
         const keys = windowSliceCells(planeRef.current, drag.start, end, st.meta.gridExtent)
-        if (keys.length > 0) st.setSelectedCells(new Set(keys))
-        else st.clearSelectedCells()
+        // Shift unions the window into the existing selection (expanding its box); otherwise the
+        // drag replaces. A shift-held empty window leaves the selection alone instead of clearing.
+        if (keys.length > 0) {
+          st.setSelectedCells(e.shiftKey ? new Set([...st.selectedCells, ...keys]) : new Set(keys))
+        } else if (!e.shiftKey) {
+          st.clearSelectedCells()
+        }
         return
       }
       if (!down) return
@@ -844,7 +903,7 @@ function VoxelInteractionHandler({ managerRef, controlsRef }: {
       // Only the left button taps (right/middle are orbit/dolly now).
       if (isBlocking()) {
         if (e.button !== 0) return
-        applyBlockingTap(e.clientX, e.clientY)
+        applyBlockingTap(e.clientX, e.clientY, e.shiftKey, wasSelectGrab)
         return
       }
 
@@ -902,6 +961,15 @@ function VoxelInteractionHandler({ managerRef, controlsRef }: {
 
       const result = resolveFaceHit(e.clientX, e.clientY)
       if (!result) return
+      // A committed selection owns the plane: mouse clicks never move it (explicit wheel/UI
+      // plane changes clear the selection instead — see the plane setters).
+      {
+        const st = useAppStore.getState()
+        if (st.selectedCells.size > 0 || st.selection) {
+          useAppStore.setState((s) => { s.objectModeTarget = null })
+          return
+        }
+      }
       handleVoxelFaceClick(result.key, result.plane.axis, result.plane.orientation, result.plane.offset)
     }
 

@@ -160,6 +160,7 @@ export const createProjectSlice: Slice = (set, get) => ({
       state.textureFloat = null
       state.textureFloatOrigin = null
       state.objectModeTarget = null
+      state.paintLineAnchor = null
       const half = effectiveExtent(extent) / 2
       state.plane.offset = clampPlaneOffset(state.plane.offset, extent)
       for (const key of state.animSettings.keys()) {
@@ -268,6 +269,7 @@ export const createProjectSlice: Slice = (set, get) => ({
       state.textureFloat = null
       state.textureFloatOrigin = null
       state.objectModeTarget = null
+      state.paintLineAnchor = null
       state.hoverCell = null
       state.chamferHoverValid = null
       state.hoveredFace = null
@@ -348,6 +350,7 @@ export const createProjectSlice: Slice = (set, get) => ({
       state.hoverCell = null
       state.chamferHoverValid = null
       state.hoveredFace = null
+      state.paintLineAnchor = null
     })
     get().resetPlaneToGround()
   },

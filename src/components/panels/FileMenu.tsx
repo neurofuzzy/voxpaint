@@ -46,6 +46,7 @@ export function FileMenu() {
         s.hoverCell = null
         s.chamferHoverValid = null
         s.hoveredFace = null
+        s.paintLineAnchor = null
         s.textureSelection = null
         s.textureFloat = null
         s.textureFloatOrigin = null

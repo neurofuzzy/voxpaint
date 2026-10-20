@@ -81,3 +81,42 @@ describe('resetPlaneToGround', () => {
     expect(useAppStore.getState().plane).toEqual({ axis: 'y', orientation: 1, offset: -4 })
   })
 })
+
+/** An explicit plane change dismisses any selection; mouse-click plane moves are suppressed
+ * while one is active (see Viewport3D), so reaching a setter means a deliberate change. */
+describe('plane changes clear the selection', () => {
+  beforeEach(() => {
+    useAppStore.getState().newProject('Test', 16)
+    useAppStore.getState().setPlaneAxisOrientation('z', 1)
+    useAppStore.getState().setPlaneOffset(0)
+  })
+
+  it('setPlaneOffset clears the 2D selection and the 3D set', () => {
+    const s = useAppStore.getState()
+    s.beginStroke()
+    expect(s.paintCell(4, 4)).toBe(true)
+    s.commitStroke()
+    s.setSelection({ originU: 4, originV: 4, width: 1, height: 1, mask: new Uint8Array([1]) })
+    s.setSelectedCells(new Set(['0,0,0']))
+
+    useAppStore.getState().setPlaneOffset(1)
+
+    const after = useAppStore.getState()
+    expect(after.plane.offset).toBe(1)
+    expect(after.selection).toBeNull()
+    expect(after.selectedCells.size).toBe(0)
+  })
+
+  it('setPlaneAxisOrientation clears the 2D selection and the 3D set', () => {
+    const s = useAppStore.getState()
+    s.setSelection({ originU: 0, originV: 0, width: 1, height: 1, mask: new Uint8Array([1]) })
+    s.setSelectedCells(new Set(['0,0,0']))
+
+    useAppStore.getState().setPlaneAxisOrientation('x', 1)
+
+    const after = useAppStore.getState()
+    expect(after.plane.axis).toBe('x')
+    expect(after.selection).toBeNull()
+    expect(after.selectedCells.size).toBe(0)
+  })
+})

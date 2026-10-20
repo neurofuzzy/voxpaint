@@ -1,5 +1,6 @@
 import type { StateCreator } from 'zustand'
 import { clampPlaneOffset, effectiveExtent } from '@/engine/grid/GridStore'
+import type { CellKey } from '@/engine/grid/types'
 import { savePlanePref } from '@/engine/persistence/uiPrefs'
 import type { AppState, PlaneSlice } from './types'
 
@@ -18,6 +19,9 @@ export const createPlaneSlice: Slice = (set, get) => ({
 
   // A pending float's cells are offsets interpreted against the plane active at lift/bake time —
   // switching planes out from under it would bake it onto the wrong 3D cells, so bake first.
+  // An explicit plane change also dismisses any selection (2D or 3D): the selection was made
+  // against the old slice, and mouse-click plane moves are suppressed while one is active (see
+  // Viewport3D) — so reaching here means a deliberate wheel/UI/keyboard change.
   setPlaneAxisOrientation: (axis, orientation) => {
     get().bakeFloatIfAny()
     set((state) => {
@@ -26,6 +30,8 @@ export const createPlaneSlice: Slice = (set, get) => ({
       // Any plane change not driven by handleVoxelFaceClick's own logic invalidates the
       // same-voxel-click-again target (the highlighted face no longer corresponds to it).
       state.objectModeTarget = null
+      state.selection = null
+      state.selectedCells = new Set<CellKey>()
     })
     // The pose persists across refreshes (project switches reset it instead — see
     // resetPlaneToGround), so the current slice survives a page reload.
@@ -40,6 +46,8 @@ export const createPlaneSlice: Slice = (set, get) => ({
     set((state) => {
       state.plane.offset = clamped
       state.objectModeTarget = null
+      state.selection = null
+      state.selectedCells = new Set<CellKey>()
     })
     savePlanePref(get().plane)
   },

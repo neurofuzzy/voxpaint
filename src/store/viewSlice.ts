@@ -62,6 +62,8 @@ export const createViewSlice: Slice = (set, get) => ({
     set((state) => {
       state.layoutMode = effective
       if (inModel) state.modelLayout = effective
+      // A layout switch ends any open 3D line gesture — the anchor belongs to the old context.
+      state.paintLineAnchor = null
     })
   },
   setWireframe: (v) => set((state) => { state.wireframe = v }),

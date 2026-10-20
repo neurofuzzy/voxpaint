@@ -301,3 +301,96 @@ describe('3D selection store + exact-set actions', () => {
     expect(useAppStore.getState().faceCells3D()).toEqual({ faced: 0, skipped: 0 })
   })
 })
+
+/** Plane-constrained wand (`applySliceWandAt`, select-tool double-click): the color-connected
+ * region on the active slice only — never other depths. */
+describe('applySliceWandAt', () => {
+  beforeEach(() => {
+    const s = useAppStore.getState()
+    s.newProject('Test', 16)
+    s.setLayoutMode('3d-only')
+    s.setPlaneAxisOrientation('z', 1)
+    s.setPlaneOffset(0)
+  })
+
+  it('selects the color-connected slice region, excluding other depths and colors', () => {
+    paintAt([0, 0, 0])
+    paintAt([1, 0, 0])
+    paintAt([2, 0, 0], SLOT_B) // same slice, touching, other color
+    paintAt([0, 0, 1]) // same color, stacked above the plane (z = 1)
+    paintAt([5, 0, 0]) // same color, disconnected on the plane
+    useAppStore.getState().applySliceWandAt([0, 0, 0])
+
+    expect(useAppStore.getState().selectedCells).toEqual(
+      new Set([encodeKey(0, 0, 0), encodeKey(1, 0, 0)]),
+    )
+  })
+
+  it('selects an edge-touching plate whole (no leak guard on occupied seeds)', () => {
+    for (let x = -8; x < 8; x++) paintAt([x, 0, 0])
+    useAppStore.getState().applySliceWandAt([0, 0, 0])
+    expect(useAppStore.getState().selectedCells.size).toBe(16)
+  })
+
+  it('empty seeds leave the selection alone', () => {
+    paintAt([0, 0, 0])
+    useAppStore.getState().setSelectedCells(new Set([encodeKey(0, 0, 0)]))
+    useAppStore.getState().applySliceWandAt([5, 5, 0])
+    expect(useAppStore.getState().selectedCells).toEqual(new Set([encodeKey(0, 0, 0)]))
+  })
+
+  it('writes the 2D footprint region in split layout', () => {
+    paintAt([0, 0, 0])
+    paintAt([1, 0, 0])
+    useAppStore.getState().setLayoutMode('split')
+    useAppStore.getState().applySliceWandAt([0, 0, 0])
+    expect(useAppStore.getState().selection).not.toBeNull()
+    expect(useAppStore.getState().selectedCells.size).toBe(0)
+  })
+
+  it('union merges the flood into the existing selection instead of replacing', () => {    paintAt([0, 0, 0])
+    paintAt([1, 0, 0])
+    paintAt([5, 0, 0])
+    useAppStore.getState().setSelectedCells(new Set([encodeKey(5, 0, 0)]))
+
+    useAppStore.getState().applySliceWandAt([0, 0, 0], true)
+    expect(useAppStore.getState().selectedCells).toEqual(
+      new Set([encodeKey(5, 0, 0), encodeKey(0, 0, 0), encodeKey(1, 0, 0)]),
+    )
+
+    // Without the flag it still replaces.
+    useAppStore.getState().applySliceWandAt([0, 0, 0])
+    expect(useAppStore.getState().selectedCells).toEqual(
+      new Set([encodeKey(0, 0, 0), encodeKey(1, 0, 0)]),
+    )
+  })
+
+  it('floods the seed slice without moving the committed plane', () => {
+    // Plane stays z/offset-0 while the seed sits two layers up: shift gestures never reorient.
+    paintAt([0, 0, 2])
+    paintAt([1, 0, 2])
+    paintAt([0, 0, 0])
+    useAppStore.getState().applySliceWandAt([0, 0, 2])
+
+    const after = useAppStore.getState()
+    expect(after.selectedCells).toEqual(new Set([encodeKey(0, 0, 2), encodeKey(1, 0, 2)]))
+    expect(after.plane).toEqual({ axis: 'z', orientation: 1, offset: 0 })
+  })
+
+  it('select-tap order (reorient then select) survives the setter clear', () => {
+    paintAt([0, 0, 0])
+    paintAt([5, 0, 0])
+    useAppStore.getState().setSelectedCells(new Set([encodeKey(5, 0, 0)]))
+
+    // What a 3D select tap does: reorient first (wiping the stale selection via the plane
+    // setters — reversing this order would lose the fresh set)...
+    useAppStore.getState().handleVoxelFaceClick(encodeKey(0, 0, 0), 'z', 1, 0)
+    expect(useAppStore.getState().selectedCells.size).toBe(0)
+    // ...then the fresh single-voxel set lands.
+    useAppStore.getState().setSelectedCells(new Set([encodeKey(0, 0, 0)]))
+
+    const after = useAppStore.getState()
+    expect(after.plane).toEqual({ axis: 'z', orientation: 1, offset: 0 })
+    expect(after.selectedCells).toEqual(new Set([encodeKey(0, 0, 0)]))
+  })
+})
