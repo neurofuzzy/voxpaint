@@ -2,6 +2,7 @@ import type { ReactNode } from 'react'
 import { ArrowDownUp, ArrowLeftRight, ArrowRightLeft, ArrowUpDown, RedoDot, UndoDot } from 'lucide-react'
 import { useAppStore } from '@/store/useAppStore'
 import type { AnimationType, AnimationSpeed } from '@/engine/animation/types'
+import type { PaletteOrientation } from './FloatingPalette'
 import { PENDULUM_AMOUNT_MAX, PENDULUM_AMOUNT_MIN, SLIDE_AMOUNT_MAX, SLIDE_AMOUNT_MIN, encodeSliceKey, isPendulumMode, isSlideMode } from '@/engine/animation/animationLayers'
 
 const ANIM_TYPES: Array<{ id: AnimationType; label: string }> = [
@@ -18,7 +19,7 @@ const ANIM_TYPES: Array<{ id: AnimationType; label: string }> = [
 
 const SPEEDS: AnimationSpeed[] = [1, 2, 3]
 
-export function AnimationPalette() {
+export function AnimationPalette({ orientation = 'horizontal' }: { orientation?: PaletteOrientation } = {}) {
   const plane = useAppStore((s) => s.plane)
   const animSettings = useAppStore((s) => s.animSettings)
   const handleSelectType = useAppStore((s) => s.setAnimationTypeForCurrentSlice)
@@ -36,6 +37,7 @@ export function AnimationPalette() {
 
   const showSlideSlider = isSlideMode(activeType)
   const showSwingSlider = isPendulumMode(activeType)
+  const vertical = orientation === 'vertical'
 
   return (
     <div
@@ -43,7 +45,7 @@ export function AnimationPalette() {
       onPointerDown={(e) => e.stopPropagation()}
       onPointerMove={(e) => e.stopPropagation()}
     >
-      <div className="flex items-center gap-1.5">
+      <div className={vertical ? 'flex w-full flex-col items-stretch gap-1' : 'flex items-center gap-1.5'}>
         {ANIM_TYPES.map(({ id, label }) => {
           const active = activeType === id
           let content: ReactNode
@@ -65,7 +67,8 @@ export function AnimationPalette() {
               title={label}
               onClick={() => handleSelectType(id)}
               className={
-                'flex h-7 items-center justify-center rounded-full px-2.5 text-sm font-medium transition ' +
+                'flex h-7 items-center justify-center rounded-full font-medium transition ' +
+                (vertical ? 'w-full px-1 text-[10px] ' : 'px-2.5 text-sm ') +
                 (active
                   ? 'bg-violet-500/60 text-white shadow'
                   : 'text-neutral-400 hover:bg-neutral-800 hover:text-neutral-200')
@@ -77,7 +80,7 @@ export function AnimationPalette() {
         })}
       </div>
 
-      <div className="flex items-center gap-2">
+      <div className={vertical ? 'flex w-full flex-col items-stretch gap-1' : 'flex items-center gap-2'}>
         <span className="text-[10px] font-medium text-neutral-500">speed</span>
         <div className="flex rounded-md border border-neutral-700 overflow-hidden">
           {SPEEDS.map((s) => {
@@ -87,7 +90,7 @@ export function AnimationPalette() {
                 key={s}
                 onClick={() => handleSelectSpeed(s)}
                 className={
-                  'px-2 py-0.5 text-xs font-medium transition ' +
+                  'flex-1 px-2 py-0.5 text-xs font-medium transition ' +
                   (active
                     ? 'bg-violet-500/60 text-white'
                     : 'text-neutral-400 hover:bg-neutral-800 hover:text-neutral-200')
@@ -108,7 +111,7 @@ export function AnimationPalette() {
               max={SLIDE_AMOUNT_MAX}
               value={activeSlideAmount}
               onChange={(e) => handleSlideAmount(Number(e.target.value))}
-              className="h-4 w-16 accent-violet-500"
+              className={vertical ? 'h-4 w-full accent-violet-500' : 'h-4 w-16 accent-violet-500'}
             />
             <span className="w-4 text-center text-[10px] tabular-nums text-neutral-400">{activeSlideAmount}</span>
           </>
@@ -122,7 +125,7 @@ export function AnimationPalette() {
               max={PENDULUM_AMOUNT_MAX}
               value={activeSwingAmount}
               onChange={(e) => handleSwingAmount(Number(e.target.value))}
-              className="h-4 w-16 accent-violet-500"
+              className={vertical ? 'h-4 w-full accent-violet-500' : 'h-4 w-16 accent-violet-500'}
             />
             <span className="w-6 text-center text-[10px] tabular-nums text-neutral-400">{activeSwingAmount}°</span>
           </>

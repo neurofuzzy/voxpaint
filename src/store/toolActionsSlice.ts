@@ -1,12 +1,15 @@
 import type { StateCreator } from 'zustand'
-import { encodeKey, expandBounds, withinWorkingBounds } from '@/engine/grid/GridStore'
-import { gridCoordFromPixel } from '@/engine/plane/constructionPlane'
+import { encodeKey, expandBounds } from '@/engine/grid/GridStore'
+import type { CellKey } from '@/engine/grid/types'
+import { gridCoordFromPixel, pixelFromGridCoord } from '@/engine/plane/constructionPlane'
 import { rebaseChamferCell } from '@/engine/chamfer/faceBasis'
-import { fillLeaksToEdges, floodFillRegion, floodFillRegion3D } from '@/engine/tools/floodFill'
-import { applyClipboardAt, clearRegion, copyRegionToClipboard, transformClipboardToPlane } from '@/engine/tools/clipboard'
+import { fillLeaksToEdges, floodFillOccupied3D, floodFillRegion, floodFillRegion3D } from '@/engine/tools/floodFill'
+import { applyClipboardAt, clipboardDepthBase, clearRegion, copyRegionToClipboard, transformClipboardToPlane } from '@/engine/tools/clipboard'
+import { copyCellsToClipboard, rotateCellsInPlane, selectionMatchesClipboard, snapshotCells } from '@/engine/tools/cellSetOps'
+import { placedFloatCoords } from '@/engine/instancing/ghostBatches'
 import { mirrorClipboard, rotateClipboard90 } from '@/engine/tools/transform'
 import { forEachSelectedCell, isCellSelected, mirrorRegion, rotateRegion90 } from '@/engine/tools/selectionMask'
-import type { AppState, ToolActionsSlice } from './types'
+import type { AppState, SelectionTransformKind, ToolActionsSlice } from './types'
 
 type Slice = StateCreator<AppState, [['zustand/immer', never]], [], ToolActionsSlice>
 
@@ -74,42 +77,76 @@ export const createToolActionsSlice: Slice = (set, get) => ({
     get().commitStroke()
   },
 
-  cloneStampCell: (srcU, srcV, destU, destV) => {
+  floodFillCellsAt: (coord, alt) => {
     get().bakeFloatIfAny()
-    const { model, plane, meta } = get()
-    const destCoord = gridCoordFromPixel(plane, destU, destV)
-    if (!withinWorkingBounds(destCoord, meta.gridExtent)) return
-    const srcKey = encodeKey(...gridCoordFromPixel(plane, srcU, srcV))
-    const srcColor = model.color.get(srcKey)
-    const srcChamfer = model.chamfer.get(srcKey)
-
-    set((state) => {
-      const destKey = encodeKey(...destCoord)
-      if (!srcColor) {
-        state.model.color.delete(destKey)
-        state.model.chamfer.delete(destKey)
+    const { model, activePaletteSlot, selectedCells, meta } = get()
+    // Voxel tap: material-only volume fill — recolors, never touches geometry (chamfer) and
+    // never moves the plane (the 3D tap path returns before plane-setting). Plain floods the
+    // color-connected volume; Alt takes the whole touching component regardless of color,
+    // mirroring the wand's two stages.
+    if (model.color.has(encodeKey(...coord))) {
+      let keys = alt
+        ? floodFillOccupied3D(model, coord, meta.gridExtent)
+        : floodFillRegion3D(model, coord, meta.gridExtent)
+      if (selectedCells.size > 0) {
+        keys = keys.filter((key) => selectedCells.has(key))
+        if (keys.length === 0) {
+          get().flashSelectionBlocked()
+          return
+        }
+      }
+      if (keys.length === 0) return
+      get().beginStroke()
+      set((state) => {
+        for (const key of keys) {
+          state.model.color.set(key, { paletteSlot: activePaletteSlot })
+        }
         state.meta.modifiedAt = new Date().toISOString()
         state.dirty = true
+      })
+      get().commitStroke()
+      return
+    }
+    // Empty-space tap: Alt does nothing; otherwise the planar slice fill at the plane UV
+    // (leak-guarded), same contract as the 2D `floodFill`.
+    if (alt) return
+    const { plane } = get()
+    // The 3D selection is planar (window select never leaves the slice), so the set reads as
+    // a UV mask on the active plane for the slice fill below.
+    const inSet = (cu: number, cv: number) => selectedCells.has(encodeKey(...gridCoordFromPixel(plane, cu, cv)))
+    const { u, v } = pixelFromGridCoord(plane, coord)
+    // Same contract as the 2D `floodFill`, masked by the 3D set: a tap inside the window
+    // treats the window itself as the bound (no leak guard needed); otherwise the leak
+    // guard applies and the result clips to the window.
+    const inSelection = selectedCells.size > 0 && inSet(u, v)
+    let cells = inSelection
+      ? floodFillRegion(model, plane, u, v, meta.gridExtent, inSet)
+      : floodFillRegion(model, plane, u, v, meta.gridExtent)
+    if (!inSelection) {
+      if (fillLeaksToEdges(cells, meta.gridExtent)) {
+        if (selectedCells.size > 0) get().flashSelectionBlocked()
         return
       }
-
-      state.model.color.set(destKey, { paletteSlot: srcColor.paletteSlot })
-      // Clone/stamp reproduces the source voxel — its chamfer shape is copied verbatim, never
-      // reclassified against the destination's neighbors (a chamfer only (re)resolves when the user
-      // edits that specific voxel).
-      if (srcChamfer) {
-        state.model.chamfer.set(destKey, {
-          planeAxis: srcChamfer.planeAxis,
-          planeOrientation: srcChamfer.planeOrientation,
-          resolvedTo: srcChamfer.resolvedTo ? { ...srcChamfer.resolvedTo } : null,
-        })
-      } else {
-        state.model.chamfer.delete(destKey)
+      if (selectedCells.size > 0) {
+        cells = cells.filter(([cu, cv]) => inSet(cu, cv))
+        if (cells.length === 0) {
+          get().flashSelectionBlocked()
+          return
+        }
       }
-      state.model.bounds = expandBounds(state.model.bounds, destCoord)
+    }
+    if (cells.length === 0) return
+    get().beginStroke()
+    set((state) => {
+      for (const [cu, cv] of cells) {
+        const c = gridCoordFromPixel(state.plane, cu, cv)
+        state.model.color.set(encodeKey(...c), { paletteSlot: activePaletteSlot })
+        state.model.bounds = expandBounds(state.model.bounds, c)
+      }
       state.meta.modifiedAt = new Date().toISOString()
       state.dirty = true
     })
+    get().commitStroke()
   },
 
   copySelection: () => {
@@ -221,6 +258,15 @@ export const createToolActionsSlice: Slice = (set, get) => ({
     })
   },
 
+  moveFloatCellsTo: (originU, originV) => {
+    // 3D exact-set moves: reposition the pending float without touching the 2D selection
+    // (the 3D set tracks position separately — see the drop handler in Viewport3D.tsx).
+    if (!get().floatContent) return
+    set((state) => {
+      state.floatOrigin = { originU, originV }
+    })
+  },
+
   transformFloat: (kind) => {
     get().liftSelectionToFloat() // no-op if already floating
     const { floatContent, selection } = get()
@@ -249,5 +295,160 @@ export const createToolActionsSlice: Slice = (set, get) => ({
       state.floatContent = null
       state.floatOrigin = null
     })
+  },
+
+  liftCellsToFloat: (cells) => {
+    get().bakeFloatIfAny()
+    const { model, plane, floatContent } = get()
+    if (cells.size === 0 || floatContent) return
+    const live = [...cells].filter((key) => model.color.has(key))
+    if (live.length === 0) return // every key stale — nothing to lift, no stroke
+    const content = copyCellsToClipboard(model, live, plane)
+    get().beginStroke()
+    set((state) => {
+      for (const key of live) {
+        state.model.color.delete(key)
+        state.model.chamfer.delete(key)
+      }
+      state.floatContent = content
+      state.floatOrigin = { originU: content.originU ?? 0, originV: content.originV ?? 0 }
+      state.meta.modifiedAt = new Date().toISOString()
+      state.dirty = true
+    })
+    // Deliberately no commitStroke() — this stroke stays open until bakeFloatIfAny().
+  },
+
+  copyCells3D: () => {
+    get().bakeFloatIfAny()
+    const { model, plane, selectedCells } = get()
+    if (selectedCells.size === 0) return
+    const clipboard = copyCellsToClipboard(model, selectedCells, plane)
+    if (clipboard.cells.length === 0) return
+    set((state) => {
+      state.clipboard = clipboard
+    })
+  },
+
+  cutCells3D: () => {
+    if (get().selectedCells.size === 0) return
+    get().copyCells3D()
+    get().deleteCells3D()
+  },
+
+  pasteCells3D: () => {
+    get().bakeFloatIfAny()
+    const { clipboard, plane, meta, model, selectedCells } = get()
+    if (!clipboard || clipboard.cells.length === 0) return
+    // Same rebase as the 2D paste path so cross-plane pastes land on screen correctly.
+    const transformed = transformClipboardToPlane(clipboard, plane)
+    const originU = transformed.originU ?? 0
+    const originV = transformed.originV ?? 0
+
+    // Targeted paste: a selection holding no live voxels whose frame matches the clipboard's
+    // dimensions is a paste destination, not something to preserve — stamp into it directly
+    // (one undo step; an empty frame has nothing to stomp) and keep the selection.
+    const hasLive = [...selectedCells].some((key) => model.color.has(key))
+    const match = !hasLive ? selectionMatchesClipboard(selectedCells, transformed, plane) : null
+    if (match) {
+      // Same depth base `applyClipboardAt` will land on, so the min-dw shift below is exact.
+      const base = clipboardDepthBase(plane, transformed)
+      // Re-anchor the depth profile onto the selection frame's min depth: applyClipboardAt
+      // lands `base + dw`, so shift every cell so its min-dw sits on the frame.
+      const shifted = {
+        ...transformed,
+        cells: transformed.cells.map((cell) => ({ ...cell, dw: cell.dw - match.minDw + match.minW - base })),
+      }
+      get().beginStroke()
+      set((state) => {
+        applyClipboardAt(state.model, state.plane, shifted, match.originU, match.originV, meta.gridExtent)
+        state.meta.modifiedAt = new Date().toISOString()
+        state.dirty = true
+      })
+      get().commitStroke()
+      return
+    }
+
+    // Floating paste: pull the content out as a pending float — nothing is written yet, so
+    // copy+paste+drag duplicates instead of stomping the source — and select its footprint.
+    // The 3D view ghosts the float and select/wand drags inside its footprint move it; the
+    // drop (or any bake trigger) stamps it. Opens an undo stroke like every other lift/paste.
+    const footprint = placedFloatCoords(transformed, { originU, originV }, plane, meta.gridExtent)
+    get().beginStroke()
+    set((state) => {
+      state.floatContent = transformed
+      state.floatOrigin = { originU, originV }
+      state.selectedCells = new Set(footprint.map((c) => encodeKey(...c)))
+    })
+    // Deliberately no commitStroke() — this stroke stays open until bakeFloatIfAny().
+  },
+
+  deleteCells3D: () => {
+    get().bakeFloatIfAny()
+    const { model, selectedCells } = get()
+    const live = [...selectedCells].filter((key) => model.color.has(key))
+    if (live.length === 0) return
+    get().beginStroke()
+    set((state) => {
+      for (const key of live) {
+        state.model.color.delete(key)
+        state.model.chamfer.delete(key)
+      }
+      state.meta.modifiedAt = new Date().toISOString()
+      state.dirty = true
+    })
+    get().commitStroke()
+  },
+
+  rotateCells3D: (kind: SelectionTransformKind) => {
+    get().bakeFloatIfAny()
+    const { model, plane, meta, selectedCells } = get()
+    const entries = snapshotCells(model, selectedCells)
+    if (entries.length === 0) return
+    const moved = rotateCellsInPlane(entries, plane, kind, meta.gridExtent)
+    get().beginStroke()
+    const placed: CellKey[] = []
+    set((state) => {
+      for (const key of selectedCells) {
+        state.model.color.delete(key)
+        state.model.chamfer.delete(key)
+      }
+      for (const e of moved) {
+        const key = encodeKey(...e.coord)
+        state.model.color.set(key, { paletteSlot: e.paletteSlot })
+        state.model.bounds = expandBounds(state.model.bounds, e.coord)
+        if (e.chamfer) state.model.chamfer.set(key, e.chamfer)
+        else state.model.chamfer.delete(key)
+        placed.push(key)
+      }
+      state.selectedCells = new Set(placed)
+      state.meta.modifiedAt = new Date().toISOString()
+      state.dirty = true
+    })
+    get().commitStroke()
+  },
+
+  faceCells3D: () => {
+    get().bakeFloatIfAny()
+    const { selectedCells } = get()
+    if (selectedCells.size === 0) return { faced: 0, skipped: 0 }
+    let faced = 0
+    let skipped = 0
+    get().beginStroke()
+    set((state) => {
+      // Same per-cell rule as faceSelection (see its docblock); the set spans depths, and each
+      // cell is judged on its own basis — plain cubes need no facing and are skipped silently.
+      for (const key of selectedCells) {
+        const cell = state.model.chamfer.get(key)
+        if (!cell) continue
+        if (rebaseChamferCell(cell, state.plane.axis, state.plane.orientation)) faced++
+        else skipped++
+      }
+      if (faced > 0) {
+        state.meta.modifiedAt = new Date().toISOString()
+        state.dirty = true
+      }
+    })
+    get().commitStroke()
+    return { faced, skipped }
   },
 })

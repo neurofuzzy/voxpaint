@@ -4,6 +4,7 @@ import type { Coord } from '@/engine/grid/types'
 import { gridCoordFromPixel, pixelFromGridCoord } from '@/engine/plane/constructionPlane'
 import { paintTool } from '@/engine/tools/paintTool'
 import type { ToolContext, ToolDragState } from '@/engine/tools/types'
+import { rectRegion } from '@/engine/tools/selectionMask'
 import { useAppStore } from './useAppStore'
 
 const PLANE = { axis: 'z' as const, orientation: 1 as const, offset: 0 }
@@ -17,6 +18,8 @@ describe('paintCell wedge handling', () => {
   beforeEach(() => {
     useAppStore.getState().newProject('Test', 16)
     useAppStore.getState().setActiveVoxelKind('wedge')
+    useAppStore.getState().setPlaneAxisOrientation('z', 1)
+    useAppStore.getState().setPlaneOffset(0)
   })
 
   it('paints a lone wedge on empty ground at rotation 0 instead of no-op', () => {
@@ -152,14 +155,82 @@ describe('bevel drag correction on release', () => {
     expect(useAppStore.getState().model.chamfer.get(keyFor(4, 5))!.resolvedTo).toBeNull()
     expect(useAppStore.getState().model.chamfer.get(keyFor(6, 5))!.resolvedTo).toBeNull()
   })
+
+  it('release correction re-applies the brush rotation instead of un-rotating the ramp', () => {
+    // Same drag as the first test, but with the R-rotated brush: mid-drag C resolves convex
+    // with the offset (paint time already applied it), and the release pass must keep it.
+    useAppStore.getState().setLayoutMode('split')
+    useAppStore.getState().setBrushRotation(2)
+    const ctx = storeCtx()
+    paintTool.onDown!(ctx, evt(4, 5))
+    paintTool.onMove!(ctx, evt(5, 4))
+    paintTool.onMove!(ctx, evt(5, 5))
+    expect(useAppStore.getState().model.chamfer.get(keyFor(5, 5))!.resolvedTo).toEqual({
+      shapeKind: 'convex',
+      rotation: 3, // autotile 1 + brush 2
+    })
+    paintTool.onMove!(ctx, evt(6, 5))
+    paintTool.onUp!(ctx, evt(6, 5))
+
+    // Autotile verdict is ramp rotation 1 (open S); the brush offset survives correction.
+    expect(useAppStore.getState().model.chamfer.get(keyFor(5, 5))!.resolvedTo).toEqual({
+      shapeKind: 'ramp',
+      rotation: 3,
+    })
+    useAppStore.getState().setBrushRotation(0)
+  })
+
+  it('wedge upgrade keeps the brush offset through the in-stroke retry and the release pass', () => {
+    // Target painted first (unresolved fallback), neighbors land later in the same stroke:
+    // both the in-stroke retry loop and correctChamferStroke must add the brush offset.
+    const runWithBrush = (brush: 0 | 2) => {
+      useAppStore.getState().newProject('Test', 16)
+      const s = useAppStore.getState()
+      s.setLayoutMode('split')
+      s.setActiveVoxelKind('wedge')
+      s.setPlaneAxisOrientation('z', 1)
+      s.setPlaneOffset(0)
+      s.setBrushRotation(brush)
+      s.beginStroke()
+      s.paintCell(5, 5) // lone wedge: fallback rotation (0 + brush), pending upgrade
+      expect(useAppStore.getState().model.chamfer.get(keyFor(5, 5))!.resolvedTo).toEqual({
+        shapeKind: 'wedge',
+        rotation: brush,
+      })
+      // Neighbors painted as wedges: each wedge paint runs the in-stroke retry loop over all
+      // pending cells (cube paints would not — the loop lives in the wedge branch).
+      s.paintCell(4, 5) // west neighbor — corner still incomplete
+      expect(useAppStore.getState().model.chamfer.get(keyFor(5, 5))!.resolvedTo).toEqual({
+        shapeKind: 'wedge',
+        rotation: brush,
+      })
+      s.paintCell(5, 4) // north neighbor — completes a true W+N corner
+      const mid = useAppStore.getState().model.chamfer.get(keyFor(5, 5))!.resolvedTo
+      s.correctChamferStroke()
+      s.commitStroke()
+      useAppStore.getState().setBrushRotation(0)
+      return { mid, final: useAppStore.getState().model.chamfer.get(keyFor(5, 5))!.resolvedTo }
+    }
+    const plain = runWithBrush(0)
+    expect(plain.mid!.shapeKind).toBe('wedge')
+    const base = plain.mid!.rotation
+    const rotated = runWithBrush(2)
+    const expected = { shapeKind: 'wedge', rotation: ((base + 2) % 4) as 0 | 1 | 2 | 3 }
+    // The in-stroke retry already upgraded with the offset, before the release pass ran.
+    expect(rotated.mid).toEqual(expected)
+    expect(rotated.final).toEqual(expected)
+  })
 })
 
-/** Direct-3D blocking (`paintCellAtCoord`/`eraseCellAtCoord`, Edit mode): coordinate-level writes
- * that bake the clicked face's axis/orientation as chamfer context instead of the active plane. */
+/** Direct-3D taps (`paintCellAtCoord`/`eraseCellAtCoord`, 3D-only layout): coordinate-level
+ * writes that bake the clicked face's axis/orientation as chamfer context instead of the
+ * active plane. */
 describe('direct 3D blocking', () => {
   beforeEach(() => {
     useAppStore.getState().newProject('Test', 16)
     useAppStore.getState().setActiveVoxelKind('cube')
+    useAppStore.getState().setPlaneAxisOrientation('z', 1)
+    useAppStore.getState().setPlaneOffset(0)
   })
 
   it('paints with the face plane as chamfer context, leaving the active plane untouched', () => {
@@ -229,12 +300,6 @@ describe('direct 3D blocking', () => {
     s.commitStroke()
     expect(useAppStore.getState().past.length).toBe(before + 1)
     expect(useAppStore.getState().model.color.size).toBe(3)
-  })
-
-  it('3D Edit mode defaults off', () => {
-    expect(useAppStore.getState().edit3D).toBe(false)
-    useAppStore.getState().setEdit3D(true)
-    expect(useAppStore.getState().edit3D).toBe(true)
   })
 })
 
@@ -775,5 +840,312 @@ describe('paintCell flat-wedge handling', () => {
       planeOrientation: 1,
       resolvedTo: { shapeKind: 'flatwedge', rotation: 0 },
     })
+  })
+})
+
+/** Explicit corner kinds: frozen at paint time with the brush rotation, never autotiled. */
+describe.each(['convex', 'concave'] as const)('paintCell explicit %s handling', (kind) => {
+  beforeEach(() => {
+    const s = useAppStore.getState()
+    s.newProject('Test', 16)
+    s.setActiveVoxelKind(kind)
+    s.setBrushRotation(0)
+    s.setPlaneAxisOrientation('z', 1)
+    s.setPlaneOffset(0)
+  })
+
+  it('paints resolved at the brush rotation', () => {
+    const s = useAppStore.getState()
+    s.setBrushRotation(2)
+    s.beginStroke()
+    expect(s.paintCell(4, 4)).toBe(true)
+    s.commitStroke()
+
+    const after = useAppStore.getState()
+    expect(after.model.color.size).toBe(1)
+    expect(after.model.chamfer.get(keyFor(4, 4))).toEqual({
+      planeAxis: 'z',
+      planeOrientation: 1,
+      resolvedTo: { shapeKind: kind, rotation: 2 },
+    })
+  })
+
+  it('never autotiles, even surrounded by neighbors that would classify', () => {
+    // Ring the target with cubes: an autotile paint here would resolve, the explicit kind must not.
+    useAppStore.getState().setActiveVoxelKind('cube')
+    const s = useAppStore.getState()
+    s.beginStroke()
+    for (const [u, v] of [[3, 4], [5, 4], [4, 3], [4, 5]] as const) expect(s.paintCell(u, v)).toBe(true)
+    s.commitStroke()
+
+    useAppStore.getState().setActiveVoxelKind(kind)
+    useAppStore.getState().beginStroke()
+    expect(useAppStore.getState().paintCell(4, 4)).toBe(true)
+    useAppStore.getState().commitStroke()
+    expect(useAppStore.getState().model.chamfer.get(keyFor(4, 4))).toEqual({
+      planeAxis: 'z',
+      planeOrientation: 1,
+      resolvedTo: { shapeKind: kind, rotation: 0 },
+    })
+  })
+
+  it('re-clicking cycles the corner, wrapping after four', () => {
+    const s = useAppStore.getState()
+    s.beginStroke()
+    expect(s.paintCell(4, 4)).toBe(true)
+    s.commitStroke()
+
+    for (const rotation of [1, 2, 3, 0]) {
+      useAppStore.getState().beginStroke()
+      expect(useAppStore.getState().paintCell(4, 4)).toBe(true)
+      useAppStore.getState().commitStroke()
+      expect(useAppStore.getState().model.chamfer.get(keyFor(4, 4))).toEqual({
+        planeAxis: 'z',
+        planeOrientation: 1,
+        resolvedTo: { shapeKind: kind, rotation },
+      })
+    }
+  })
+
+  it('re-applying within the same stroke does not cycle it', () => {
+    const s = useAppStore.getState()
+    s.beginStroke()
+    expect(s.paintCell(4, 4)).toBe(true)
+    expect(s.paintCell(4, 4)).toBe(true)
+    s.commitStroke()
+
+    expect(useAppStore.getState().model.chamfer.get(keyFor(4, 4))).toEqual({
+      planeAxis: 'z',
+      planeOrientation: 1,
+      resolvedTo: { shapeKind: kind, rotation: 0 },
+    })
+  })
+})
+
+/** Clicking the yellow 3D selection box stamps the whole selection with the brush. */
+describe('fillSelection (box click fills the window with the brush)', () => {
+  const SLOT_A = { kind: 'base', index: 0 } as const
+  const SLOT_B = { kind: 'base', index: 3 } as const
+
+  beforeEach(() => {
+    const s = useAppStore.getState()
+    s.newProject('Test', 16)
+    s.setActiveVoxelKind('cube')
+    s.setActivePaletteSlot(SLOT_A)
+    s.setPlaneAxisOrientation('z', 1)
+    s.setPlaneOffset(0)
+  })
+
+  function paintAt(coord: Coord) {
+    const s = useAppStore.getState()
+    s.beginStroke()
+    expect(s.paintCellAtCoord(coord, 'z', 1)).toBe(true)
+    s.commitStroke()
+  }
+
+  it('fills a 3D set including empty cells, in one undo stroke', () => {
+    paintAt([0, 0, 0])
+    useAppStore.getState().setSelectedCells(new Set([encodeKey(0, 0, 0), encodeKey(1, 0, 0)]))
+    useAppStore.getState().setActivePaletteSlot(SLOT_B)
+    const strokes = useAppStore.getState().past.length
+    useAppStore.getState().fillSelection()
+
+    const after = useAppStore.getState()
+    expect(after.model.color.get(encodeKey(0, 0, 0))?.paletteSlot).toEqual(SLOT_B)
+    // The empty window cell gains a voxel too — the area fills, not just recolors.
+    expect(after.model.color.get(encodeKey(1, 0, 0))?.paletteSlot).toEqual(SLOT_B)
+    expect(after.model.chamfer.size).toBe(0) // cube brush writes no chamfers
+    expect(after.past.length).toBe(strokes + 1)
+  })
+
+  it('stamps the brush kind verbatim in 3D-only (ramp keeps its plane basis)', () => {
+    const s = useAppStore.getState()
+    s.setLayoutMode('3d-only')
+    s.setActiveVoxelKind('ramp')
+    s.setSelectedCells(new Set([encodeKey(0, 0, 0)]))
+    s.fillSelection()
+
+    expect(useAppStore.getState().model.chamfer.get(encodeKey(0, 0, 0))).toEqual({
+      planeAxis: 'z',
+      planeOrientation: 1,
+      resolvedTo: { shapeKind: 'ramp', rotation: s.brushRotation },
+    })
+  })
+
+  it('fills every cell of a split-layout window, including empty space', () => {
+    const s = useAppStore.getState()
+    s.setLayoutMode('split')
+    // 2x2 window on the z=0 slice (u,v -1..0 == x -1..0, y 0..-1).
+    s.setSelection(rectRegion(-1, -1, 0, 0))
+    s.setActivePaletteSlot(SLOT_B)
+    const strokes = useAppStore.getState().past.length
+    useAppStore.getState().fillSelection()
+
+    const after = useAppStore.getState()
+    expect(after.model.color.size).toBe(4)
+    for (const key of after.model.color.keys()) {
+      expect(after.model.color.get(key)?.paletteSlot).toEqual(SLOT_B)
+    }
+    expect(after.past.length).toBe(strokes + 1)
+  })
+
+  it('stamps instead of cycling: no re-click rotation on matching chamfers', () => {
+    // A settled wedge at rotation 2: a real click would rotate it to 3, but a fill must
+    // stamp the brush rotation (0) like a fresh paint.
+    useAppStore.setState((s) => {
+      s.model.color.set(encodeKey(0, 0, 0), { paletteSlot: { ...SLOT_A } })
+      s.model.chamfer.set(encodeKey(0, 0, 0), {
+        planeAxis: 'z',
+        planeOrientation: 1,
+        resolvedTo: { shapeKind: 'wedge', rotation: 2 },
+      })
+    })
+    useAppStore.getState().setActiveVoxelKind('wedge')
+    useAppStore.getState().setSelectedCells(new Set([encodeKey(0, 0, 0)]))
+    useAppStore.getState().fillSelection()
+
+    expect(useAppStore.getState().model.chamfer.get(encodeKey(0, 0, 0))?.resolvedTo).toEqual({
+      shapeKind: 'wedge',
+      rotation: 0,
+    })
+  })
+
+  it('no-ops with no selection and drops out-of-grid keys', () => {
+    useAppStore.getState().fillSelection()
+    expect(useAppStore.getState().past.length).toBe(0)
+
+    paintAt([0, 0, 0])
+    useAppStore.getState().setSelectedCells(new Set([encodeKey(0, 0, 0), encodeKey(900, 0, 0)]))
+    const strokes = useAppStore.getState().past.length
+    useAppStore.getState().fillSelection()
+    expect(useAppStore.getState().model.color.size).toBe(1)
+    expect(useAppStore.getState().past.length).toBe(strokes + 1)
+  })
+})
+
+/** 3D shift-paint (`paintLineAtCoord`, 3D-only layout): plain taps paint one cell and anchor;
+ * shift-taps paint the dominant-axis line from the anchor in one undo stroke. */
+describe('3D shift-paint lines', () => {
+  const SLOT_A = { kind: 'base', index: 0 } as const
+  const SLOT_B = { kind: 'base', index: 1 } as const
+
+  beforeEach(() => {
+    const s = useAppStore.getState()
+    s.newProject('Test', 16)
+    s.setLayoutMode('3d-only')
+    s.setActiveVoxelKind('cube')
+    s.setActivePaletteSlot(SLOT_A)
+    s.setPlaneAxisOrientation('z', 1)
+    s.setPlaneOffset(0)
+    s.setPlaneLocked3D(false)
+  })
+
+  it('plain tap paints one cell and sets the anchor', () => {
+    expect(useAppStore.getState().paintLineAtCoord([0, 0, 0], false)).toBe(true)
+
+    const after = useAppStore.getState()
+    expect(after.model.color.size).toBe(1)
+    expect(after.paintLineAnchor).toEqual({ coord: [0, 0, 0], axis: 'z', orientation: 1 })
+    expect(after.past.length).toBe(1)
+  })
+
+  it('shift-tap draws the dominant-axis line in one stroke', () => {
+    const s = useAppStore.getState()
+    expect(s.paintLineAtCoord([0, 0, 0], false)).toBe(true)
+    expect(s.paintLineAtCoord([3, 0, 0], true)).toBe(true)
+
+    const after = useAppStore.getState()
+    for (const x of [0, 1, 2, 3]) {
+      expect(after.model.color.has(encodeKey(x, 0, 0))).toBe(true)
+    }
+    expect(after.model.color.size).toBe(4)
+    expect(after.past.length).toBe(2)
+    // The tap re-anchors for chaining.
+    expect(after.paintLineAnchor?.coord).toEqual([3, 0, 0])
+  })
+
+  it('locks to the farther plane axis', () => {
+    const s = useAppStore.getState()
+    expect(s.paintLineAtCoord([0, 0, 0], false)).toBe(true)
+    // |du| = 1, |dv| = 2 on the z plane → v line at the anchor's u.
+    expect(s.paintLineAtCoord([1, 2, 0], true)).toBe(true)
+
+    const after = useAppStore.getState()
+    expect(after.model.color.size).toBe(3)
+    const ys = [...after.model.color.keys()].map((k) => k.split(',').map(Number))
+    expect(ys.every(([x, , z]) => x === 0 && z === 0)).toBe(true)
+    expect(ys.map(([, y]) => y).sort()).toEqual([0, 1, 2])
+  })
+
+  it('shift-tap without an anchor paints one and anchors', () => {
+    useAppStore.getState().clearPaintLineAnchor()
+    expect(useAppStore.getState().paintLineAtCoord([2, 2, 0], true)).toBe(true)
+
+    const after = useAppStore.getState()
+    expect(after.model.color.size).toBe(1)
+    expect(after.paintLineAnchor?.coord).toEqual([2, 2, 0])
+  })
+
+  it('unlocked lines skip occupied cells', () => {
+    const s = useAppStore.getState()
+    expect(s.paintLineAtCoord([2, 0, 0], false)).toBe(true)
+    expect(s.paintLineAtCoord([0, 0, 0], false)).toBe(true)
+    expect(s.paintLineAtCoord([3, 0, 0], true)).toBe(true)
+
+    const after = useAppStore.getState()
+    for (const x of [0, 1, 2, 3]) {
+      expect(after.model.color.has(encodeKey(x, 0, 0))).toBe(true)
+    }
+    expect(after.model.color.size).toBe(4)
+    expect(after.past.length).toBe(3)
+  })
+
+  it('locked lines replace occupied cells without growing the model', () => {
+    const s = useAppStore.getState()
+    expect(s.paintLineAtCoord([1, 0, 0], false)).toBe(true)
+    expect(s.paintLineAtCoord([2, 0, 0], false)).toBe(true)
+    useAppStore.getState().setPlaneLocked3D(true)
+    useAppStore.getState().setActivePaletteSlot(SLOT_B)
+    expect(useAppStore.getState().paintLineAtCoord([0, 0, 0], false)).toBe(true)
+    expect(useAppStore.getState().paintLineAtCoord([3, 0, 0], true)).toBe(true)
+
+    const after = useAppStore.getState()
+    expect(after.model.color.size).toBe(4)
+    for (const x of [0, 1, 2, 3]) {
+      expect(after.model.color.get(encodeKey(x, 0, 0))?.paletteSlot).toEqual(SLOT_B)
+    }
+    useAppStore.getState().setPlaneLocked3D(false)
+  })
+
+  it('a changed plane frame falls back to a single paint', () => {
+    const s = useAppStore.getState()
+    expect(s.paintLineAtCoord([0, 0, 0], false)).toBe(true)
+    s.setPlaneAxisOrientation('x', 1)
+
+    expect(useAppStore.getState().paintLineAtCoord([0, 0, 0], true)).toBe(true)
+    const after = useAppStore.getState()
+    expect(after.model.color.size).toBe(1)
+    expect(after.paintLineAnchor).toEqual({ coord: [0, 0, 0], axis: 'x', orientation: 1 })
+  })
+
+  it('an off-slice target falls back to a single paint', () => {
+    const s = useAppStore.getState()
+    expect(s.paintLineAtCoord([0, 0, 0], false)).toBe(true)
+    // z = 2 leaves the z/offset-0 slice — no in-plane line exists.
+    expect(s.paintLineAtCoord([0, 1, 2], true)).toBe(true)
+
+    const after = useAppStore.getState()
+    expect(after.model.color.size).toBe(2)
+    expect(after.model.color.has(encodeKey(0, 1, 2))).toBe(true)
+  })
+
+  it('same-cell shift-tap repaints once', () => {
+    const s = useAppStore.getState()
+    expect(s.paintLineAtCoord([0, 0, 0], false)).toBe(true)
+    expect(s.paintLineAtCoord([0, 0, 0], true)).toBe(true)
+
+    const after = useAppStore.getState()
+    expect(after.model.color.size).toBe(1)
+    expect(after.paintLineAnchor?.coord).toEqual([0, 0, 0])
   })
 })

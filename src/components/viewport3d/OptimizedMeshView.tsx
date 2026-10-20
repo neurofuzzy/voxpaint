@@ -11,6 +11,7 @@ import { buildPreviewMaterial, tickEmissiveAnimation } from '@/engine/instancing
 import { buildEmissiveAnimIndex } from '@/engine/palette/emissiveAnimation'
 import { darkestBaseColor } from '@/engine/palette/palette'
 import { useAppStore } from '@/store/useAppStore'
+import { useActiveMemo } from './useActiveMemo'
 import { usePreviewAOMaps } from './usePreviewAOMaps'
 
 const wireframeOverlayMaterial = new THREE.MeshBasicMaterial({ color: 0xffffff, wireframe: true })
@@ -35,8 +36,12 @@ const wireframeOverlayMaterial = new THREE.MeshBasicMaterial({ color: 0xffffff, 
  * Geometry rebuilds only when the model, palette, or texture changes; the AO atlas re-bakes when
  * the model or the toggle changes. `onStats` surfaces the before/after triangle counts. When
  * wireframe is on, each group also draws a white unlit wireframe overlay.
+ *
+ * Stays mounted across mode switches (`active` false hides it): while inactive the build
+ * freezes — texture painting behind it never rebuilds this shell or re-bakes its AO — and
+ * returning rebuilds once against the current inputs.
  */
-export function OptimizedMeshView() {
+export function OptimizedMeshView({ active }: { active: boolean }) {
   const model = useAppStore((s) => s.model)
   const palette = useAppStore((s) => s.palette)
   const texture = useAppStore((s) => s.texture)
@@ -56,7 +61,7 @@ export function OptimizedMeshView() {
 
   const textured = hasTextureContent(texture)
 
-  const built = useMemo(() => {
+  const built = useActiveMemo(active, () => {
     if (textured) {
       const merged = buildTexturedGeometryByColorMerged(model, palette, gridExtent, optimizedMesh, texelScale)
       return { groups: merged.groups, rawTriangles: merged.rawTriangles, optimizedTriangles: merged.optimizedTriangles }
@@ -110,6 +115,7 @@ export function OptimizedMeshView() {
   }, [built.groups, overlayByColor, glassRoughnessLevel, emissiveAnimIndex, emissiveAnimOffColor])
 
   useFrame(() => {
+    if (!active) return
     const elapsed = performance.now() / 1000
     for (const m of materials) tickEmissiveAnimation(m, elapsed)
   })
@@ -150,7 +156,7 @@ export function OptimizedMeshView() {
   )
 
   return (
-    <>
+    <group visible={active}>
       {built.groups.map((g, i) => (
         <mesh key={i} geometry={g.geometry}>
           <primitive object={materials[i]} attach="material" />
@@ -162,6 +168,6 @@ export function OptimizedMeshView() {
             <primitive object={wireframeOverlayMaterial} attach="material" />
           </mesh>
         ))}
-    </>
+    </group>
   )
 }

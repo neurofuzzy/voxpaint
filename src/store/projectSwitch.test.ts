@@ -14,6 +14,9 @@ describe('project switch hygiene', () => {
     s.beginStroke()
     s.paintCellAtCoord([0, 0, 0], 'z', 1)
     s.commitStroke()
+    // New projects start Y-up; pin the z/1/offset-0 frame this selection was written for.
+    s.setPlaneAxisOrientation('z', 1)
+    s.setPlaneOffset(0)
     // (u,v) = (0,-1) on z/1/offset-0 is exactly [0,0,0].
     s.setSelection({ originU: 0, originV: -1, width: 1, height: 1, mask: new Uint8Array([1]) })
     s.liftSelectionToFloat()
@@ -52,5 +55,21 @@ describe('project switch hygiene', () => {
     useAppStore.getState().newProject('Fresh', 16)
 
     expect(useAppStore.getState().textureSelection).toBeNull()
+  })
+
+  it('newProject resets the plane to Y-up at the lowest layer', () => {
+    const s = useAppStore.getState()
+    s.setPlaneAxisOrientation('x', -1)
+    s.setPlaneOffset(5)
+
+    useAppStore.getState().newProject('Fresh', 16)
+
+    expect(useAppStore.getState().plane).toEqual({ axis: 'y', orientation: 1, offset: -8 })
+  })
+
+  it('newProject grounds the plane on the even working grid for odd sizes', () => {
+    useAppStore.getState().newProject('Fresh', 9)
+
+    expect(useAppStore.getState().plane).toEqual({ axis: 'y', orientation: 1, offset: -5 })
   })
 })

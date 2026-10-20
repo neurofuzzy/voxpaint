@@ -1,9 +1,10 @@
 import { describe, expect, it } from 'vitest'
 import type { Axis, ChamferClassification, Orientation, Rotation, VoxelModel } from '@/engine/grid/types'
 import type { ConstructionPlane } from '@/engine/plane/types'
-import { emptyModel, encodeKey } from '@/engine/grid/GridStore'
+import { decodeKey, emptyModel, encodeKey } from '@/engine/grid/GridStore'
 import { toDisplayU, toDisplayV } from '@/engine/plane/planeDisplay'
 import type { ClipboardData, SelectionRegion } from '@/store/types'
+import { copyCellsToClipboard } from './cellSetOps'
 import { applyClipboardAt, clearRegion, copyRegionToClipboard, transformClipboardToPlane } from './clipboard'
 import { mirrorClassification, mirrorClipboard, rotateClipboard90 } from './transform'
 
@@ -277,3 +278,75 @@ function srcScreenMirrorsU(from: ConstructionPlane, to: ConstructionPlane): bool
 function srcScreenMirrorsV(from: ConstructionPlane, to: ConstructionPlane): boolean {
   return toDisplayV(from, 0) !== toDisplayV(to, 0)
 }
+
+/** Depth anchoring: region pastes land on the destination (active) slice, while bbox-anchored
+ * exact-set content preserves absolute depth on same-plane drops (the 3D move flow). */
+describe('depth anchoring (slice vs bbox)', () => {
+  const EXT = 16
+  const slotA = { kind: 'base', index: 0 } as const
+  const slotB = { kind: 'base', index: 1 } as const
+  const z5: ConstructionPlane = { axis: 'z', orientation: 1, offset: 5 }
+  const z6: ConstructionPlane = { axis: 'z', orientation: 1, offset: 6 }
+  const oneCell: SelectionRegion = { originU: 0, originV: 0, width: 1, height: 1, mask: new Uint8Array([1]) }
+
+  it('ordinary pastes land on the active slice, not the copy-time slice', () => {
+    const src = emptyModel()
+    src.color.set(encodeKey(0, -1, 5), { paletteSlot: slotA })
+    const clipboard = copyRegionToClipboard(src, z5, oneCell)
+    expect(clipboard.copyPlaneOffset).toBe(5)
+    const dest = emptyModel()
+    applyClipboardAt(dest, z6, clipboard, 0, 0, EXT)
+    expect([...dest.color.keys()]).toEqual([encodeKey(0, -1, 6)])
+  })
+
+  it('deep region pastes re-anchor the depth profile onto the active slice', () => {
+    const src = emptyModel()
+    src.color.set(encodeKey(0, -1, 5), { paletteSlot: slotA })
+    src.color.set(encodeKey(0, -1, 6), { paletteSlot: slotB })
+    const clipboard = copyRegionToClipboard(src, z5, oneCell, true, EXT)
+    const dest = emptyModel()
+    applyClipboardAt(dest, z6, clipboard, 0, 0, EXT)
+    expect(dest.color.get(encodeKey(0, -1, 6))?.paletteSlot).toEqual(slotA)
+    expect(dest.color.get(encodeKey(0, -1, 7))?.paletteSlot).toEqual(slotB)
+  })
+
+  it('cross-plane pastes land on the destination slice, not the stale source offset', () => {
+    const src = emptyModel()
+    src.color.set(encodeKey(0, -1, 5), { paletteSlot: slotA })
+    const clipboard = copyRegionToClipboard(src, z5, oneCell)
+    const rebased = transformClipboardToPlane(clipboard, { axis: 'x', orientation: 1, offset: 3 })
+    const dest = emptyModel()
+    const at = { axis: 'x' as const, orientation: 1 as const, offset: 3 }
+    applyClipboardAt(dest, at, rebased, rebased.originU ?? 0, rebased.originV ?? 0, EXT)
+    expect(dest.color.size).toBe(1)
+    for (const key of dest.color.keys()) expect(decodeKey(key)[0]).toBe(3)
+  })
+
+  it('bbox-anchored exact-set content preserves absolute depth when the slice moved', () => {
+    const src = emptyModel()
+    src.color.set(encodeKey(0, 0, 2), { paletteSlot: slotA })
+    src.color.set(encodeKey(1, 0, 3), { paletteSlot: slotB })
+    const clipboard = copyCellsToClipboard(src, [encodeKey(0, 0, 2), encodeKey(1, 0, 3)], z5)
+    expect(clipboard.depthAnchor).toBe('bbox')
+    // Same plane, but the active slice is nowhere near the volume: it must not collapse onto it.
+    const dest = emptyModel()
+    applyClipboardAt(dest, z6, clipboard, clipboard.originU ?? 0, clipboard.originV ?? 0, EXT)
+    expect([...dest.color.keys()].sort()).toEqual([encodeKey(0, 0, 2), encodeKey(1, 0, 3)].sort())
+  })
+
+  it('cross-plane rebases drop the bbox anchor onto the destination slice', () => {
+    const src = emptyModel()
+    src.color.set(encodeKey(0, 0, 2), { paletteSlot: slotA })
+    src.color.set(encodeKey(1, 0, 3), { paletteSlot: slotB })
+    const clipboard = copyCellsToClipboard(src, [encodeKey(0, 0, 2), encodeKey(1, 0, 3)], z5)
+    const at = { axis: 'x' as const, orientation: 1 as const, offset: 3 }
+    const rebased = transformClipboardToPlane(clipboard, at)
+    expect(rebased.depthAnchor).toBeUndefined()
+    const dest = emptyModel()
+    applyClipboardAt(dest, at, rebased, rebased.originU ?? 0, rebased.originV ?? 0, EXT)
+    expect(dest.color.size).toBe(2)
+    // dw 0..1 rides off the destination slice — the stale z bbox-min (2) must not leak into x.
+    const xs = [...dest.color.keys()].map((k) => decodeKey(k)[0]).sort()
+    expect(xs).toEqual([3, 4])
+  })
+})

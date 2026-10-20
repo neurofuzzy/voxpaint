@@ -14,10 +14,12 @@ import {
 } from '@/engine/grid/GridStore'
 import { RESCALE_FACTOR, rescaleCoord, rescaleTargetExtent, rescaleVoxelModel } from '@/engine/grid/rescale'
 import { axisIndex } from '@/engine/plane/planeGeometry'
+import { savePlanePref } from '@/engine/persistence/uiPrefs'
 import { DEFAULT_PALETTE } from '@/engine/palette/defaultPalette'
 import { TEXEL_SCALE } from '@/engine/texture/types'
 import { emptyTextureModel, normalizeTexelScale, resampleTextureModel, rescaleTextureModel2x, resizeTextureModel } from '@/engine/texture/TextureStore'
 import type { TexelScale } from '@/engine/texture/types'
+import type { CellKey } from '@/engine/grid/types'
 import type { AppState, ProjectSlice } from './types'
 
 type Slice = StateCreator<AppState, [['zustand/immer', never]], [], ProjectSlice>
@@ -151,12 +153,14 @@ export const createProjectSlice: Slice = (set, get) => ({
       state.animPast = []
       state.animFuture = []
       state.selection = null
+      state.selectedCells = new Set<CellKey>()
       state.floatContent = null
       state.floatOrigin = null
       state.textureSelection = null
       state.textureFloat = null
       state.textureFloatOrigin = null
       state.objectModeTarget = null
+      state.paintLineAnchor = null
       const half = effectiveExtent(extent) / 2
       state.plane.offset = clampPlaneOffset(state.plane.offset, extent)
       for (const key of state.animSettings.keys()) {
@@ -172,6 +176,8 @@ export const createProjectSlice: Slice = (set, get) => ({
         }
       }
     })
+    // A resize can clamp the offset — persist the pose it settled on.
+    savePlanePref(get().plane)
   },
 
   rescaleProject: () => {
@@ -256,18 +262,22 @@ export const createProjectSlice: Slice = (set, get) => ({
       state.animPast = []
       state.animFuture = []
       state.selection = null
+      state.selectedCells = new Set<CellKey>()
       state.floatContent = null
       state.floatOrigin = null
       state.textureSelection = null
       state.textureFloat = null
       state.textureFloatOrigin = null
       state.objectModeTarget = null
+      state.paintLineAnchor = null
       state.hoverCell = null
       state.chamferHoverValid = null
       state.hoveredFace = null
       // Same slice on screen is twice as far out after doubling.
       state.plane.offset = clampPlaneOffset(RESCALE_FACTOR * state.plane.offset, extent)
     })
+    // A rescale moves the offset — persist the pose it settled on.
+    savePlanePref(get().plane)
   },
 
   randomizeNoiseSeed: () =>
@@ -326,20 +336,22 @@ export const createProjectSlice: Slice = (set, get) => ({
       state.markers = []
       state.selectedMarkerId = null
       state.dirty = true
-      // A stale plane offset from a larger project would start out of bounds — pull it back in.
-      // (Axis/orientation carry over; only the offset is range-bound.)
-      state.plane.offset = clampPlaneOffset(state.plane.offset, extent)
+      // A new project starts grounded (see resetPlaneToGround) instead of inheriting a stale
+      // mid-air slice — applied after this block so it reads the fresh extent.
       state.objectModeTarget = null
-      // View/tool prefs (active tool, palette slot, plane axis) carry over deliberately — but a
+      // View/tool prefs (active tool, palette slot) carry over deliberately — but a
       // stale voxel selection would clip painting on the fresh canvas via an invisible mask, and
       // hover state references dead cells, so both reset. (Clipboards are kept: pasting across
       // projects is safe — paste clips to the new bounds.)
       state.selection = null
+      state.selectedCells = new Set<CellKey>()
       state.floatContent = null
       state.floatOrigin = null
       state.hoverCell = null
       state.chamferHoverValid = null
       state.hoveredFace = null
+      state.paintLineAnchor = null
     })
+    get().resetPlaneToGround()
   },
 })

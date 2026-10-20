@@ -1,5 +1,6 @@
 import type { StateCreator } from 'zustand'
 import { AO_DEFAULT_ENABLED } from '@/engine/ao/aoConstants'
+import { loadUiPrefs, saveUiPrefs } from '@/engine/persistence/uiPrefs'
 import type { AppState, ViewSlice } from './types'
 
 type Slice = StateCreator<AppState, [['zustand/immer', never]], [], ViewSlice>
@@ -15,9 +16,14 @@ const ALERT_TTL_MS = 2600
 let alertTimer: ReturnType<typeof setTimeout> | null = null
 let alertKey = 0
 
-export const createViewSlice: Slice = (set) => ({
+export const createViewSlice: Slice = (set, get) => ({
   fullscreen: false,
-  edit3D: false,
+  // Restored from localStorage UI prefs (validated there); defaults to the 2D/3D split.
+  // The app always boots into Model mode, so the boot layout is Model's remembered one
+  // (falling back to the live pref for pre-existing installs without it).
+  layoutMode: loadUiPrefs().modelLayout ?? loadUiPrefs().layoutMode ?? 'split',
+  // Model's own layout, remembered across tab switches and refreshes (see modelLayout pref).
+  modelLayout: loadUiPrefs().modelLayout ?? loadUiPrefs().layoutMode ?? 'split',
   hoverCell: null,
   chamferHoverValid: null,
   hoveredFace: null,
@@ -44,7 +50,22 @@ export const createViewSlice: Slice = (set) => ({
   exportIncludeMarkers: true,
 
   setFullscreen: (v) => set((state) => { state.fullscreen = v }),
-  setEdit3D: (v) => set((state) => { state.edit3D = v }),
+  setLayoutMode: (v) => {
+    // Animate and Texture modes edit on the 2D canvas — 3D-only has no editing surface there,
+    // so the layout is pinned to split outside Model mode (the collapse button hides there too;
+    // this guard keeps the invariant airtight for any other caller).
+    const effective = v === '3d-only' && get().mode !== 'model' ? 'split' : v
+    // Read-modify-write so unrelated prefs (e.g. dontShowSplash) survive the update. Model-mode
+    // changes also record Model's remembered layout (forced splits elsewhere leave it alone).
+    const inModel = get().mode === 'model'
+    saveUiPrefs({ ...loadUiPrefs(), layoutMode: effective, ...(inModel ? { modelLayout: effective } : {}) })
+    set((state) => {
+      state.layoutMode = effective
+      if (inModel) state.modelLayout = effective
+      // A layout switch ends any open 3D line gesture — the anchor belongs to the old context.
+      state.paintLineAnchor = null
+    })
+  },
   setWireframe: (v) => set((state) => { state.wireframe = v }),
   setTextureFaceMap: (v) => set((state) => { state.textureFaceMap = v }),
   setOptimizedMesh: (v) => set((state) => { state.optimizedMesh = v }),

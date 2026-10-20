@@ -7,8 +7,9 @@ import { classify, sampleNeighbors } from '@/engine/chamfer/chamferResolver'
 import { spinSlabAboutLocalY } from '@/engine/chamfer/chamferTransform'
 import { findDualRampRotation, findWedgeRampDual } from '@/engine/chamfer/rampDual'
 import { gridCoordFromPixel, pixelFromGridCoord } from '@/engine/plane/constructionPlane'
+import { dominantAxisLine } from '@/engine/tools/lineUtils'
 import { axisIndex } from '@/engine/plane/planeGeometry'
-import { isCellSelected } from '@/engine/tools/selectionMask'
+import { isCellSelected, forEachSelectedCell } from '@/engine/tools/selectionMask'
 import type { AppState, PaintActionsSlice, VoxelKind } from './types'
 
 type Slice = StateCreator<AppState, [['zustand/immer', never]], [], PaintActionsSlice>
@@ -38,8 +39,14 @@ export function endFreshChamferTracking() {
 /**
  * The paint-cell write itself, parameterized by an explicit plane instead of the store's active
  * one. `paintCell` (2D) passes `get().plane` plus its selection clip; `paintCellAtCoord` (3D
- * direct blocking) passes the synthetic face plane. One implementation, so chamfer
- * classification, wedge retry, and tracking behave identically from either view.
+ * direct blocking) passes the active construction plane at the target's slice. One
+ * implementation, so chamfer classification, wedge retry, and tracking behave identically from
+ * either view.
+ *
+ * `stamp` switches from click semantics to fill semantics: every cell lands the brush shape
+ * deterministically (fresh classification at the brush rotation, verbatim in 3D-only) instead
+ * of applying re-click rotation/spin/cycle to already-matching cells — bulk-filling a window
+ * must stamp, never spin what it just wrote. Tracking sets are left alone in stamp mode.
  */
 function applyPaintCell(
   state: AppState,
@@ -49,16 +56,26 @@ function applyPaintCell(
   plane: ConstructionPlane,
   kind: VoxelKind,
   slot: PaletteSlotRef,
+  stamp = false,
 ) {
   const key = encodeKey(...coord)
   state.model.color.set(key, { paletteSlot: slot })
   state.model.bounds = expandBounds(state.model.bounds, coord)
+  // Manual brush rotation (R key / preview button): an additive quarter-turn offset applied to
+  // orientable kinds at paint time. 0 preserves legacy behavior exactly (pure autotile / fresh-0).
+  const brush = (state.brushRotation ?? 0) as Rotation
+  // 3D-only mode is verbatim: no adjacency classification and no end-of-stroke correction —
+  // what the brush preview shows is exactly what the click writes.
+  const verbatim = state.layoutMode === '3d-only'
 
   if (kind === 'ramp') {
-    const resolvedTo = classify(sampleNeighbors(state.model, plane, u, v))
+    const resolvedTo = verbatim
+      ? { shapeKind: 'ramp' as const, rotation: brush }
+      : classify(sampleNeighbors(state.model, plane, u, v))
+    if (!verbatim && resolvedTo && brush) resolvedTo.rotation = ((resolvedTo.rotation + brush) % 4) as Rotation
     state.model.chamfer.set(key, { planeAxis: plane.axis, planeOrientation: plane.orientation, resolvedTo })
 
-    if (freshChamferKeys) {
+    if (!stamp && !verbatim && freshChamferKeys) {
       freshChamferKeys.add(key)
       const pi = axisIndex(plane.axis)
       for (const freshKey of freshChamferKeys) {
@@ -68,12 +85,14 @@ function applyPaintCell(
         if (fc[pi] !== plane.offset) continue
         const { u: fu, v: fv } = pixelFromGridCoord(plane, fc)
         const rt = classify(sampleNeighbors(state.model, plane, fu, fv))
-        if (rt) cell.resolvedTo = rt
+        // Same brush offset as the fresh paint above, or the retry would silently un-rotate
+        // the preview/ghost's promised shape.
+        if (rt) cell.resolvedTo = brush ? { ...rt, rotation: ((rt.rotation + brush) % 4) as Rotation } : rt
       }
     }
   } else if (kind === 'wedge') {
     const existing = state.model.chamfer.get(key)
-    const alreadyFinalized = existing?.resolvedTo?.shapeKind === 'wedge' && !pendingWedgeKeys?.has(key)
+    const alreadyFinalized = !stamp && existing?.resolvedTo?.shapeKind === 'wedge' && !pendingWedgeKeys?.has(key)
 
     if (alreadyFinalized) {
       // Re-clicking a wedge that's already locked in (this stroke or a prior one) manually
@@ -81,11 +100,11 @@ function applyPaintCell(
       const rotation = ((existing!.resolvedTo!.rotation + 1) % 4) as Rotation
       existing!.resolvedTo = { shapeKind: 'wedge', rotation }
     } else {
-      const resolved = classify(sampleNeighbors(state.model, plane, u, v))
-      const rotation = resolved?.shapeKind === 'convex' ? resolved.rotation : 0
+      const resolved = verbatim ? null : classify(sampleNeighbors(state.model, plane, u, v))
+      const rotation = (((resolved?.shapeKind === 'convex' ? resolved.rotation : 0) + brush) % 4) as Rotation
       state.model.chamfer.set(key, { planeAxis: plane.axis, planeOrientation: plane.orientation, resolvedTo: { shapeKind: 'wedge', rotation } })
 
-      if (pendingWedgeKeys) {
+      if (!stamp && !verbatim && pendingWedgeKeys) {
         if (resolved?.shapeKind === 'convex') pendingWedgeKeys.delete(key)
         else pendingWedgeKeys.add(key)
 
@@ -101,12 +120,33 @@ function applyPaintCell(
           const { u: pu, v: pv } = pixelFromGridCoord(plane, pc)
           const rt = classify(sampleNeighbors(state.model, plane, pu, pv))
           if (rt?.shapeKind === 'convex') {
-            cell.resolvedTo = { shapeKind: 'wedge', rotation: rt.rotation }
+            // Same brush offset as the fresh paint above (which falls back to rotation 0 +
+            // brush until the corner completes).
+            cell.resolvedTo = { shapeKind: 'wedge', rotation: ((rt.rotation + brush) % 4) as Rotation }
             pendingWedgeKeys.delete(pendingKey)
           }
         }
       }
     }
+  } else if (kind === 'convex' || kind === 'concave') {
+    // Explicit corner kinds: the autotile family painted directly, no neighbor sampling — always
+    // resolved and frozen at paint time. Fresh paints start at the brush rotation; re-clicking
+    // cycles the corner 90° (the wedge-style manual rotation). Revisits within the same stroke
+    // are left untouched so a drag's interpolation can't spin what the stroke just wrote.
+    const existing = state.model.chamfer.get(key)
+    if (!stamp && strokeSlabKeys?.has(key)) {
+      // Already touched this stroke — leave the chamfer entry exactly as the stroke left it.
+    } else if (!stamp && existing?.resolvedTo?.shapeKind === kind) {
+      const rotation = ((existing.resolvedTo.rotation + 1) % 4) as Rotation
+      existing.resolvedTo = { shapeKind: kind, rotation }
+    } else {
+      state.model.chamfer.set(key, {
+        planeAxis: plane.axis,
+        planeOrientation: plane.orientation,
+        resolvedTo: { shapeKind: kind, rotation: brush },
+      })
+    }
+    strokeSlabKeys?.add(key)
   } else if (kind === 'thin') {
     // Re-clicking a thin slab spins it 90° about the V it was painted on (the wedge-style
     // click-to-rotate escape hatch). Revisits within the same stroke are left untouched so a
@@ -114,7 +154,7 @@ function applyPaintCell(
     const existing = state.model.chamfer.get(key)
     if (strokeSlabKeys?.has(key)) {
       // Already touched this stroke — leave the chamfer entry exactly as the stroke left it.
-    } else if (existing?.resolvedTo?.shapeKind === 'thin') {
+    } else if (!stamp && existing?.resolvedTo?.shapeKind === 'thin') {
       state.model.chamfer.set(key, spinSlabAboutLocalY(existing))
     } else {
       // A thin slab is a normal color cell plus a fixed chamfer entry recording only the
@@ -135,7 +175,7 @@ function applyPaintCell(
     const existing = state.model.chamfer.get(key)
     if (strokeSlabKeys?.has(key)) {
       // Already touched this stroke — leave the chamfer entry exactly as the stroke left it.
-    } else if (existing?.resolvedTo?.shapeKind === 'half') {
+    } else if (!stamp && existing?.resolvedTo?.shapeKind === 'half') {
       state.model.chamfer.set(key, spinSlabAboutLocalY(existing))
     } else {
       // A half slab is the flush sibling of the centered thin slab — but recessed, not proud:
@@ -155,7 +195,7 @@ function applyPaintCell(
     const existing = state.model.chamfer.get(key)
     if (strokeSlabKeys?.has(key)) {
       // Already touched this stroke — leave the chamfer entry exactly as the stroke left it.
-    } else if (existing?.resolvedTo?.shapeKind === 'post') {
+    } else if (!stamp && existing?.resolvedTo?.shapeKind === 'post') {
       state.model.chamfer.set(key, spinSlabAboutLocalY(existing))
     } else {
       // A post is a centered 0.5×0.5 column running the full unit length along the outward
@@ -175,16 +215,16 @@ function applyPaintCell(
     const existing = state.model.chamfer.get(key)
     if (strokeSlabKeys?.has(key)) {
       // Already touched this stroke — leave the chamfer entry exactly as the stroke left it.
-    } else if (existing?.resolvedTo?.shapeKind === 'quarter') {
+    } else if (!stamp && existing?.resolvedTo?.shapeKind === 'quarter') {
       const rotation = ((existing.resolvedTo.rotation + 1) % 4) as Rotation
       existing.resolvedTo = { shapeKind: 'quarter', rotation }
     } else {
       // A quarter is the post pushed into the NE corner — a 0.5×0.5×1 column in one quadrant,
-      // full length along the outward axis. Fresh paints start NE; re-click cycles corners.
+      // full length along the outward axis. Fresh paints start at the brush rotation; re-click cycles corners.
       state.model.chamfer.set(key, {
         planeAxis: plane.axis,
         planeOrientation: plane.orientation,
-        resolvedTo: { shapeKind: 'quarter', rotation: 0 },
+        resolvedTo: { shapeKind: 'quarter', rotation: brush },
       })
     }
     strokeSlabKeys?.add(key)
@@ -195,7 +235,7 @@ function applyPaintCell(
     const existing = state.model.chamfer.get(key)
     if (strokeSlabKeys?.has(key)) {
       // Already touched this stroke — leave the chamfer entry exactly as the stroke left it.
-    } else if (existing?.resolvedTo?.shapeKind === 'flat') {
+    } else if (!stamp && existing?.resolvedTo?.shapeKind === 'flat') {
       state.model.chamfer.set(key, spinSlabAboutLocalY(existing))
     } else {
       // A flat is thin's centre plane as a bare quad — frozen at paint time with rotation 0,
@@ -215,16 +255,16 @@ function applyPaintCell(
     const existing = state.model.chamfer.get(key)
     if (strokeSlabKeys?.has(key)) {
       // Already touched this stroke — leave the chamfer entry exactly as the stroke left it.
-    } else if (existing?.resolvedTo?.shapeKind === 'flatwedge') {
+    } else if (!stamp && existing?.resolvedTo?.shapeKind === 'flatwedge') {
       const rotation = ((existing.resolvedTo.rotation + 1) % 4) as Rotation
       existing.resolvedTo = { shapeKind: 'flatwedge', rotation }
     } else {
       // A flat wedge is wedge's diagonal cut face as a bare quad — open NE corner at rotation 0
-      // (the wedge convention), never resolver-created. Fresh paints start NE; re-click cycles.
+      // (the wedge convention), never resolver-created. Fresh paints start at the brush rotation; re-click cycles.
       state.model.chamfer.set(key, {
         planeAxis: plane.axis,
         planeOrientation: plane.orientation,
-        resolvedTo: { shapeKind: 'flatwedge', rotation: 0 },
+        resolvedTo: { shapeKind: 'flatwedge', rotation: brush },
       })
     }
     strokeSlabKeys?.add(key)
@@ -234,6 +274,24 @@ function applyPaintCell(
 
   state.meta.modifiedAt = new Date().toISOString()
   state.dirty = true
+}
+
+/**
+ * Bulk-fill write: stamps the brush onto a cell exactly as a fresh paint would (same
+ * autotile/verbatim resolution from the live model), but never applies re-click
+ * rotation/spin/cycle semantics — filling a window must stamp every cell deterministically,
+ * never spin what the fill just wrote. Used by `fillSelection`; single-cell tools keep using
+ * `applyPaintCell` directly.
+ */
+export function applyFillCell(
+  state: AppState,
+  coord: Coord,
+  plane: ConstructionPlane,
+  kind: VoxelKind,
+  slot: PaletteSlotRef,
+) {
+  const { u, v } = pixelFromGridCoord(plane, coord)
+  applyPaintCell(state, coord, u, v, plane, kind, slot, true)
 }
 
 /** Shared erase write (both layers, no selection concept) — `eraseCell` clips first, 3D skips it. */
@@ -262,9 +320,17 @@ function applyMaterialCell(state: AppState, coord: Coord, slot: PaletteSlotRef):
 
 export const createPaintActionsSlice: Slice = (set, get) => ({
   correctChamferStroke: () => {
+    // 3D-only mode never corrects: every paint is verbatim, frozen at click time.
+    if (get().layoutMode === '3d-only') return
     // Outside an open stroke there is nothing stroke-local to correct (both tracking sets are
     // only non-null between beginStroke/commitStroke).
     if (!freshChamferKeys && !pendingWedgeKeys) return
+    // The manual brush rotation (R key) is additive on every fresh paint, so the correction
+    // pass must re-apply it to its fresh verdicts — otherwise it silently un-rotates the shape
+    // the ghost/HUD preview promised.
+    const strokeBrush = (get().brushRotation ?? 0) as Rotation
+    const withBrush = <T extends { rotation: Rotation }>(rt: T | null): T | null =>
+      rt && strokeBrush ? { ...rt, rotation: ((rt.rotation + strokeBrush) % 4) as Rotation } : rt
     let changed = false
     set((state) => {
       if (freshChamferKeys) {
@@ -280,7 +346,7 @@ export const createPaintActionsSlice: Slice = (set, get) => ({
             offset: coord[axisIndex(cell.planeAxis)],
           }
           const { u: fu, v: fv } = pixelFromGridCoord(cellPlane, coord)
-          const rt = classify(sampleNeighbors(state.model, cellPlane, fu, fv))
+          const rt = withBrush(classify(sampleNeighbors(state.model, cellPlane, fu, fv)))
           // Overwrite even when already resolved: a mid-stroke verdict read partial neighbors
           // (this stroke's own later paints completed them). Still-null stays null.
           if (JSON.stringify(cell.resolvedTo) !== JSON.stringify(rt)) {
@@ -307,7 +373,7 @@ export const createPaintActionsSlice: Slice = (set, get) => ({
           // Wedges only upgrade: an unresolved fallback takes its true corner once the stroke
           // completes it, but a locked-in wedge never flips (freeze + click-to-rotate intact).
           if (rt?.shapeKind === 'convex') {
-            cell.resolvedTo = { shapeKind: 'wedge', rotation: rt.rotation }
+            cell.resolvedTo = { shapeKind: 'wedge', rotation: ((rt.rotation + strokeBrush) % 4) as Rotation }
             pendingWedgeKeys.delete(pendingKey)
             changed = true
           }
@@ -341,8 +407,9 @@ export const createPaintActionsSlice: Slice = (set, get) => ({
     get().bakeFloatIfAny()
     const { activeVoxelKind, activePaletteSlot, meta } = get()
     if (!withinWorkingBounds(coord, meta.gridExtent)) return false
-    // The clicked face supplies the chamfer context: its own axis/orientation on the target
-    // cell's slice, so 3D-painted shapes bake exactly as if painted from that face in 2D.
+    // The caller-supplied axis/orientation (3D taps pass the active construction plane, so
+    // orientation always matches the brush preview — never the raycast face) on the target
+    // cell's slice.
     // (Deliberately no selection clip — the 2D selection mask lives in the active plane's frame
     // and can't meaningfully clip a different face's slice.)
     const facePlane: ConstructionPlane = { axis: faceAxis, orientation: faceOrientation, offset: coord[axisIndex(faceAxis)] }
@@ -351,6 +418,40 @@ export const createPaintActionsSlice: Slice = (set, get) => ({
       applyPaintCell(state, coord, u, v, facePlane, activeVoxelKind, activePaletteSlot)
     })
     return true
+  },
+
+  paintLineAtCoord: (coord: Coord, extend: boolean) => {
+    get().bakeFloatIfAny()
+    const { plane, activeVoxelKind, activePaletteSlot, meta, planeLocked3D, paintLineAnchor } = get()
+    // Every tap re-establishes the anchor — chaining for the next shift-click.
+    get().setPaintLineAnchor({ coord, axis: plane.axis, orientation: plane.orientation })
+    // Without a usable anchor (none yet, or the plane frame changed since) — or when the
+    // target sits off the active slice (out-of-plane stacking has no in-plane line) — paint one.
+    const anchorUsable = extend && paintLineAnchor !== null
+      && paintLineAnchor.axis === plane.axis
+      && paintLineAnchor.orientation === plane.orientation
+    const onSlice = coord[axisIndex(plane.axis)] === plane.offset
+    // One stroke for the whole gesture (the primitive below never brackets itself — the
+    // 3D tap path brackets it instead — so bracketing here nests nothing).
+    get().beginStroke()
+    let ok = true
+    if (paintLineAnchor && anchorUsable && onSlice) {
+      const a = pixelFromGridCoord(plane, paintLineAnchor.coord)
+      const b = pixelFromGridCoord(plane, coord)
+      set((state) => {
+        for (const [lu, lv] of dominantAxisLine(a.u, a.v, b.u, b.v)) {
+          const c = gridCoordFromPixel(plane, lu, lv)
+          if (!withinWorkingBounds(c, meta.gridExtent)) continue
+          // Unlocked taps never overwrite (matching single-tap semantics); locked taps replace.
+          if (!planeLocked3D && state.model.color.has(encodeKey(...c))) continue
+          applyPaintCell(state, c, lu, lv, plane, activeVoxelKind, activePaletteSlot)
+        }
+      })
+    } else {
+      ok = get().paintCellAtCoord(coord, plane.axis, plane.orientation)
+    }
+    get().commitStroke()
+    return ok
   },
 
   eraseCell: (coord: Coord) => {
@@ -373,6 +474,31 @@ export const createPaintActionsSlice: Slice = (set, get) => ({
     set((state) => {
       applyEraseCell(state, coord)
     })
+  },
+
+  fillSelection: () => {
+    get().bakeFloatIfAny()
+    const { plane, activeVoxelKind, activePaletteSlot, selectedCells, selection, meta } = get()
+    const coords: Coord[] = []
+    if (selectedCells.size > 0) {
+      for (const key of selectedCells) {
+        const coord = decodeKey(key)
+        if (!withinWorkingBounds(coord, meta.gridExtent)) continue
+        coords.push(coord)
+      }
+    } else if (selection) {
+      forEachSelectedCell(selection, (u, v) => {
+        const coord = gridCoordFromPixel(plane, u, v)
+        if (!withinWorkingBounds(coord, meta.gridExtent)) return
+        coords.push(coord)
+      })
+    } else return
+    if (coords.length === 0) return
+    get().beginStroke()
+    set((state) => {
+      for (const coord of coords) applyFillCell(state, coord, plane, activeVoxelKind, activePaletteSlot)
+    })
+    get().commitStroke()
   },
 
   paintMaterialCell: (u: number, v: number) => {

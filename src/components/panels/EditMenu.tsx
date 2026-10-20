@@ -22,19 +22,28 @@ export function EditMenu() {
   const [rescaleOpen, setRescaleOpen] = useState(false)
   const setStatusMessage = useAppStore((s) => s.setStatusMessage)
   const isTexture = useAppStore((s) => s.mode === 'texture')
-  const hasSelection = useAppStore((s) => (s.mode === 'texture' ? s.textureSelection : s.selection) !== null)
+  const is3D = useAppStore((s) => s.layoutMode === '3d-only' && s.mode === 'model')
+  // 3D-only routes at the independent 3D voxel set; split keeps the plane-framed 2D selection.
+  const hasSelection = useAppStore((s) =>
+    s.mode === 'texture' ? s.textureSelection !== null : s.layoutMode === '3d-only' && s.mode === 'model'
+      ? s.selectedCells.size > 0
+      : s.selection !== null,
+  )
   const hasClipboard = useAppStore((s) => (s.mode === 'texture' ? s.textureClipboard : s.clipboard) !== null)
   const gridExtent = useAppStore((s) => s.meta.gridExtent)
 
-  const copy = useAppStore((s) => (isTexture ? s.textureCopy : s.copySelection))
+  const copy = useAppStore((s) => (isTexture ? s.textureCopy : is3D ? s.copyCells3D : s.copySelection))
   const pasteInPlace = useAppStore((s) => s.pasteClipboardInPlace)
+  const pasteCells3D = useAppStore((s) => s.pasteCells3D)
   const texturePasteAt = useAppStore((s) => s.texturePasteAt)
   const textureClipboard = useAppStore((s) => s.textureClipboard)
 
   function paste() {
     // Same origins as the Cmd+V path: voxel paste re-anchors to the same spot on screen (the
     // active plane may have changed since the copy); texel paste lands at the copied origin.
+    // 3D-only stamps directly (no 2D float to drag there) and selects the pasted cells.
     if (isTexture) texturePasteAt(textureClipboard?.originU ?? 0, textureClipboard?.originV ?? 0)
+    else if (is3D) pasteCells3D()
     else pasteInPlace()
   }
 
@@ -74,7 +83,7 @@ export function EditMenu() {
               disabled={!hasClipboard}
               onSelect={paste}
               className={ITEM}
-              onPointerEnter={() => setStatusMessage('Paste in place — drag inside the pasted selection to move it')}
+              onPointerEnter={() => setStatusMessage('Paste as a floating ghost — drag to move, tap to drop')}
               onPointerLeave={() => setStatusMessage(null)}
             >
               <ClipboardPaste size={14} /> Paste

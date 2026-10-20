@@ -9,7 +9,6 @@ import { encodeSliceKey } from '@/engine/animation/animationLayers'
 import { useAppStore } from '@/store/useAppStore'
 import { worldToScreen, vScaleForPlane } from './cameraTransform'
 import { BASE_CELL_PX } from './canvasConstants'
-import { useKeyboardShortcuts } from './useKeyboardShortcuts'
 import { usePixelCanvasTools } from './usePixelCanvasTools'
 
 /**
@@ -94,9 +93,8 @@ export function PixelCanvas() {
   // V-axis display stretch for the active plane (Y voxel scale on X/Z planes, square on Y).
   const vScale = vScaleForPlane(plane.axis, voxelScaleY)
 
-  const { onPointerDown, onPointerMove, onPointerUp, onPointerLeave, linePreview, selectPreview, hoverCellRef, size, pan, zoom } =
+  const { onPointerDown, onPointerMove, onPointerUp, onPointerLeave, linePreview, selectPreview, size, pan, zoom } =
     usePixelCanvasTools(canvasRef)
-  useKeyboardShortcuts(hoverCellRef)
 
   // Marching-ants animation tick. Stops entirely (no rAF loop) when nothing is selected.
   const [antPhase, setAntPhase] = useState(0)

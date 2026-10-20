@@ -1,5 +1,7 @@
 import { beforeEach, describe, expect, it } from 'vitest'
 import { encodeKey } from '@/engine/grid/GridStore'
+import type { Coord } from '@/engine/grid/types'
+import type { PaletteSlotRef } from '@/engine/palette/types'
 import { gridCoordFromPixel } from '@/engine/plane/constructionPlane'
 import { rectRegion } from '@/engine/tools/selectionMask'
 import { useAppStore } from './useAppStore'
@@ -12,6 +14,8 @@ const SLOT_B = { kind: 'base', index: 1 } as const
 describe('floodFill (2D, edge-leak guard)', () => {
   beforeEach(() => {
     useAppStore.getState().newProject('Test', 16)
+    useAppStore.getState().setPlaneAxisOrientation('z', 1)
+    useAppStore.getState().setPlaneOffset(0)
   })
 
   it('fills an enclosed empty pocket normally', () => {
@@ -74,6 +78,8 @@ describe('floodFill (2D, edge-leak guard)', () => {
 describe('floodFill3D (alt-click, 3D connected fill)', () => {
   beforeEach(() => {
     useAppStore.getState().newProject('Test', 16)
+    useAppStore.getState().setPlaneAxisOrientation('z', 1)
+    useAppStore.getState().setPlaneOffset(0)
   })
 
   it('no-ops when the clicked cell has no voxel', () => {
@@ -126,9 +132,36 @@ describe('floodFill3D (alt-click, 3D connected fill)', () => {
   })
 })
 
+describe('copy/paste depth anchoring', () => {
+  beforeEach(() => {
+    useAppStore.getState().newProject('Test', 16)
+    useAppStore.getState().setPlaneAxisOrientation('z', 1)
+    useAppStore.getState().setPlaneOffset(5)
+    useAppStore.getState().setActiveVoxelKind('cube')
+  })
+
+  it('paste-in-place after a plane move lands on the active slice', () => {
+    const s = useAppStore.getState()
+    s.beginStroke()
+    expect(s.paintCell(0, 0)).toBe(true) // (0,0) on z/5 is [0,-1,5]
+    s.commitStroke()
+    s.setSelection({ originU: 0, originV: 0, width: 1, height: 1, mask: new Uint8Array([1]) })
+    s.copySelection()
+    expect(useAppStore.getState().clipboard?.copyPlaneOffset).toBe(5)
+    // Moving the plane bakes nothing (no float pending) and clears the selection.
+    useAppStore.getState().setPlaneOffset(6)
+    useAppStore.getState().pasteClipboardInPlace()
+    useAppStore.getState().bakeFloatIfAny()
+    // dw=0 lands on the live slice, not the copy-time one.
+    expect([...useAppStore.getState().model.color.keys()]).toEqual([encodeKey(0, -1, 5), encodeKey(0, -1, 6)])
+  })
+})
+
 describe('liftSelectionToFloat (deep alt-drag)', () => {
   beforeEach(() => {
     useAppStore.getState().newProject('Test', 16)
+    useAppStore.getState().setPlaneAxisOrientation('z', 1)
+    useAppStore.getState().setPlaneOffset(0)
   })
 
   /** (u,v) = (0,0) on z/1/offset-0 is [0,-1,0]; depth +1 is [0,-1,1]. */
@@ -178,6 +211,8 @@ describe('liftSelectionToFloat (deep alt-drag)', () => {
 describe('faceSelection', () => {
   beforeEach(() => {
     useAppStore.getState().newProject('Test', 16)
+    useAppStore.getState().setPlaneAxisOrientation('z', 1)
+    useAppStore.getState().setPlaneOffset(0)
   })
 
   it('re-faces a thin slab onto the flipped plane orientation and ignores cubes', () => {
@@ -247,5 +282,132 @@ describe('faceSelection', () => {
 
   it('returns zeros with no selection', () => {
     expect(useAppStore.getState().faceSelection()).toEqual({ faced: 0, skipped: 0 })
+  })
+})
+
+describe('floodFillCellsAt (3D viewport fill, 3D-selection aware)', () => {
+  beforeEach(() => {
+    const s = useAppStore.getState()
+    s.newProject('Test', 16)
+    s.setLayoutMode('3d-only')
+    s.setPlaneAxisOrientation('z', 1)
+    s.setPlaneOffset(0)
+    s.setActiveVoxelKind('cube')
+  })
+
+  function paintAt(coord: Coord, slot: PaletteSlotRef = SLOT_A) {
+    const s = useAppStore.getState()
+    s.setActivePaletteSlot(slot)
+    s.beginStroke()
+    expect(s.paintCellAtCoord(coord, 'z', 1)).toBe(true)
+    s.commitStroke()
+  }
+
+  it('Alt-tap recolors the 3D-connected volume, clipped to the selection', () => {
+    paintAt([0, 0, 0])
+    paintAt([1, 0, 0])
+    paintAt([0, 0, 1]) // stacked above — same connected volume
+    paintAt([5, 0, 0]) // disconnected loner, same color
+    useAppStore.getState().setSelectedCells(new Set([encodeKey(0, 0, 0), encodeKey(1, 0, 0)]))
+    useAppStore.getState().setActivePaletteSlot(SLOT_B)
+    const strokesBefore = useAppStore.getState().past.length
+    useAppStore.getState().floodFillCellsAt([1, 0, 0], true)
+
+    const after = useAppStore.getState()
+    expect(after.model.color.get(encodeKey(0, 0, 0))?.paletteSlot).toEqual(SLOT_B)
+    expect(after.model.color.get(encodeKey(1, 0, 0))?.paletteSlot).toEqual(SLOT_B)
+    expect(after.model.color.get(encodeKey(0, 0, 1))?.paletteSlot).toEqual(SLOT_A) // outside set
+    expect(after.model.color.get(encodeKey(5, 0, 0))?.paletteSlot).toEqual(SLOT_A) // disconnected
+    expect(after.past.length).toBe(strokesBefore + 1)
+  })
+
+  it('Alt-tap outside the selection with no overlap is blocked without a stroke', () => {
+    paintAt([0, 0, 0])
+    useAppStore.getState().setSelectedCells(new Set([encodeKey(5, 5, 0)]))
+    useAppStore.getState().setActivePaletteSlot(SLOT_B)
+    const strokesBefore = useAppStore.getState().past.length
+    useAppStore.getState().floodFillCellsAt([0, 0, 0], true)
+
+    const after = useAppStore.getState()
+    expect(after.model.color.get(encodeKey(0, 0, 0))?.paletteSlot).toEqual(SLOT_A)
+    expect(after.past.length).toBe(strokesBefore)
+  })
+
+  it('Alt-tap on empty space no-ops', () => {
+    useAppStore.getState().setActivePaletteSlot(SLOT_B)
+    useAppStore.getState().floodFillCellsAt([0, 0, 0], true)
+    expect(useAppStore.getState().model.color.size).toBe(0)
+    expect(useAppStore.getState().past.length).toBe(0)
+  })
+
+  it('plain tap fills an empty selected window without needing painted bounds', () => {
+    useAppStore.getState().setActivePaletteSlot(SLOT_B)
+    // 2x2 window on the z=0 slice (u 0..1, v -1..0 == x 0..1, y 0..-1).
+    useAppStore.getState().setSelectedCells(
+      new Set([encodeKey(0, 0, 0), encodeKey(1, 0, 0), encodeKey(0, -1, 0), encodeKey(1, -1, 0)]),
+    )
+    useAppStore.getState().floodFillCellsAt([0, 0, 0], false)
+
+    const after = useAppStore.getState()
+    expect(after.model.color.size).toBe(4)
+    expect(after.model.color.get(encodeKey(1, -1, 0))?.paletteSlot).toEqual(SLOT_B)
+    expect(after.past.length).toBe(1)
+  })
+
+  it('plain tap on an empty plane without selection is leak-guarded', () => {
+    useAppStore.getState().setActivePaletteSlot(SLOT_B)
+    useAppStore.getState().floodFillCellsAt([0, 0, 0], false)
+    expect(useAppStore.getState().model.color.size).toBe(0)
+    expect(useAppStore.getState().past.length).toBe(0)
+  })
+
+  it('plain tap recolors the color-connected 3D volume, geometry untouched', () => {
+    // Two touching SLOT_A voxels plus an adjacent other-color voxel and a same-color loner.
+    paintAt([0, 0, 0])
+    paintAt([1, 0, 0])
+    paintAt([0, 0, 1], SLOT_B)
+    paintAt([5, 0, 0])
+    useAppStore.getState().setActivePaletteSlot(SLOT_B)
+    const strokesBefore = useAppStore.getState().past.length
+    useAppStore.getState().floodFillCellsAt([0, 0, 0], false)
+
+    const after = useAppStore.getState()
+    expect(after.model.color.get(encodeKey(0, 0, 0))?.paletteSlot).toEqual(SLOT_B)
+    expect(after.model.color.get(encodeKey(1, 0, 0))?.paletteSlot).toEqual(SLOT_B)
+    expect(after.model.color.get(encodeKey(0, 0, 1))?.paletteSlot).toEqual(SLOT_B) // already B
+    expect(after.model.color.get(encodeKey(5, 0, 0))?.paletteSlot).toEqual(SLOT_A) // disconnected
+    expect(after.model.color.size).toBe(4) // recolor only — nothing added
+    expect(after.past.length).toBe(strokesBefore + 1)
+  })
+
+  it('plain tap fills regardless of the active plane (no second click needed)', () => {
+    // Regression: the old planar fill ran in the previous plane's frame and usually leaked,
+    // so the first click only moved the plane. The volume fill has no plane frame at all.
+    paintAt([0, 0, 2])
+    paintAt([1, 0, 2])
+    useAppStore.getState().setPlaneAxisOrientation('x', 1)
+    useAppStore.getState().setPlaneOffset(-8)
+    useAppStore.getState().setActivePaletteSlot(SLOT_B)
+    useAppStore.getState().floodFillCellsAt([0, 0, 2], false)
+
+    const after = useAppStore.getState()
+    expect(after.model.color.get(encodeKey(0, 0, 2))?.paletteSlot).toEqual(SLOT_B)
+    expect(after.model.color.get(encodeKey(1, 0, 2))?.paletteSlot).toEqual(SLOT_B)
+    // And the fill itself never moves the plane.
+    expect(after.plane).toEqual({ axis: 'x', orientation: 1, offset: -8 })
+  })
+
+  it('Alt-tap recolors the whole touching component across colors', () => {
+    paintAt([0, 0, 0])
+    paintAt([1, 0, 0], SLOT_B) // touching, different color
+    paintAt([5, 0, 0])
+    useAppStore.getState().setActivePaletteSlot(SLOT_B)
+    useAppStore.getState().floodFillCellsAt([0, 0, 0], true)
+
+    const after = useAppStore.getState()
+    expect(after.model.color.get(encodeKey(0, 0, 0))?.paletteSlot).toEqual(SLOT_B)
+    expect(after.model.color.get(encodeKey(1, 0, 0))?.paletteSlot).toEqual(SLOT_B)
+    expect(after.model.color.get(encodeKey(5, 0, 0))?.paletteSlot).toEqual(SLOT_A) // disconnected
+    expect(after.model.color.size).toBe(3)
   })
 })

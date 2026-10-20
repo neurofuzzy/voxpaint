@@ -1,5 +1,7 @@
 import { debounce, loadAutosave, saveAutosave } from '@/engine/persistence/autosave'
 import { deserializeProject, serializeProject } from '@/engine/persistence/serialize'
+import { clampPlaneOffset } from '@/engine/grid/GridStore'
+import { loadUiPrefs } from '@/engine/persistence/uiPrefs'
 import { useAppStore } from './useAppStore'
 
 const AUTOSAVE_DEBOUNCE_MS = 800
@@ -32,6 +34,18 @@ export function restoreAutosave(): void {
       state.markers = markers
       state.selectedMarkerId = null
     })
+    // A refresh restores the same project, so the persisted plane pose comes back with it
+    // (clamped — a hand-edited autosave could carry an out-of-range offset). Explicit project
+    // switches reset instead (see resetPlaneToGround).
+    const savedPlane = loadUiPrefs().plane
+    if (savedPlane) {
+      useAppStore.setState((state) => {
+        state.plane.axis = savedPlane.axis
+        state.plane.orientation = savedPlane.orientation
+        state.plane.offset = clampPlaneOffset(savedPlane.offset, state.meta.gridExtent)
+        state.objectModeTarget = null
+      })
+    }
   } catch (err) {
     console.error('Failed to restore autosave', err)
   }

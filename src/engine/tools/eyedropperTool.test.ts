@@ -36,10 +36,8 @@ describe('voxelKindForCell', () => {
     expect(voxelKindForCell(undefined)).toBe('cube')
   })
 
-  it('maps the ramp autotile family to ramp', () => {
-    for (const shapeKind of ['ramp', 'convex', 'concave'] as const) {
-      expect(voxelKindForCell({ planeAxis: 'z', planeOrientation: 1, resolvedTo: { shapeKind, rotation: 0 } })).toBe('ramp')
-    }
+  it('maps ramp to ramp', () => {
+    expect(voxelKindForCell({ planeAxis: 'z', planeOrientation: 1, resolvedTo: { shapeKind: 'ramp', rotation: 0 } })).toBe('ramp')
   })
 
   it('maps an unresolved chamfer cell to ramp', () => {
@@ -47,7 +45,7 @@ describe('voxelKindForCell', () => {
   })
 
   it('maps every other resolved shape to its own kind', () => {
-    for (const shapeKind of ['wedge', 'thin', 'half', 'post', 'quarter', 'flat', 'flatwedge'] as const) {
+    for (const shapeKind of ['convex', 'concave', 'wedge', 'thin', 'half', 'post', 'quarter', 'flat', 'flatwedge'] as const) {
       expect(
         voxelKindForCell({ planeAxis: 'z', planeOrientation: 1, resolvedTo: { shapeKind, rotation: 0 } }),
       ).toBe(shapeKind)
@@ -75,11 +73,11 @@ describe('eyedropperTool', () => {
     expect(calls.tools).toEqual(['paint'])
   })
 
-  it('picks ramp from a convex autotile voxel', () => {
+  it('picks the explicit corner kind from a convex autotile voxel', () => {
     const { ctx, calls } = makeCtx()
     paintVoxel(ctx, 0, 0, { planeAxis: 'z', planeOrientation: 1, resolvedTo: { shapeKind: 'convex', rotation: 1 } })
     eyedropperTool.onDown!(ctx, evt(0, 0))
-    expect(calls.kinds).toEqual(['ramp'])
+    expect(calls.kinds).toEqual(['convex'])
     expect(calls.tools).toEqual(['paint'])
   })
 

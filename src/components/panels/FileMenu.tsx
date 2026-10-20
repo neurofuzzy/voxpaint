@@ -3,13 +3,13 @@ import { ChevronDown, FileDown, FilePlus, FileUp, Package, Printer } from 'lucid
 import { useRef, useState } from 'react'
 import { readProjectFile, downloadProjectFile } from '@/engine/persistence/projectFile'
 import { deserializeProject, serializeProject } from '@/engine/persistence/serialize'
-import { clampPlaneOffset } from '@/engine/grid/GridStore'
 import { isIPad } from '@/engine/input/isIPad'
 import { useAppStore } from '@/store/useAppStore'
 import { showToast } from '@/components/ui/toastBus'
 import { ExportGltfDialog } from './ExportGltfDialog'
 import { ExportStlDialog } from './ExportStlDialog'
 import { NewProjectDialog } from './NewProjectDialog'
+import type { CellKey } from '@/engine/grid/types'
 
 export function FileMenu() {
   const fileInputRef = useRef<HTMLInputElement>(null)
@@ -38,17 +38,15 @@ export function FileMenu() {
       useAppStore.getState().setTexture(texture)
       useAppStore.setState((s) => {
         s.meta = meta
-        // An imported project may be smaller than the current one — pull a stale plane offset
-        // back into the new bounds rather than starting out of range.
-        s.plane.offset = clampPlaneOffset(s.plane.offset, meta.gridExtent)
-        s.objectModeTarget = null
         // Stale selection/float/hover reference the old project's cells — reset (clipboards kept).
         s.selection = null
+        s.selectedCells = new Set<CellKey>()
         s.floatContent = null
         s.floatOrigin = null
         s.hoverCell = null
         s.chamferHoverValid = null
         s.hoveredFace = null
+        s.paintLineAnchor = null
         s.textureSelection = null
         s.textureFloat = null
         s.textureFloatOrigin = null
@@ -78,6 +76,8 @@ export function FileMenu() {
         s.markers = markers
         s.selectedMarkerId = null
       })
+      // An imported project opens grounded — one project's slice never leaks into the next.
+      useAppStore.getState().resetPlaneToGround()
       showToast('Project imported.')
     } catch (err) {
       showToast(err instanceof Error ? err.message : 'Import failed.')

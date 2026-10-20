@@ -7,6 +7,7 @@ import { TEXEL_SCALE } from '@/engine/texture/types'
 import { isActiveAnimation, updateAnimatedGroupTransform } from '@/engine/animation/animationLayers'
 import type { SliceKey } from '@/engine/animation/types'
 import { tickEmissiveAnimation } from '@/engine/instancing/previewMaterial'
+import { useActiveMemo } from './useActiveMemo'
 import { useAppStore } from '@/store/useAppStore'
 
 type AnimGroup = {
@@ -16,7 +17,7 @@ type AnimGroup = {
   sliceKey: SliceKey
 }
 
-export function AnimatedModelView() {
+export function AnimatedModelView({ active }: { active: boolean }) {
   const model = useAppStore((s) => s.model)
   const palette = useAppStore((s) => s.palette)
   const animSettings = useAppStore((s) => s.animSettings)
@@ -30,7 +31,9 @@ export function AnimatedModelView() {
   const animGroupRefs = useRef<Map<SliceKey, AnimGroup>>(new Map())
   const rootGroup = useMemo(() => new THREE.Group(), [])
 
-  const built = useMemo(
+  // Frozen while hidden (stays mounted across mode switches): voxel painting in Model mode
+  // never rebuilds these meshes behind the visible view.
+  const built = useActiveMemo(active,
     () => buildAnimatedSliceMeshes(model, palette, animSettings, sliceMasks, texture, gridExtent, glassRoughnessLevel, slicePivots, texelScale),
     [model, palette, animSettings, sliceMasks, texture, gridExtent, glassRoughnessLevel, slicePivots, texelScale],
   )
@@ -103,6 +106,7 @@ export function AnimatedModelView() {
   }, [built, rootGroup])
 
   useFrame(() => {
+    if (!active) return
     const elapsed = performance.now() / 1000
 
     const groups = animGroupRefs.current
@@ -117,5 +121,5 @@ export function AnimatedModelView() {
     }
   })
 
-  return <primitive object={rootGroup} />
+  return <primitive object={rootGroup} visible={active} />
 }

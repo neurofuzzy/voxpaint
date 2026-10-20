@@ -13,9 +13,9 @@ const TOOL_KEYS: Record<string, ToolId> = {
   t: 'textureface',
   s: 'select',
   k: 'fill',
-  c: 'clone',
   v: 'move',
   d: 'marker',
+  w: 'wand',
 }
 
 /**
@@ -24,16 +24,17 @@ const TOOL_KEYS: Record<string, ToolId> = {
  * trixelart's own use-keyboard-shortcuts.ts), separate from tool pointer-dispatch since this is
  * app/selection-domain, not per-tool pointer logic.
  *
- * Deliberately no bare single-key transform shortcuts: selection rotate/mirror live on the
- * SelectionPalette buttons instead, so a stray keypress can never reshape the model — only
- * explicit Cmd-chord clipboard/undo commands and selection-gated Delete may change it.
+ * Deliberately no bare single-key transform shortcuts for the *selection*: selection
+ * rotate/mirror live on the SelectionPalette buttons instead, so a stray keypress can never
+ * reshape the model — only explicit Cmd-chord clipboard/undo commands and selection-gated Delete
+ * may change it. `R` (brush rotation) is the one exception: it only changes what the *next* paint
+ * writes, never existing voxels.
  *
  * Mode-aware: in Texture mode every selection/history action dispatches to the parallel texture
  * actions (its own separate undo/redo history and texel selection/clipboard). Tool switching is
- * shared. Called from whichever 2D canvas is mounted (only one at a time), so a single listener is
- * ever active.
+ * shared. Called once from MainLayout (not the 2D canvases) so bindings stay live in 3D-only mode.
  */
-export function useKeyboardShortcuts(hoverCellRef?: React.RefObject<[number, number] | null>) {
+export function useKeyboardShortcuts() {
   useEffect(() => {
     function onKeyDown(e: KeyboardEvent) {
       const target = e.target as HTMLElement | null
@@ -55,6 +56,9 @@ export function useKeyboardShortcuts(hoverCellRef?: React.RefObject<[number, num
       // handler reads the same regardless of mode.
       const isTexture = store.mode === 'texture'
       const isAnimate = store.mode === 'animate'
+      // 3D-only layout routes shared selection actions at the independent 3D voxel set;
+      // split keeps the plane-framed 2D selection (see Selection3DSlice).
+      const is3D = !isTexture && !isAnimate && store.layoutMode === '3d-only'
       const undo = isTexture ? store.textureUndo : isAnimate ? store.animUndo : store.undo
       const redo = isTexture ? store.textureRedo : isAnimate ? store.animRedo : store.redo
       const selection = isTexture ? store.textureSelection : isAnimate ? null : store.selection
@@ -77,22 +81,29 @@ export function useKeyboardShortcuts(hoverCellRef?: React.RefObject<[number, num
           if (isTexture) {
             const faceSize = faceSizeFor(store.meta.gridExtent, store.meta.texelScale ?? TEXEL_SCALE)
             store.setTextureSelection(rectRegion(0, 0, faceSize - 1, faceSize - 1))
+          } else if (is3D) {
+            // 3D-only: every occupied voxel, as an explicit set (no plane frame involved).
+            store.setSelectedCells(new Set(store.model.color.keys()))
           } else {
             const half = effectiveExtent(store.meta.gridExtent) / 2
             store.setSelection(rectRegion(-half, -half, half - 1, half - 1))
           }
           e.preventDefault()
-        } else if (key === 'c' && selection) {
-          copy()
+        } else if (key === 'c' && (is3D ? store.selectedCells.size > 0 : selection)) {
+          if (is3D) store.copyCells3D()
+          else copy()
           e.preventDefault()
-        } else if (key === 'x' && selection) {
-          cut()
+        } else if (key === 'x' && (is3D ? store.selectedCells.size > 0 : selection)) {
+          if (is3D) store.cutCells3D()
+          else cut()
           e.preventDefault()
         } else if (key === 'v' && clipboard) {
           // Paste-in-place. In voxel mode "in place" means the same spot *on screen*, so the store
           // rebases the origin for the active plane; texture mode has no planes and pastes at the
-          // literal copied origin.
+          // literal copied origin. 3D-only stamps directly (no 2D float to drag there) and
+          // selects the pasted cells.
           if (isTexture) store.texturePasteAt(clipboard.originU ?? 0, clipboard.originV ?? 0)
+          else if (is3D) store.pasteCells3D()
           else store.pasteClipboardInPlace()
           e.preventDefault()
         }
@@ -102,6 +113,9 @@ export function useKeyboardShortcuts(hoverCellRef?: React.RefObject<[number, num
       if (e.key === 'Escape') {
         bakeFloat()
         clearSelection()
+        // The 3D store is independent — clear it too (no-op when empty, which is always the
+        // case outside model-mode 3D gestures).
+        store.clearSelectedCells()
         if (!isTexture && !isAnimate) store.selectMarker(null)
         e.preventDefault()
         return
@@ -133,8 +147,9 @@ export function useKeyboardShortcuts(hoverCellRef?: React.RefObject<[number, num
         }
       }
 
-      if ((key === 'delete' || key === 'backspace') && selection) {
-        deleteSelection()
+      if ((key === 'delete' || key === 'backspace') && (is3D ? store.selectedCells.size > 0 : selection)) {
+        if (is3D) store.deleteCells3D()
+        else deleteSelection()
         e.preventDefault()
         return
       }
@@ -152,10 +167,18 @@ export function useKeyboardShortcuts(hoverCellRef?: React.RefObject<[number, num
       if (tool && (!isAnimate || tool === 'paint' || tool === 'erase')) {
         store.setActiveTool(tool)
         e.preventDefault()
+        return
+      }
+
+      // Brush rotation: R steps +90°, Shift+R steps −90°. Model mode only (kind has no meaning
+      // while texturing/animating). Changes only the next paint, never existing voxels.
+      if (key === 'r' && !isTexture && !isAnimate) {
+        store.rotateBrush(e.shiftKey ? -1 : 1)
+        e.preventDefault()
       }
     }
 
     window.addEventListener('keydown', onKeyDown)
     return () => window.removeEventListener('keydown', onKeyDown)
-  }, [hoverCellRef])
+  }, [])
 }

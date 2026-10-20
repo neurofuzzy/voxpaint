@@ -4,10 +4,11 @@ import { emptyModel, encodeKey } from '@/engine/grid/GridStore'
 import type { Axis, Orientation } from '@/engine/grid/types'
 import type { ConstructionPlane } from '@/engine/plane/types'
 import { applyClipboardAt } from '@/engine/tools/clipboard'
+import { copyCellsToClipboard } from '@/engine/tools/cellSetOps'
 import { gridCoordFromPixel } from '@/engine/plane/constructionPlane'
 import { DEFAULT_PALETTE } from '@/engine/palette/defaultPalette'
 import type { ClipboardData, SelectionRegion } from '@/store/types'
-import { buildFloatGhostBatches, buildSelectionHighlightBatches } from './ghostBatches'
+import { buildFloatGhostBatches, buildSelectionHighlightBatches, placedFloatCoords } from './ghostBatches'
 import { cubeInstanceMatrix } from './basis'
 
 const EXTENT = 16
@@ -112,6 +113,112 @@ describe('buildFloatGhostBatches', () => {
   })
 })
 
+describe('placedFloatCoords', () => {
+  it('returns nothing when there is no float', () => {
+    expect(placedFloatCoords(null, null, ALL_PLANES[0], EXTENT)).toEqual([])
+    expect(placedFloatCoords(floatOf([]), null, ALL_PLANES[0], EXTENT)).toEqual([])
+    expect(placedFloatCoords(floatOf([]), origin, ALL_PLANES[0], EXTENT)).toEqual([])
+  })
+
+  it('tracks exactly the cells the bake would write, on every plane', () => {
+    const cells = [
+      { du: 0, dv: 0, dw: 0, color: { paletteSlot: slot } },
+      { du: 2, dv: 1, dw: 0, color: { paletteSlot: slot } },
+    ]
+    for (const plane of ALL_PLANES) {
+      const model = emptyModel()
+      applyClipboardAt(model, plane, floatOf(cells), origin.originU, origin.originV, EXTENT)
+
+      const placed = placedFloatCoords(floatOf(cells), origin, plane, EXTENT)
+        .map((c) => encodeKey(...c))
+        .sort()
+
+      expect(placed).toEqual([...model.color.keys()].sort())
+    }
+  })
+
+  it('skips cells with no color and cells outside the working grid', () => {
+    const plane: ConstructionPlane = { axis: 'z', orientation: 1, offset: 0 }
+    expect(placedFloatCoords(floatOf([{ du: 0, dv: 0, dw: 0 }]), origin, plane, EXTENT)).toEqual([])
+    const far = { originU: 900, originV: 900 }
+    expect(
+      placedFloatCoords(floatOf([{ du: 0, dv: 0, dw: 0, color: { paletteSlot: slot } }]), far, plane, EXTENT),
+    ).toEqual([])
+  })
+
+  it('rides deep-lifted cells at their depth offset like the bake does', () => {
+    const content: ClipboardData = {
+      ...floatOf([{ du: 0, dv: 0, dw: 2, color: { paletteSlot: slot } }]),
+      copyPlaneAxis: 'z',
+      copyPlaneOrientation: 1,
+      copyPlaneOffset: 0,
+    }
+    // Same-plane drop re-anchors to the recorded lift slice.
+    const same: ConstructionPlane = { axis: 'z', orientation: 1, offset: 0 }
+    const [at] = placedFloatCoords(content, origin, same, EXTENT)
+    expect(at[2]).toBe(2)
+    // A move onto a different plane re-anchors to that plane's slice instead.
+    const across: ConstructionPlane = { axis: 'x', orientation: 1, offset: 3 }
+    const [re] = placedFloatCoords(content, origin, across, EXTENT)
+    expect(re[0]).toBe(3 + 2)
+  })
+
+  it('ghost and footprint follow the active slice for region content after the plane moved', () => {
+    // Ordinary copy (lift slice 4), then the plane moved to 6 before the paste: all three
+    // placements must agree on the live slice, not the stale recorded offset.
+    const plane: ConstructionPlane = { axis: 'z', orientation: 1, offset: 6 }
+    const content: ClipboardData = {
+      width: 1,
+      height: 1,
+      originU: 0,
+      originV: 0,
+      cells: [{ du: 0, dv: 0, dw: 0, color: { paletteSlot: slot } }],
+      copyPlaneAxis: 'z',
+      copyPlaneOrientation: 1,
+      copyPlaneOffset: 4,
+    }
+    const baked = emptyModel()
+    applyClipboardAt(baked, plane, content, origin.originU, origin.originV, EXTENT)
+    const expected = [encodeKey(...gridCoordFromPixel(plane, origin.originU, origin.originV))]
+    expect([...baked.color.keys()]).toEqual(expected)
+
+    expect(placedFloatCoords(content, origin, plane, EXTENT).map((c) => encodeKey(...c))).toEqual(expected)
+
+    const ghosted = buildFloatGhostBatches(content, origin, plane, palette, EXTENT)
+      .flatMap((b) => b.matrices.map(positionOf))
+      .map(([x, y, z]) => encodeKey(Math.floor(x), Math.floor(y), Math.floor(z)))
+    expect(ghosted).toEqual(expected)
+  })
+
+  it('keeps an exact-set lift at absolute depths when the set sits off the plane', () => {
+    // Exact-set lifts (wand volumes) anchor dw off the set bbox-min, not the plane — unlike
+    // region lifts, dw==0 does NOT mean "on the plane". Ghost, box, and bake must all
+    // re-anchor off copyPlaneOffset or the bottom layer collapses onto the plane.
+    const plane: ConstructionPlane = { axis: 'z', orientation: 1, offset: 0 }
+    const model = emptyModel()
+    model.color.set(encodeKey(0, 0, 2), { paletteSlot: slot })
+    model.color.set(encodeKey(1, 0, 3), { paletteSlot: slot })
+    const content = copyCellsToClipboard(model, [encodeKey(0, 0, 2), encodeKey(1, 0, 3)], plane)
+    const at = { originU: content.originU!, originV: content.originV! }
+    const expected = [encodeKey(0, 0, 2), encodeKey(1, 0, 3)].sort()
+
+    const placed = placedFloatCoords(content, at, plane, EXTENT)
+      .map((c) => encodeKey(...c))
+      .sort()
+    expect(placed).toEqual(expected)
+
+    const ghosted = buildFloatGhostBatches(content, at, plane, DEFAULT_PALETTE, EXTENT)
+      .flatMap((b) => b.matrices.map(positionOf))
+      .map(([x, y, z]) => encodeKey(Math.floor(x), Math.floor(y), Math.floor(z)))
+      .sort()
+    expect(ghosted).toEqual(expected)
+
+    const baked = emptyModel()
+    applyClipboardAt(baked, plane, content, at.originU, at.originV, EXTENT)
+    expect([...baked.color.keys()].sort()).toEqual(expected)
+  })
+})
+
 describe('buildSelectionHighlightBatches', () => {
   const plane: ConstructionPlane = { axis: 'z', orientation: 1, offset: 0 }
 
@@ -175,5 +282,23 @@ describe('buildSelectionHighlightBatches', () => {
 
   it('ignores selection cells that fall outside the working grid', () => {
     expect(buildSelectionHighlightBatches(modelWith([[0, 0]]), plane, rect(900, 900, 2, 2), EXTENT)).toEqual([])
+  })
+
+  it('extraCells lights an explicit set at every depth alongside the slice cast', () => {
+    const model = modelWith([[0, 0]])
+    model.color.set(encodeKey(0, -1, 1), { paletteSlot: slot }) // stacked above the slice cell
+    model.color.set(encodeKey(4, 4, 4), { paletteSlot: slot }) // disconnected loner
+    // Slice cast alone: just the plane cell.
+    expect(count(buildSelectionHighlightBatches(model, plane, rect(0, 0, 1, 1), EXTENT))).toBe(1)
+    // Plus the explicit set: stacked cell joins, loner joins, nothing doubles.
+    const extra = [encodeKey(0, -1, 1), encodeKey(0, -1, 0), encodeKey(4, 4, 4)]
+    expect(count(buildSelectionHighlightBatches(model, plane, rect(0, 0, 1, 1), EXTENT, extra))).toBe(3)
+  })
+
+  it('extraCells works with no region and skips missing/out-of-grid keys', () => {
+    const model = modelWith([[0, 0]])
+    const extra = [encodeKey(0, -1, 0), encodeKey(7, 7, 7), encodeKey(900, 0, 0)]
+    expect(count(buildSelectionHighlightBatches(model, plane, null, EXTENT, extra))).toBe(1)
+    expect(buildSelectionHighlightBatches(model, plane, null, EXTENT)).toEqual([])
   })
 })

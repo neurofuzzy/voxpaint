@@ -73,6 +73,34 @@ export function fillLeaksToEdges(cells: Array<[number, number]>, gridExtent: Gri
 }
 
 /**
+ * 6-connected flood fill through occupied voxels (any color), starting from an occupied cell.
+ * Unlike `floodFillRegion3D` (which matches one palette slot, classic color-wand semantics),
+ * this matches mere occupancy — the whole touching component regardless of color. Used by the
+ * magic-wand select (bounding box) and by component-scoped delete, which re-floods live from
+ * the wand anchor so the set can never go stale.
+ */
+export function floodFillOccupied3D(model: VoxelModel, start: Coord, gridExtent: GridExtent): CellKey[] {
+  const visited = new Set<CellKey>()
+  const stack: Coord[] = [start]
+  const result: CellKey[] = []
+
+  while (stack.length > 0) {
+    const coord = stack.pop()!
+    const key = encodeKey(...coord)
+    if (visited.has(key)) continue
+    visited.add(key)
+    if (!withinWorkingBounds(coord, gridExtent)) continue
+    if (!model.color.has(key)) continue
+
+    result.push(key)
+    const [x, y, z] = coord
+    stack.push([x + 1, y, z], [x - 1, y, z], [x, y + 1, z], [x, y - 1, z], [x, y, z + 1], [x, y, z - 1])
+  }
+
+  return result
+}
+
+/**
  * 6-connected flood fill through the full 3D VoxelModel (not just one plane), color layer only —
  * same chamfer-preserving rule as `floodFillRegion`. Only ever called from an already-occupied
  * starting cell (the fill tool's alt-click requires clicking an existing voxel), so `target` is

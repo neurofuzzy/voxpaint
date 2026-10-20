@@ -5,6 +5,7 @@ type Slice = StateCreator<AppState, [['zustand/immer', never]], [], SelectionSli
 
 export const createSelectionSlice: Slice = (set, get) => ({
   selection: null,
+  selectPreview: null,
   clipboard: null,
   floatContent: null,
   floatOrigin: null,
@@ -20,4 +21,5 @@ export const createSelectionSlice: Slice = (set, get) => ({
     set((state) => { state.selection = region })
   },
   setClipboard: (clipboard) => set((state) => { state.clipboard = clipboard }),
+  setSelectPreview: (region) => set((state) => { state.selectPreview = region }),
 })

@@ -8,6 +8,7 @@ import { buildTexturedGeometryByColor } from '@/engine/texture/texturedGeometry'
 import { buildPreviewMaterial, tickEmissiveAnimation } from '@/engine/instancing/previewMaterial'
 import { buildEmissiveAnimIndex } from '@/engine/palette/emissiveAnimation'
 import { darkestBaseColor } from '@/engine/palette/palette'
+import { useActiveMemo } from './useActiveMemo'
 import { useAppStore } from '@/store/useAppStore'
 import { usePreviewAOMaps } from './usePreviewAOMaps'
 
@@ -19,8 +20,12 @@ import { usePreviewAOMaps } from './usePreviewAOMaps'
  * the same AO/specular-noise bake as Model mode (`usePreviewAOMaps`), so switching modes on a
  * painted model doesn't lose or change the shading.
  * Geometry rebuilds on model change; the baked overlay textures re-bake on texture change.
+ *
+ * Stays mounted across mode switches (`active` false hides it): while inactive the build
+ * freezes — voxel painting in Model mode never rebuilds this behind the visible view — and
+ * returning rebuilds once against the current inputs.
  */
-export function TexturedModelView() {
+export function TexturedModelView({ active }: { active: boolean }) {
   const model = useAppStore((s) => s.model)
   const palette = useAppStore((s) => s.palette)
   const texture = useAppStore((s) => s.texture)
@@ -34,8 +39,15 @@ export function TexturedModelView() {
   const noiseSeed = useAppStore((s) => s.meta.noiseSeed)
   const texelScale = useAppStore((s) => s.meta.texelScale ?? TEXEL_SCALE)
 
-  const groups = useMemo(() => buildTexturedGeometryByColor(model, palette, gridExtent, texelScale), [model, palette, gridExtent, texelScale])
+  const groups = useActiveMemo(active,
+    () => buildTexturedGeometryByColor(model, palette, gridExtent, texelScale),
+    [model, palette, gridExtent, texelScale],
+  )
   useEffect(() => () => { for (const g of groups) g.geometry.dispose() }, [groups])
+
+  // The occlusion bake reads the model the frozen build was made from — not the live one — so
+  // voxel painting in Model mode never re-bakes this hidden view's AO atlas on every edit.
+  const frozenModel = useActiveMemo(active, () => model, [model])
 
   // Emissive materials skip AO/noise baking entirely (see OptimizedMeshView) — excluded from the
   // unwrap atlas; they still occlude everything else, since occlusion sampling reads the 3D model.
@@ -44,7 +56,7 @@ export function TexturedModelView() {
     [groups],
   )
   const { aoTexture, metalnessTexture, roughnessTexture } = usePreviewAOMaps(
-    model,
+    frozenModel,
     geometries,
     false,
     { ambientOcclusion, noiseLevel, specularNoiseLevel, aoStrength, noiseSeed, noiseScale },
@@ -73,6 +85,7 @@ export function TexturedModelView() {
   useEffect(() => () => { for (const m of materials) m.dispose() }, [materials])
 
   useFrame(() => {
+    if (!active) return
     const elapsed = performance.now() / 1000
     for (const m of materials) tickEmissiveAnimation(m, elapsed)
   })
@@ -92,12 +105,12 @@ export function TexturedModelView() {
   }, [materials, groups, aoTexture, metalnessTexture, roughnessTexture])
 
   return (
-    <>
+    <group visible={active}>
       {groups.map((g, i) => (
         <mesh key={i} geometry={g.geometry}>
           <primitive object={materials[i]} attach="material" />
         </mesh>
       ))}
-    </>
+    </group>
   )
 }

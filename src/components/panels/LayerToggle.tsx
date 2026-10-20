@@ -1,7 +1,7 @@
 import * as Tooltip from '@radix-ui/react-tooltip'
 import { useAppStore } from '@/store/useAppStore'
 import type { VoxelKind } from '@/store/types'
-import { ChamferIcon, CubeIcon, FlatIcon, FlatWedgeIcon, HalfIcon, PostIcon, QuarterIcon, ThinIcon, WedgeIcon } from './voxelKindIcons'
+import { ChamferIcon, ConcaveIcon, CubeIcon, FlatIcon, FlatWedgeIcon, HalfIcon, PostIcon, QuarterIcon, ThinIcon, WedgeIcon } from './voxelKindIcons'
 
 const KINDS: Array<{ id: VoxelKind; label: string; Icon: typeof CubeIcon; hint: string }> = [
   { id: 'cube', label: 'Cube', Icon: CubeIcon, hint: 'Cube mode: standard block shapes' },
@@ -15,14 +15,29 @@ const KINDS: Array<{ id: VoxelKind; label: string; Icon: typeof CubeIcon; hint: 
   { id: 'flatwedge', label: 'Flat wedge', Icon: FlatWedgeIcon, hint: 'Flat wedge mode: a bare diagonal pane, re-click to turn it' },
 ]
 
+/** Outer/inner corner bevels, painted explicitly (no autotile) — 3D-only palette entries. The
+ * autotiled Chamfer kind is hidden there (nothing auto-resolves in verbatim mode); Outer corner
+ * takes over its icon. */
+const CORNER_KINDS: Array<{ id: VoxelKind; label: string; Icon: typeof CubeIcon; hint: string }> = [
+  { id: 'convex', label: 'Outer corner', Icon: ChamferIcon, hint: 'Outer corner mode: full-height corner post, R rotates it' },
+  { id: 'concave', label: 'Inner corner', Icon: ConcaveIcon, hint: 'Inner corner mode: notched pocket corner, R rotates it' },
+]
+
 /**
  * Which kind of voxel paint writes — cube vs. chamfer. Rendered as a bordered vertical segmented
  * toggle in the left toolbar (below the tools), so it reads clearly as a two-state switch. The
  * active segment is driven directly from `activeVoxelKind` (explicit classes rather than Radix
  * `data-state`, so the highlight is unambiguous behind the literal-fill SVG icons).
+ *
+ * In 3D-only layout the autotiled Chamfer entry is replaced by the two explicit corner bevels
+ * (outer/inner) — they paint frozen with the brush rotation, unlike the autotiled ramp family.
+ * A corner kind picked there stays selected back in split view (same paint path paints them anywhere).
  */
 export function VoxelKindToggle() {
   const activeVoxelKind = useAppStore((s) => s.activeVoxelKind)
+  const showCorners = useAppStore((s) => s.layoutMode === '3d-only')
+  // KINDS[1] is the autotiled Chamfer: hidden in 3D-only, where the corners take its slot.
+  const kinds = showCorners ? [...KINDS.slice(0, 1), ...CORNER_KINDS, ...KINDS.slice(2)] : KINDS
   const setActiveVoxelKind = useAppStore((s) => s.setActiveVoxelKind)
   const setActiveTool = useAppStore((s) => s.setActiveTool)
   const setStatusMessage = useAppStore((s) => s.setStatusMessage)
@@ -42,7 +57,7 @@ export function VoxelKindToggle() {
           (disabled ? 'pointer-events-none opacity-40' : '')
         }
       >
-        {KINDS.map(({ id, label, Icon, hint }) => {
+        {kinds.map(({ id, label, Icon, hint }) => {
           const active = activeVoxelKind === id
           return (
             <Tooltip.Root key={id}>

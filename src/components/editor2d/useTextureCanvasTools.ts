@@ -37,8 +37,6 @@ function pixelToTexel(
  */
 export function useTextureCanvasTools(canvasRef: React.RefObject<HTMLCanvasElement | null>) {
   const drag = useRef<TextureDragState>({ kind: 'idle' })
-  const cloneSourceRef = useRef<[number, number] | null>(null)
-  const cloneOffsetRef = useRef<[number, number] | null>(null)
   const panDragRef = useRef<{ startX: number; startY: number; lastX: number; lastY: number; hasMoved: boolean } | null>(null)
 
   // Multi-touch gesture tracking — the texel twin of usePixelCanvasTools' touch handling: every
@@ -160,7 +158,6 @@ export function useTextureCanvasTools(canvasRef: React.RefObject<HTMLCanvasEleme
     paintTexel: store.paintTexel,
     eraseTexel: store.eraseTexel,
     floodFillTexel: store.floodFillTexel,
-    cloneStampTexel: store.cloneStampTexel,
     beginTextureMove: store.beginTextureMove,
     updateTextureMove: store.updateTextureMove,
     endTextureMove: store.endTextureMove,
@@ -177,8 +174,6 @@ export function useTextureCanvasTools(canvasRef: React.RefObject<HTMLCanvasEleme
     selectPreview,
     setSelectPreview,
     drag,
-    cloneSourceRef,
-    cloneOffsetRef,
   }
   const ctxRef = useRef(ctx)
   ctxRef.current = ctx

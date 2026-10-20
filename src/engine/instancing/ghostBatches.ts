@@ -1,9 +1,9 @@
 import * as THREE from 'three'
-import { encodeKey, withinWorkingBounds } from '@/engine/grid/GridStore'
-import type { ChamferCell, Coord, GridExtent, VoxelModel } from '@/engine/grid/types'
+import { decodeKey, encodeKey, withinWorkingBounds } from '@/engine/grid/GridStore'
+import type { CellKey, ChamferCell, Coord, GridExtent, VoxelModel } from '@/engine/grid/types'
 import type { ConstructionPlane } from '@/engine/plane/types'
 import { gridCoordFromPixel } from '@/engine/plane/constructionPlane'
-import { axisIndex } from '@/engine/plane/planeGeometry'
+import { placeClipboardCell } from '@/engine/tools/clipboard'
 import { resolveSlotColor } from '@/engine/palette/palette'
 import type { PaletteState } from '@/engine/palette/types'
 import { forEachSelectedCell } from '@/engine/tools/selectionMask'
@@ -44,8 +44,8 @@ function pushInto(byPool: Map<PoolId, GhostBatch>, coord: Coord, chamfer: Chamfe
  * `FloatGhostPreview.tsx`), grouped into the same instancing pools the live `InstancingManager`
  * uses so a float and the model it bakes into agree on every cell's shape.
  *
- * Deliberately mirrors `applyClipboardAt`'s placement exactly — same plane mapping, same bounds
- * rejection — so the ghost is a truthful preview of the bake rather than an approximation of it.
+ * Placement goes through the shared `placeClipboardCell`, so the ghost is a truthful preview of
+ * the bake rather than an approximation of it.
  */
 export function buildFloatGhostBatches(
   floatContent: ClipboardData | null,
@@ -56,20 +56,12 @@ export function buildFloatGhostBatches(
 ): GhostBatch[] {
   if (!floatContent || !floatOrigin) return []
   const byPool = new Map<PoolId, GhostBatch>()
-  const ai = axisIndex(plane.axis)
 
   for (const cell of floatContent.cells) {
     // A cell with no color paints nothing when baked, so it has nothing to ghost either.
     // (It still clears on bake — replace semantics — but clearing renders as absence.)
     if (!cell.color) continue
-    const coord = gridCoordFromPixel(plane, floatOrigin.originU + cell.du, floatOrigin.originV + cell.dv)
-    // Deep-lifted cells ride at their depth offset off the float slice, mirroring
-    // `applyClipboardAt` (same-plane drops re-anchor to the lift slice recorded in the content).
-    if (cell.dw !== 0) {
-      const samePlane =
-        floatContent.copyPlaneAxis === plane.axis && floatContent.copyPlaneOrientation === plane.orientation
-      coord[ai] = (samePlane ? (floatContent.copyPlaneOffset ?? plane.offset) : plane.offset) + cell.dw
-    }
+    const coord = placeClipboardCell(plane, floatContent, floatOrigin.originU, floatOrigin.originV, cell)
     // Cells dragged off-grid are dropped by `applyClipboardAt` on bake — don't promise them here.
     if (!withinWorkingBounds(coord, gridExtent)) continue
     pushInto(byPool, coord, cell.chamfer, new THREE.Color(resolveSlotColor(palette, cell.color.paletteSlot)))
@@ -79,13 +71,42 @@ export function buildFloatGhostBatches(
 }
 
 /**
+ * Current grid-space footprint of a pending float: every placed cell coordinate within working
+ * bounds. Placement goes through the shared `placeClipboardCell`, so the box and the ghost
+ * agree on where the drag is. Only cells with color are included, matching what the ghost renders
+ * (colorless cells clear on bake but paint nothing, so they contribute no visible drag).
+ *
+ * Used by the 3D selection bounding box to track a dragged selection: a lift deletes the cells
+ * out of the model, leaving the selection set stale, but the float knows where its cells live
+ * right now and `floatOrigin` follows the pointer every frame.
+ */
+export function placedFloatCoords(
+  floatContent: ClipboardData | null,
+  floatOrigin: FloatOrigin | null,
+  plane: ConstructionPlane,
+  gridExtent: GridExtent,
+): Coord[] {
+  if (!floatContent || !floatOrigin) return []
+  const out: Coord[] = []
+  for (const cell of floatContent.cells) {
+    if (!cell.color) continue
+    const coord = placeClipboardCell(plane, floatContent, floatOrigin.originU, floatOrigin.originV, cell)
+    if (!withinWorkingBounds(coord, gridExtent)) continue
+    out.push(coord)
+  }
+  return out
+}
+
+/**
  * Lays out the voxels under a (non-floating) selection so 3D can cast the same cyan over them that
  * the 2D canvas tints them with — the selection is otherwise invisible in 3D, leaving no clue which
  * voxels a delete or transform is about to hit.
  *
  * Only cells that actually hold a voxel are included: the selection is a rectangle-or-lasso mask
- * over the plane, and casting empty space would read as a floating cyan slab. Since a selection
- * lives on one construction-plane slice, only that slice ever lights up.
+ * over the plane, and casting empty space would read as a floating cyan slab. `extraCells` lights
+ * an explicit grid-space set (the 3D selection store) at every depth alongside the slice cast —
+ * callers pass already-resolved keys; missing/out-of-grid keys are skipped benignly. Overlap
+ * between the two casts draws once (shared dedupe set).
  *
  * No per-instance colors — the whole overlay is one flat tint, so the caller's material carries it.
  */
@@ -94,17 +115,31 @@ export function buildSelectionHighlightBatches(
   plane: ConstructionPlane,
   selection: SelectionRegion | null,
   gridExtent: GridExtent,
+  extraCells: Iterable<CellKey> | null = null,
 ): GhostBatch[] {
-  if (!selection) return []
+  if (!selection && !extraCells) return []
   const byPool = new Map<PoolId, GhostBatch>()
+  const lit = new Set<string>()
 
-  forEachSelectedCell(selection, (u, v) => {
-    const coord = gridCoordFromPixel(plane, u, v)
+  const pushCell = (coord: Coord) => {
     if (!withinWorkingBounds(coord, gridExtent)) return
     const key = encodeKey(...coord)
-    if (!model.color.has(key)) return
+    if (lit.has(key) || !model.color.has(key)) return
+    lit.add(key)
     pushInto(byPool, coord, model.chamfer.get(key))
-  })
+  }
+
+  if (selection) {
+    forEachSelectedCell(selection, (u, v) => {
+      pushCell(gridCoordFromPixel(plane, u, v))
+    })
+  }
+
+  if (extraCells) {
+    for (const key of extraCells) {
+      pushCell(decodeKey(key))
+    }
+  }
 
   return [...byPool.values()]
 }

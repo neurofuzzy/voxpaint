@@ -1,11 +1,8 @@
-import { Boxes, FlipHorizontal, Grid3x3, SquareArrowOutDownLeft, Sun, Video } from 'lucide-react'
-import type { Axis } from '@/engine/grid/types'
+import { Boxes, Grid3x3, SquareArrowOutDownLeft, Sun, Video } from 'lucide-react'
 import { useAppStore } from '@/store/useAppStore'
 
 const BTN_BASE = 'flex h-8 w-8 items-center justify-center rounded-md text-neutral-400 hover:bg-neutral-800 hover:text-neutral-100'
 const BTN_ON = 'bg-violet-500/20 text-violet-300 hover:bg-violet-500/25 hover:text-violet-200'
-
-const AXES: Axis[] = ['x', 'y', 'z']
 
 function ToggleButton({ on, onClick, label, children, onPointerEnter, onPointerLeave }: {
   on: boolean
@@ -31,9 +28,11 @@ function ToggleButton({ on, onClick, label, children, onPointerEnter, onPointerL
 }
 
 /**
- * Frosted overlay pinned to the top-right of the 3D preview. Two clusters, divider-separated:
- * construction-plane controls (cycle axis, flip orientation) and view toggles (Wireframe, Texture
- * face map, Optimized mesh). Viewport Orbit/3D-Edit mode lives top-left next to the compass (`ViewportModeToggle`).
+ * Frosted overlay pinned to the top-right of the 3D preview: view toggles (Wireframe, Texture
+ * face map, Optimized mesh), camera reset, and exposure. The construction-plane pose (axis,
+ * orientation, offset) lives on the far-right edge slider (`PlaneEdgeSlider`), along with the
+ * 3D paint plane lock (3D-only model mode).
+ * Collapsing the 2D pane lives on the 2D pane itself (its X button) and the collapsed rail.
  * `stopPropagation` keeps clicks/drags off the OrbitControls underneath.
  */
 export function ViewOptionsOverlay({ onResetCamera, showExposure, onToggleExposure }: {
@@ -41,9 +40,7 @@ export function ViewOptionsOverlay({ onResetCamera, showExposure, onToggleExposu
   showExposure: boolean
   onToggleExposure: () => void
 }) {
-  const plane = useAppStore((s) => s.plane)
   const mode = useAppStore((s) => s.mode)
-  const setPlaneAxisOrientation = useAppStore((s) => s.setPlaneAxisOrientation)
   const wireframe = useAppStore((s) => s.wireframe)
   const textureFaceMap = useAppStore((s) => s.textureFaceMap)
   const optimizedMesh = useAppStore((s) => s.optimizedMesh)
@@ -52,9 +49,6 @@ export function ViewOptionsOverlay({ onResetCamera, showExposure, onToggleExposu
   const setOptimizedMesh = useAppStore((s) => s.setOptimizedMesh)
   const setStatusMessage = useAppStore((s) => s.setStatusMessage)
 
-  const cycleAxis = () => setPlaneAxisOrientation(AXES[(AXES.indexOf(plane.axis) + 1) % 3], plane.orientation)
-  const flip = () => setPlaneAxisOrientation(plane.axis, plane.orientation === 1 ? -1 : 1)
-
   return (
     <div
       className="absolute right-3 top-3 z-40 flex items-center gap-1.5 rounded-xl border border-neutral-800
@@ -62,29 +56,6 @@ export function ViewOptionsOverlay({ onResetCamera, showExposure, onToggleExposu
       onPointerDown={(e) => e.stopPropagation()}
       onPointerMove={(e) => e.stopPropagation()}
     >
-      <button
-        onClick={cycleAxis}
-        title="Construction plane axis (click to cycle)"
-        aria-label="Construction plane axis"
-        onPointerEnter={() => setStatusMessage('Click to cycle the construction plane axis')}
-        onPointerLeave={() => setStatusMessage(null)}
-        className={`${BTN_BASE} font-mono text-sm font-semibold uppercase`}
-      >
-        {plane.axis}
-      </button>
-      <button
-        onClick={flip}
-        title={`Flip plane orientation (currently ${plane.orientation === 1 ? '+' : '−'})`}
-        aria-label="Flip plane orientation"
-        onPointerEnter={() => setStatusMessage('Click to flip the construction plane orientation')}
-        onPointerLeave={() => setStatusMessage(null)}
-        className={BTN_BASE}
-      >
-        <FlipHorizontal size={16} />
-      </button>
-
-      <div className="h-5 w-px bg-neutral-800" />
-
       <ToggleButton
         on={wireframe}
         onClick={() => setWireframe(!wireframe)}

@@ -1,4 +1,5 @@
 import chamferUrl from '@/assets/chamfer.svg'
+import concaveUrl from '@/assets/concave.svg'
 import cubeUrl from '@/assets/cube.svg'
 import flatUrl from '@/assets/flat.svg'
 import flatwedgeUrl from '@/assets/flatwedge.svg'
@@ -34,6 +35,10 @@ export function ChamferIcon({ size = 18 }: IconProps) {
   return <FileIcon url={chamferUrl} size={size} />
 }
 
+export function ConcaveIcon({ size = 18 }: IconProps) {
+  return <FileIcon url={concaveUrl} size={size} />
+}
+
 export function WedgeIcon({ size = 18 }: IconProps) {
   return <FileIcon url={wedgeUrl} size={size} />
 }
@@ -59,5 +64,7 @@ export function FlatIcon({ size = 18 }: IconProps) {
 }
 
 export function FlatWedgeIcon({ size = 18 }: IconProps) {
-  return <FileIcon url={flatwedgeUrl} size={size} />
+  // 120×137 frame (the pane's top edge sits at full cell height): scale height so it draws at
+  // the same size/128 scale as the 120×128 icons.
+  return <FileIcon url={flatwedgeUrl} size={size} height={size * (137 / 128)} />
 }

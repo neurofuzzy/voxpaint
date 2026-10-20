@@ -9,7 +9,6 @@ import { animateToolMap, toolMap } from '@/engine/tools'
 import type { ToolContext, ToolDragState } from '@/engine/tools/types'
 import type { ConstructionPlane } from '@/engine/plane/types'
 import { useAppStore } from '@/store/useAppStore'
-import type { SelectionRegion } from '@/store/types'
 import type { CanvasPan, CanvasSize } from './cameraTransform'
 import { clampPan, screenToWorld, touchDistance, touchMidpoint, vScaleForPlane } from './cameraTransform'
 import {
@@ -57,8 +56,6 @@ function pixelToCell(
  */
 export function usePixelCanvasTools(canvasRef: React.RefObject<HTMLCanvasElement | null>) {
   const drag = useRef<ToolDragState>({ kind: 'idle' })
-  const cloneSourceRef = useRef<[number, number] | null>(null)
-  const cloneOffsetRef = useRef<[number, number] | null>(null)
   const hoverCellRef = useRef<[number, number] | null>(null)
   const panDragRef = useRef<{ startX: number; startY: number; lastX: number; lastY: number; hasMoved: boolean } | null>(null)
 
@@ -108,7 +105,10 @@ export function usePixelCanvasTools(canvasRef: React.RefObject<HTMLCanvasElement
   }, [gridExtent, voxelScaleY])
 
   const [linePreview, setLinePreview] = useState<{ anchor: [number, number]; end: [number, number] } | null>(null)
-  const [selectPreview, setSelectPreview] = useState<SelectionRegion | null>(null)
+  // Store-backed (not local) so the 3D selection box can mirror the live marquee while it is
+  // being dragged — the 2D canvas renders `selectPreview ?? selection` for the same reason.
+  const selectPreview = useAppStore((s) => s.selectPreview)
+  const setSelectPreview = useAppStore((s) => s.setSelectPreview)
 
   useEffect(() => {
     const canvas = canvasRef.current
@@ -267,7 +267,6 @@ export function usePixelCanvasTools(canvasRef: React.RefObject<HTMLCanvasElement
     clearPivotForCurrentSlice: store.clearPivotForCurrentSlice,
     animBeginStroke: store.animBeginStroke,
     animCommitStroke: store.animCommitStroke,
-    cloneStampCell: store.cloneStampCell,
     beginMove: store.beginMove,
     updateMove: store.updateMove,
     endMove: store.endMove,
@@ -275,6 +274,7 @@ export function usePixelCanvasTools(canvasRef: React.RefObject<HTMLCanvasElement
     setActiveVoxelKind: store.setActiveVoxelKind,
     setActiveTool: store.setActiveTool,
     setSelection: store.setSelection,
+    applyWandAt: store.applyWandAt,
     liftSelectionToFloat: store.liftSelectionToFloat,
     moveFloatTo: store.moveFloatTo,
     transformFloat: store.transformFloat,
@@ -287,8 +287,6 @@ export function usePixelCanvasTools(canvasRef: React.RefObject<HTMLCanvasElement
     selectPreview,
     setSelectPreview,
     drag,
-    cloneSourceRef,
-    cloneOffsetRef,
   }
   const ctxRef = useRef(ctx)
   ctxRef.current = ctx
