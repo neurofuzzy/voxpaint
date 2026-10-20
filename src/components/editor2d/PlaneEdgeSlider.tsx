@@ -1,5 +1,5 @@
 import { useRef, useState } from 'react'
-import { ChevronDown, ChevronUp, FlipHorizontal, Lock, LockOpen } from 'lucide-react'
+import { ChevronDown, ChevronUp, FlipHorizontal, Lock, LockOpen, Paintbrush } from 'lucide-react'
 import { effectiveExtent } from '@/engine/grid/GridStore'
 import type { Axis } from '@/engine/grid/types'
 import { useAppStore } from '@/store/useAppStore'
@@ -40,6 +40,9 @@ export function PlaneEdgeSlider() {
   const gridExtent = useAppStore((s) => s.meta.gridExtent)
   const mode = useAppStore((s) => s.mode)
   const layoutMode = useAppStore((s) => s.layoutMode)
+  const activeTool = useAppStore((s) => s.activeTool)
+  const touchPaintHold = useAppStore((s) => s.touchPaintHold)
+  const setTouchPaintHold = useAppStore((s) => s.setTouchPaintHold)
   const planeLocked3D = useAppStore((s) => s.planeLocked3D)
   const setPlaneLocked3D = useAppStore((s) => s.setPlaneLocked3D)
   const setStatusMessage = useAppStore((s) => s.setStatusMessage)
@@ -119,6 +122,9 @@ export function PlaneEdgeSlider() {
   }
   // The plane lock only constrains 3D paint, which only exists in 3D-only model mode.
   const showLock = mode === 'model' && layoutMode === '3d-only'
+  // Momentary hold-to-paint for touch/stylus: while held, orbit locks and paint drags
+  // write onto the construction plane. Paint tool only (3D-only model mode).
+  const showTouchPaint = showLock && activeTool === 'paint'
 
   return (
     <div
@@ -229,6 +235,65 @@ export function PlaneEdgeSlider() {
           <div className={`h-6 w-1 rounded-full ${atBottom && !dragging ? 'bg-neutral-700' : 'bg-neutral-400'}`} />
         </div>
         {stepperButton(-1, 'Decrease offset', 'Click to move the plane back one layer', atBottom, ChevronDown)}
+        {showTouchPaint && (
+          <>
+            <div className="h-px w-6 bg-neutral-700/60" />
+            <button
+              aria-label="Hold to paint (touch)"
+              aria-pressed={touchPaintHold}
+              title="Hold to lock orbit and paint with touch/stylus"
+              onPointerDown={(e) => {
+                // Never starts an offset drag — this button owns its own press.
+                e.stopPropagation()
+                e.preventDefault()
+                try {
+                  e.currentTarget.setPointerCapture(e.pointerId)
+                } catch {
+                  // Already released (touch pointer-up auto-releases) — the up handler still clears.
+                }
+                setTouchPaintHold(true)
+                setStatusMessage('Holding: orbit locked — paint on the plane with stylus/finger')
+              }}
+              onPointerUp={(e) => {
+                e.stopPropagation()
+                setTouchPaintHold(false)
+                setStatusMessage(null)
+                try {
+                  e.currentTarget.releasePointerCapture(e.pointerId)
+                } catch {
+                  // Already released — nothing to do.
+                }
+              }}
+              onPointerCancel={(e) => {
+                e.stopPropagation()
+                setTouchPaintHold(false)
+                setStatusMessage(null)
+              }}
+              onLostPointerCapture={() => {
+                // Safety net: a capture loss without up/cancel (e.g. alert overlap) still unlocks orbit.
+                if (useAppStore.getState().touchPaintHold) {
+                  setTouchPaintHold(false)
+                  setStatusMessage(null)
+                }
+              }}
+              onPointerEnter={() => {
+                if (!touchPaintHold) setStatusMessage('Hold to lock orbit and paint with touch/stylus')
+              }}
+              onPointerLeave={() => {
+                if (!touchPaintHold) setStatusMessage(null)
+              }}
+              onContextMenu={(e) => e.preventDefault()}
+              className={
+                'flex h-11 w-11 touch-none items-center justify-center rounded-full border transition-colors select-none ' +
+                (touchPaintHold
+                  ? 'border-violet-500/70 bg-violet-500/25 text-violet-200'
+                  : 'border-neutral-700/60 bg-neutral-900/40 text-neutral-300 hover:border-neutral-500 hover:bg-neutral-900/70 hover:text-neutral-100')
+              }
+            >
+              <Paintbrush size={17} />
+            </button>
+          </>
+        )}
       </div>
       {dragging && (
         <div className="pointer-events-none absolute right-14 top-1/2 -translate-y-1/2 rounded-lg border border-cyan-400/50 bg-neutral-900/95 px-2.5 py-1.5 font-mono text-sm tabular-nums text-cyan-200 shadow-2xl">

@@ -38,6 +38,7 @@ export const createViewSlice: Slice = (set, get) => ({
   meshTriangles: null,
   aoStrength: 1,
   exposure: 1,
+  touchPaintHold: false,
   statusMessage: null,
   statusAlert: null,
   onionSkin: true,
@@ -77,6 +78,7 @@ export const createViewSlice: Slice = (set, get) => ({
   setMeshTriangles: (v) => set((state) => { state.meshTriangles = v }),
   setAoStrength: (v) => set((state) => { state.aoStrength = v; state.dirty = true }),
   setExposure: (v) => set((state) => { state.exposure = v; state.dirty = true }),
+  setTouchPaintHold: (v) => set((state) => { state.touchPaintHold = v }),
   setHoverCell: (coord, chamferValid) =>
     set((state) => {
       state.hoverCell = coord

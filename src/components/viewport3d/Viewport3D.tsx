@@ -10,6 +10,7 @@ import type { InstancingManager } from '@/engine/instancing/InstancingManager'
 import { placedFloatCoords } from '@/engine/instancing/ghostBatches'
 import type { ClipboardData, FloatOrigin } from '@/store/types'
 import { gridCoordFromPixel, pixelFromGridCoord, planeFromFaceHit } from '@/engine/plane/constructionPlane'
+import { bresenhamLine } from '@/engine/tools/lineUtils'
 import { WAND_DOUBLE_TAP_MS } from '@/engine/tools/wandTool'
 import { axisIndex } from '@/engine/plane/planeGeometry'
 import { resolveDirectPaintTarget } from '@/store/ghostPlacement'
@@ -214,6 +215,9 @@ function VoxelInteractionHandler({ managerRef, controlsRef }: {
   const activeTool = useAppStore((s) => s.activeTool)
   const activeToolRef = useRef(activeTool)
   activeToolRef.current = activeTool
+  const touchPaintHold = useAppStore((s) => s.touchPaintHold)
+  const touchPaintHoldRef = useRef(touchPaintHold)
+  touchPaintHoldRef.current = touchPaintHold
   const setHoverCell = useAppStore((s) => s.setHoverCell)
   const setHoveredFace = useAppStore((s) => s.setHoveredFace)
   const setStatusMessage = useAppStore((s) => s.setStatusMessage)
@@ -266,6 +270,11 @@ function VoxelInteractionHandler({ managerRef, controlsRef }: {
     // stroke opens on the first over-threshold move; a tap orients the plane instead. Orbit
     // suppressed until pointer-up, like the marquee.
     let moveDrag: { startU: number; startV: number; lastU: number; lastV: number; begun: boolean } | null = null
+    // Open touch hold-to-paint drag (3D-only Model + paint tool + hold button pressed): the
+    // stylus/finger paints directly onto the construction plane while orbit stays locked.
+    // One undo stroke per drag, bracketed here (not per cell); `lastCoord` anchors the
+    // Bresenham interpolation so fast sweeps don't gap. Orbit suppressed until pointer-up.
+    let paintTouchDrag: { lastCoord: Coord } | null = null
     // Last select-tool tap (3D-only layout only) for double-click detection: a rapid second tap
     // on the same voxel flood-selects the plane slice instead of re-landing the plane (see the
     // tap commit below). Stale entries self-expire via the timing check; drags and canvas-leave
@@ -277,6 +286,78 @@ function VoxelInteractionHandler({ managerRef, controlsRef }: {
      * orbit/navigate only. */
     function isBlocking(): boolean {
       return layoutModeRef.current === '3d-only' && (BLOCKING_TOOLS as readonly string[]).includes(activeToolRef.current)
+    }
+
+    /** True while the touch hold-to-paint button is down in 3D-only Model with the paint
+     * tool: the stylus/finger paints directly onto the construction plane and orbit stays
+     * locked. Paint only — every other tool keeps its tap/drag behavior. */
+    function isTouchPainting(): boolean {
+      return touchPaintHoldRef.current
+        && layoutModeRef.current === '3d-only'
+        && modeRef.current === 'model'
+        && activeToolRef.current === 'paint'
+    }
+
+    /** Resolves what a touch hold-to-paint pointer paints: the shared direct-paint target
+     * (face hit → stack-or-replace per the plane lock; else the plane cell under the
+     * cursor), so drag writes agree with taps and the ghost preview. Null when the ray
+     * runs parallel to the plane or the target is blocked (occupied-unlocked / off-slice). */
+    function resolveTouchPaintTarget(clientX: number, clientY: number): Coord | null {
+      const st = useAppStore.getState()
+      const activePlane = planeRef.current
+      const hit = applyPlaneLockFilter(resolveFaceHit(clientX, clientY), 'paint')
+      if (hit) {
+        const [x, y, z] = hit.key.split(',').map(Number)
+        const cell: Coord = [x, y, z]
+        return resolveDirectPaintTarget(
+          st.model,
+          activePlane,
+          cell,
+          { cellKey: hit.key, axis: hit.plane.axis, orientation: hit.plane.orientation },
+          st.meta.gridExtent,
+          st.planeLocked3D,
+        )
+      }
+      const empty = resolveEmptyCell(clientX, clientY)
+      if (!empty) return null
+      return resolveDirectPaintTarget(st.model, activePlane, empty, null, st.meta.gridExtent, st.planeLocked3D)
+    }
+
+    /** Writes one touch hold-to-paint cell inside the already-open stroke (orientation
+     * always inherits the active construction plane, matching taps and the ghost). Skips
+     * occupied cells when unlocked (tap parity) and out-of-bounds cells. */
+    function paintTouchCell(coord: Coord): void {
+      const st = useAppStore.getState()
+      if (!withinWorkingBounds(coord, st.meta.gridExtent)) return
+      if (!st.planeLocked3D && st.model.color.has(encodeKey(...coord))) return
+      st.paintCellAtCoord(coord, st.plane.axis, st.plane.orientation)
+    }
+
+    /** Paints the interpolated run from the drag's last cell to the current target so fast
+     * stylus sweeps don't gap (plane-UV Bresenham, like the 2D drag path). Both endpoints
+     * sit on the active slice by construction, so the run stays in-plane. */
+    function paintTouchRunTo(target: Coord, drag: { lastCoord: Coord }): void {
+      const activePlane = planeRef.current
+      const a = pixelFromGridCoord(activePlane, drag.lastCoord)
+      const b = pixelFromGridCoord(activePlane, target)
+      if (a.u === b.u && a.v === b.v) return
+      for (const [lu, lv] of bresenhamLine(a.u, a.v, b.u, b.v)) {
+        const c = gridCoordFromPixel(activePlane, lu, lv)
+        paintTouchCell(c)
+      }
+      drag.lastCoord = target
+    }
+
+    /** Ends an open touch hold-to-paint drag: one undo step for the whole sweep, orbit back. */
+    function endPaintTouchDrag(commit: boolean) {
+      if (!paintTouchDrag) return
+      const last = paintTouchDrag.lastCoord
+      paintTouchDrag = null
+      const st = useAppStore.getState()
+      st.setPaintLineAnchor({ coord: last, axis: st.plane.axis, orientation: st.plane.orientation })
+      if (commit) st.commitStroke()
+      else st.cancelStroke()
+      if (controlsRef.current) controlsRef.current.enabled = true
     }
 
     function ndcFor(clientX: number, clientY: number): THREE.Vector2 {
@@ -479,6 +560,32 @@ function VoxelInteractionHandler({ managerRef, controlsRef }: {
     const onPointerDown = (e: PointerEvent) => {
       down = { x: e.clientX, y: e.clientY }
       downOutside = pressOutsideCube(e.clientX, e.clientY)
+      // Touch hold-to-paint: while the hold button is down, the primary pointer paints
+      // directly onto the construction plane instead of orbiting (orbit is locked via the
+      // controls' `enabled` prop; this opens the stroke). Outside-cube and unresolvable
+      // presses open no gesture — they no-op while held.
+      if (isTouchPainting() && e.button === 0 && e.isPrimary && !downOutside) {
+        const target = resolveTouchPaintTarget(e.clientX, e.clientY)
+        if (target) {
+          const store = useAppStore.getState()
+          store.bakeFloatIfAny()
+          store.beginStroke()
+          paintTouchCell(target)
+          paintTouchDrag = { lastCoord: target }
+          if (controlsRef.current) controlsRef.current.enabled = false
+          try {
+            dom.setPointerCapture(e.pointerId)
+          } catch {
+            // Pointer already released/implicit capture (touch) — the up handler still ends it.
+          }
+          lastCellKey = null
+          lastFaceKey = null
+          setHoverCell(null, null)
+          setHoveredFace(null)
+          setStatusMessage('Painting on the plane — release to end the stroke')
+          return
+        }
+      }
       // Outside the working cube nothing is actionable: open no gesture (controls stay enabled
       // so the press orbits from the real pointerdown) and ignore the tap below.
       if (downOutside) return
@@ -672,6 +779,23 @@ function VoxelInteractionHandler({ managerRef, controlsRef }: {
     }
 
     const onPointerMove = (e: PointerEvent) => {
+      // Open touch hold-to-paint drag: every move paints the interpolated run onto the
+      // plane inside the open stroke. Non-primary pointers (a second finger) never hijack
+      // the run. If the hold was released mid-drag, end the stroke instead of stranding it.
+      if (paintTouchDrag) {
+        if (!e.isPrimary) return
+        if (!isTouchPainting()) {
+          endPaintTouchDrag(true)
+          return
+        }
+        const target = resolveTouchPaintTarget(e.clientX, e.clientY)
+        if (target) {
+          const drag = paintTouchDrag
+          const lastKey = encodeKey(...drag.lastCoord)
+          if (encodeKey(...target) !== lastKey) paintTouchRunTo(target, drag)
+        }
+        return
+      }
       // Open whole-model move: steer by the plane cell under the cursor (face hit, else the
       // empty-space plane cell — the model slides under the pointer like the 2D tool). The
       // stroke opens on the first over-threshold move; integer-UV dedupe skips sub-cell moves.
@@ -882,6 +1006,9 @@ function VoxelInteractionHandler({ managerRef, controlsRef }: {
       endMaterialDrag()
       endSelectDrag()
       endFloatDrag()
+      // A leave mid-paint commits the sweep as its one undo step (pointer capture makes
+      // this rare — a capture loss without up/cancel).
+      endPaintTouchDrag(true)
       // A leave mid-move drops the model where it is (endMove self-guards when never begun).
       if (moveDrag) {
         moveDrag = null
@@ -894,6 +1021,13 @@ function VoxelInteractionHandler({ managerRef, controlsRef }: {
     }
 
     const onPointerUp = (e: PointerEvent) => {
+      // An open touch hold-to-paint drag commits as its one undo step — before the
+      // downOutside/tap paths below, so the sweep is never double-applied as a tap.
+      if (paintTouchDrag) {
+        endPaintTouchDrag(true)
+        down = null
+        return
+      }
       // Presses that missed the working cube orbit (or no-op as taps) — no gesture opened.
       // Exception: an unmoved outside tap in select mode clears the selection (2D parity —
       // tapping the margin clears there too). Both setters bake first, so a pending float
@@ -1148,6 +1282,9 @@ export function Viewport3D() {
   const gridExtent = useAppStore((s) => s.meta.gridExtent)
   const voxelScaleY = useAppStore((s) => s.meta.voxelScaleY)
   const layoutMode = useAppStore((s) => s.layoutMode)
+  // Touch hold-to-paint: while the PlaneEdgeSlider hold button is down, orbit locks so the
+  // stylus/finger paints onto the construction plane instead of rotating the camera.
+  const touchPaintHold = useAppStore((s) => s.touchPaintHold)
   const containerRef = useRef<HTMLDivElement>(null)
   usePlaneLayerScroll(containerRef)
   const [showExposure, setShowExposure] = useState(false)
@@ -1221,6 +1358,7 @@ export function Viewport3D() {
           <OrbitControls
             ref={orbitControlsRef}
             makeDefault
+            enabled={!touchPaintHold}
             enableDamping
             dampingFactor={0.12}
             minDistance={2}
