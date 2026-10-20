@@ -7,10 +7,10 @@ import type { ToolId } from '@/store/types'
 const TOOLS: Array<{ id: ToolId; label: string; icon: typeof Brush; hint: string }> = [
   { id: 'paint', label: 'Paint', icon: Brush, hint: 'click or drag to paint · shift+drag: straight line' },
   { id: 'erase', label: 'Erase', icon: Eraser, hint: 'click or drag to erase · shift+drag: straight line' },
+  { id: 'select', label: 'Select', icon: SquareDashedMousePointer, hint: 'drag to select · alt+drag: lasso' },
   { id: 'eyedropper', label: 'Eyedropper', icon: Pipette, hint: 'click to pick a color and voxel type from the model' },
   { id: 'material', label: 'Material', icon: Droplet, hint: 'click or drag to repaint occupied voxels · never adds or deletes' },
   { id: 'textureface', label: 'Texture Face', icon: SquareArrowOutDownLeft, hint: 'click or drag ramps, wedges + thin slabs to re-map their texture face to the current plane · geometry unchanged' },
-  { id: 'select', label: 'Select', icon: SquareDashedMousePointer, hint: 'drag to select · alt+drag: lasso' },
   { id: 'fill', label: 'Fill', icon: PaintBucket, hint: 'click to flood-fill connected cells · alt+click an existing voxel: fill in 3D' },
   { id: 'move', label: 'Move / Transform', icon: Move, hint: 'drag to shift the current slice' },
   { id: 'marker', label: 'Marker', icon: MapPin, hint: 'click empty space to place a marker · tap a marker to recolor it, tap again to delete · drag to move · right-click: delete' },

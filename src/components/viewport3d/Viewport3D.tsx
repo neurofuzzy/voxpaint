@@ -133,7 +133,11 @@ function ToneMappingController({ exposure }: { exposure: number }) {
  * drag, bracketed as one undo stroke with orbit suppressed until pointer-up; select and wand
  * capture left-drag on a selected voxel to lift and move it in the plane's UV axes (Alt: full
  * depth) — wand defers the lift past the tap threshold so taps keep working, otherwise select
- * opens a plane-slice marquee — right-drag still orbits.
+ * opens a plane-slice marquee — right-drag still orbits. With the move tool, left-drag
+ * translates the entire model along the construction plane (like the 2D tool — slice moves
+ * stay there), live as one undo step; a tap orients the plane like a plain model click.
+ * Presses whose ray misses the working cube open no gesture at all — drags orbit, taps no-op
+ * (select-mode taps clear the selection instead). Press location decides, not the drag path.
  * Empty-space paint taps start a blob on the active slice. In split layout the viewport is
  * orbit/navigate only and every tap sets the construction plane.
  */
@@ -204,6 +208,9 @@ function VoxelInteractionHandler({ managerRef, controlsRef }: {
   const layoutMode = useAppStore((s) => s.layoutMode)
   const layoutModeRef = useRef(layoutMode)
   layoutModeRef.current = layoutMode
+  const mode = useAppStore((s) => s.mode)
+  const modeRef = useRef(mode)
+  modeRef.current = mode
   const activeTool = useAppStore((s) => s.activeTool)
   const activeToolRef = useRef(activeTool)
   activeToolRef.current = activeTool
@@ -215,6 +222,11 @@ function VoxelInteractionHandler({ managerRef, controlsRef }: {
     const dom = gl.domElement
     const raycaster = new THREE.Raycaster()
     let down: { x: number; y: number } | null = null
+    // True when the press ray misses the working cube entirely: nothing actionable lives out
+    // there, so the press opens no gesture — drags orbit, taps no-op, except select-mode taps,
+    // which clear the selection (2D margin-tap parity). Recomputed per press (press location
+    // decides, not the drag path).
+    let downOutside = false
     let lastCellKey: string | null = null
     let lastFaceKey: string | null = null
     // Open material drag stroke (3D-only layout only): recoloring is idempotent — it never adds or
@@ -249,6 +261,11 @@ function VoxelInteractionHandler({ managerRef, controlsRef }: {
     // Unlike select it must NOT lift yet — a tap here is a two-stage wand click, so the lift
     // waits until the pointer actually moves past the tap threshold, then converts to floatDrag.
     let pendingWandDrag: { startU: number; startV: number } | null = null
+    // Open whole-model move drag (3D-only layout, Model mode only): the plane-UV anchor plus the
+    // last-applied UV (integer-deduped, like the 2D tool) and whether the undo stroke opened. The
+    // stroke opens on the first over-threshold move; a tap orients the plane instead. Orbit
+    // suppressed until pointer-up, like the marquee.
+    let moveDrag: { startU: number; startV: number; lastU: number; lastV: number; begun: boolean } | null = null
     // Last select-tool tap (3D-only layout only) for double-click detection: a rapid second tap
     // on the same voxel flood-selects the plane slice instead of re-landing the plane (see the
     // tap commit below). Stale entries self-expire via the timing check; drags and canvas-leave
@@ -265,6 +282,19 @@ function VoxelInteractionHandler({ managerRef, controlsRef }: {
     function ndcFor(clientX: number, clientY: number): THREE.Vector2 {
       const rect = dom.getBoundingClientRect()
       return new THREE.Vector2(((clientX - rect.left) / rect.width) * 2 - 1, -((clientY - rect.top) / rect.height) * 2 + 1)
+    }
+
+    /** Whether the press ray misses the working cube (`[-half, half)` cells, Y-stretched like
+     * the scene group). A missing ray can hit no voxel and paints nothing — it orbits. */
+    function pressOutsideCube(clientX: number, clientY: number): boolean {
+      const st = useAppStore.getState()
+      const half = effectiveExtent(st.meta.gridExtent) / 2
+      const sy = st.meta.voxelScaleY
+      raycaster.setFromCamera(ndcFor(clientX, clientY), camera)
+      return !raycaster.ray.intersectsBox(new THREE.Box3(
+        new THREE.Vector3(-half, -half * sy, -half),
+        new THREE.Vector3(half, half * sy, half),
+      ))
     }
 
     /** Raycasts to a voxel face and resolves it into a would-be construction plane, in one shot —
@@ -443,6 +473,38 @@ function VoxelInteractionHandler({ managerRef, controlsRef }: {
 
     const onPointerDown = (e: PointerEvent) => {
       down = { x: e.clientX, y: e.clientY }
+      downOutside = pressOutsideCube(e.clientX, e.clientY)
+      // Outside the working cube nothing is actionable: open no gesture (controls stay enabled
+      // so the press orbits from the real pointerdown) and ignore the tap below.
+      if (downOutside) return
+      // Move captures left-drag in 3D-only Model mode (right-drag still orbits): the anchor is
+      // the plane-UV cell under the cursor (face hit, else the empty-space plane cell); a
+      // parallel ray leaves the gesture to orbit.
+      if (
+        e.button === 0 && e.isPrimary &&
+        layoutModeRef.current === '3d-only' &&
+        activeToolRef.current === 'move' &&
+        modeRef.current === 'model'
+      ) {
+        const hit = resolveFaceHit(e.clientX, e.clientY)
+        const cell = hit ? decodeKey(hit.key) : resolveEmptyCell(e.clientX, e.clientY)
+        if (cell) {
+          const { u, v } = pixelFromGridCoord(planeRef.current, cell)
+          moveDrag = { startU: u, startV: v, lastU: u, lastV: v, begun: false }
+          if (controlsRef.current) controlsRef.current.enabled = false
+          try {
+            dom.setPointerCapture(e.pointerId)
+          } catch {
+            // Pointer already released/implicit capture (touch) — the up handler still ends it.
+          }
+          lastCellKey = null
+          lastFaceKey = null
+          setHoverCell(null, null)
+          setHoveredFace(null)
+          setStatusMessage('Dragging the whole model in the plane — release to drop it')
+          return
+        }
+      }
       if (!isBlocking() || e.button !== 0 || !e.isPrimary) return
       // Select captures left-drag (right-drag still orbits). A press on a selected voxel lifts
       // the selection and drags it in the plane's UV axes instead of marqueeing. Otherwise the
@@ -605,6 +667,31 @@ function VoxelInteractionHandler({ managerRef, controlsRef }: {
     }
 
     const onPointerMove = (e: PointerEvent) => {
+      // Open whole-model move: steer by the plane cell under the cursor (face hit, else the
+      // empty-space plane cell — the model slides under the pointer like the 2D tool). The
+      // stroke opens on the first over-threshold move; integer-UV dedupe skips sub-cell moves.
+      if (moveDrag) {
+        if (
+          !moveDrag.begun && down &&
+          Math.hypot(e.clientX - down.x, e.clientY - down.y) > CLICK_DRAG_THRESHOLD_PX
+        ) {
+          moveDrag.begun = true
+          useAppStore.getState().beginMove(true)
+        }
+        if (moveDrag.begun) {
+          const hit = resolveFaceHit(e.clientX, e.clientY)
+          const cell = hit ? decodeKey(hit.key) : resolveEmptyCell(e.clientX, e.clientY)
+          if (cell) {
+            const { u, v } = pixelFromGridCoord(planeRef.current, cell)
+            if (u !== moveDrag.lastU || v !== moveDrag.lastV) {
+              moveDrag.lastU = u
+              moveDrag.lastV = v
+              useAppStore.getState().updateMove(u - moveDrag.startU, v - moveDrag.startV)
+            }
+          }
+        }
+        return
+      }
       // Pending wand grab: sub-threshold movement holds the press (a tap resolves via the normal
       // tap path on release); crossing the threshold lifts and converts to a float drag, flowing
       // into the branch below so the first over-threshold move displaces. Lifts the exact voxel
@@ -758,6 +845,11 @@ function VoxelInteractionHandler({ managerRef, controlsRef }: {
         }
         return
       }
+      // Move drags the whole model in the plane (like the 2D tool); taps orient the plane.
+      if (activeToolRef.current === 'move' && layoutModeRef.current === '3d-only' && modeRef.current === 'model') {
+        setStatusMessage('Drag to move the entire model along the plane · click a voxel to set the plane')
+        return
+      }
 
       const target = objectModeTargetRef.current
       const again = result && target
@@ -785,6 +877,11 @@ function VoxelInteractionHandler({ managerRef, controlsRef }: {
       endMaterialDrag()
       endSelectDrag()
       endFloatDrag()
+      // A leave mid-move drops the model where it is (endMove self-guards when never begun).
+      if (moveDrag) {
+        moveDrag = null
+        useAppStore.getState().endMove()
+      }
       // An unmoved wand grab is just a press — hand orbit control back; release resolves as a tap.
       pendingWandDrag = null
       pendingSelectGrab = null
@@ -792,6 +889,40 @@ function VoxelInteractionHandler({ managerRef, controlsRef }: {
     }
 
     const onPointerUp = (e: PointerEvent) => {
+      // Presses that missed the working cube orbit (or no-op as taps) — no gesture opened.
+      // Exception: an unmoved outside tap in select mode clears the selection (2D parity —
+      // tapping the margin clears there too). Both setters bake first, so a pending float
+      // lands instead of stranding.
+      if (downOutside) {
+        const tapped = down !== null && Math.hypot(e.clientX - down.x, e.clientY - down.y) <= CLICK_DRAG_THRESHOLD_PX
+        down = null
+        lastSelectTap = null
+        if (tapped && e.button === 0 && activeToolRef.current === 'select') {
+          const st = useAppStore.getState()
+          if (st.selectedCells.size > 0 || st.selection) {
+            st.setSelectedCells(new Set())
+            st.setSelection(null)
+          }
+        }
+        return
+      }
+      // Open whole-model move: a drag drops the model as one undo step; a tap (never begun)
+      // orients the construction plane like a plain model click instead.
+      if (moveDrag) {
+        const drag = moveDrag
+        moveDrag = null
+        if (controlsRef.current) controlsRef.current.enabled = true
+        down = null
+        if (drag.begun) {
+          useAppStore.getState().endMove()
+          return
+        }
+        const hit = resolveFaceHit(e.clientX, e.clientY)
+        if (hit) {
+          useAppStore.getState().handleVoxelFaceClick(hit.key, hit.plane.axis, hit.plane.orientation, hit.plane.offset)
+        }
+        return
+      }
       if (materialDrag) {
         endMaterialDrag()
         down = null

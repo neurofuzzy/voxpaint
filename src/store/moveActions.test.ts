@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it } from 'vitest'
 import { encodeKey } from '@/engine/grid/GridStore'
+import type { Coord } from '@/engine/grid/types'
 import { gridCoordFromPixel } from '@/engine/plane/constructionPlane'
 import { cloneTextureModel } from '@/engine/texture/TextureStore'
 import { EMPTY, faceSizeFor } from '@/engine/texture/types'
@@ -234,6 +235,47 @@ describe('whole-model move carries the texture', () => {
     const after = useAppStore.getState()
     expect(after.texture).toBe(texBefore)
     expect(after.texturePast.length).toBe(texturePastBefore)
+  })
+})
+
+/** The 3D move gesture's store sequence (Viewport3D steers begin/update/end by the plane cell
+ * under the cursor): the whole model rides along the plane as one undo step. */
+describe('3D whole-model drag sequence', () => {
+  beforeEach(() => {
+    const s = useAppStore.getState()
+    s.newProject('Test', 16)
+    s.setMode('model')
+    s.setPlaneAxisOrientation('z', 1)
+    s.setPlaneOffset(0)
+  })
+
+  function paintCubeAt(coord: Coord) {
+    const s = useAppStore.getState()
+    s.setActiveVoxelKind('cube')
+    s.beginStroke()
+    expect(s.paintCellAtCoord(coord, 'z', 1)).toBe(true)
+    s.commitStroke()
+  }
+
+  it('drags every voxel along the plane as one undo step', () => {
+    paintCubeAt([0, 0, 0])
+    paintCubeAt([0, 0, 3]) // off-slice voxel rides along too (whole model, not slice)
+    const strokesBefore = useAppStore.getState().past.length
+
+    // Begin on first move, steer by plane-UV deltas, drop on release.
+    useAppStore.getState().beginMove(true)
+    useAppStore.getState().updateMove(2, 0)
+    useAppStore.getState().updateMove(2, -1)
+    useAppStore.getState().endMove()
+
+    const after = useAppStore.getState()
+    // z-plane du runs along +x, dv along −y: (2,−1) shifts (+2,+1,0).
+    expect(after.model.color.has(encodeKey(2, 1, 0))).toBe(true)
+    expect(after.model.color.has(encodeKey(2, 1, 3))).toBe(true)
+    expect(after.model.color.size).toBe(2)
+    expect(after.past.length).toBe(strokesBefore + 1)
+    after.undo()
+    expect(useAppStore.getState().model.color.has(encodeKey(0, 0, 0))).toBe(true)
   })
 })
 
