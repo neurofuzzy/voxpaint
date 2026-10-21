@@ -291,6 +291,10 @@ export type ViewSlice = {
    * NeutralToneMapping (Canvas.tsx), so it's the user-facing lever for brightness since the
    * baked-in light intensities can't be tuned by eye from here. */
   exposure: number
+  /** Touch hold-to-paint: true while the PlaneEdgeSlider's hold-to-paint button is pressed.
+   * While held, orbit is locked and 3D paint drags write onto the construction plane
+   * (momentary dead-man switch — cleared on pointer-up/cancel). Session state, never persisted. */
+  touchPaintHold: boolean
   /** Dynamic status message shown in the footer's center area. Components set this on hover to
    * show contextual info; cleared on pointer leave. Falls back to the active tool hint when null. */
   statusMessage: string | null
@@ -336,6 +340,7 @@ export type ViewSlice = {
   setGlassRoughnessLevel: (v: number) => void
   setMeshTriangles: (v: { optimized: number; raw: number } | null) => void
   setExposure: (v: number) => void
+  setTouchPaintHold: (v: boolean) => void
   setAoStrength: (v: number) => void
   setStatusMessage: (msg: string | null) => void
   /** Flashes the selection-blocked alert (Esc hint). Call when a 2D edit hits the selection clip. */
