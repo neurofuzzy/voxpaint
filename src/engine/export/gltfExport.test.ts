@@ -351,3 +351,65 @@ describe('exportModelToGlb AO map exclusion', () => {
     expect(withoutAO.materials!.length).toBe(withAO.materials!.length)
   })
 })
+
+describe('exportModelToGlb rig boxes', () => {
+  /** Two voxels in different base slots (separate color groups): limb at x=0, hand at x=2. */
+  function limbModel(): VoxelModel {
+    const model = emptyModel()
+    model.color.set(encodeKey(0, 0, 0), { paletteSlot: base0 })
+    model.color.set(encodeKey(2, 0, 0), { paletteSlot: { kind: 'base', index: 1 } })
+    return { ...model, bounds: recomputeBounds(model) }
+  }
+
+  const rigBoxes = [
+    { id: 'torso-id', name: 'torso', min: [-1, -1, -1] as [number, number, number], max: [3, 1, 1] as [number, number, number], parentId: null },
+    { id: 'arm-id', name: 'arm', min: [2, 0, 0] as [number, number, number], max: [2, 0, 0] as [number, number, number], parentId: 'torso-id' },
+  ]
+
+  type NamedNode = { name?: string; children?: number[]; mesh?: number }
+  const namedNodes = (json: GlbJson) => (json.nodes ?? []) as NamedNode[]
+  const indexOf = (nodes: NamedNode[], name: string) => {
+    const i = nodes.findIndex((n) => n.name === name)
+    expect(i).toBeGreaterThanOrEqual(0)
+    return i
+  }
+
+  it('nests rig groups and assigns the overlapping voxel to the deepest box', async () => {
+    const json = glbJson(
+      await exportModelToGlb(limbModel(), DEFAULT_PALETTE, 16, undefined, { includeTextureMaps: false, rigBoxes }),
+    )
+    const nodes = namedNodes(json)
+    const torso = indexOf(nodes, 'torso')
+    const arm = indexOf(nodes, 'arm')
+    // The arm group nests under the torso group (not directly under the root).
+    expect(nodes[torso].children).toContain(arm)
+    // Mesh nodes carry their owning box as a prefix: the x=2 voxel's mesh parents under arm,
+    // the x=0 voxel's under torso (deepest-box-wins despite torso listing first).
+    const armMesh = nodes.findIndex((n) => n.name?.startsWith('arm_') && n.mesh !== undefined)
+    const torsoMesh = nodes.findIndex((n) => n.name?.startsWith('torso_') && n.mesh !== undefined)
+    expect(armMesh).toBeGreaterThanOrEqual(0)
+    expect(torsoMesh).toBeGreaterThanOrEqual(0)
+    expect(nodes[arm].children).toContain(armMesh)
+    expect(nodes[torso].children).toContain(torsoMesh)
+  })
+
+  it('exports the same voxels flat when boxes have no parents', async () => {
+    // Disjoint bounds here (unlike the nesting test): with no hierarchy both boxes must own
+    // exactly their own voxel and parent directly under the slice root.
+    const flat = glbJson(
+      await exportModelToGlb(limbModel(), DEFAULT_PALETTE, 16, undefined, {
+        includeTextureMaps: false,
+        rigBoxes: [
+          { id: 'torso-id', name: 'torso', min: [-1, -1, -1] as [number, number, number], max: [1, 1, 1] as [number, number, number], parentId: null },
+          { id: 'arm-id', name: 'arm', min: [2, -1, -1] as [number, number, number], max: [3, 1, 1] as [number, number, number], parentId: null },
+        ],
+      }),
+    )
+    const nodes = namedNodes(flat)
+    const torso = indexOf(nodes, 'torso')
+    const arm = indexOf(nodes, 'arm')
+    // Siblings: neither parents the other.
+    expect(nodes[torso].children ?? []).not.toContain(arm)
+    expect(nodes[arm].children ?? []).not.toContain(torso)
+  })
+})

@@ -19,15 +19,15 @@ export function FileMenu() {
   const setStatusMessage = useAppStore((s) => s.setStatusMessage)
 
   function handleExport() {
-    const { model, palette, meta, texture, ambientOcclusion, noiseLevel, specularNoiseLevel, noiseScale, aoStrength, glassRoughnessLevel, exposure, exportScaleFactor, exportAnchor, exportAlignToObjectBounds, exportIncludeTextureMaps, exportIncludeAOMaps, exportIncludeMarkers, animSettings, sliceMasks, slicePivots, markers } = useAppStore.getState()
-    downloadProjectFile(serializeProject(model, palette, meta, texture, { ambientOcclusion, noiseLevel, specularNoiseLevel, noiseScale, aoStrength, glassRoughnessLevel, exposure, exportScaleFactor, exportAnchor, exportAlignToObjectBounds, exportIncludeTextureMaps, exportIncludeAOMaps, exportIncludeMarkers }, animSettings, sliceMasks, slicePivots, markers))
+    const { model, palette, meta, texture, ambientOcclusion, noiseLevel, specularNoiseLevel, noiseScale, aoStrength, glassRoughnessLevel, exposure, exportScaleFactor, exportAnchor, exportAlignToObjectBounds, exportIncludeTextureMaps, exportIncludeAOMaps, exportIncludeMarkers, animSettings, sliceMasks, slicePivots, markers, rigBoxes } = useAppStore.getState()
+    downloadProjectFile(serializeProject(model, palette, meta, texture, { ambientOcclusion, noiseLevel, specularNoiseLevel, noiseScale, aoStrength, glassRoughnessLevel, exposure, exportScaleFactor, exportAnchor, exportAlignToObjectBounds, exportIncludeTextureMaps, exportIncludeAOMaps, exportIncludeMarkers }, animSettings, sliceMasks, slicePivots, markers, rigBoxes))
     showToast('Project exported.')
   }
 
   async function handleImportFile(file: File) {
     try {
       const parsed = await readProjectFile(file)
-      const { model, palette, meta, texture, view, animSettings, sliceMasks, slicePivots, markers } = deserializeProject(parsed)
+      const { model, palette, meta, texture, view, animSettings, sliceMasks, slicePivots, markers, rigBoxes } = deserializeProject(parsed)
       // Same project-switch hygiene as newProject: abandon open strokes (a pending float belongs
       // to the old model) rather than baking them into the imported one.
       useAppStore.getState().cancelStroke()
@@ -75,6 +75,8 @@ export function FileMenu() {
         s.animFuture = []
         s.markers = markers
         s.selectedMarkerId = null
+        s.rigBoxes = rigBoxes
+        s.selectedRigBoxId = null
       })
       // An imported project opens grounded — one project's slice never leaks into the next.
       useAppStore.getState().resetPlaneToGround()

@@ -1,6 +1,6 @@
 import * as THREE from 'three'
 import { GLTFExporter } from 'three/addons/exporters/GLTFExporter.js'
-import { viewOriginShift } from '@/engine/grid/GridStore'
+import { decodeKey, viewOriginShift } from '@/engine/grid/GridStore'
 import { outwardNormal } from '@/engine/plane/planeGeometry'
 import type { Axis, VoxelModel, CellKey, GridExtent, VoxelScaleY } from '@/engine/grid/types'
 import type { Marker } from '@/engine/markers/types'
@@ -20,6 +20,7 @@ import { buildEmissiveAnimIndex } from '@/engine/palette/emissiveAnimation'
 import type { SliceAnimSettings, SliceKey } from '@/engine/animation/types'
 import { assignVoxelsToNodes, hasActiveAnimations, resolveAnimCenter } from '@/engine/animation/animationLayers'
 import { buildAllAnimationClips, type AnimNodeInfo } from '@/engine/animation/animationGLTF'
+import { rigIdForCoord, sanitizeRigName, type RigBox } from '@/engine/rigging/types'
 import { registerEmissiveAnimationExtension, type EmissiveAnimExportTarget } from './emissiveAnimationExport'
 import { scaleGeometryY } from './scaleGeometry'
 
@@ -112,9 +113,37 @@ export type GltfExportOptions = {
   markers?: Marker[]
   /** Emit the `markers` as empty nodes (default true). Off skips them — the .glb carries voxels only. */
   includeMarkers?: boolean
+  /** Named rig bounding boxes: voxels inside a box export under a `Group` named for the box
+   * (first match wins on overlap); voxels outside all boxes export as today. Boxes are
+   * model-decoupled bboxes — containment is tested at export time. */
+  rigBoxes?: RigBox[]
 }
 
 const hex6 = (colorKey: number) => colorKey.toString(16).padStart(6, '0')
+
+/** Builds the export-time voxel → rig-box assignment (deepest containing box wins). */
+export function buildRigAssignment(model: VoxelModel, rigBoxes: RigBox[] | undefined): {
+  assignment: Map<CellKey, string> | undefined
+  names: Map<string, string>
+} {
+  if (!rigBoxes || rigBoxes.length === 0) return { assignment: undefined, names: new Map() }
+  const assignment = new Map<CellKey, string>()
+  const names = new Map<string, string>()
+  const used = new Set<string>()
+  for (const box of rigBoxes) {
+    let base = sanitizeRigName(box.name, `rig_${box.id.slice(0, 8)}`)
+    let candidate = base
+    let i = 2
+    while (used.has(candidate)) candidate = `${base}-${i++}`
+    used.add(candidate)
+    names.set(box.id, candidate)
+  }
+  for (const key of model.color.keys()) {
+    const rigId = rigIdForCoord(rigBoxes, decodeKey(key))
+    if (rigId) assignment.set(key, rigId)
+  }
+  return { assignment, names }
+}
 
 /**
  * Attach `mesh` to its animation slice node (creating the node on first use, keyed by `sliceKey`)
@@ -123,7 +152,46 @@ const hex6 = (colorKey: number) => colorKey.toString(16).padStart(6, '0')
  * `-center` here, or the two offsets would stack. Both the node position and the clip-baking
  * center are expressed in *scaled* world units (`center.y * voxelScaleY`) to agree with the
  * scale-baked vertices — animation clips author absolute positions around that center.
+ *
+ * With `rig` set, the mesh instead parents under a `Group` named for the rig box — nested
+ * under its ancestors' groups (child of the slice node when animated, of root otherwise —
+ * keyed per slice, since one rig box can span slices that move independently). Rig groups
+ * carry no transform; the mesh keeps the same `-center` offset as the non-rig path.
  */
+type RigAttachContext = {
+  rigId: string
+  rigName: string
+  rigGroups: Map<string, THREE.Group>
+  rigParents: Map<string, string | null>
+  rigNames: Map<string, string>
+}
+
+/** Ensures the rig group for `rigId` exists under `branchParent`, creating ancestors first so
+ * the outline nests. The threaded `seen` set stops a corrupt cyclic parent chain at the
+ * first repeat (store moves and file loading both guarantee acyclic input — this is
+ * defense for direct API callers). */
+function ensureRigGroup(
+  rigId: string,
+  sliceKey: SliceKey | undefined,
+  branchParent: THREE.Group,
+  rig: RigAttachContext,
+  seen: Set<string> = new Set(),
+): THREE.Group {
+  const groupKey = `${sliceKey ?? ''}:${rigId}`
+  const existing = rig.rigGroups.get(groupKey)
+  if (existing) return existing
+  const group = new THREE.Group()
+  group.name = rig.rigNames.get(rigId) ?? rigId
+  rig.rigGroups.set(groupKey, group)
+  const parentId = rig.rigParents.get(rigId) ?? null
+  const chainParent =
+    parentId && !seen.has(parentId)
+      ? ensureRigGroup(parentId, sliceKey, branchParent, rig, new Set([...seen, rigId]))
+      : branchParent
+  chainParent.add(group)
+  return group
+}
+
 function attachToSliceOrRoot(
   mesh: THREE.Mesh,
   sliceKey: SliceKey | undefined,
@@ -134,7 +202,9 @@ function attachToSliceOrRoot(
   root: THREE.Group,
   slicePivots: Map<SliceKey, CellKey> | undefined,
   voxelScaleY: number = 1,
+  rig?: RigAttachContext,
 ) {
+  let parent: THREE.Group
   if (sliceNodes && sliceKey) {
     let node = sliceNodes.get(sliceKey)
     if (!node) {
@@ -148,10 +218,15 @@ function attachToSliceOrRoot(
       sliceNodes.set(sliceKey, node)
       animNodes!.push({ node, sliceKey, settings, axis: entry.axis, center: scaled ?? new THREE.Vector3() })
     }
+    parent = node
     mesh.position.copy(node.position).negate()
-    node.add(mesh)
   } else {
-    root.add(mesh)
+    parent = root
+  }
+  if (rig) {
+    ensureRigGroup(rig.rigId, sliceKey, parent, rig).add(mesh)
+  } else {
+    parent.add(mesh)
   }
 }
 
@@ -231,6 +306,21 @@ export async function exportModelToGlb(
   // rest of the (baked-once, rest-pose) model — see bakeAOToAtlas calls below.
   const animatedKeys = nodeAssignment ? new Set(nodeAssignment.keys()) : undefined
 
+  // Named rig boxes: deepest-box-wins containment tested at export time (model-decoupled).
+  const { assignment: rigAssignment, names: rigNames } = buildRigAssignment(model, options.rigBoxes)
+  const rigGroups = new Map<string, THREE.Group>()
+  const rigParents = new Map((options.rigBoxes ?? []).map((b) => [b.id, b.parentId]))
+  const rigContextFor = (rigId: string | undefined): RigAttachContext | undefined => {
+    if (!rigId) return undefined
+    const rigName = rigNames.get(rigId)
+    if (!rigName) return undefined
+    return { rigId, rigName, rigGroups, rigParents, rigNames }
+  }
+  const meshDisplayName = (rigId: string | undefined, colorKey: number, materialClass: MaterialClass) => {
+    const rigName = rigId ? rigNames.get(rigId) : undefined
+    return rigName ? `${rigName}_${hex6(colorKey)}_${materialClass}` : `voxel_${hex6(colorKey)}_${materialClass}`
+  }
+
   // Map-free export: solid materials + bare geometry, no uv attributes (the exporter turns any
   // `uv`/`uv1` attribute into TEXCOORDs), so the .glb carries no images/textures/samplers.
   const includeTextureMaps = options.includeTextureMaps ?? true
@@ -253,10 +343,10 @@ export async function exportModelToGlb(
     // for glass we emit a solid-colour material (no baked map, no unused TEXCOORD_0).
     const texelScale = options.texelScale ?? TEXEL_SCALE
     const cullInteriorFaces = options.cullInteriorFaces ?? true
-    const groups: Array<{ geometry: THREE.BufferGeometry; colorKey: number; materialClass: MaterialClass; sliceKey?: string }> =
+    const groups: Array<{ geometry: THREE.BufferGeometry; colorKey: number; materialClass: MaterialClass; sliceKey?: string; rigId?: string }> =
       hasAnimations && nodeAssignment
-        ? buildTexturedGeometryBySlice(model, palette, nodeAssignment, gridExtent, texelScale, cullInteriorFaces)
-        : buildTexturedGeometryByColorMerged(model, palette, gridExtent, options.optimizeMesh ?? true, texelScale, cullInteriorFaces).groups.map((g) => ({ ...g, sliceKey: undefined }))
+        ? buildTexturedGeometryBySlice(model, palette, nodeAssignment, gridExtent, texelScale, cullInteriorFaces, rigAssignment)
+        : buildTexturedGeometryByColorMerged(model, palette, gridExtent, options.optimizeMesh ?? true, texelScale, cullInteriorFaces, rigAssignment).groups.map((g) => ({ ...g, sliceKey: undefined }))
     for (const { geometry } of groups) geometries.push(geometry)
     if (!includeTextureMaps) stripUVs(groups)
 
@@ -306,7 +396,7 @@ export async function exportModelToGlb(
     // Y-scale bakes after the AO/unwrap work above (unit-cube voxel units) and before meshes —
     // anchors below then operate on true scaled extents.
     bakeScaleY(groups)
-    for (const { colorKey, materialClass, geometry, sliceKey } of groups) {
+    for (const { colorKey, materialClass, geometry, sliceKey, rigId } of groups) {
       geometry.deleteAttribute('color')
       const params = materialParamsFor(materialClass)
 
@@ -337,10 +427,10 @@ export async function exportModelToGlb(
           if (metalTex) material.metalnessMap = metalTex
           if (roughTex) material.roughnessMap = roughTex
         }
-        material.name = `voxel_${hex6(colorKey)}_${materialClass}`
+        material.name = meshDisplayName(rigId, colorKey, materialClass)
         const mesh = new THREE.Mesh(geometry, material)
         mesh.name = material.name
-        attachToSliceOrRoot(mesh, sliceKey, animSettings, sliceNodeInfo, sliceNodes, animNodes, root, slicePivots, voxelScaleY)
+        attachToSliceOrRoot(mesh, sliceKey, animSettings, sliceNodeInfo, sliceNodes, animNodes, root, slicePivots, voxelScaleY, rigContextFor(rigId))
         materials.push(material)
       } else {
         const map = bakeOverlayTexture(blend!.data, blend!.width, blend!.height, colorKey)
@@ -364,25 +454,26 @@ export async function exportModelToGlb(
           if (metalTex) material.metalnessMap = metalTex
           if (roughTex) material.roughnessMap = roughTex
         }
-        material.name = `voxel_${hex6(colorKey)}_${materialClass}`
+        material.name = meshDisplayName(rigId, colorKey, materialClass)
         const mesh = new THREE.Mesh(geometry, material)
         mesh.name = material.name
-        attachToSliceOrRoot(mesh, sliceKey, animSettings, sliceNodeInfo, sliceNodes, animNodes, root, slicePivots, voxelScaleY)
+        attachToSliceOrRoot(mesh, sliceKey, animSettings, sliceNodeInfo, sliceNodes, animNodes, root, slicePivots, voxelScaleY, rigContextFor(rigId))
         materials.push(material)
       }
     }
   } else {
     // PBR path — one solid-colour optimized mesh per (materialClass, colorKey) pair, optional baked AO.
     // When animations exist, groups are further split by slice for per-node assignment.
-    let groups: Array<{ geometry: THREE.BufferGeometry; colorKey: number; materialClass: MaterialClass; sliceKey?: string }>
+    // Rig boxes split every group once more (same material + same box weld; different boxes never weld).
+    let groups: Array<{ geometry: THREE.BufferGeometry; colorKey: number; materialClass: MaterialClass; sliceKey?: string; rigId?: string }>
 
     const mergeCoplanar = options.optimizeMesh ?? true
     const cullInteriorFaces = options.cullInteriorFaces ?? true
     if (hasAnimations && nodeAssignment) {
-      const sliceResult = buildOptimizedVoxelGroupsBySlice(model, palette, nodeAssignment, mergeCoplanar, cullInteriorFaces)
+      const sliceResult = buildOptimizedVoxelGroupsBySlice(model, palette, nodeAssignment, mergeCoplanar, cullInteriorFaces, rigAssignment)
       groups = sliceResult.groups
     } else {
-      groups = buildOptimizedVoxelGeometryByMaterial(model, palette, mergeCoplanar, cullInteriorFaces).map((g) => ({ ...g, sliceKey: undefined }))
+      groups = buildOptimizedVoxelGeometryByMaterial(model, palette, mergeCoplanar, cullInteriorFaces, rigAssignment).map((g) => ({ ...g, sliceKey: undefined }))
     }
     for (const { geometry } of groups) geometries.push(geometry)
     if (!includeTextureMaps) stripUVs(groups)
@@ -423,7 +514,7 @@ export async function exportModelToGlb(
     }
 
     bakeScaleY(groups)
-    for (const { materialClass, colorKey, geometry, sliceKey } of groups) {
+    for (const { materialClass, colorKey, geometry, sliceKey, rigId } of groups) {
       const params = materialParamsFor(materialClass)
       const isGlass = materialClass === 'glass'
       const material = new THREE.MeshPhysicalMaterial({
@@ -452,10 +543,10 @@ export async function exportModelToGlb(
         if (roughTex) material.roughnessMap = roughTex
         if (colorTex) material.map = colorTex
       }
-      material.name = `voxel_${hex6(colorKey)}_${materialClass}`
+      material.name = meshDisplayName(rigId, colorKey, materialClass)
       const mesh = new THREE.Mesh(geometry, material)
       mesh.name = material.name
-      attachToSliceOrRoot(mesh, sliceKey, animSettings, sliceNodeInfo, sliceNodes, animNodes, root, slicePivots, voxelScaleY)
+      attachToSliceOrRoot(mesh, sliceKey, animSettings, sliceNodeInfo, sliceNodes, animNodes, root, slicePivots, voxelScaleY, rigContextFor(rigId))
       materials.push(material)
     }
   }

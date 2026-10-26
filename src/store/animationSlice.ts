@@ -1,6 +1,7 @@
 import type { StateCreator } from 'zustand'
 import type { CellKey, Coord } from '@/engine/grid/types'
 import { encodeKey, withinWorkingBounds } from '@/engine/grid/GridStore'
+import type { RigBox } from '@/engine/rigging/types'
 import type { AnimationSpeed, AnimationType, SliceAnimSettings, SliceKey } from '@/engine/animation/types'
 import { defaultAnimationSettings, encodeSliceKey } from '@/engine/animation/animationLayers'
 import { gridCoordFromPixel } from '@/engine/plane/constructionPlane'
@@ -28,11 +29,12 @@ function cloneSlicePivots(map: Map<SliceKey, CellKey>): Map<SliceKey, CellKey> {
   return new Map(map)
 }
 
-function cloneSnapshot(state: { animSettings: Map<SliceKey, SliceAnimSettings>; sliceMasks: Map<SliceKey, Set<CellKey>>; slicePivots: Map<SliceKey, CellKey> }): AnimSnapshot {
+function cloneSnapshot(state: { animSettings: Map<SliceKey, SliceAnimSettings>; sliceMasks: Map<SliceKey, Set<CellKey>>; slicePivots: Map<SliceKey, CellKey>; rigBoxes: RigBox[] }): AnimSnapshot {
   return {
     animSettings: cloneAnimSettings(state.animSettings),
     sliceMasks: cloneSliceMasks(state.sliceMasks),
     slicePivots: cloneSlicePivots(state.slicePivots),
+    rigBoxes: state.rigBoxes.map((b) => ({ ...b, min: [...b.min] as Coord, max: [...b.max] as Coord })),
   }
 }
 
@@ -65,7 +67,6 @@ export const createAnimationSlice: Slice = (set, get) => ({
       state.animPast = []
       state.animFuture = []
     }),
-
   setAnimationTypeForCurrentSlice: (type: AnimationType) => {
     const { axis, offset } = get().plane
     if (type === 'none') {
@@ -188,6 +189,10 @@ export const createAnimationSlice: Slice = (set, get) => ({
       state.animSettings = prev.animSettings
       state.sliceMasks = prev.sliceMasks
       state.slicePivots = prev.slicePivots
+      state.rigBoxes = prev.rigBoxes
+      if (state.selectedRigBoxId && !state.rigBoxes.some((b) => b.id === state.selectedRigBoxId)) {
+        state.selectedRigBoxId = null
+      }
       state.dirty = true
     })
   },
@@ -200,6 +205,10 @@ export const createAnimationSlice: Slice = (set, get) => ({
       state.animSettings = next.animSettings
       state.sliceMasks = next.sliceMasks
       state.slicePivots = next.slicePivots
+      state.rigBoxes = next.rigBoxes
+      if (state.selectedRigBoxId && !state.rigBoxes.some((b) => b.id === state.selectedRigBoxId)) {
+        state.selectedRigBoxId = null
+      }
       state.dirty = true
     })
   },
@@ -236,6 +245,19 @@ function slicePivotsEqual(a: Map<SliceKey, CellKey>, b: Map<SliceKey, CellKey>):
   return true
 }
 
-function snapshotsEqual(a: AnimSnapshot, b: { animSettings: Map<SliceKey, SliceAnimSettings>; sliceMasks: Map<SliceKey, Set<CellKey>>; slicePivots: Map<SliceKey, CellKey> }): boolean {
-  return mapsEqual(a.animSettings, b.animSettings) && sliceMasksEqual(a.sliceMasks, b.sliceMasks) && slicePivotsEqual(a.slicePivots, b.slicePivots)
+function rigBoxesEqual(a: RigBox[], b: RigBox[]): boolean {
+  if (a.length !== b.length) return false
+  for (let i = 0; i < a.length; i++) {
+    const x = a[i]
+    const y = b[i]
+    if (x.id !== y.id || x.name !== y.name) return false
+    if ((x.parentId ?? null) !== (y.parentId ?? null)) return false
+    if (x.min[0] !== y.min[0] || x.min[1] !== y.min[1] || x.min[2] !== y.min[2]) return false
+    if (x.max[0] !== y.max[0] || x.max[1] !== y.max[1] || x.max[2] !== y.max[2]) return false
+  }
+  return true
+}
+
+function snapshotsEqual(a: AnimSnapshot, b: { animSettings: Map<SliceKey, SliceAnimSettings>; sliceMasks: Map<SliceKey, Set<CellKey>>; slicePivots: Map<SliceKey, CellKey>; rigBoxes: RigBox[] }): boolean {
+  return mapsEqual(a.animSettings, b.animSettings) && sliceMasksEqual(a.sliceMasks, b.sliceMasks) && slicePivotsEqual(a.slicePivots, b.slicePivots) && rigBoxesEqual(a.rigBoxes, b.rigBoxes)
 }

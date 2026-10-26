@@ -51,6 +51,8 @@ export interface ToolContext {
   setSelection: (region: SelectionRegion | null) => void
   /** Two-stage wand click (color, then whole-component on rapid re-tap). Wand stays active. */
   applyWandAt: (start: [number, number, number]) => void
+  /** Rig wand tap: material-class flood → named bounding box. Rig tool stays active. */
+  applyRigBoxAt: (start: [number, number, number]) => void
   /** Alt-drag passes `deep` to lift the full cuboid under the selection window (see
    * `liftSelectionToFloat` in store/types.ts). */
   liftSelectionToFloat: (deep?: boolean) => void

@@ -143,6 +143,33 @@ export const createProjectSlice: Slice = (set, get) => ({
         state.selectedMarkerId = null
       }
 
+      // Rig boxes are model-decoupled but grid-bound — clamp into the new working cube,
+      // dropping boxes with nothing left inside. Children of dropped boxes move up to the
+      // nearest surviving ancestor (or root).
+      {
+        const half = effectiveExtent(extent) / 2
+        const lo = -half
+        const hi = half - 1
+        const clamp = (v: number) => Math.max(lo, Math.min(hi, v))
+        const parentOf = new Map(state.rigBoxes.map((b) => [b.id, b.parentId]))
+        state.rigBoxes = state.rigBoxes
+          .map((b) => ({
+            ...b,
+            min: [clamp(Math.min(b.min[0], b.max[0])), clamp(Math.min(b.min[1], b.max[1])), clamp(Math.min(b.min[2], b.max[2]))] as [number, number, number],
+            max: [clamp(Math.max(b.min[0], b.max[0])), clamp(Math.max(b.min[1], b.max[1])), clamp(Math.max(b.min[2], b.max[2]))] as [number, number, number],
+          }))
+          .filter((b) => b.min[0] <= b.max[0] && b.min[1] <= b.max[1] && b.min[2] <= b.max[2])
+        const surviving = new Set(state.rigBoxes.map((b) => b.id))
+        for (const b of state.rigBoxes) {
+          let p = b.parentId
+          while (p && !surviving.has(p)) p = parentOf.get(p) ?? null
+          b.parentId = p
+        }
+        if (state.selectedRigBoxId && !surviving.has(state.selectedRigBoxId)) {
+          state.selectedRigBoxId = null
+        }
+      }
+
       // Position-dependent state can't survive a bounds change: clear histories, selections,
       // and pending floats (already baked above), prune animation slices outside the new range,
       // and clamp the construction plane back into it.
@@ -206,6 +233,12 @@ export const createProjectSlice: Slice = (set, get) => ({
       // Markers double about the origin with everything else (frozen facing basis untouched).
       for (const m of state.markers) {
         m.position = [RESCALE_FACTOR * m.position[0], RESCALE_FACTOR * m.position[1], RESCALE_FACTOR * m.position[2]]
+      }
+
+      // Rig boxes double with the voxels: inclusive [min, max] → [2*min, 2*max+1].
+      for (const b of state.rigBoxes) {
+        b.min = [RESCALE_FACTOR * b.min[0], RESCALE_FACTOR * b.min[1], RESCALE_FACTOR * b.min[2]]
+        b.max = [RESCALE_FACTOR * b.max[0] + 1, RESCALE_FACTOR * b.max[1] + 1, RESCALE_FACTOR * b.max[2] + 1]
       }
 
       // Animation slices fan out: old slice o becomes new slices 2o/2o+1. Settings clone onto
@@ -335,6 +368,8 @@ export const createProjectSlice: Slice = (set, get) => ({
       state.animFuture = []
       state.markers = []
       state.selectedMarkerId = null
+      state.rigBoxes = []
+      state.selectedRigBoxId = null
       state.dirty = true
       // A new project starts grounded (see resetPlaneToGround) instead of inheriting a stale
       // mid-air slice — applied after this block so it reads the fresh extent.

@@ -11,7 +11,7 @@ export function restoreAutosave(): void {
   try {
     const file = loadAutosave()
     if (!file) return
-    const { model, palette, meta, texture, view, animSettings, sliceMasks, slicePivots, markers } = deserializeProject(file)
+    const { model, palette, meta, texture, view, animSettings, sliceMasks, slicePivots, markers, rigBoxes } = deserializeProject(file)
     useAppStore.getState().setModel(model)
     useAppStore.getState().setPalette(palette)
     useAppStore.getState().setTexture(texture)
@@ -33,6 +33,8 @@ export function restoreAutosave(): void {
       state.sliceMasks = sliceMasks
       state.slicePivots = slicePivots
       state.markers = markers
+      state.rigBoxes = rigBoxes
+      state.selectedRigBoxId = null
       state.selectedMarkerId = null
     })
     // A refresh restores the same project, so the persisted plane pose comes back with it
@@ -65,6 +67,7 @@ const flush = debounce(() => {
       state.sliceMasks,
       state.slicePivots,
       state.markers,
+      state.rigBoxes,
     )
     saveAutosave(file)
     state.markSaved(new Date().toISOString())
@@ -83,5 +86,6 @@ export function wireAutosave(): () => void {
     else if (state.animSettings !== prevState.animSettings && state.dirty) flush()
     else if (state.sliceMasks !== prevState.sliceMasks && state.dirty) flush()
     else if (state.slicePivots !== prevState.slicePivots && state.dirty) flush()
+    else if (state.rigBoxes !== prevState.rigBoxes && state.dirty) flush()
   })
 }

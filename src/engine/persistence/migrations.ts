@@ -85,6 +85,11 @@ MIGRATIONS[9] = (doc) => ({ ...doc, schemaVersion: 10 })
  * reject v11 files with "please update" instead of crashing on an unknown shape. */
 MIGRATIONS[10] = (doc) => ({ ...doc, schemaVersion: 11 })
 
+/** v11 → v12: the `rigBoxes` array is added for Animate-mode named rig bounding boxes. Older
+ * files simply have no rig boxes (matching their pre-rig export behavior — everything exports
+ * under default mesh names). */
+MIGRATIONS[11] = (doc) => ({ ...doc, schemaVersion: 12 })
+
 export class UnsupportedSchemaVersionError extends Error {
   constructor(foundVersion: unknown) {
     super(`This file is from a newer version of VoxPaint (schemaVersion=${String(foundVersion)}). Please update the app.`)

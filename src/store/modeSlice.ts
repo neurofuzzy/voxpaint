@@ -21,10 +21,11 @@ export const createModeSlice: Slice = (set, get) => ({
     }
     set((state) => {
       state.mode = mode
-      // Animate mode only has mask paint/erase handlers (see engine/tools's animateToolMap) — land
-      // on a tool that's actually wired up there instead of leaving dispatch pointed at one that
-      // silently no-ops (e.g. 'select' or 'move' from Model mode).
-      if (mode === 'animate' && state.activeTool !== 'paint' && state.activeTool !== 'erase') {
+      // Animate mode only has mask paint/erase + pivot/rig handlers wired up (see
+      // engine/tools's animateToolMap) — land on a tool that's actually wired up there instead
+      // of leaving dispatch pointed at one that silently no-ops (e.g. 'select' or 'move' from
+      // Model mode).
+      if (mode === 'animate' && state.activeTool !== 'paint' && state.activeTool !== 'erase' && state.activeTool !== 'pivot' && state.activeTool !== 'rigbox') {
         state.activeTool = 'paint'
       }
     })

@@ -13,6 +13,7 @@ const TOOL_HINTS: Record<ToolId, string> = {
   move: 'drag to shift every pixel on this slice',
   marker: 'click empty space to place a marker · tap a marker to recolor it, tap again to delete · drag to move',
   pivot: 'click to pin the rotation/pendulum pivot for this slice · right-click: clear',
+  rigbox: 'click a voxel to box its color-connected region as a named rig mesh for GLTF export',
   textureface: 'click or drag ramps, wedges + thin slabs to re-map their texture face to the current plane · geometry unchanged',
 }
 

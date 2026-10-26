@@ -383,6 +383,8 @@ export interface ColorGroupGeometry {
   /** The group's PBR material class (matte/emissive/metal/glass). */
   materialClass: MaterialClass
   geometry: THREE.BufferGeometry
+  /** Rig box id owning this group, when the voxel lies inside a named rig box. */
+  rigId?: string
 }
 
 /**
@@ -420,8 +422,8 @@ export interface OptimizedVoxelGroups {
  * Returns one `ColorGroupGeometry` per (materialClass, colorKey) pair — the consumer creates one
  * solid-colour PBR material per group. No vertex colours are needed.
  */
-export function buildOptimizedVoxelGroups(model: VoxelModel, palette: PaletteState, mergeCoplanar?: boolean, cullInteriorFaces = true): OptimizedVoxelGroups {
-  const byGroup = new Map<string, VoxelGroup>()
+export function buildOptimizedVoxelGroups(model: VoxelModel, palette: PaletteState, mergeCoplanar?: boolean, cullInteriorFaces = true, rigAssignment?: Map<CellKey, string>): OptimizedVoxelGroups {
+  const byGroup = new Map<string, VoxelGroup & { rigId?: string }>()
   const color = new THREE.Color()
   const matrix = new THREE.Matrix4()
   let rawTriangles = 0
@@ -433,10 +435,11 @@ export function buildOptimizedVoxelGroups(model: VoxelModel, palette: PaletteSta
     const colorKey = color.set(resolveSlotColor(palette, slot)).getHex()
     const chamfer = model.chamfer.get(key)
 
-    const groupKey = `${materialClass}:${colorKey}`
+    const rigId = rigAssignment?.get(key)
+    const groupKey = `${materialClass}:${colorKey}:${rigId ?? ''}`
     let group = byGroup.get(groupKey)
     if (!group) {
-      group = { colorKey, materialClass, geometries: [] }
+      group = { colorKey, materialClass, geometries: [], rigId }
       byGroup.set(groupKey, group)
     }
 
@@ -464,8 +467,8 @@ export function buildOptimizedVoxelGroups(model: VoxelModel, palette: PaletteSta
 }
 
 /** Per-(materialClass, colorKey) optimized geometries for GLTF export — one solid-colour mesh per group. */
-export function buildOptimizedVoxelGeometryByMaterial(model: VoxelModel, palette: PaletteState, mergeCoplanar?: boolean, cullInteriorFaces = true): ColorGroupGeometry[] {
-  return buildOptimizedVoxelGroups(model, palette, mergeCoplanar, cullInteriorFaces).groups
+export function buildOptimizedVoxelGeometryByMaterial(model: VoxelModel, palette: PaletteState, mergeCoplanar?: boolean, cullInteriorFaces = true, rigAssignment?: Map<CellKey, string>): ColorGroupGeometry[] {
+  return buildOptimizedVoxelGroups(model, palette, mergeCoplanar, cullInteriorFaces, rigAssignment).groups
 }
 
 export interface SliceGroupGeometry extends ColorGroupGeometry {
@@ -492,8 +495,9 @@ export function buildOptimizedVoxelGroupsBySlice(
   nodeAssignment: Map<CellKey, SliceKey>,
   mergeCoplanar?: boolean,
   cullInteriorFaces = true,
+  rigAssignment?: Map<CellKey, string>,
 ): SliceGroupResult {
-  const byGroup = new Map<string, VoxelGroup & { sliceKey: SliceKey }>()
+  const byGroup = new Map<string, VoxelGroup & { sliceKey: SliceKey; rigId?: string }>()
   const color = new THREE.Color()
   const matrix = new THREE.Matrix4()
   let rawTriangles = 0
@@ -506,11 +510,12 @@ export function buildOptimizedVoxelGroupsBySlice(
     const chamfer = model.chamfer.get(key)
 
     const sliceKey = nodeAssignment.get(key) ?? ''
+    const rigId = rigAssignment?.get(key)
 
-    const groupKey = `${materialClass}:${colorKey}:${sliceKey}`
+    const groupKey = `${materialClass}:${colorKey}:${sliceKey}:${rigId ?? ''}`
     let group = byGroup.get(groupKey)
     if (!group) {
-      group = { colorKey, materialClass, geometries: [], sliceKey }
+      group = { colorKey, materialClass, geometries: [], sliceKey, rigId }
       byGroup.set(groupKey, group)
     }
 
@@ -626,12 +631,14 @@ export function buildTexturedShellGeometryBySliceColor(  model: VoxelModel,
   uvFor: VertexUV,
   nodeAssignment: Map<CellKey, SliceKey>,
   cullInteriorFaces = true,
+  rigAssignment?: Map<CellKey, string>,
 ): SliceGroupGeometry[] {
   const { faces } = buildShellFaces(model, palette, nodeAssignment, cullInteriorFaces)
   const byGroup = new Map<string, Face[]>()
   for (const f of faces) {
     const sliceKey = nodeAssignment.get(f.cellKey!) ?? ''
-    const groupKey = `${f.colorKey}:${f.materialClass}:${sliceKey}`
+    const rigId = f.cellKey ? rigAssignment?.get(f.cellKey) : undefined
+    const groupKey = `${f.colorKey}:${f.materialClass}:${sliceKey}:${rigId ?? ''}`
     const group = byGroup.get(groupKey)
     if (group) group.push(f)
     else byGroup.set(groupKey, [f])
@@ -639,7 +646,8 @@ export function buildTexturedShellGeometryBySliceColor(  model: VoxelModel,
   const out: SliceGroupGeometry[] = []
   for (const group of byGroup.values()) {
     const sliceKey = nodeAssignment.get(group[0].cellKey!) ?? ''
-    out.push({ colorKey: group[0].colorKey, materialClass: group[0].materialClass, sliceKey, geometry: geometryFromFacesUV(group, uvFor) })
+    const rigId = group[0].cellKey ? rigAssignment?.get(group[0].cellKey!) : undefined
+    out.push({ colorKey: group[0].colorKey, materialClass: group[0].materialClass, sliceKey, rigId, geometry: geometryFromFacesUV(group, uvFor) })
   }
   return out
 }
@@ -683,11 +691,13 @@ export function buildTexturedShellGeometryByColorMerged(
   uvForTag: UVForTexturedTag,
   mergeCoplanar: boolean,
   cullInteriorFaces = true,
+  rigAssignment?: Map<CellKey, string>,
 ): TexturedGroupsResult {
   const { faces } = buildShellFaces(model, palette, undefined, cullInteriorFaces)
   const byMaterial = new Map<string, Face[]>()
   for (const f of faces) {
-    const matKey = `${f.colorKey}:${f.materialClass}`
+    const rigId = f.cellKey ? rigAssignment?.get(f.cellKey) : undefined
+    const matKey = `${f.colorKey}:${f.materialClass}:${rigId ?? ''}`
     const group = byMaterial.get(matKey)
     if (group) group.push(f)
     else byMaterial.set(matKey, [f])
@@ -698,6 +708,7 @@ export function buildTexturedShellGeometryByColorMerged(
   const color = new THREE.Color()
   for (const group of byMaterial.values()) {
     const [{ colorKey, materialClass }] = group
+    const rigId = group[0].cellKey ? rigAssignment?.get(group[0].cellKey!) : undefined
     color.setHex(colorKey)
     if (!mergeCoplanar) {
       const positions: number[] = []
@@ -720,7 +731,7 @@ export function buildTexturedShellGeometryByColorMerged(
       geometry.setAttribute('color', new THREE.Float32BufferAttribute(colors, 3))
       geometry.setAttribute('uv', new THREE.Float32BufferAttribute(uvs, 2))
       optimizedTriangles += triangleCount(geometry)
-      out.push({ colorKey, materialClass, geometry })
+      out.push({ colorKey, materialClass, rigId, geometry })
       continue
     }
 
@@ -789,7 +800,7 @@ export function buildTexturedShellGeometryByColorMerged(
     geometry.setAttribute('color', new THREE.Float32BufferAttribute(colors, 3))
     geometry.setAttribute('uv', new THREE.Float32BufferAttribute(uvs, 2))
     optimizedTriangles += triangleCount(geometry)
-    out.push({ colorKey, materialClass, geometry })
+    out.push({ colorKey, materialClass, rigId, geometry })
   }
 
   return { groups: out, rawTriangles: faces.length, optimizedTriangles }

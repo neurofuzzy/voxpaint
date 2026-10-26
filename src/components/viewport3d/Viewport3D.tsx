@@ -42,6 +42,8 @@ import { VoxelFaceHighlight } from './VoxelFaceHighlight'
 import { SettingsPalette } from './SettingsPalette'
 import { VoxelGhostPreview } from './VoxelGhostPreview'
 import { VoxelInstancedMeshes } from './VoxelInstancedMeshes'
+import { RigBoxHighlight } from './RigBoxHighlight'
+import { RiggingPalette } from './RiggingPalette'
 
 const CLICK_DRAG_THRESHOLD_PX = 4
 
@@ -153,7 +155,7 @@ const EDIT_HINT = 'Edit 3D: click a face to apply the tool · drag empty space t
  * past the tap threshold so taps keep their two-stage click behavior; otherwise select opens a
  * plane-slice marquee on drag (a tap only reorients the plane, never selecting). Right-drag
  * still orbits, per the 3D-only convention. */
-const BLOCKING_TOOLS = ['paint', 'erase', 'eyedropper', 'material', 'select', 'wand'] as const
+const BLOCKING_TOOLS = ['paint', 'erase', 'eyedropper', 'material', 'select', 'wand', 'rigbox'] as const
 type BlockingTool = (typeof BLOCKING_TOOLS)[number]
 
 function editHint(tool: BlockingTool): string {
@@ -164,6 +166,7 @@ function editHint(tool: BlockingTool): string {
   if (tool === 'material') return 'Click or drag to repaint · never adds voxels'
   if (tool === 'select') return 'Drag to marquee-select · click selects the voxel and sets the plane · double-click selects the slice region · Shift adds to the selection'
   if (tool === 'wand') return 'Click a component for its color · re-tap it quickly for the whole component · drag inside to move'
+  if (tool === 'rigbox') return 'Click a voxel to box its color-connected region as a named rig mesh'
   return 'Click a voxel to pick its color and type'
 }
 
@@ -439,6 +442,14 @@ function VoxelInteractionHandler({ managerRef, controlsRef }: {
         const coord = result ? decodeKey(result.key) : resolveEmptyCell(clientX, clientY)
         if (!coord) return
         store.applyWandAt(coord)
+        return
+      }
+      // Rig wand (animate): single tap boxes the color-connected region. Empty taps
+      // toast a hint via the store. Tap-only; stays active for consecutive boxes.
+      if (tool === 'rigbox') {
+        const coord = result ? decodeKey(result.key) : resolveEmptyCell(clientX, clientY)
+        if (!coord) return
+        store.applyRigBoxAt(coord)
         return
       }
       // Select taps (3D-only layout only — the split viewport never reaches here with the
@@ -933,6 +944,10 @@ function VoxelInteractionHandler({ managerRef, controlsRef }: {
         setStatusMessage(result ? 'Click to select this marker · click empty space to place a new one' : 'Click to place a marker')
         return
       }
+      if (activeToolRef.current === 'rigbox' && modeRef.current === 'animate') {
+        setStatusMessage(result ? 'Click to box this color-connected region as a named rig mesh' : 'Click a voxel to create a rig box')
+        return
+      }
       if (isBlocking()) {
         const tool = activeToolRef.current as BlockingTool
         // Select and wand both act from empty space too, so their hints show even with no hit.
@@ -1185,6 +1200,19 @@ function VoxelInteractionHandler({ managerRef, controlsRef }: {
         return
       }
 
+      // Rig wand in Animate mode (split layout is orbit-only otherwise): taps box the
+      // color-connected region. Works from face hits or empty plane cells (empty
+      // toasts via the store). Never moves the construction plane.
+      if (activeToolRef.current === 'rigbox' && modeRef.current === 'animate') {
+        if (e.button !== 0) return
+        const store = useAppStore.getState()
+        const hit = resolveFaceHit(e.clientX, e.clientY)
+        const coord: Coord | null = hit ? decodeKey(hit.key) : resolveEmptyCell(e.clientX, e.clientY)
+        if (!coord) return
+        store.applyRigBoxAt(coord)
+        return
+      }
+
       // Fill owns its taps in 3D-only layout and never moves the construction plane: a
       // committed selection fills with the brush wherever the click landed; otherwise a
       // voxel tap flood-fills material (color only — like the material tool, geometry
@@ -1317,6 +1345,7 @@ export function Viewport3D() {
               <ConstructionPlaneGizmo />
               <PivotGizmo />
               <MarkersView />
+              <RigBoxHighlight />
             </>
           )}
           {textureMode && (
@@ -1354,6 +1383,7 @@ export function Viewport3D() {
         onToggleExposure={() => setShowExposure((v) => !v)}
       />
       <SettingsPalette />
+      {animateMode && <RiggingPalette />}
       {showExposure && <ExposureSlider />}
       <BrushPreview />
       <div className="absolute left-5 top-5 z-40">

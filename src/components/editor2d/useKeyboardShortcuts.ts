@@ -16,6 +16,7 @@ const TOOL_KEYS: Record<string, ToolId> = {
   v: 'move',
   d: 'marker',
   w: 'wand',
+  b: 'rigbox',
 }
 
 /**
@@ -162,9 +163,9 @@ export function useKeyboardShortcuts() {
       }
 
       const tool = TOOL_KEYS[key]
-      // Animate mode's toolbar only has paint/erase (mask) and pivot (no letter shortcut) — other
-      // tool letters stay inert there rather than switching to a tool with no animate-mode handler.
-      if (tool && (!isAnimate || tool === 'paint' || tool === 'erase')) {
+      // Animate mode's toolbar has paint/erase (mask), pivot, and rigbox — other tool letters
+      // stay inert there rather than switching to a tool with no animate-mode handler.
+      if (tool && (!isAnimate || tool === 'paint' || tool === 'erase' || tool === 'pivot' || tool === 'rigbox')) {
         store.setActiveTool(tool)
         e.preventDefault()
         return

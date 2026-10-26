@@ -1,5 +1,6 @@
 import type { Axis, CellKey, ChamferCell, Coord, GridExtent, Orientation, Rotation, VoxelModel, VoxelScaleY } from '@/engine/grid/types'
 import type { Marker } from '@/engine/markers/types'
+import type { RigBox } from '@/engine/rigging/types'
 import type { GltfExportAnchor } from '@/engine/export/gltfExport'
 import type { EmissiveAnimMode, PaletteSlotRef, PaletteState } from '@/engine/palette/types'
 import type { ConstructionPlane } from '@/engine/plane/types'
@@ -8,7 +9,7 @@ import type { BoxFace, TexelScale, TextureModel } from '@/engine/texture/types'
 import type { TexelClip } from '@/engine/texture/texelOps'
 import type { AnimationSpeed, AnimationType, SliceAnimSettings, SliceKey } from '@/engine/animation/types'
 
-export type ToolId = 'paint' | 'erase' | 'eyedropper' | 'select' | 'fill' | 'move' | 'material' | 'pivot' | 'textureface' | 'marker' | 'wand'
+export type ToolId = 'paint' | 'erase' | 'eyedropper' | 'select' | 'fill' | 'move' | 'material' | 'pivot' | 'textureface' | 'marker' | 'wand' | 'rigbox'
 export type VoxelKind = 'cube' | 'ramp' | 'convex' | 'concave' | 'wedge' | 'thin' | 'half' | 'post' | 'quarter' | 'flat' | 'flatwedge'
 
 export type SelectionRegion = {
@@ -689,11 +690,13 @@ export type UiSlice = {
   tourPrev: () => void
 }
 
-/** One Animate-mode undo/redo snapshot: animation settings, mask paint state, and pivots travel together. */
+/** One Animate-mode undo/redo snapshot: animation settings, mask paint state, pivots, and
+ * rigging boxes travel together. */
 export type AnimSnapshot = {
   animSettings: Map<SliceKey, SliceAnimSettings>
   sliceMasks: Map<SliceKey, Set<CellKey>>
   slicePivots: Map<SliceKey, CellKey>
+  rigBoxes: RigBox[]
 }
 
 export type MarkerSlice = {
@@ -721,6 +724,36 @@ export type MarkerSlice = {
   setActiveMarkerColor: (color: number) => void
 }
 
+/**
+ * Animate-mode rigging selections: named, model-decoupled bounding boxes used only at GLTF
+ * export to name meshes. Boxes store min/max only (not cell sets); export names whatever
+ * voxels lie inside at export time. `parentId` links boxes into an outline — export emits
+ * nested `Group` nodes, deepest box wins on overlap, list order breaks ties.
+ */
+export type RiggingSlice = {
+  rigBoxes: RigBox[]
+  /** Currently highlighted rig box in the list/3D view, or null. */
+  selectedRigBoxId: string | null
+  /** Adds a box (auto-uniquifies the name, drops dangling parents to root). Self-brackets undo. */
+  addRigBox: (box: RigBox) => void
+  /** Renames a box (auto-uniquifies; no-op on empty/unknown). Self-brackets undo. */
+  renameRigBox: (id: string, name: string) => void
+  /** Deletes a box, promoting its children to its parent. Self-brackets undo. */
+  deleteRigBox: (id: string) => void
+  /** Outline reorder: `before`/`after` land beside the target's whole subtree, `child` nests
+   * as its last child, `null` target appends at root level. No-op when invalid (unknown ids,
+   * or the target sits inside the dragged subtree). Self-brackets undo. */
+  moveRigBox: (dragId: string, targetId: string | null, position: 'before' | 'after' | 'child') => void
+  selectRigBox: (id: string | null) => void
+  clearAllRigBoxes: () => void
+  /**
+   * Rig wand tap at a grid cell: color-connected flood (exact palette slot) → bounding box →
+   * named selection. Empty taps toast a hint and do nothing. Stays on the rig tool so consecutive
+   * taps add consecutive boxes.
+   */
+  applyRigBoxAt: (start: Coord) => void
+}
+
 export type AppState = ProjectSlice &
   HistorySlice &
   PlaneSlice &
@@ -736,4 +769,5 @@ export type AppState = ProjectSlice &
   TextureSlice &
   AnimationSlice &
   MarkerSlice &
+  RiggingSlice &
   UiSlice
