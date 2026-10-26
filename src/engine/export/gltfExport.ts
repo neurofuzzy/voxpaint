@@ -89,6 +89,13 @@ export type GltfExportOptions = {
    * mesh along its original voxel topology. On the textured path this gates the tag-aware
    * coplanar merge instead (same default); the animated textured path always stays per-voxel. */
   optimizeMesh?: boolean
+  /** Cull hidden faces between touching voxels (default true). Set false to keep the interface
+   * faces between *different* colors/materials: same-color neighbors still weld into one solid
+   * exactly as before, but touching parts in different colors keep both sides of the seam so
+   * they stay separable downstream (split apart and rig limbs). File grows only by the kept
+   * seam faces. The glass-side occlusion cull still runs — a glass face coincident with a kept
+   * solid face would z-fight rather than separate. */
+  cullInteriorFaces?: boolean
   /** Emit texture maps: the baked color overlay, ambient-occlusion, and metal specular-noise maps
    * (default true). Set false to export materials + geometry only — no `map`/`aoMap`/metalness-map
    * nodes reference any texture, and geometry carries no `uv`/`uv1` attributes, so the .glb
@@ -245,10 +252,11 @@ export async function exportModelToGlb(
     // Glass + KHR_materials_volume + baseColorTexture breaks Mac Preview / Blender;
     // for glass we emit a solid-colour material (no baked map, no unused TEXCOORD_0).
     const texelScale = options.texelScale ?? TEXEL_SCALE
+    const cullInteriorFaces = options.cullInteriorFaces ?? true
     const groups: Array<{ geometry: THREE.BufferGeometry; colorKey: number; materialClass: MaterialClass; sliceKey?: string }> =
       hasAnimations && nodeAssignment
-        ? buildTexturedGeometryBySlice(model, palette, nodeAssignment, gridExtent, texelScale)
-        : buildTexturedGeometryByColorMerged(model, palette, gridExtent, options.optimizeMesh ?? true, texelScale).groups.map((g) => ({ ...g, sliceKey: undefined }))
+        ? buildTexturedGeometryBySlice(model, palette, nodeAssignment, gridExtent, texelScale, cullInteriorFaces)
+        : buildTexturedGeometryByColorMerged(model, palette, gridExtent, options.optimizeMesh ?? true, texelScale, cullInteriorFaces).groups.map((g) => ({ ...g, sliceKey: undefined }))
     for (const { geometry } of groups) geometries.push(geometry)
     if (!includeTextureMaps) stripUVs(groups)
 
@@ -369,11 +377,12 @@ export async function exportModelToGlb(
     let groups: Array<{ geometry: THREE.BufferGeometry; colorKey: number; materialClass: MaterialClass; sliceKey?: string }>
 
     const mergeCoplanar = options.optimizeMesh ?? true
+    const cullInteriorFaces = options.cullInteriorFaces ?? true
     if (hasAnimations && nodeAssignment) {
-      const sliceResult = buildOptimizedVoxelGroupsBySlice(model, palette, nodeAssignment, mergeCoplanar)
+      const sliceResult = buildOptimizedVoxelGroupsBySlice(model, palette, nodeAssignment, mergeCoplanar, cullInteriorFaces)
       groups = sliceResult.groups
     } else {
-      groups = buildOptimizedVoxelGeometryByMaterial(model, palette, mergeCoplanar).map((g) => ({ ...g, sliceKey: undefined }))
+      groups = buildOptimizedVoxelGeometryByMaterial(model, palette, mergeCoplanar, cullInteriorFaces).map((g) => ({ ...g, sliceKey: undefined }))
     }
     for (const { geometry } of groups) geometries.push(geometry)
     if (!includeTextureMaps) stripUVs(groups)

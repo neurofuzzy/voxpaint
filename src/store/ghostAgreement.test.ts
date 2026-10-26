@@ -47,7 +47,6 @@ function ghostFor(target: Coord, axis: Axis = 'z', orientation: Orientation = 1)
     activeTool: s.activeTool,
     directEdit: false,
     gridExtent: s.meta.gridExtent,
-    layoutMode: s.layoutMode,
   })
 }
 
@@ -126,8 +125,8 @@ describe('ghost vs paintCellAtCoord agreement', () => {
   })
 })
 
-/** 3D-only mode is verbatim: no adjacency classification, no end-of-stroke correction. */
-describe('verbatim paint in 3d-only mode', () => {
+/** 3D-only mode classifies exactly like 2D: same autotile, same correction pass. */
+describe('autotile paint in 3d-only mode', () => {
   beforeEach(() => {
     const s = useAppStore.getState()
     s.newProject('Test', 16)
@@ -136,50 +135,50 @@ describe('verbatim paint in 3d-only mode', () => {
     s.setPlaneOffset(0)
   })
 
-  it('ramp ignores neighbors and paints the brush rotation', () => {
+  it('ramp resolves neighbors instead of painting the brush rotation', () => {
     const s = useAppStore.getState()
     s.setActiveVoxelKind('ramp')
     s.setBrushRotation(1)
     s.setActiveTool('paint')
-    // N+E+S filled: autotile would resolve a ramp (open W) at rotation 2 — verbatim must not.
+    // N+E+S filled: autotile resolves a ramp (open W) — the write must classify, not stamp brush 1.
     paintCubeNeighbor([0, -1, 0])
     paintCubeNeighbor([1, 0, 0])
     paintCubeNeighbor([0, 1, 0])
     const target: Coord = [0, 0, 0]
     expect(ghostFor(target)?.kind).toBe('chamfer')
-    expect(paintAt(target)?.resolvedTo).toEqual({ shapeKind: 'ramp', rotation: 1 })
+    const written = paintAt(target)
+    expect(written?.resolvedTo?.shapeKind).toBe('ramp')
+    expect(written?.resolvedTo).not.toEqual({ shapeKind: 'ramp', rotation: 1 })
   })
 
-  it('wedge ignores a convex corner match and paints the brush rotation', () => {
+  it('wedge matches a convex corner instead of painting the brush fallback', () => {
     const s = useAppStore.getState()
     s.setActiveVoxelKind('wedge')
     s.setBrushRotation(0)
     s.setActiveTool('paint')
-    // E+S filled: autotile would match convex rotation 3 — verbatim paints fallback 0.
+    // E+S filled: autotile matches a convex corner — the write upgrades instead of fallback 0.
     paintCubeNeighbor([1, 0, 0])
     paintCubeNeighbor([0, 1, 0])
     const target: Coord = [0, 0, 0]
     expect(ghostFor(target)?.kind).toBe('chamfer')
-    expect(paintAt(target)?.resolvedTo).toEqual({ shapeKind: 'wedge', rotation: 0 })
+    // E+(plane-N = +y): filled E+N -> convex rotation 2 -> wedge rotation 2.
+    expect(paintAt(target)?.resolvedTo).toEqual({ shapeKind: 'wedge', rotation: 2 })
   })
 
-  it('lone ramp resolves immediately (no cube fallback, no correction pass)', () => {
+  it('lone ramp stays unresolved (cube fallback) with the correction pass a no-op', () => {
     const s = useAppStore.getState()
     s.setActiveVoxelKind('ramp')
     s.setBrushRotation(3)
     s.setActiveTool('paint')
     const target: Coord = [0, 0, 0]
-    expect(ghostFor(target)?.kind).toBe('chamfer')
-    expect(paintAt(target)?.resolvedTo).toEqual({ shapeKind: 'ramp', rotation: 3 })
-    // The correction pass is a no-op in 3d-only: the verbatim cell is untouched.
+    expect(ghostFor(target)?.kind).toBe('cube')
+    expect(paintAt(target)?.resolvedTo).toBeNull()
+    // The correction pass keeps it unresolved (no neighbors completed it).
     s.correctChamferStroke()
-    expect(useAppStore.getState().model.chamfer.get(encodeKey(...target))?.resolvedTo).toEqual({
-      shapeKind: 'ramp',
-      rotation: 3,
-    })
+    expect(useAppStore.getState().model.chamfer.get(encodeKey(...target))?.resolvedTo).toBeNull()
   })
 
-  it('ghost pool matches the verbatim write on every axis', () => {
+  it('ghost pool matches the classified write on every axis', () => {
     for (const [axis, orientation] of [['z', 1], ['z', -1], ['x', 1], ['y', -1]] as Array<[Axis, Orientation]>) {
       const s = useAppStore.getState()
       s.newProject('Test', 16)
@@ -194,7 +193,7 @@ describe('verbatim paint in 3d-only mode', () => {
       if (placement?.kind === 'chamfer') {
         expect(placement.pool).toBe(poolIdFor(written))
       } else {
-        expect.unreachable('verbatim wedge ghost must be a chamfer')
+        expect.unreachable('classified wedge ghost must be a chamfer')
       }
     }
   })
@@ -202,8 +201,8 @@ describe('verbatim paint in 3d-only mode', () => {
 
 /**
  * Orientation ALWAYS inherits the active construction plane, never the raycast face: tapping a
- * voxel's east (+x) face with the plane on z paints the x+1 neighbor authored in the z frame —
- * exactly what the brush preview shows.
+ * voxel's east (+x) face with the plane on z replaces the hovered voxel authored in the
+ * z frame — exactly what the brush preview shows.
  */
 describe('orientation inherits the construction plane, never the raycast face', () => {
   function facePlacement() {
@@ -218,7 +217,6 @@ describe('orientation inherits the construction plane, never the raycast face', 
       activeTool: 'paint',
       directEdit: true,
       gridExtent: s.meta.gridExtent,
-      layoutMode: s.layoutMode,
     })
   }
 
@@ -233,42 +231,43 @@ describe('orientation inherits the construction plane, never the raycast face', 
     s.setPlaneOffset(0)
   })
 
-  it('ghost places across the hit face but resolves in the plane frame', () => {
+  it('ghost replaces the hovered voxel in the plane frame', () => {
     const placement = facePlacement()
     expect(placement?.kind).toBe('chamfer')
     if (placement?.kind !== 'chamfer') return
-    // Across the east face…
-    expect(placement.target).toEqual([1, 0, 0])
-    // …but the pool is the z-frame (plane) pool, not the x-frame (face) pool.
-    const written = paintAt([1, 0, 0], 'z', 1)
+    // Same cell (replace-only), not across the face…
+    expect(placement.target).toEqual([0, 0, 0])
+    // …and the pool is the z-frame (plane) pool, not the x-frame (face) pool.
+    const written = paintAt([0, 0, 0], 'z', 1)
     expect(written?.planeAxis).toBe('z')
     expect(written?.planeOrientation).toBe(1)
     expect(placement.pool).toBe(poolIdFor(written))
   })
 
-  it('verbatim 3d-only write matches the plane-frame preview', () => {
+  it('3d-only write matches the plane-frame preview', () => {
     useAppStore.getState().setLayoutMode('3d-only')
     const placement = facePlacement()
-    const written = paintAt([1, 0, 0], 'z', 1)
+    const written = paintAt([0, 0, 0], 'z', 1)
     expect(written?.resolvedTo).toEqual({ shapeKind: 'wedge', rotation: 0 })
     expect(written?.planeAxis).toBe('z')
     if (placement?.kind === 'chamfer') {
       expect(placement.pool).toBe(poolIdFor(written))
     } else {
-      expect.unreachable('verbatim wedge ghost must be a chamfer')
+      expect.unreachable('classified wedge ghost must be a chamfer')
     }
   })
 })
 
 /**
- * 3D plane lock (`planeLocked3D`): unlocked stacks the neighbor across the clicked face
- * (Zanpo-builder behavior); locked replaces the hovered voxel on the active slice.
+ * 3D paint is replace-only on the construction plane (2D parity): face hits replace the
+ * hovered voxel when on-slice and project onto the plane when off-slice; occupied cells
+ * are always replaced, never blocked.
  */
-describe('3d plane lock', () => {
+describe('3d replace-only paint', () => {
   const SLOT_A = { kind: 'base', index: 0 } as const
   const SLOT_B = { kind: 'base', index: 1 } as const
 
-  function lockedFaceInput(locked: boolean, hover: Coord = [0, 0, 0]) {
+  function faceInput(hover: Coord = [0, 0, 0]) {
     const s = useAppStore.getState()
     return {
       model: s.model,
@@ -280,8 +279,6 @@ describe('3d plane lock', () => {
       activeTool: 'paint' as const,
       directEdit: true,
       gridExtent: s.meta.gridExtent,
-      layoutMode: s.layoutMode,
-      planeLocked3D: locked,
     }
   }
 
@@ -295,56 +292,39 @@ describe('3d plane lock', () => {
     s.setActiveTool('paint')
     s.setPlaneAxisOrientation('z', 1)
     s.setPlaneOffset(0)
-    s.setPlaneLocked3D(false)
   })
 
-  it('defaults to unlocked (Zanpo-style stacking)', () => {
-    useAppStore.getState().newProject('Test', 16)
-    expect(useAppStore.getState().planeLocked3D).toBe(false)
-  })
-
-  it('unlocked face hit targets the neighbor across the face', () => {
-    const s = useAppStore.getState()
-    expect(resolveDirectPaintTarget(s.model, s.plane, [0, 0, 0],
-      { cellKey: encodeKey(0, 0, 0), axis: 'x', orientation: 1 }, s.meta.gridExtent, false))
-      .toEqual([1, 0, 0])
-    expect(resolveGhostPlacement(lockedFaceInput(false))?.target).toEqual([1, 0, 0])
-  })
-
-  it('locked face hit targets the hovered voxel itself, even when occupied', () => {
+  it('face hit targets the hovered voxel itself, even when occupied', () => {
     const s = useAppStore.getState()
     s.beginStroke()
     expect(s.paintCellAtCoord([0, 0, 0], 'z', 1)).toBe(true)
     expect(s.paintCellAtCoord([1, 0, 0], 'z', 1)).toBe(true)
     s.commitStroke()
-    // Hover cell and its across-the-face neighbor both occupied: unlocked is blocked (its
-    // target is taken), locked replaces the hovered voxel.
-    expect(resolveGhostPlacement(lockedFaceInput(false))).toBeNull()
-    const placement = resolveGhostPlacement(lockedFaceInput(true))
+    // Both the hover cell and its across-the-face neighbor are occupied: stacking would be
+    // blocked, but replace-only re-targets the hovered voxel itself.
+    const placement = resolveGhostPlacement(faceInput())
     expect(placement?.target).toEqual([0, 0, 0])
+    expect(resolveDirectPaintTarget(s.plane, [0, 0, 0],
+      { cellKey: encodeKey(0, 0, 0), axis: 'x', orientation: 1 }, s.meta.gridExtent))
+      .toEqual([0, 0, 0])
   })
 
-  it('locked face hit off the active slice paints nothing', () => {
+  it('off-slice face hit projects onto the active slice', () => {
     const s = useAppStore.getState()
-    expect(resolveDirectPaintTarget(s.model, s.plane, [0, 0, 1],
-      { cellKey: encodeKey(0, 0, 1), axis: 'x', orientation: 1 }, s.meta.gridExtent, true))
-      .toBeNull()
-    expect(resolveGhostPlacement(lockedFaceInput(true, [0, 0, 1]))).toBeNull()
-    // Same hit unlocked stacks onto the slice-adjacent neighbor.
-    expect(resolveDirectPaintTarget(s.model, s.plane, [0, 0, 1],
-      { cellKey: encodeKey(0, 0, 1), axis: 'x', orientation: 1 }, s.meta.gridExtent, false))
-      .toEqual([1, 0, 1])
+    expect(resolveDirectPaintTarget(s.plane, [0, 0, 1],
+      { cellKey: encodeKey(0, 0, 1), axis: 'x', orientation: 1 }, s.meta.gridExtent))
+      .toEqual([0, 0, 0])
+    expect(resolveGhostPlacement(faceInput([0, 0, 1]))?.target).toEqual([0, 0, 0])
   })
 
-  it('locked empty-space hover on an occupied plane cell replaces it', () => {
+  it('empty-space hover on an occupied plane cell replaces it', () => {
     const s = useAppStore.getState()
     s.beginStroke()
     expect(s.paintCellAtCoord([2, 2, 0], 'z', 1)).toBe(true)
     s.commitStroke()
     const after = useAppStore.getState()
-    // No face: the plane cell under the cursor. Occupied blocks unlocked, replaces locked.
-    expect(resolveDirectPaintTarget(after.model, after.plane, [2, 2, 0], null, after.meta.gridExtent, false)).toBeNull()
-    expect(resolveDirectPaintTarget(after.model, after.plane, [2, 2, 0], null, after.meta.gridExtent, true)).toEqual([2, 2, 0])
+    // No face: the plane cell under the cursor, occupied or not.
+    expect(resolveDirectPaintTarget(after.plane, [2, 2, 0], null, after.meta.gridExtent)).toEqual([2, 2, 0])
   })
 
   it('direct-edit 3D shows no place-here ghost for tools that place nothing', () => {
@@ -361,7 +341,6 @@ describe('3d plane lock', () => {
       activeTool: tool,
       directEdit: true,
       gridExtent: s.meta.gridExtent,
-      layoutMode: s.layoutMode,
     })
     expect(resolveGhostPlacement(input('paint'))?.target).toEqual([2, 2, 0])
     expect(resolveGhostPlacement(input('marker'))?.target).toEqual([2, 2, 0])
@@ -370,16 +349,15 @@ describe('3d plane lock', () => {
     }
   })
 
-  it('locked paint write replaces the voxel color in place', () => {
+  it('paint write replaces the voxel color in place', () => {
     const s = useAppStore.getState()
     s.beginStroke()
     expect(s.paintCellAtCoord([0, 0, 0], 'z', 1)).toBe(true)
     s.commitStroke()
     useAppStore.getState().setActivePaletteSlot(SLOT_B)
-    useAppStore.getState().setPlaneLocked3D(true)
     const st = useAppStore.getState()
     st.beginStroke()
-    // The locked tap target is the hovered cell itself — the write overwrites it.
+    // The tap target is the hovered cell itself — the write overwrites it.
     expect(st.paintCellAtCoord([0, 0, 0], st.plane.axis, st.plane.orientation)).toBe(true)
     st.commitStroke()
     const after = useAppStore.getState()

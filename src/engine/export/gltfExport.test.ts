@@ -268,6 +268,42 @@ describe('exportModelToGlb textured mesh optimization', () => {  it('merges copl
   })
 })
 
+describe('exportModelToGlb cullInteriorFaces', () => {
+  /** Two adjacent cubes in different colours — the interface is cross-group and culled by default. */
+  function barModel(): VoxelModel {
+    const model = emptyModel()
+    model.color.set(encodeKey(0, 0, 0), { paletteSlot: base0 })
+    model.color.set(encodeKey(1, 0, 0), { paletteSlot: { kind: 'base', index: 1 } })
+    return { ...model, bounds: recomputeBounds(model) }
+  }
+
+  it('keeps the cross-group interface when false (PBR path), culling by default', async () => {
+    const culled = positionVertexCount(glbJson(await exportModelToGlb(barModel(), DEFAULT_PALETTE, 16, undefined, { includeTextureMaps: false })))
+    const kept = positionVertexCount(
+      glbJson(await exportModelToGlb(barModel(), DEFAULT_PALETTE, 16, undefined, { includeTextureMaps: false, cullInteriorFaces: false })),
+    )
+    // Two full boxes, unmerged across groups: 2 × 12 tris × 3 verts.
+    expect(kept).toBe(72)
+    expect(culled).toBeLessThan(kept)
+  })
+
+  it('keeps every voxel shell when false (textured path)', async () => {
+    const texture = emptyTextureModel(16)
+    texture.faces.px[0] = 0
+    const culled = positionVertexCount(
+      glbJson(await exportModelToGlb(barModel(), DEFAULT_PALETTE, 16, texture, { includeTextureMaps: false })),
+    )
+    const kept = positionVertexCount(
+      glbJson(
+        await exportModelToGlb(barModel(), DEFAULT_PALETTE, 16, texture, { includeTextureMaps: false, cullInteriorFaces: false }),
+      ),
+    )
+    // 2 cubes × 12 shell tris × 3 verts, unmerged.
+    expect(kept).toBe(72)
+    expect(culled).toBeLessThan(kept)
+  })
+})
+
 /** Material names carrying an occlusionTexture in the exported JSON. */
 function materialsWithOcclusion(json: GlbJson): string[] {
   return (json.materials ?? []).filter((m) => m.occlusionTexture !== undefined).map((m) => m.name ?? '')

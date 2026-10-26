@@ -22,6 +22,7 @@ export function ExportGltfDialog({ open, onOpenChange }: { open: boolean; onOpen
   const exportAnchor = useAppStore((s) => s.exportAnchor)
   const exportAlignToObjectBounds = useAppStore((s) => s.exportAlignToObjectBounds)
   const exportDisableMeshOptimization = useAppStore((s) => s.exportDisableMeshOptimization)
+  const exportCullInteriorFaces = useAppStore((s) => s.exportCullInteriorFaces)
   const exportIncludeTextureMaps = useAppStore((s) => s.exportIncludeTextureMaps)
   const exportIncludeAOMaps = useAppStore((s) => s.exportIncludeAOMaps)
   const exportIncludeMarkers = useAppStore((s) => s.exportIncludeMarkers)
@@ -29,6 +30,7 @@ export function ExportGltfDialog({ open, onOpenChange }: { open: boolean; onOpen
   const setExportAnchor = useAppStore((s) => s.setExportAnchor)
   const setExportAlignToObjectBounds = useAppStore((s) => s.setExportAlignToObjectBounds)
   const setExportDisableMeshOptimization = useAppStore((s) => s.setExportDisableMeshOptimization)
+  const setExportCullInteriorFaces = useAppStore((s) => s.setExportCullInteriorFaces)
   const setExportIncludeTextureMaps = useAppStore((s) => s.setExportIncludeTextureMaps)
   const setExportIncludeAOMaps = useAppStore((s) => s.setExportIncludeAOMaps)
   const setExportIncludeMarkers = useAppStore((s) => s.setExportIncludeMarkers)
@@ -76,6 +78,7 @@ export function ExportGltfDialog({ open, onOpenChange }: { open: boolean; onOpen
         alignToObjectBounds,
         noiseSeed: meta.noiseSeed,
         optimizeMesh: !state.exportDisableMeshOptimization,
+        cullInteriorFaces: state.exportCullInteriorFaces,
         texelScale: state.meta.texelScale ?? TEXEL_SCALE,
         includeTextureMaps: state.exportIncludeTextureMaps,
         voxelScaleY: meta.voxelScaleY,
@@ -188,6 +191,21 @@ export function ExportGltfDialog({ open, onOpenChange }: { open: boolean; onOpen
                 className="h-4 w-4 shrink-0 cursor-pointer accent-violet-500"
               />
               <span className="text-sm text-neutral-400">Disable mesh optimization</span>
+            </label>
+
+            <label className="flex items-start gap-2.5 ml-[4.5rem] cursor-pointer select-none" title="Off keeps the hidden faces between touching parts in different colors, so limbs stay separate shells for rigging (same-color neighbors still weld)">
+              <input
+                type="checkbox"
+                checked={exportCullInteriorFaces}
+                onChange={(e) => setExportCullInteriorFaces(e.target.checked)}
+                className="mt-0.5 h-4 w-4 shrink-0 cursor-pointer accent-violet-500"
+              />
+              <span className="text-sm text-neutral-400">
+                Remove interior faces
+                <span className="block text-xs text-neutral-500">
+                  Off keeps different-colored parts separable for rigging
+                </span>
+              </span>
             </label>
           </div>
 

@@ -39,14 +39,14 @@ export function endFreshChamferTracking() {
 /**
  * The paint-cell write itself, parameterized by an explicit plane instead of the store's active
  * one. `paintCell` (2D) passes `get().plane` plus its selection clip; `paintCellAtCoord` (3D
- * direct blocking) passes the active construction plane at the target's slice. One
+ * direct) passes the active construction plane at the target's slice. One
  * implementation, so chamfer classification, wedge retry, and tracking behave identically from
  * either view.
  *
  * `stamp` switches from click semantics to fill semantics: every cell lands the brush shape
- * deterministically (fresh classification at the brush rotation, verbatim in 3D-only) instead
- * of applying re-click rotation/spin/cycle to already-matching cells — bulk-filling a window
- * must stamp, never spin what it just wrote. Tracking sets are left alone in stamp mode.
+ * deterministically (fresh classification at the brush rotation) instead of applying
+ * re-click rotation/spin/cycle to already-matching cells — bulk-filling a window must stamp,
+ * never spin what it just wrote. Tracking sets are left alone in stamp mode.
  */
 function applyPaintCell(
   state: AppState,
@@ -64,18 +64,13 @@ function applyPaintCell(
   // Manual brush rotation (R key / preview button): an additive quarter-turn offset applied to
   // orientable kinds at paint time. 0 preserves legacy behavior exactly (pure autotile / fresh-0).
   const brush = (state.brushRotation ?? 0) as Rotation
-  // 3D-only mode is verbatim: no adjacency classification and no end-of-stroke correction —
-  // what the brush preview shows is exactly what the click writes.
-  const verbatim = state.layoutMode === '3d-only'
 
   if (kind === 'ramp') {
-    const resolvedTo = verbatim
-      ? { shapeKind: 'ramp' as const, rotation: brush }
-      : classify(sampleNeighbors(state.model, plane, u, v))
-    if (!verbatim && resolvedTo && brush) resolvedTo.rotation = ((resolvedTo.rotation + brush) % 4) as Rotation
+    const resolvedTo = classify(sampleNeighbors(state.model, plane, u, v))
+    if (resolvedTo && brush) resolvedTo.rotation = ((resolvedTo.rotation + brush) % 4) as Rotation
     state.model.chamfer.set(key, { planeAxis: plane.axis, planeOrientation: plane.orientation, resolvedTo })
 
-    if (!stamp && !verbatim && freshChamferKeys) {
+    if (!stamp && freshChamferKeys) {
       freshChamferKeys.add(key)
       const pi = axisIndex(plane.axis)
       for (const freshKey of freshChamferKeys) {
@@ -100,11 +95,11 @@ function applyPaintCell(
       const rotation = ((existing!.resolvedTo!.rotation + 1) % 4) as Rotation
       existing!.resolvedTo = { shapeKind: 'wedge', rotation }
     } else {
-      const resolved = verbatim ? null : classify(sampleNeighbors(state.model, plane, u, v))
+      const resolved = classify(sampleNeighbors(state.model, plane, u, v))
       const rotation = (((resolved?.shapeKind === 'convex' ? resolved.rotation : 0) + brush) % 4) as Rotation
       state.model.chamfer.set(key, { planeAxis: plane.axis, planeOrientation: plane.orientation, resolvedTo: { shapeKind: 'wedge', rotation } })
 
-      if (!stamp && !verbatim && pendingWedgeKeys) {
+      if (!stamp && pendingWedgeKeys) {
         if (resolved?.shapeKind === 'convex') pendingWedgeKeys.delete(key)
         else pendingWedgeKeys.add(key)
 
@@ -320,8 +315,6 @@ function applyMaterialCell(state: AppState, coord: Coord, slot: PaletteSlotRef):
 
 export const createPaintActionsSlice: Slice = (set, get) => ({
   correctChamferStroke: () => {
-    // 3D-only mode never corrects: every paint is verbatim, frozen at click time.
-    if (get().layoutMode === '3d-only') return
     // Outside an open stroke there is nothing stroke-local to correct (both tracking sets are
     // only non-null between beginStroke/commitStroke).
     if (!freshChamferKeys && !pendingWedgeKeys) return
@@ -422,7 +415,7 @@ export const createPaintActionsSlice: Slice = (set, get) => ({
 
   paintLineAtCoord: (coord: Coord, extend: boolean) => {
     get().bakeFloatIfAny()
-    const { plane, activeVoxelKind, activePaletteSlot, meta, planeLocked3D, paintLineAnchor } = get()
+    const { plane, activeVoxelKind, activePaletteSlot, meta, paintLineAnchor } = get()
     // Every tap re-establishes the anchor — chaining for the next shift-click.
     get().setPaintLineAnchor({ coord, axis: plane.axis, orientation: plane.orientation })
     // Without a usable anchor (none yet, or the plane frame changed since) — or when the
@@ -442,8 +435,7 @@ export const createPaintActionsSlice: Slice = (set, get) => ({
         for (const [lu, lv] of dominantAxisLine(a.u, a.v, b.u, b.v)) {
           const c = gridCoordFromPixel(plane, lu, lv)
           if (!withinWorkingBounds(c, meta.gridExtent)) continue
-          // Unlocked taps never overwrite (matching single-tap semantics); locked taps replace.
-          if (!planeLocked3D && state.model.color.has(encodeKey(...c))) continue
+          // Replace-only (2D parity): every line cell overwrites, like single taps.
           applyPaintCell(state, c, lu, lv, plane, activeVoxelKind, activePaletteSlot)
         }
       })

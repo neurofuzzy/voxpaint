@@ -22,6 +22,8 @@ export type ViewSettings = {
   exportAlignToObjectBounds: boolean
   /** GLTF export: skip coplanar-face merging to keep the mesh's per-voxel topology. */
   exportDisableMeshOptimization?: boolean
+  /** GLTF export: cull hidden faces between touching voxels. Defaults true. */
+  exportCullInteriorFaces?: boolean
   /** GLTF export: emit texture maps (baked color overlay, AO, metal maps). Defaults true. */
   exportIncludeTextureMaps?: boolean
   /** GLTF export: bake ambient occlusion into an aoMap. Defaults true. */

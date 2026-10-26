@@ -135,12 +135,6 @@ export type ObjectModeTarget = { cellKey: CellKey; axis: Axis; orientation: Orie
 export type PlaneSlice = {
   plane: ConstructionPlane
   objectModeTarget: ObjectModeTarget | null
-  /** 3D-only paint constraint: when true, paint taps in the 3D view replace the hovered voxel
-   * on the active construction-plane slice instead of stacking a new voxel in front of the
-   * clicked face (zanpo-style). False = unlocked, Zanpo-builder behavior. Paint-only; every
-   * other 3D tool ignores it. Session state, never persisted. */
-  planeLocked3D: boolean
-  setPlaneLocked3D: (v: boolean) => void
   setPlaneAxisOrientation: (axis: ConstructionPlane['axis'], orientation: ConstructionPlane['orientation']) => void
   setPlaneOffset: (offset: number) => void
   /** Grounds the plane (Y-up at the lowest layer for the current extent) and persists it —
@@ -314,6 +308,10 @@ export type ViewSlice = {
   /** GLTF export: skip coplanar-face merging so the exported mesh keeps its per-voxel topology
    * (default false = meshes are optimized). */
   exportDisableMeshOptimization: boolean
+  /** GLTF export: cull hidden faces between touching voxels (default true). Off keeps the
+   * interface faces between different colors/materials so touching parts stay separable
+   * downstream (rigging); same-color neighbors still weld. */
+  exportCullInteriorFaces: boolean
   /** GLTF export: emit texture maps — baked color overlay, ambient occlusion, metal maps
    * (default true). Off = solid materials + bare geometry, no maps or TEXCOORDs. */
   exportIncludeTextureMaps: boolean
@@ -352,6 +350,7 @@ export type ViewSlice = {
   setExportAnchor: (v: GltfExportAnchor) => void
   setExportAlignToObjectBounds: (v: boolean) => void
   setExportDisableMeshOptimization: (v: boolean) => void
+  setExportCullInteriorFaces: (v: boolean) => void
   setExportIncludeTextureMaps: (v: boolean) => void
   setExportIncludeAOMaps: (v: boolean) => void
   setExportIncludeMarkers: (v: boolean) => void

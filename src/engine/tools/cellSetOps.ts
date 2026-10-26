@@ -207,6 +207,54 @@ export function rotateCellsInPlane(
 }
 
 /**
+ * Whether every key in an explicit voxel set sits on the active construction-plane slice.
+ * Empty sets read as not-coplanar (there is nothing to route to the 2D clipboard).
+ * Stale keys decode like any other cell — off-slice keys fail the check.
+ */
+export function isCoplanarWithPlane(keys: Iterable<CellKey>, plane: ConstructionPlane): boolean {
+  let seen = false
+  const ai = axisIndex(plane.axis)
+  for (const key of keys) {
+    seen = true
+    if (decodeKey(key)[ai] !== plane.offset) return false
+  }
+  return seen
+}
+
+/**
+ * Expresses a coplanar explicit voxel set as a plane-framed 2D selection window: bounding
+ * (u,v) rect in the plane's logical frame with the mask set exactly on the set's cells
+ * (holes stay holes). Unoccupied window cells are not selected, so pasting stamps only the
+ * copied cells instead of clearing the whole rect (occupied-only, not the full window).
+ * Returns null for empty sets. Callers must check `isCoplanarWithPlane` first — off-plane
+ * keys project onto the slice and would silently collapse depth.
+ */
+export function selectionRegionFromCoplanarCells(
+  keys: Iterable<CellKey>,
+  plane: ConstructionPlane,
+): SelectionRegion | null {
+  let minU = Infinity
+  let minV = Infinity
+  let maxU = -Infinity
+  let maxV = -Infinity
+  const uvs: Array<{ u: number; v: number }> = []
+  for (const key of keys) {
+    const { u, v } = pixelFromGridCoord(plane, decodeKey(key))
+    if (u < minU) minU = u
+    if (u > maxU) maxU = u
+    if (v < minV) minV = v
+    if (v > maxV) maxV = v
+    uvs.push({ u, v })
+  }
+  if (uvs.length === 0) return null
+  const width = maxU - minU + 1
+  const height = maxV - minV + 1
+  const mask = new Uint8Array(width * height)
+  for (const { u, v } of uvs) mask[(v - minV) * width + (u - minU)] = 1
+  return { originU: minU, originV: minV, width, height, mask }
+}
+
+/**
  * Whether an explicit voxel set frames the given clipboard exactly: the set's bounding box,
  * measured in the plane's (u,v) + depth frame, matches the clipboard's width/height/depth
  * span. Used by 3D paste to recognize an empty selection as a paste destination ("paste into

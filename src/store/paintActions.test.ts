@@ -958,17 +958,18 @@ describe('fillSelection (box click fills the window with the brush)', () => {
     expect(after.past.length).toBe(strokes + 1)
   })
 
-  it('stamps the brush kind verbatim in 3D-only (ramp keeps its plane basis)', () => {
+  it('classifies the brush in 3D-only like 2D (lone ramp stays unresolved)', () => {
     const s = useAppStore.getState()
     s.setLayoutMode('3d-only')
     s.setActiveVoxelKind('ramp')
     s.setSelectedCells(new Set([encodeKey(0, 0, 0)]))
     s.fillSelection()
 
+    // No neighbors: autotile leaves the ramp unresolved, exactly like the 2D fill path.
     expect(useAppStore.getState().model.chamfer.get(encodeKey(0, 0, 0))).toEqual({
       planeAxis: 'z',
       planeOrientation: 1,
-      resolvedTo: { shapeKind: 'ramp', rotation: s.brushRotation },
+      resolvedTo: null,
     })
   })
 
@@ -1037,7 +1038,6 @@ describe('3D shift-paint lines', () => {
     s.setActivePaletteSlot(SLOT_A)
     s.setPlaneAxisOrientation('z', 1)
     s.setPlaneOffset(0)
-    s.setPlaneLocked3D(false)
   })
 
   it('plain tap paints one cell and sets the anchor', () => {
@@ -1086,7 +1086,7 @@ describe('3D shift-paint lines', () => {
     expect(after.paintLineAnchor?.coord).toEqual([2, 2, 0])
   })
 
-  it('unlocked lines skip occupied cells', () => {
+  it('lines replace occupied cells without growing the model', () => {
     const s = useAppStore.getState()
     expect(s.paintLineAtCoord([2, 0, 0], false)).toBe(true)
     expect(s.paintLineAtCoord([0, 0, 0], false)).toBe(true)
@@ -1100,11 +1100,10 @@ describe('3D shift-paint lines', () => {
     expect(after.past.length).toBe(3)
   })
 
-  it('locked lines replace occupied cells without growing the model', () => {
+  it('shift-lines repaint occupied cells with the active slot', () => {
     const s = useAppStore.getState()
     expect(s.paintLineAtCoord([1, 0, 0], false)).toBe(true)
     expect(s.paintLineAtCoord([2, 0, 0], false)).toBe(true)
-    useAppStore.getState().setPlaneLocked3D(true)
     useAppStore.getState().setActivePaletteSlot(SLOT_B)
     expect(useAppStore.getState().paintLineAtCoord([0, 0, 0], false)).toBe(true)
     expect(useAppStore.getState().paintLineAtCoord([3, 0, 0], true)).toBe(true)
@@ -1114,7 +1113,6 @@ describe('3D shift-paint lines', () => {
     for (const x of [0, 1, 2, 3]) {
       expect(after.model.color.get(encodeKey(x, 0, 0))?.paletteSlot).toEqual(SLOT_B)
     }
-    useAppStore.getState().setPlaneLocked3D(false)
   })
 
   it('a changed plane frame falls back to a single paint', () => {

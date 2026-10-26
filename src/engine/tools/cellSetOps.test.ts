@@ -8,8 +8,10 @@ import { axisIndex } from '@/engine/plane/planeGeometry'
 import {
   bboxOfCoords,
   copyCellsToClipboard,
+  isCoplanarWithPlane,
   rotateCellsInPlane,
   selectionMatchesClipboard,
+  selectionRegionFromCoplanarCells,
   snapshotCells,
   windowSliceCells,
   windowSlabBounds,
@@ -226,6 +228,28 @@ describe('rotateCellsInPlane', () => {
         [2, 0, 0],
       ].sort(),
     )
+  })
+})
+
+describe('isCoplanarWithPlane + selectionRegionFromCoplanarCells', () => {
+  it('empty sets are not coplanar and convert to null', () => {
+    expect(isCoplanarWithPlane(new Set(), PLANE)).toBe(false)
+    expect(selectionRegionFromCoplanarCells(new Set(), PLANE)).toBeNull()
+  })
+
+  it('single-slice sets are coplanar; mixed depths are not', () => {
+    expect(isCoplanarWithPlane(new Set([encodeKey(0, 0, 0), encodeKey(1, 0, 0)]), PLANE)).toBe(true)
+    expect(isCoplanarWithPlane(new Set([encodeKey(0, 0, 0), encodeKey(0, 0, 1)]), PLANE)).toBe(false)
+    // Off-slice single cell is not coplanar with this plane.
+    expect(isCoplanarWithPlane(new Set([encodeKey(0, 0, 2)]), PLANE)).toBe(false)
+  })
+
+  it('converts a sparse coplanar set to an occupied-only mask', () => {
+    const region = selectionRegionFromCoplanarCells(new Set([encodeKey(0, 0, 0), encodeKey(2, 0, 0)]), PLANE)!
+    expect(region.width).toBe(3)
+    expect(region.height).toBe(1)
+    // Only the two occupied cells are selected; the hole stays a hole (merge, not clear).
+    expect([...region.mask]).toEqual([1, 0, 1])
   })
 })
 

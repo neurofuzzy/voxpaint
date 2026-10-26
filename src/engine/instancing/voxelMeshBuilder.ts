@@ -254,8 +254,14 @@ function emitChamfer(faces: Face[], base: THREE.BufferGeometry, matrix: THREE.Ma
  * When `nodeAssignment` is given (animated export), a pair spanning two *different* animation nodes
  * is never cancelled even if otherwise eligible — those cells will move apart independently, so the
  * face between them is a real (if currently coincident) surface, not a hidden interior one.
+ *
+ * With `cullCrossGroup: false` only **same-group** pairs (identical materialClass *and* colorKey,
+ * i.e. one export mesh) are culled — the union-equivalent for the shell path. Interfaces between
+ * different colors/materials keep both sides so touching parts stay separable downstream. The
+ * glass-vs-solid rule is unchanged (the glass side is still dropped to avoid z-fighting); the
+ * solid side's kept face still marks the seam.
  */
-export function removeInteriorFaces(faces: Face[], nodeAssignment?: Map<CellKey, SliceKey>): Face[] {
+export function removeInteriorFaces(faces: Face[], nodeAssignment?: Map<CellKey, SliceKey>, cullCrossGroup = true): Face[] {
   const byTri = new Map<string, number[]>()
   faces.forEach((f, i) => {
     const key = [qkey(f.a), qkey(f.b), qkey(f.c)].sort().join('|')
@@ -275,6 +281,19 @@ export function removeInteriorFaces(faces: Face[], nodeAssignment?: Map<CellKey,
     if (faces[i].twoSided || faces[j].twoSided) continue
     if (faces[i].normal.dot(faces[j].normal) >= -0.9) continue // not back-to-back
     if (nodeAssignment && sliceOf(faces[i]) !== sliceOf(faces[j])) continue // different animation nodes
+
+    const sameGroup =
+      faces[i].materialClass === faces[j].materialClass && faces[i].colorKey === faces[j].colorKey
+    if (!sameGroup && !cullCrossGroup) {
+      // No-cull export mode: only same-export-mesh pairs cancel. Cross-group interfaces keep
+      // both sides — except glass-involved pairs, which keep the existing glass-side-only
+      // drop so the kept glass face can't z-fight the coincident solid face.
+      if (faces[i].materialClass === 'glass' || faces[j].materialClass === 'glass') {
+        if (faces[i].materialClass === 'glass') removed.add(i)
+        if (faces[j].materialClass === 'glass') removed.add(j)
+      }
+      continue
+    }
 
     if (faces[i].materialClass === faces[j].materialClass) {
       removed.add(i) // same material → both sides hidden
@@ -298,11 +317,17 @@ export function removeInteriorFaces(faces: Face[], nodeAssignment?: Map<CellKey,
  * The shell pass runs across all colors together — interior faces
  * between differently-coloured cells must still cancel — so grouping by colour happens afterward.
  * Returns the surviving faces plus the pre-shell triangle total (for the overlay's raw stat).
+ *
+ * With `cullInteriorFaces: false` only same-export-mesh pairs cancel (the union-equivalent);
+ * interfaces between different colors/materials keep both sides so touching parts stay
+ * separable downstream. The coplanar merge is unaffected (per-group, so it can never weld
+ * across a kept seam).
  */
 function buildShellFaces(
   model: VoxelModel,
   palette: PaletteState,
   nodeAssignment?: Map<CellKey, SliceKey>,
+  cullInteriorFaces = true,
 ): { faces: Face[]; rawTriangles: number } {
   const faces: Face[] = []
   const matrix = new THREE.Matrix4()
@@ -349,7 +374,7 @@ function buildShellFaces(
   }
 
   const rawTriangles = faces.length
-  return { faces: removeInteriorFaces(faces, nodeAssignment), rawTriangles }
+  return { faces: removeInteriorFaces(faces, nodeAssignment, cullInteriorFaces), rawTriangles }
 }
 
 export interface ColorGroupGeometry {
@@ -387,10 +412,15 @@ export interface OptimizedVoxelGroups {
  * (see `cullCoincidentOpaqueInterfaces` in `meshOptimizer.ts`) — the interface is inside the
  * combined solid. Glass-involved interfaces keep the solid side (glass side only is dropped).
  *
+ * With `cullInteriorFaces: false` the cross-group cull is skipped while the union and the
+ * coplanar merge still run: same-color neighbors weld exactly as before, but interfaces
+ * between different colors/materials keep both sides so touching parts stay separable
+ * downstream.
+ *
  * Returns one `ColorGroupGeometry` per (materialClass, colorKey) pair — the consumer creates one
  * solid-colour PBR material per group. No vertex colours are needed.
  */
-export function buildOptimizedVoxelGroups(model: VoxelModel, palette: PaletteState, mergeCoplanar?: boolean): OptimizedVoxelGroups {
+export function buildOptimizedVoxelGroups(model: VoxelModel, palette: PaletteState, mergeCoplanar?: boolean, cullInteriorFaces = true): OptimizedVoxelGroups {
   const byGroup = new Map<string, VoxelGroup>()
   const color = new THREE.Color()
   const matrix = new THREE.Matrix4()
@@ -426,7 +456,7 @@ export function buildOptimizedVoxelGroups(model: VoxelModel, palette: PaletteSta
   }
 
   const isOccupied = (x: number, y: number, z: number) => isCellOccupied(model, x, y, z)
-  const groups = optimizeGroupsByCSG(Array.from(byGroup.values()), mergeCoplanar ?? true, isOccupied)
+  const groups = optimizeGroupsByCSG(Array.from(byGroup.values()), mergeCoplanar ?? true, isOccupied, cullInteriorFaces)
   let optimizedTriangles = 0
   for (const g of groups) optimizedTriangles += triangleCount(g.geometry)
 
@@ -434,8 +464,8 @@ export function buildOptimizedVoxelGroups(model: VoxelModel, palette: PaletteSta
 }
 
 /** Per-(materialClass, colorKey) optimized geometries for GLTF export — one solid-colour mesh per group. */
-export function buildOptimizedVoxelGeometryByMaterial(model: VoxelModel, palette: PaletteState, mergeCoplanar?: boolean): ColorGroupGeometry[] {
-  return buildOptimizedVoxelGroups(model, palette, mergeCoplanar).groups
+export function buildOptimizedVoxelGeometryByMaterial(model: VoxelModel, palette: PaletteState, mergeCoplanar?: boolean, cullInteriorFaces = true): ColorGroupGeometry[] {
+  return buildOptimizedVoxelGroups(model, palette, mergeCoplanar, cullInteriorFaces).groups
 }
 
 export interface SliceGroupGeometry extends ColorGroupGeometry {
@@ -461,6 +491,7 @@ export function buildOptimizedVoxelGroupsBySlice(
   palette: PaletteState,
   nodeAssignment: Map<CellKey, SliceKey>,
   mergeCoplanar?: boolean,
+  cullInteriorFaces = true,
 ): SliceGroupResult {
   const byGroup = new Map<string, VoxelGroup & { sliceKey: SliceKey }>()
   const color = new THREE.Color()
@@ -499,7 +530,7 @@ export function buildOptimizedVoxelGroupsBySlice(
   }
 
   const isOccupied = (x: number, y: number, z: number) => isCellOccupied(model, x, y, z)
-  const groups: SliceGroupGeometry[] = optimizeGroupsByCSG(Array.from(byGroup.values()), mergeCoplanar ?? true, isOccupied)
+  const groups: SliceGroupGeometry[] = optimizeGroupsByCSG(Array.from(byGroup.values()), mergeCoplanar ?? true, isOccupied, cullInteriorFaces)
   let optimizedTriangles = 0
   for (const g of groups) optimizedTriangles += triangleCount(g.geometry)
 
@@ -588,13 +619,15 @@ export function buildTexturedShellGeometryByColor(model: VoxelModel, palette: Pa
 
 /** Per-(color, material class, animation slice) split of the textured shell, for animated GLTF
  * export. Faces spanning two different animation nodes are never shell-culled (see
- * `removeInteriorFaces`), so each node's mesh stays watertight once it moves independently. */
+ * `removeInteriorFaces`), so each node's mesh stays watertight once it moves independently.
+ * With `cullInteriorFaces: false` no interface is culled at all. */
 export function buildTexturedShellGeometryBySliceColor(  model: VoxelModel,
   palette: PaletteState,
   uvFor: VertexUV,
   nodeAssignment: Map<CellKey, SliceKey>,
+  cullInteriorFaces = true,
 ): SliceGroupGeometry[] {
-  const { faces } = buildShellFaces(model, palette, nodeAssignment)
+  const { faces } = buildShellFaces(model, palette, nodeAssignment, cullInteriorFaces)
   const byGroup = new Map<string, Face[]>()
   for (const f of faces) {
     const sliceKey = nodeAssignment.get(f.cellKey!) ?? ''
@@ -639,6 +672,9 @@ export interface TexturedGroupsResult {
  *
  * With `mergeCoplanar` off this reduces to the plain shell (same output as
  * `buildTexturedShellGeometryByColor`, plus counts) — the toggle-off path stays untouched.
+ * With `cullInteriorFaces: false` cross-group shell interfaces are kept, but the merge still
+ * runs: it is keyed per (material, color, texture page), so it can never weld across a kept
+ * seam.
  */
 export function buildTexturedShellGeometryByColorMerged(
   model: VoxelModel,
@@ -646,8 +682,9 @@ export function buildTexturedShellGeometryByColorMerged(
   tagFor: TagForTexturedFace,
   uvForTag: UVForTexturedTag,
   mergeCoplanar: boolean,
+  cullInteriorFaces = true,
 ): TexturedGroupsResult {
-  const { faces } = buildShellFaces(model, palette)
+  const { faces } = buildShellFaces(model, palette, undefined, cullInteriorFaces)
   const byMaterial = new Map<string, Face[]>()
   for (const f of faces) {
     const matKey = `${f.colorKey}:${f.materialClass}`

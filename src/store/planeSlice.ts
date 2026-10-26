@@ -9,13 +9,6 @@ type Slice = StateCreator<AppState, [['zustand/immer', never]], [], PlaneSlice>
 export const createPlaneSlice: Slice = (set, get) => ({
   plane: { axis: 'z', orientation: 1, offset: 0 },
   objectModeTarget: null,
-  planeLocked3D: false,
-
-  setPlaneLocked3D: (v) => {
-    set((state) => {
-      state.planeLocked3D = v
-    })
-  },
 
   // A pending float's cells are offsets interpreted against the plane active at lift/bake time —
   // switching planes out from under it would bake it onto the wrong 3D cells, so bake first.

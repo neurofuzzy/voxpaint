@@ -156,11 +156,9 @@ const EDIT_HINT = 'Edit 3D: click a face to apply the tool · drag empty space t
 const BLOCKING_TOOLS = ['paint', 'erase', 'eyedropper', 'material', 'select', 'wand'] as const
 type BlockingTool = (typeof BLOCKING_TOOLS)[number]
 
-function editHint(tool: BlockingTool, planeLocked3D = false): string {
+function editHint(tool: BlockingTool): string {
   if (tool === 'paint') {
-    return planeLocked3D
-      ? 'Locked to the plane: click to replace · Shift-click draws a line · R rotates the brush'
-      : 'Click a face to paint · Shift-click draws a line · R rotates the brush'
+    return 'Locked to the plane: click to replace · Shift-click draws a line · R rotates the brush'
   }
   if (tool === 'erase') return 'Click a voxel to erase it'
   if (tool === 'material') return 'Click or drag to repaint · never adds voxels'
@@ -299,37 +297,34 @@ function VoxelInteractionHandler({ managerRef, controlsRef }: {
     }
 
     /** Resolves what a touch hold-to-paint pointer paints: the shared direct-paint target
-     * (face hit → stack-or-replace per the plane lock; else the plane cell under the
-     * cursor), so drag writes agree with taps and the ghost preview. Null when the ray
-     * runs parallel to the plane or the target is blocked (occupied-unlocked / off-slice). */
+     * (face hit → plane-projected replace; else the plane cell under the cursor), so drag
+     * writes agree with taps and the ghost preview. Null when the ray runs parallel to the
+     * plane or the target is out of bounds. */
     function resolveTouchPaintTarget(clientX: number, clientY: number): Coord | null {
       const st = useAppStore.getState()
       const activePlane = planeRef.current
-      const hit = applyPlaneLockFilter(resolveFaceHit(clientX, clientY), 'paint')
+      const hit = resolveFaceHit(clientX, clientY)
       if (hit) {
         const [x, y, z] = hit.key.split(',').map(Number)
         const cell: Coord = [x, y, z]
         return resolveDirectPaintTarget(
-          st.model,
           activePlane,
           cell,
           { cellKey: hit.key, axis: hit.plane.axis, orientation: hit.plane.orientation },
           st.meta.gridExtent,
-          st.planeLocked3D,
         )
       }
       const empty = resolveEmptyCell(clientX, clientY)
       if (!empty) return null
-      return resolveDirectPaintTarget(st.model, activePlane, empty, null, st.meta.gridExtent, st.planeLocked3D)
+      return resolveDirectPaintTarget(activePlane, empty, null, st.meta.gridExtent)
     }
 
     /** Writes one touch hold-to-paint cell inside the already-open stroke (orientation
-     * always inherits the active construction plane, matching taps and the ghost). Skips
-     * occupied cells when unlocked (tap parity) and out-of-bounds cells. */
+     * always inherits the active construction plane, matching taps and the ghost).
+     * Replace-only: occupied cells are overwritten, like taps. */
     function paintTouchCell(coord: Coord): void {
       const st = useAppStore.getState()
       if (!withinWorkingBounds(coord, st.meta.gridExtent)) return
-      if (!st.planeLocked3D && st.model.color.has(encodeKey(...coord))) return
       st.paintCellAtCoord(coord, st.plane.axis, st.plane.orientation)
     }
 
@@ -418,21 +413,9 @@ function VoxelInteractionHandler({ managerRef, controlsRef }: {
       return coord
     }
 
-    /** Plane-locked paint and fill ignore voxels off the active slice: a face hit there resolves
-     * as if the ray had passed straight through, so hover (ghost, face highlight, hover blink)
-     * and taps both fall through to the construction-plane cell under the cursor instead of
-     * touching off-slice geometry. (Fill taps check the unfiltered hit too, so off-plane voxel
-     * clicks no-op instead of slice-filling behind.) Other tools keep full-model picking. */
-    function applyPlaneLockFilter<T extends { key: string }>(hit: T | null, tool: string): T | null {
-      if (!hit || (tool !== 'paint' && tool !== 'fill') || layoutModeRef.current !== '3d-only' || !useAppStore.getState().planeLocked3D) return hit
-      const coord = decodeKey(hit.key)
-      return coord[axisIndex(planeRef.current.axis)] === planeRef.current.offset ? hit : null
-    }
-
-    /** Applies the blocking tool once for a tap (3D-only layout only): paint adds a voxel —
-     * unlocked (Zanpo-builder behavior) it stacks the neighbor cell across the face, locked it
-     * paints the construction-plane slice under the cursor (replacing the clicked voxel when
-     * it is on-slice; off-slice faces fall through to the plane cell behind them) — erase
+    /** Applies the blocking tool once for a tap (3D-only layout only): paint replaces the
+     * construction-plane cell under the cursor (the clicked voxel when it is on-slice,
+     * otherwise the plane-projected cell behind it) — erase
      * deletes the cell, eyedropper samples its color and voxel type,
      * material recolors the cell, select reorients the plane without touching the selection,
      * wand selects connected color (whole component on rapid re-tap; empty space clears the
@@ -442,16 +425,14 @@ function VoxelInteractionHandler({ managerRef, controlsRef }: {
      * pointer crossing would spray voxels along the raycast), so movement always
      * orbits — material alone drags (see onPointerMove); select commits via its own drag.
      *
-     * Paint placement crosses the clicked face when unlocked, but orientation ALWAYS inherits
+     * Paint placement is replace-only on the construction plane, but orientation ALWAYS inherits
      * the active construction plane — never the raycast face — so the write matches the brush
      * preview. The target itself resolves through the shared `resolveDirectPaintTarget`
      * helper, so tap and ghost preview always agree. */
     function applyBlockingTap(clientX: number, clientY: number, shiftKey: boolean, wasSelectGrab = false) {
       const store = useAppStore.getState()
       const tool = activeToolRef.current
-      // Locked paint never sees off-slice voxels (see applyPlaneLockFilter) — the tap falls
-      // through to the empty-space plane-cell path below, matching the hover ghost.
-      const result = applyPlaneLockFilter(resolveFaceHit(clientX, clientY), tool)
+      const result = resolveFaceHit(clientX, clientY)
       // Wand: two-stage tap (color-connected, then whole component on rapid re-tap); the wand
       // stays active so the second tap lands here too. Empty space clears. Tap-only.
       if (tool === 'wand') {
@@ -501,21 +482,20 @@ function VoxelInteractionHandler({ managerRef, controlsRef }: {
         }
         const [x, y, z] = result.key.split(',').map(Number)
         const cell: Coord = [x, y, z]
-        // Paint resolves through the shared helper (locked: replace on-slice — off-slice hits
-        // never reach here, filtered above; unlocked: stack across the face) so the write
-        // matches the ghost preview. A null target (occupied neighbor) paints nothing.
+        // Paint resolves through the shared helper (replace-only on the construction plane —
+        // on-slice face hits replace the hovered voxel, off-slice hits project onto the
+        // plane) so the write matches the ghost preview. A null target (out of bounds)
+        // paints nothing.
         // Plain taps paint one cell; shift-taps extend the dominant-axis line from the anchor —
         // every tap re-establishes the anchor, so lines chain. The gesture action brackets its
         // own undo stroke either way.
         if (tool === 'paint') {
           const activePlane = planeRef.current
           const t = resolveDirectPaintTarget(
-            store.model,
             activePlane,
             cell,
             { cellKey: result.key, axis: result.plane.axis, orientation: result.plane.orientation },
             store.meta.gridExtent,
-            store.planeLocked3D,
           )
           if (!t) return
           store.paintLineAtCoord(t, shiftKey)
@@ -915,10 +895,9 @@ function VoxelInteractionHandler({ managerRef, controlsRef }: {
         return
       }
 
-      // Locked paint ignores off-slice voxels entirely (no face highlight, no hover blink
-      // on them) — the cursor falls through to the plane cell below, exactly what a click
-      // would paint.
-      const result = applyPlaneLockFilter(resolveFaceHit(e.clientX, e.clientY), activeToolRef.current)
+      // Paint hovers resolve through the shared direct-paint target (see the ghost): the
+      // cursor previews the plane cell a click would paint.
+      const result = resolveFaceHit(e.clientX, e.clientY)
 
       // No voxel face under the cursor: fall back to the construction plane, so the ghost
       // preview still marks the cell a click would paint (empty-space paint starts a blob on
@@ -956,9 +935,8 @@ function VoxelInteractionHandler({ managerRef, controlsRef }: {
       }
       if (isBlocking()) {
         const tool = activeToolRef.current as BlockingTool
-        const locked = useAppStore.getState().planeLocked3D
         // Select and wand both act from empty space too, so their hints show even with no hit.
-        setStatusMessage(tool === 'select' || tool === 'wand' ? editHint(tool) : result ? editHint(tool, locked) : EDIT_HINT)
+        setStatusMessage(tool === 'select' || tool === 'wand' ? editHint(tool) : result ? editHint(tool) : EDIT_HINT)
         return
       }
       // Fill owns its taps (never sets the plane), so it needs its own hints — the plane
@@ -1208,11 +1186,9 @@ function VoxelInteractionHandler({ managerRef, controlsRef }: {
       }
 
       // Fill owns its taps in 3D-only layout and never moves the construction plane: a
-      // committed selection fills with the brush wherever the click landed (overriding the
-      // plane lock); otherwise a voxel tap flood-fills material (color only — like the material
-      // tool, geometry untouched) and an empty tap fills the plane slice at that UV. Locked
-      // fill ignores off-plane voxels entirely: those taps no-op rather than falling through
-      // (fill has no ghost previewing the plane cell behind, so falling through would surprise).
+      // committed selection fills with the brush wherever the click landed; otherwise a
+      // voxel tap flood-fills material (color only — like the material tool, geometry
+      // untouched) and an empty tap fills the plane slice at that UV.
       if (activeToolRef.current === 'fill' && useAppStore.getState().layoutMode === '3d-only') {
         if (e.button !== 0) return
         const st = useAppStore.getState()
@@ -1220,9 +1196,7 @@ function VoxelInteractionHandler({ managerRef, controlsRef }: {
           st.fillSelection()
           return
         }
-        const rawHit = resolveFaceHit(e.clientX, e.clientY)
-        const hit = applyPlaneLockFilter(rawHit, 'fill')
-        if (rawHit && !hit) return // locked: off-plane voxel — untouchable
+        const hit = resolveFaceHit(e.clientX, e.clientY)
         const coord: Coord | null = hit ? decodeKey(hit.key) : resolveEmptyCell(e.clientX, e.clientY)
         if (!coord) return
         st.floodFillCellsAt(coord, e.altKey)
