@@ -267,7 +267,7 @@ export function placePivotOnPlane(box: RigBox, plane: ConstructionPlane, cu: num
  * different surviving box (dangling and self parents are skipped — same guards as the outline
  * list). Grid coordinates; the view adds +0.5 per axis for world space, mirroring rigPivotOf.
  */
-export type RigPivotLink = { childId: string; from: Coord; to: Coord }
+export type RigPivotLink = { childId: string; parentId: string; from: Coord; to: Coord }
 
 export function rigPivotLinks(boxes: RigBox[]): RigPivotLink[] {
   const byId = new Map(boxes.map((b) => [b.id, b]))
@@ -276,7 +276,7 @@ export function rigPivotLinks(boxes: RigBox[]): RigPivotLink[] {
     if (!box.parentId || box.parentId === box.id) continue
     const parent = byId.get(box.parentId)
     if (!parent) continue
-    links.push({ childId: box.id, from: rigPivotOf(parent), to: rigPivotOf(box) })
+    links.push({ childId: box.id, parentId: parent.id, from: rigPivotOf(parent), to: rigPivotOf(box) })
   }
   return links
 }

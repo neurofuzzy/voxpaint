@@ -9,6 +9,7 @@ import { fillTool } from './fillTool'
 import { moveTool } from './moveTool'
 import { markerTool } from './markerTool'
 import { pivotTool } from './pivotTool'
+import { poseTool } from './poseTool'
 import { textureFaceTool } from './textureFaceTool'
 import { wandTool } from './wandTool'
 import { rigWandTool } from './rigWandTool'
@@ -33,6 +34,8 @@ export const toolMap: Record<ToolId, ToolHandler> = {
   // harmless no-op fallback for the (normally unreachable) case where `activeTool` is still
   // 'pivot' after switching out of Animate mode.
   pivot: {},
+  // Pose likewise only exists in Animate — same stale-tool fallback (selection-only anyway).
+  pose: {},
 }
 
 /** Animate-mode tool dispatch: only the rig tools have meaning here (boxing/selecting/moving
@@ -42,19 +45,20 @@ export const toolMap: Record<ToolId, ToolHandler> = {
 export const animateToolMap: Partial<Record<ToolId, ToolHandler>> = {
   pivot: pivotTool,
   rigbox: rigWandTool,
+  pose: poseTool,
 }
 
 /** Gesture-tool resolution for pointer dispatch (see usePixelCanvasTools.ts).
  *
  * Spring-loaded pivot lives here as well as in the keyboard shortcut: holding Alt turns a
- * rig-tool press into a pivot press, so it behaves exactly like the pivot tool itself.
- * Resolving it from the *pointer* event's own `altKey` (instead of only from the Alt-keydown
- * toolbar switch) keeps the gesture correct when the keydown never fires — e.g. keyboard
- * focus sitting in the rig-name field, where the shortcut handler deliberately stays out of
- * the way — and the hook's per-gesture affinity keeps the matching onMove/onUp on this tool
- * even if Alt (and with it the toolbar) flips back mid-gesture. Outside Animate's rig tool
- * this is the identity. */
+ * rig-tool (or pose-tool) press into a pivot press, so it behaves exactly like the pivot
+ * tool itself. Resolving it from the *pointer* event's own `altKey` (instead of only from
+ * the Alt-keydown toolbar switch) keeps the gesture correct when the keydown never fires —
+ * e.g. keyboard focus sitting in the rig-name field, where the shortcut handler deliberately
+ * stays out of the way — and the hook's per-gesture affinity keeps the matching onMove/onUp
+ * on this tool even if Alt (and with it the toolbar) flips back mid-gesture. Outside those
+ * two tools this is the identity. */
 export function resolveGestureTool(mode: EditorMode, activeTool: ToolId, altKey: boolean): ToolId {
-  if (mode === 'animate' && activeTool === 'rigbox' && altKey) return 'pivot'
+  if (mode === 'animate' && (activeTool === 'rigbox' || activeTool === 'pose') && altKey) return 'pivot'
   return activeTool
 }

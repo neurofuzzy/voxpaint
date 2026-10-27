@@ -14,6 +14,7 @@ const TOOL_HINTS: Record<ToolId, string> = {
   marker: 'click empty space to place a marker · tap a marker to recolor it, tap again to delete · drag to move',
   pivot: 'click: place pivot on the half-grid · rotate the plane for depth · right-click: reset to center',
   rigbox: 'click a voxel to box its color-connected region · click a box to select it · drag to move it on this slice',
+  pose: 'tap a box to select it · drag the selected box in 3D to pose it · drag a ring for one axis · Esc resets the pose',
   textureface: 'click or drag ramps, wedges + thin slabs to re-map their texture face to the current plane · geometry unchanged',
 }
 
@@ -51,8 +52,8 @@ export function BottomBar() {
 
   const defaultHint = mode === 'animate'
     ? (activeTool === 'rigbox'
-        ? 'click a voxel to box its region · click a box to select · drag a box to move it on this slice · hold Alt for Pivot'
-        : 'click: center the pivot on the voxel · click again: face under the plane · select a box in the outline first')
+        ? `${TOOL_HINTS.rigbox} · hold Alt for Pivot`
+        : TOOL_HINTS[activeTool])
     : suffix
       ? `${selectHint} · ${suffix}`
       : selectHint

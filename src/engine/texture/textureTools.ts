@@ -216,4 +216,6 @@ export const textureToolMap: Record<ToolId, TextureToolHandler> = {
   wand: {},
   // Rig wand boxes voxel regions, meaningless on texel grids — harmless no-op here.
   rigbox: {},
+  // Pose selects rig boxes, meaningless on texel grids — harmless no-op here.
+  pose: {},
 }

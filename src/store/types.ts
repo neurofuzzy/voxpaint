@@ -1,6 +1,7 @@
 import type { Axis, CellKey, ChamferCell, Coord, GridExtent, Orientation, Rotation, VoxelModel, VoxelScaleY } from '@/engine/grid/types'
 import type { Marker } from '@/engine/markers/types'
 import type { RigBox } from '@/engine/rigging/types'
+import type { JointEuler } from '@/engine/rigging/pose'
 import type { GltfExportAnchor } from '@/engine/export/gltfExport'
 import type { EmissiveAnimMode, PaletteSlotRef, PaletteState } from '@/engine/palette/types'
 import type { ConstructionPlane } from '@/engine/plane/types'
@@ -9,7 +10,7 @@ import type { BoxFace, TexelScale, TextureModel } from '@/engine/texture/types'
 import type { TexelClip } from '@/engine/texture/texelOps'
 import type { SliceAnimSettings, SliceKey } from '@/engine/animation/types'
 
-export type ToolId = 'paint' | 'erase' | 'eyedropper' | 'select' | 'fill' | 'move' | 'material' | 'pivot' | 'textureface' | 'marker' | 'wand' | 'rigbox'
+export type ToolId = 'paint' | 'erase' | 'eyedropper' | 'select' | 'fill' | 'move' | 'material' | 'pivot' | 'textureface' | 'marker' | 'wand' | 'rigbox' | 'pose'
 export type VoxelKind = 'cube' | 'ramp' | 'convex' | 'concave' | 'wedge' | 'thin' | 'half' | 'post' | 'quarter' | 'flat' | 'flatwedge'
 
 export type SelectionRegion = {
@@ -763,6 +764,20 @@ export type RiggingSlice = {
   applyRigBoxAt: (start: Coord) => void
 }
 
+export type PoseSlice = {
+  /** Ephemeral pose preview: joint id → local rotation (radians, intrinsic XYZ). Empty = bind.
+   * Never undoable, never persisted; cleared when leaving Animate mode. */
+  poseRotations: Map<string, JointEuler>
+  /** Sets a joint's local rotation (no-op on unknown ids; near-zero collapses to bind). */
+  setJointRotation: (id: string, euler: JointEuler) => void
+  /** Drops the whole preview back to bind. */
+  resetPose: () => void
+  /** True while a gizmo drag is open — keeps the pose view mounted through exact-zero
+   * crossings (which collapse back to bind mid-drag) instead of flickering view swaps. */
+  poseDragging: boolean
+  setPoseDragging: (dragging: boolean) => void
+}
+
 export type AppState = ProjectSlice &
   HistorySlice &
   PlaneSlice &
@@ -779,4 +794,5 @@ export type AppState = ProjectSlice &
   AnimationSlice &
   MarkerSlice &
   RiggingSlice &
+  PoseSlice &
   UiSlice

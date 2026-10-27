@@ -1,6 +1,6 @@
 import * as ToggleGroup from '@radix-ui/react-toggle-group'
 import * as Tooltip from '@radix-ui/react-tooltip'
-import { Bone, Brush, Droplet, Eraser, MapPin, Move, Pin, Pipette, SquareArrowOutDownLeft, SquareDashedMousePointer, PaintBucket } from 'lucide-react'
+import { Bone, Brush, Droplet, Eraser, MapPin, Move, Pin, Pipette, Rotate3d, SquareArrowOutDownLeft, SquareDashedMousePointer, PaintBucket } from 'lucide-react'
 import { useAppStore } from '@/store/useAppStore'
 import type { ToolId } from '@/store/types'
 
@@ -21,6 +21,7 @@ const TOOLS: Array<{ id: ToolId; label: string; icon: typeof Brush; hint: string
  * paint/erase are gone: slice loops still play back for old files, but only whole-slice. */
 const ANIMATE_TOOLS: Array<{ id: ToolId; label: string; icon: typeof Brush; hint: string }> = [
   { id: 'rigbox', label: 'Rig Box', icon: Bone, hint: 'click a voxel to box its color-connected region · click a box to select it · drag a box to move it on this slice · hold Alt for Pivot' },
+  { id: 'pose', label: 'Pose', icon: Rotate3d, hint: 'drag the selected box in 3D to pose it · drag a ring for one axis · hold Alt for Pivot' },
   { id: 'pivot', label: 'Pivot Point', icon: Pin, hint: 'click: place pivot on the half-grid · rotate the plane for depth · right-click: reset to center' },
 ]
 

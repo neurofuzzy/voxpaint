@@ -19,12 +19,17 @@ export const createModeSlice: Slice = (set, get) => ({
     if (mode === 'animate') {
       get().bakeFloatIfAny()
     }
+    // Pose preview is Animate-only working state — leaving the mode drops it back to bind
+    // (it survives tool/selection changes inside Animate, and Reset clears it explicitly).
+    if (mode !== 'animate' && get().poseRotations.size > 0) {
+      get().resetPose()
+    }
     set((state) => {
       state.mode = mode
-      // Animate mode only has rig/pivot handlers wired up (see engine/tools's animateToolMap) —
+      // Animate mode only has rig/pivot/pose handlers wired up (see engine/tools's animateToolMap) —
       // land on a tool that's actually wired up there instead of leaving dispatch pointed at
       // one that silently no-ops (e.g. 'select' or 'move' from Model mode).
-      if (mode === 'animate' && state.activeTool !== 'pivot' && state.activeTool !== 'rigbox') {
+      if (mode === 'animate' && state.activeTool !== 'pivot' && state.activeTool !== 'rigbox' && state.activeTool !== 'pose') {
         state.activeTool = 'rigbox'
       }
     })

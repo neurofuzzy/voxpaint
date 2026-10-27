@@ -9,6 +9,7 @@ import { createRiggingSlice } from './riggingSlice'
 import { createPaintActionsSlice } from './paintActions'
 import { createPersistenceSlice } from './persistenceSlice'
 import { createPlaneSlice } from './planeSlice'
+import { createPoseSlice } from './poseSlice'
 import { createProjectSlice } from './projectSlice'
 import { createSelectionSlice } from './selectionSlice'
 import { createSelection3DSlice } from './selection3DSlice'
@@ -40,6 +41,7 @@ export const useAppStore = create<AppState>()(
     ...createAnimationSlice(...a),
     ...createMarkerSlice(...a),
     ...createRiggingSlice(...a),
+    ...createPoseSlice(...a),
     ...createUiSlice(...a),
   })),
 )

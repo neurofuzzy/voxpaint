@@ -1,6 +1,6 @@
 import { decodeKey } from '@/engine/grid/GridStore'
 import { encodeSliceKey } from '@/engine/animation/animationLayers'
-import { rigPivotOf } from '@/engine/rigging/types'
+import { posedPivotWorld } from '@/engine/rigging/pose'
 import { useAppStore } from '@/store/useAppStore'
 
 const PIVOT_COLOR = '#8b5cf6' // violet-500, matching the app's UI accent
@@ -23,6 +23,9 @@ export function PivotGizmo() {
   const selectedRigBoxId = useAppStore((s) => s.selectedRigBoxId)
   // Isolate mode shows only the selected box's pivot, matching its wire box.
   const isolating = useAppStore((s) => s.isolateRig)
+  // Pivots ride the pose (a joint's own rotation never moves its own pivot, but ancestors
+  // carry whole subtrees) so markers stay glued to the posed joints.
+  const poseRotations = useAppStore((s) => s.poseRotations)
 
   if (mode !== 'animate') return null
 
@@ -43,12 +46,12 @@ export function PivotGizmo() {
       )}
       {shownBoxes.map((box) => {
         const active = box.id === selectedRigBoxId
-        const pivot = rigPivotOf(box)
+        const pivot = posedPivotWorld(rigBoxes, poseRotations, box)
         const color = active ? RIG_PIVOT_COLOR : RIG_PIVOT_DIM
         return (
           <mesh
             key={box.id}
-            position={[pivot[0] + 0.5, pivot[1] + 0.5, pivot[2] + 0.5]}
+            position={[pivot[0], pivot[1], pivot[2]]}
             raycast={() => null}
             renderOrder={10}
           >

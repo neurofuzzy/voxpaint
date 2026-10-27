@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { Bone, Crosshair } from 'lucide-react'
+import { Bone, Crosshair, RotateCcw } from 'lucide-react'
 import { rigPivotOf } from '@/engine/rigging/types'
 import { useAppStore } from '@/store/useAppStore'
 import type { PaletteOrientation } from './FloatingPalette'
@@ -16,6 +16,8 @@ export function RigInspectorCard({ orientation = 'horizontal' }: { orientation?:
   const selectedRigBoxId = useAppStore((s) => s.selectedRigBoxId)
   const renameRigBox = useAppStore((s) => s.renameRigBox)
   const setRigPivot = useAppStore((s) => s.setRigPivot)
+  const poseCount = useAppStore((s) => s.poseRotations.size)
+  const resetPose = useAppStore((s) => s.resetPose)
   const vertical = orientation === 'vertical'
   const [editing, setEditing] = useState(false)
   const [draft, setDraft] = useState('')
@@ -86,7 +88,7 @@ export function RigInspectorCard({ orientation = 'horizontal' }: { orientation?:
               const custom = box.pivot !== null
               return (
                 <>
-                  <span className="whitespace-nowrap font-mono text-[10px] text-neutral-400" title={custom ? 'Rotation-center override (half-integers sit on cell boundaries — alt-click with the Pivot tool to pin a joint face)' : 'Rotates about the box center'}>
+                  <span className="whitespace-nowrap font-mono text-[10px] text-neutral-400" title={custom ? 'Rotation-center override (half-integers sit on cell boundaries — rotate the plane to place depth)' : 'Rotates about the box center'}>
                     {custom ? `(${pivot[0]}, ${pivot[1]}, ${pivot[2]})` : 'center'}
                   </span>
                   <button
@@ -114,6 +116,18 @@ export function RigInspectorCard({ orientation = 'horizontal' }: { orientation?:
             })()}
           </div>
         </>
+      )}
+      {poseCount > 0 && (
+        <div className={'flex items-center gap-1.5 ' + (vertical ? '' : 'border-l border-neutral-800 pl-2')}>
+          <button
+            onClick={resetPose}
+            title="Reset the pose preview to bind (posing is preview — Esc works too)"
+            className="flex items-center gap-1 whitespace-nowrap rounded px-1 py-0.5 text-[10px] font-medium text-amber-300 hover:bg-neutral-800 hover:text-amber-100"
+          >
+            <RotateCcw size={12} />
+            posing · reset
+          </button>
+        </div>
       )}
     </div>
   )

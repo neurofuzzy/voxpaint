@@ -272,7 +272,7 @@ describe('rigPivotLinks', () => {
       { ...box('b', 'a'), min: [0, 0, 0] as Coord, max: [0, 0, 0] as Coord, pivot: [0, 0, 2] as Coord },
     ]
     // a defaults to its box center [1,1,1]; b has an explicit pivot.
-    expect(rigPivotLinks(boxes)).toEqual([{ childId: 'b', from: [1, 1, 1], to: [0, 0, 2] }])
+    expect(rigPivotLinks(boxes)).toEqual([{ childId: 'b', parentId: 'a', from: [1, 1, 1], to: [0, 0, 2] }])
   })
 
   it('skips roots, dangling parents, and self-parents', () => {

@@ -17,6 +17,7 @@ const TOOL_KEYS: Record<string, ToolId> = {
   d: 'marker',
   w: 'wand',
   b: 'rigbox',
+  o: 'pose',
 }
 
 /**
@@ -51,8 +52,8 @@ function endAltPivotSwitch() {
 export function useKeyboardShortcuts() {
   useEffect(() => {
     function onKeyDown(e: KeyboardEvent) {
-      // Spring-loaded pivot: lone Alt with the rig tool active (Animate mode) arms the pivot
-      // tool until Alt releases. This sits above the INPUT/TEXTAREA guard on purpose: a lone
+      // Spring-loaded pivot: lone Alt with the rig or pose tool active (Animate mode) arms
+      // the pivot tool until Alt releases. This sits above the INPUT/TEXTAREA guard on purpose: a lone
       // Alt press never produces text, so arming from inside a field (e.g. the rig-name input)
       // is harmless — it restores on keyup — and without this the switch silently fails there,
       // sending Alt+clicks to the rig tool instead of pinning. Guarded to a clean press (no
@@ -60,8 +61,8 @@ export function useKeyboardShortcuts() {
       // sticking.
       if (e.key.toLowerCase() === 'alt') {
         const store = useAppStore.getState()
-        if (!e.repeat && !e.shiftKey && !e.ctrlKey && !e.metaKey && store.mode === 'animate' && store.activeTool === 'rigbox') {
-          altPivotRestore = 'rigbox'
+        if (!e.repeat && !e.shiftKey && !e.ctrlKey && !e.metaKey && store.mode === 'animate' && (store.activeTool === 'rigbox' || store.activeTool === 'pose')) {
+          altPivotRestore = store.activeTool
           store.setActiveTool('pivot')
           e.preventDefault()
         }
@@ -148,6 +149,10 @@ export function useKeyboardShortcuts() {
         // case outside model-mode 3D gestures).
         store.clearSelectedCells()
         if (!isTexture && !isAnimate) store.selectMarker(null)
+        // Animate: Escape also drops the pose preview back to bind (preview is not undoable,
+        // so it needs an explicit exit — selection clearing alone would strand a posed model
+        // with no gizmo to grab).
+        if (isAnimate && (store.poseRotations.size > 0 || store.poseDragging)) store.resetPose()
         e.preventDefault()
         return
       }
@@ -195,9 +200,9 @@ export function useKeyboardShortcuts() {
       }
 
       const tool = TOOL_KEYS[key]
-      // Animate mode's toolbar is rigbox + pivot only — other tool letters stay inert there
+      // Animate mode's toolbar is rigbox + pivot + pose — other tool letters stay inert there
       // rather than switching to a tool with no animate-mode handler.
-      if (tool && (!isAnimate || tool === 'pivot' || tool === 'rigbox')) {
+      if (tool && (!isAnimate || tool === 'pivot' || tool === 'rigbox' || tool === 'pose')) {
         store.setActiveTool(tool)
         e.preventDefault()
         return
