@@ -68,8 +68,6 @@ function makeCtx(): ToolContext & {
     rebaseRampCell: () => false,
     floodFill: () => {},
     floodFill3D: () => {},
-    paintMaskCell: () => false,
-    eraseMaskCell: () => {},
     setPivotForCurrentSlice: () => false,
     clearPivotForCurrentSlice: () => {},
     animBeginStroke: () => {},

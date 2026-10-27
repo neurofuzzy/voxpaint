@@ -32,7 +32,6 @@ export function VoxelGhostPreview() {
   const plane = useAppStore((s) => s.plane)
   const gridExtent = useAppStore((s) => s.meta.gridExtent)
   const layoutMode = useAppStore((s) => s.layoutMode)
-  const planeLocked3D = useAppStore((s) => s.planeLocked3D)
 
   // One geometry set for the component's lifetime (callers own disposal).
   const pools = useMemo(() => buildPoolGeometries(), [])
@@ -41,8 +40,8 @@ export function VoxelGhostPreview() {
   }, [pools])
 
   const ghost = useMemo(
-    () => resolveGhostPlacement({ model, plane, hoverCell, hoveredFace, activeVoxelKind, brushRotation, activeTool, directEdit: layoutMode === '3d-only', gridExtent, layoutMode, planeLocked3D }),
-    [model, plane, hoverCell, hoveredFace, activeVoxelKind, brushRotation, activeTool, gridExtent, layoutMode, planeLocked3D],
+    () => resolveGhostPlacement({ model, plane, hoverCell, hoveredFace, activeVoxelKind, brushRotation, activeTool, directEdit: layoutMode === '3d-only', gridExtent }),
+    [model, plane, hoverCell, hoveredFace, activeVoxelKind, brushRotation, activeTool, gridExtent, layoutMode],
   )
 
   if (!ghost) return null

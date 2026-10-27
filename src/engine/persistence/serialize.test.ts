@@ -12,8 +12,7 @@ const meta: ProjectMeta = { name: 'T', createdAt: '2026-01-01T00:00:00.000Z', mo
 const faceSize = faceSizeFor(meta.gridExtent)
 
 describe('serialize with texture', () => {
-  it('round-trips a painted texture through serialize → deserialize', () => {
-    const model = emptyModel()
+  it('round-trips a painted texture through serialize → deserialize', () => {    const model = emptyModel()
     model.color.set(encodeKey(0, 0, 0), { paletteSlot: { kind: 'base', index: 3 } })
 
     const texture = emptyTextureModel(meta.gridExtent)
@@ -262,7 +261,7 @@ describe('flats persistence (v11)', () => {
     })
   })
 
-  it('migrates v10 files untouched, stamping v11', () => {
+  it('migrates v10 files untouched, stamping current', () => {
     const v10 = {
       schemaVersion: 10,
       meta,
@@ -272,5 +271,72 @@ describe('flats persistence (v11)', () => {
     const migrated = migrateToCurrent(v10)
     expect(migrated.schemaVersion).toBe(CURRENT_SCHEMA_VERSION)
     expect(deserializeProject(migrated).model.color.size).toBe(0)
+  })
+})
+
+describe('serialize rig boxes', () => {
+  it('round-trips the outline hierarchy through serialize → deserialize', () => {
+    const texture = emptyTextureModel(meta.gridExtent)
+    const rigBoxes = [
+      { id: 'a', name: 'torso', min: [0, 0, 0] as [number, number, number], max: [3, 3, 3] as [number, number, number], parentId: null, pivot: null },
+      // Half-integer pivots (cell-boundary joint faces) must survive the trip, not just ints.
+      { id: 'b', name: 'arm', min: [1, 0, 1] as [number, number, number], max: [2, 3, 2] as [number, number, number], parentId: 'a', pivot: [0.5, 1, 1] as [number, number, number] },
+    ]
+    const file = serializeProject(emptyModel(), DEFAULT_PALETTE, meta, texture, undefined, undefined, undefined, undefined, undefined, rigBoxes)
+    expect(file.rigBoxes).toHaveLength(2)
+    expect(file.rigBoxes?.[0]).not.toHaveProperty('pivot')
+    expect(file.rigBoxes?.[1].pivot).toEqual([0.5, 1, 1])
+    const restored = deserializeProject(file)
+    expect(restored.rigBoxes).toEqual(rigBoxes)
+  })
+
+  it('loads v12 files with pivots unset and drops malformed pivots', () => {
+    const texture = emptyTextureModel(meta.gridExtent)
+    const v12 = {
+      ...serializeProject(emptyModel(), DEFAULT_PALETTE, meta, texture),
+      rigBoxes: [
+        { id: 'a', name: 'a', min: [0, 0, 0] as [number, number, number], max: [1, 1, 1] as [number, number, number], parentId: null },
+        { id: 'b', name: 'b', min: [2, 2, 2] as [number, number, number], max: [3, 3, 3] as [number, number, number], parentId: null, pivot: [0, 'x', 0] as unknown as [number, number, number] },
+        { id: 'c', name: 'c', min: [4, 4, 4] as [number, number, number], max: [5, 5, 5] as [number, number, number], parentId: null, pivot: [99, 99, 99] as [number, number, number] },
+      ],
+    }
+    const restored = deserializeProject(v12).rigBoxes
+    expect(restored.find((b) => b.id === 'a')?.pivot).toBeNull()
+    expect(restored.find((b) => b.id === 'b')?.pivot).toBeNull()
+    expect(restored.find((b) => b.id === 'c')?.pivot).toBeNull()
+  })
+
+  it('collapses stale duplicate bounds on load, reparenting their children', () => {
+    const texture = emptyTextureModel(meta.gridExtent)
+    // 'b' is an exact twin of 'a' (stale: creatable before footprint hit-testing selected
+    // first); 'c' nests under the twin. Load keeps the first and folds the rest into it.
+    const file = serializeProject(emptyModel(), DEFAULT_PALETTE, meta, texture, undefined, undefined, undefined, undefined, undefined, [
+      { id: 'a', name: 'torso', min: [0, 0, 0] as [number, number, number], max: [1, 1, 1] as [number, number, number], parentId: null, pivot: null },
+      { id: 'b', name: 'torso-copy', min: [0, 0, 0] as [number, number, number], max: [1, 1, 1] as [number, number, number], parentId: null, pivot: null },
+      { id: 'c', name: 'arm', min: [0, 0, 0] as [number, number, number], max: [0, 0, 0] as [number, number, number], parentId: 'b', pivot: null },
+    ])
+    const restored = deserializeProject(file).rigBoxes
+    expect(restored.map((b) => b.id).sort()).toEqual(['a', 'c'])
+    expect(restored.find((b) => b.id === 'c')?.parentId).toBe('a')
+  })
+
+  it('roots pre-hierarchy files and breaks parent cycles', () => {
+    const texture = emptyTextureModel(meta.gridExtent)
+    const file = serializeProject(emptyModel(), DEFAULT_PALETTE, meta, texture)
+    expect(deserializeProject(file).rigBoxes).toEqual([])
+
+    const cyclic = {
+      ...serializeProject(emptyModel(), DEFAULT_PALETTE, meta, texture),
+      rigBoxes: [
+        { id: 'a', name: 'a', min: [0, 0, 0] as [number, number, number], max: [1, 1, 1] as [number, number, number], parentId: 'b' },
+        { id: 'b', name: 'b', min: [2, 2, 2] as [number, number, number], max: [3, 3, 3] as [number, number, number], parentId: 'a' },
+        { id: 'c', name: 'c', min: [4, 4, 4] as [number, number, number], max: [5, 5, 5] as [number, number, number], parentId: 'missing' },
+      ],
+    }
+    const restored = deserializeProject(cyclic).rigBoxes
+    expect(restored.find((b) => b.id === 'c')?.parentId).toBeNull()
+    // The cycle breaks: at least one of the two links roots.
+    const links = restored.filter((b) => b.id === 'a' || b.id === 'b').map((b) => b.parentId)
+    expect(links).toContain(null)
   })
 })

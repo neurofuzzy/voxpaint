@@ -312,6 +312,48 @@ describe('3D selection store + exact-set actions', () => {
     // Plain cube: nothing to face, silently ignored — same as faceSelection.
     expect(useAppStore.getState().faceCells3D()).toEqual({ faced: 0, skipped: 0 })
   })
+
+  it('coplanar selections copy slice-anchored and paste onto the moved plane', () => {
+    paintAt([0, 0, 0], SLOT_A)
+    paintAt([1, 0, 0], SLOT_B)
+    useAppStore.getState().setSelectedCells(new Set([encodeKey(0, 0, 0), encodeKey(1, 0, 0)]))
+    useAppStore.getState().copyCells3D()
+    // 2D-path clipboard: no bbox depth anchor, so the bake follows the destination slice.
+    expect(useAppStore.getState().clipboard!.depthAnchor).not.toBe('bbox')
+    // Move the plane two layers up — the set clears (plane setters), the clipboard survives.
+    useAppStore.getState().setPlaneOffset(2)
+    useAppStore.getState().pasteCells3D()
+    const after = useAppStore.getState()
+    expect(after.floatContent).not.toBeNull()
+    after.bakeFloatIfAny()
+    const baked = useAppStore.getState()
+    expect(baked.model.color.get(encodeKey(0, 0, 2))?.paletteSlot).toEqual(SLOT_A)
+    expect(baked.model.color.get(encodeKey(1, 0, 2))?.paletteSlot).toEqual(SLOT_B)
+  })
+
+  it('multi-depth selections still copy bbox-anchored (absolute depth)', () => {
+    paintAt([0, 0, 0], SLOT_A)
+    paintAt([0, 0, 1], SLOT_B)
+    useAppStore.getState().setSelectedCells(new Set([encodeKey(0, 0, 0), encodeKey(0, 0, 1)]))
+    useAppStore.getState().copyCells3D()
+    expect(useAppStore.getState().clipboard!.depthAnchor).toBe('bbox')
+  })
+
+  it('re-clicking a 3D wedge rotates it like 2D (replace-only re-hit)', () => {
+    const s = useAppStore.getState()
+    s.setActiveVoxelKind('wedge')
+    s.beginStroke()
+    expect(s.paintCellAtCoord([0, 0, 0], 'z', 1)).toBe(true)
+    s.commitStroke()
+    expect(useAppStore.getState().model.chamfer.get(encodeKey(0, 0, 0))?.resolvedTo)
+      .toEqual({ shapeKind: 'wedge', rotation: 0 })
+    const s2 = useAppStore.getState()
+    s2.beginStroke()
+    expect(s2.paintCellAtCoord([0, 0, 0], 'z', 1)).toBe(true)
+    s2.commitStroke()
+    expect(useAppStore.getState().model.chamfer.get(encodeKey(0, 0, 0))?.resolvedTo)
+      .toEqual({ shapeKind: 'wedge', rotation: 1 })
+  })
 })
 
 /** Plane-constrained wand (`applySliceWandAt`, select-tool double-click): the color-connected

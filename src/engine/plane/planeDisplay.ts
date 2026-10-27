@@ -67,6 +67,36 @@ export function toDisplayGridlineV(plane: ConstructionPlane, v: number): number 
 }
 
 /**
+ * Display-space (u, v) position of a continuous **grid point** (not a cell index) — for
+ * markers that live between cells, like a rig box's rotation center. `pixelFromGridCoord`
+ * can't take fractional points: its `-1` terms are cell corner-anchoring corrections, so this
+ * feeds only the linear part (per-plane axis negation, same slopes, no constants) through the
+ * *gridline* transforms, which place a zero-width position exactly (a mirrored axis maps a
+ * point to plain `-n`, where the cell version uses `-n - 1`). For an integer cell's own center
+ * this agrees exactly with the cell formula (`toDisplayU/V(pixelFromGridCoord(cell)) + 0.5`) —
+ * see the test below.
+ */
+export function displayPointForGridPoint(plane: ConstructionPlane, point: Coord): { u: number; v: number } {
+  let lu: number
+  let lv: number
+  switch (plane.axis) {
+    case 'x':
+      lu = -point[2]
+      lv = -point[1]
+      break
+    case 'y':
+      lu = point[0]
+      lv = -point[2]
+      break
+    case 'z':
+      lu = point[0]
+      lv = -point[1]
+      break
+  }
+  return { u: toDisplayGridlineU(plane, lu), v: toDisplayGridlineV(plane, lv) }
+}
+
+/**
  * The continuous display-space (u, v) coordinate the 2D canvas should frame at its centre for
  * `plane`, so a project reads centred on every plane/orientation. For an EVEN project this is the
  * world-origin gridline (0, 0) — the true grid centre. For an ODD project the model is still the

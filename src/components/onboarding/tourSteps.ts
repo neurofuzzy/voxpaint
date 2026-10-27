@@ -20,7 +20,7 @@ export const TOUR_STEPS: TourStep[] = [
   {
     target: 'modes',
     title: 'Three modes',
-    body: 'Switch between Model (build voxels), Animate (bring slices to life), and Texture (paint surface detail). Every panel adapts to the mode you pick.',
+    body: 'Switch between Model (build voxels), Animate (pose rig boxes), and Texture (paint surface detail). Every panel adapts to the mode you pick.',
     placement: 'bottom',
   },
   {

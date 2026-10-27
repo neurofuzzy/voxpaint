@@ -152,6 +152,95 @@ describe('CSG per-color-group optimizer', () => {
   })
 })
 
+describe('cullInteriorFaces: false (rigging-friendly export)', () => {
+  it('still welds adjacent same-colour voxels exactly like the default', () => {
+    const def = buildOptimizedVoxelGroups(twoVoxels(base0, base0), DEFAULT_PALETTE)
+    const kept = buildOptimizedVoxelGroups(twoVoxels(base0, base0), DEFAULT_PALETTE, true, false)
+    expect(kept.groups).toHaveLength(1)
+    // Same group unions regardless of the flag: interior gone, exterior merged.
+    expect(kept.optimizedTriangles).toBe(def.optimizedTriangles)
+    expect(kept.optimizedTriangles).toBeLessThan(24)
+    expect(trisOnPlane(kept.groups[0].geometry, 'x', 1)).toBe(0)
+  })
+
+  it('keeps the shared interface on both sides for adjacent different colours', () => {
+    const built = buildOptimizedVoxelGroups(twoVoxels(base0, metal0), DEFAULT_PALETTE, true, false)
+    expect(built.groups).toHaveLength(2)
+    expect(built.rawTriangles).toBe(24)
+    // No cross-group cull (union per single-voxel group is a no-op, merge can't cross groups).
+    expect(built.optimizedTriangles).toBe(24)
+    for (const g of built.groups) {
+      expect(trisOnPlane(g.geometry, 'x', 1)).toBe(2)
+    }
+  })
+
+  it('keeps the textured shell interface between different colours (but still grouped)', () => {
+    const merged = buildTexturedShellGeometryByColorMerged(
+      twoVoxels(base0, metal0),
+      DEFAULT_PALETTE,
+      () => 't',
+      () => [0, 0] as [number, number],
+      false,
+      false,
+    )
+    expect(merged.groups).toHaveLength(2)
+    // Shell pass keeps the cross-group pair: all 24 shell triangles survive, unmerged.
+    expect(merged.rawTriangles).toBe(24)
+    expect(merged.optimizedTriangles).toBe(24)
+  })
+
+  it('keeps same-slice cross-colour interfaces (slice only matters within one group)', () => {
+    const model = twoVoxels(base0, metal0)
+    const nodeAssignment = new Map<CellKey, SliceKey>([
+      [encodeKey(0, 0, 0), 'slice-a'],
+      [encodeKey(1, 0, 0), 'slice-a'],
+    ])
+    const culled = buildOptimizedVoxelGroupsBySlice(
+      { ...model, bounds: recomputeBounds(model) },
+      DEFAULT_PALETTE,
+      nodeAssignment,
+    )
+    expect(culled.optimizedTriangles).toBe(20)
+    const kept = buildOptimizedVoxelGroupsBySlice(
+      { ...model, bounds: recomputeBounds(model) },
+      DEFAULT_PALETTE,
+      nodeAssignment,
+      true,
+      false,
+    )
+    expect(kept.rawTriangles).toBe(24)
+    expect(kept.optimizedTriangles).toBe(24)
+  })
+
+  it('keeps slice-spanning interfaces even across different animation slices', () => {
+    const model = twoVoxels(base0, metal0)
+    const nodeAssignment = new Map<CellKey, SliceKey>([
+      [encodeKey(0, 0, 0), 'slice-a'],
+      [encodeKey(1, 0, 0), 'slice-b'],
+    ])
+    const built = buildOptimizedVoxelGroupsBySlice(
+      { ...model, bounds: recomputeBounds(model) },
+      DEFAULT_PALETTE,
+      nodeAssignment,
+      true,
+      false,
+    )
+    expect(built.rawTriangles).toBe(24)
+    expect(built.optimizedTriangles).toBe(24)
+  })
+
+  it('still drops only the glass side of a glass-solid seam', () => {
+    const built = buildOptimizedVoxelGroups(twoVoxels(base0, glass0), DEFAULT_PALETTE, true, false)
+    expect(built.groups).toHaveLength(2)
+    const [solid, glass] = built.groups[0].materialClass === 'glass'
+      ? [built.groups[1], built.groups[0]]
+      : [built.groups[0], built.groups[1]]
+    // Solid keeps its interface face (the seam is marked); glass drops its side (z-fighting).
+    expect(trisOnPlane(solid.geometry, 'x', 1)).toBe(2)
+    expect(trisOnPlane(glass.geometry, 'x', 1)).toBe(0)
+  })
+})
+
 describe('coplanar merge with a pinch vertex (donut face whose ring closes through a corner)', () => {
   // A ring of cells around an empty center (0,-1) in the z=0 layer, plus one cell (-1,0,-1)
   // hanging below the ring's top-left. That removes the -z face of (-1,0,0), so the -z face at

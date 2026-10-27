@@ -25,6 +25,9 @@ export type UiPrefs = {
    * project switches (new/import reset it — one project's slice must never leak into the
    * next). Absent/invalid reads as unset (the store default applies). */
   plane?: SavedPlane
+  /** Animate-mode model visibility (full/ghost/hidden). Pure view chrome — absent/invalid
+   * reads as 'full'. */
+  animateModelView?: 'full' | 'ghost' | 'hidden'
 }
 
 const DEFAULT_UI_PREFS: UiPrefs = { dontShowSplash: false }
@@ -39,6 +42,10 @@ export function loadUiPrefs(): UiPrefs {
     // Sanitize: only the two known layout values survive (hand-edited/corrupt storage falls back).
     if (prefs.layoutMode !== 'split' && prefs.layoutMode !== '3d-only') delete prefs.layoutMode
     if (prefs.modelLayout !== 'split' && prefs.modelLayout !== '3d-only') delete prefs.modelLayout
+    // Same for the animate model view: only the three known modes survive.
+    if (prefs.animateModelView !== 'full' && prefs.animateModelView !== 'ghost' && prefs.animateModelView !== 'hidden') {
+      delete prefs.animateModelView
+    }
     // Sanitize the plane the same way: known axes, ±1 orientations, integer offsets only.
     const p = parsed.plane
     if (

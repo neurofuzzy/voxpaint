@@ -5,6 +5,7 @@ import { createAnimationSlice } from './animationSlice'
 import { createHistorySlice } from './historySlice'
 import { createMarkerSlice } from './markerSlice'
 import { createModeSlice } from './modeSlice'
+import { createRiggingSlice } from './riggingSlice'
 import { createPaintActionsSlice } from './paintActions'
 import { createPersistenceSlice } from './persistenceSlice'
 import { createPlaneSlice } from './planeSlice'
@@ -38,6 +39,7 @@ export const useAppStore = create<AppState>()(
     ...createTextureSlice(...a),
     ...createAnimationSlice(...a),
     ...createMarkerSlice(...a),
+    ...createRiggingSlice(...a),
     ...createUiSlice(...a),
   })),
 )

@@ -4,6 +4,7 @@ import type { ConstructionPlane } from '@/engine/plane/types'
 import type { PaletteSlotRef } from '@/engine/palette/types'
 import type { NormalizedPointerEvent } from '@/engine/input/PointerInputController'
 import type { ClipboardData, FloatOrigin, SelectionRegion, SelectionTransformKind, ToolId, VoxelKind } from '@/store/types'
+import type { RigBox } from '@/engine/rigging/types'
 
 /**
  * Everything a tool module needs, bundled into one object rebuilt fresh every render by the
@@ -32,14 +33,20 @@ export interface ToolContext {
   floodFill: (u: number, v: number) => void
   /** 3D connected fill, alt-click's variant — only meaningful when (u,v) is an existing voxel. */
   floodFill3D: (u: number, v: number) => void
-  /** Animate-mode mask paint/erase, plus its own (Animate-mode-scoped) undo stroke bracket —
-   * separate from the voxel model's beginStroke/commitStroke above. */
-  paintMaskCell: (u: number, v: number) => boolean
-  eraseMaskCell: (coord: [number, number, number]) => void
-  /** Animate-mode pivot tool: sets/clears the current slice's rotation/pendulum pivot. Both
-   * self-bracket their own (Animate-mode-scoped) undo stroke. */
+  /** Animate-mode pivot tool: with a rig box selected it sets that box's rotation
+   * center, otherwise it toasts that a selection is needed (slice pivots are legacy,
+   * no longer authorable). Both self-bracket their own (Animate-mode-scoped) undo stroke. */
   setPivotForCurrentSlice: (u: number, v: number) => boolean
+  /** Direct per-box pivot write (self-bracketed undo) — the pivot tool's two-click cycle. */
+  setRigPivot: (id: string, pivot: [number, number, number] | null) => void
   clearPivotForCurrentSlice: () => void
+  /** Animate-mode rig boxes (the mode's primary editable objects — the voxel model underneath
+   * is a non-interactive underlay). Live store-backed so tools never read stale snapshots. */
+  rigBoxes: RigBox[]
+  selectedRigBoxId: string | null
+  selectRigBox: (id: string | null) => void
+  /** Translates a box's whole subtree (no undo bracketing — the caller owns the stroke). */
+  translateRigBox: (id: string, delta: [number, number, number]) => void
   animBeginStroke: () => void
   animCommitStroke: () => void
   beginMove: (wholeModel: boolean) => void
@@ -51,6 +58,9 @@ export interface ToolContext {
   setSelection: (region: SelectionRegion | null) => void
   /** Two-stage wand click (color, then whole-component on rapid re-tap). Wand stays active. */
   applyWandAt: (start: [number, number, number]) => void
+  /** Rig tool: tap empty space to box the tapped region, tap a footprint to select it, drag
+   * a footprint to move its box across the slice. Rig tool stays active. */
+  applyRigBoxAt: (start: [number, number, number]) => void
   /** Alt-drag passes `deep` to lift the full cuboid under the selection window (see
    * `liftSelectionToFloat` in store/types.ts). */
   liftSelectionToFloat: (deep?: boolean) => void
@@ -107,6 +117,9 @@ export type ToolDragState =
    * yet. A release here resolves to recolor-or-delete; leaving the start cell converts to a
    * `marker` move drag instead. */
   | { kind: 'marker-pending'; id: string; startU: number; startV: number }
+  /** Rig-box move drag (Animate mode): pointer went down on a box footprint and is sliding it
+   * across the slice. Coordinates are logical (u,v) cells; the offset-axis delta is always 0. */
+  | { kind: 'rig-move'; id: string; lastU: number; lastV: number }
 
 export interface ToolHandler {
   onDown?(ctx: ToolContext, e: NormalizedPointerEvent): void

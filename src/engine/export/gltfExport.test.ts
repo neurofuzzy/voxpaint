@@ -6,6 +6,7 @@ import type { PaletteSlotRef } from '@/engine/palette/types'
 import type { TextureModel } from '@/engine/texture/types'
 import { emptyTextureModel } from '@/engine/texture/TextureStore'
 import { MARKER_COLORS } from '@/engine/markers/types'
+import { defaultAnimationSettings, encodeSliceKey } from '@/engine/animation/animationLayers'
 import { exportModelToGlb } from './gltfExport'
 
 // three's GLTFExporter rasterizes every texture image through a 2D canvas — also absent in
@@ -268,6 +269,42 @@ describe('exportModelToGlb textured mesh optimization', () => {  it('merges copl
   })
 })
 
+describe('exportModelToGlb cullInteriorFaces', () => {
+  /** Two adjacent cubes in different colours — the interface is cross-group and culled by default. */
+  function barModel(): VoxelModel {
+    const model = emptyModel()
+    model.color.set(encodeKey(0, 0, 0), { paletteSlot: base0 })
+    model.color.set(encodeKey(1, 0, 0), { paletteSlot: { kind: 'base', index: 1 } })
+    return { ...model, bounds: recomputeBounds(model) }
+  }
+
+  it('keeps the cross-group interface when false (PBR path), culling by default', async () => {
+    const culled = positionVertexCount(glbJson(await exportModelToGlb(barModel(), DEFAULT_PALETTE, 16, undefined, { includeTextureMaps: false })))
+    const kept = positionVertexCount(
+      glbJson(await exportModelToGlb(barModel(), DEFAULT_PALETTE, 16, undefined, { includeTextureMaps: false, cullInteriorFaces: false })),
+    )
+    // Two full boxes, unmerged across groups: 2 × 12 tris × 3 verts.
+    expect(kept).toBe(72)
+    expect(culled).toBeLessThan(kept)
+  })
+
+  it('keeps every voxel shell when false (textured path)', async () => {
+    const texture = emptyTextureModel(16)
+    texture.faces.px[0] = 0
+    const culled = positionVertexCount(
+      glbJson(await exportModelToGlb(barModel(), DEFAULT_PALETTE, 16, texture, { includeTextureMaps: false })),
+    )
+    const kept = positionVertexCount(
+      glbJson(
+        await exportModelToGlb(barModel(), DEFAULT_PALETTE, 16, texture, { includeTextureMaps: false, cullInteriorFaces: false }),
+      ),
+    )
+    // 2 cubes × 12 shell tris × 3 verts, unmerged.
+    expect(kept).toBe(72)
+    expect(culled).toBeLessThan(kept)
+  })
+})
+
 /** Material names carrying an occlusionTexture in the exported JSON. */
 function materialsWithOcclusion(json: GlbJson): string[] {
   return (json.materials ?? []).filter((m) => m.occlusionTexture !== undefined).map((m) => m.name ?? '')
@@ -315,3 +352,176 @@ describe('exportModelToGlb AO map exclusion', () => {
     expect(withoutAO.materials!.length).toBe(withAO.materials!.length)
   })
 })
+
+describe('exportModelToGlb rig boxes', () => {
+  /** Two voxels in different base slots (separate color groups): limb at x=0, hand at x=2. */
+  function limbModel(): VoxelModel {
+    const model = emptyModel()
+    model.color.set(encodeKey(0, 0, 0), { paletteSlot: base0 })
+    model.color.set(encodeKey(2, 0, 0), { paletteSlot: { kind: 'base', index: 1 } })
+    return { ...model, bounds: recomputeBounds(model) }
+  }
+
+  const rigBoxes = [
+    { id: 'torso-id', name: 'torso', min: [-1, -1, -1] as [number, number, number], max: [3, 1, 1] as [number, number, number], parentId: null, pivot: null },
+    { id: 'arm-id', name: 'arm', min: [2, 0, 0] as [number, number, number], max: [2, 0, 0] as [number, number, number], parentId: 'torso-id', pivot: null },
+  ]
+
+  type NamedNode = { name?: string; children?: number[]; mesh?: number; translation?: number[]; matrix?: number[] }
+  const namedNodes = (json: GlbJson) => (json.nodes ?? []) as NamedNode[]
+  const indexOf = (nodes: NamedNode[], name: string) => {
+    const i = nodes.findIndex((n) => n.name === name)
+    expect(i).toBeGreaterThanOrEqual(0)
+    return i
+  }
+  // The exporter bakes node TRS as `matrix` (trs:false, like the existing slice nodes) —
+  // read the translation from either encoding.
+  const translationOf = (nodes: NamedNode[], name: string) => {
+    const node = nodes.find((n) => n.name === name)
+    expect(node).toBeDefined()
+    if (node!.translation) return node!.translation
+    if (node!.matrix) return [node!.matrix[12], node!.matrix[13], node!.matrix[14]]
+    return [0, 0, 0]
+  }
+
+  it('nests rig groups and assigns the overlapping voxel to the deepest box', async () => {
+    const json = glbJson(
+      await exportModelToGlb(limbModel(), DEFAULT_PALETTE, 16, undefined, { includeTextureMaps: false, rigBoxes }),
+    )
+    const nodes = namedNodes(json)
+    const torso = indexOf(nodes, 'torso')
+    const arm = indexOf(nodes, 'arm')
+    // The arm group nests under the torso group (not directly under the root).
+    expect(nodes[torso].children).toContain(arm)
+    // Mesh nodes carry their owning box as a prefix: the x=2 voxel's mesh parents under arm,
+    // the x=0 voxel's under torso (deepest-box-wins despite torso listing first).
+    const armMesh = nodes.findIndex((n) => n.name?.startsWith('arm_') && n.mesh !== undefined)
+    const torsoMesh = nodes.findIndex((n) => n.name?.startsWith('torso_') && n.mesh !== undefined)
+    expect(armMesh).toBeGreaterThanOrEqual(0)
+    expect(torsoMesh).toBeGreaterThanOrEqual(0)
+    expect(nodes[arm].children).toContain(armMesh)
+    expect(nodes[torso].children).toContain(torsoMesh)
+  })
+
+  it('exports the same voxels flat when boxes have no parents', async () => {
+    // Disjoint bounds here (unlike the nesting test): with no hierarchy both boxes must own
+    // exactly their own voxel and mount as siblings under the Rig container at the root.
+    const flat = glbJson(
+      await exportModelToGlb(limbModel(), DEFAULT_PALETTE, 16, undefined, {
+        includeTextureMaps: false,
+        rigBoxes: [
+          { id: 'torso-id', name: 'torso', min: [-1, -1, -1] as [number, number, number], max: [1, 1, 1] as [number, number, number], parentId: null, pivot: null },
+          { id: 'arm-id', name: 'arm', min: [2, -1, -1] as [number, number, number], max: [3, 1, 1] as [number, number, number], parentId: null, pivot: null },
+        ],
+      }),
+    )
+    const nodes = namedNodes(flat)
+    const torso = indexOf(nodes, 'torso')
+    const arm = indexOf(nodes, 'arm')
+    // Siblings: neither parents the other.
+    expect(nodes[torso].children ?? []).not.toContain(arm)
+    expect(nodes[arm].children ?? []).not.toContain(torso)
+  })
+
+  it('emits joint translations with mesh negation (poseable rest pose)', async () => {
+    const joints = [
+      { id: 'torso-id', name: 'torso', min: [-1, -1, -1] as [number, number, number], max: [3, 1, 1] as [number, number, number], parentId: null, pivot: [0, 1, 0] as [number, number, number] },
+      { id: 'arm-id', name: 'arm', min: [2, 0, 0] as [number, number, number], max: [2, 0, 0] as [number, number, number], parentId: 'torso-id', pivot: [2, 0, 0] as [number, number, number] },
+    ]
+    const json = glbJson(
+      await exportModelToGlb(limbModel(), DEFAULT_PALETTE, 16, undefined, { includeTextureMaps: false, rigBoxes: joints }),
+    )
+    const nodes = namedNodes(json)
+    // Joints sit at their pivots; the nested arm is relative to its parent.
+    expect(translationOf(nodes, 'torso')).toEqual([0, 1, 0])
+    expect(translationOf(nodes, 'arm')).toEqual([2, -1, 0])
+    // Meshes hang under their joint recentered by -pivot, so the rest pose is unchanged and
+    // rotating the joint orbits the part around the authored center.
+    const armMesh = nodes.find((n) => n.name?.startsWith('arm_') && n.mesh !== undefined)
+    const torsoMesh = nodes.find((n) => n.name?.startsWith('torso_') && n.mesh !== undefined)
+    const meshTranslation = (n: NamedNode | undefined) =>
+      n?.translation ?? (n?.matrix ? [n.matrix[12], n.matrix[13], n.matrix[14]] : [0, 0, 0])
+    expect(meshTranslation(armMesh)).toEqual([-2, 0, 0])
+    expect(meshTranslation(torsoMesh)).toEqual([0, -1, 0])
+  })
+
+  it('excludes rigged voxels from slice nodes (rig wins)', async () => {
+    const animSettings = new Map([
+      [encodeSliceKey('z', 0), { ...defaultAnimationSettings(), animationType: 'rotate-cw' as const }],
+    ])
+    // Only the hand voxel is rigged: the limb voxel keeps animating, the hand goes rigid.
+    const json = glbJson(
+      await exportModelToGlb(limbModel(), DEFAULT_PALETTE, 16, undefined, {
+        includeTextureMaps: false,
+        rigBoxes: [
+          { id: 'arm-id', name: 'arm', min: [2, 0, 0] as [number, number, number], max: [2, 0, 0] as [number, number, number], parentId: null, pivot: null },
+        ],
+      }, animSettings),
+    )
+    const nodes = namedNodes(json)
+    // The animated slice node exists and owns only the unrigged voxel's default-named mesh.
+    const animNode = nodes.find((n) => n.name?.startsWith('anim_'))
+    expect(animNode).toBeDefined()
+    const animChildren = (animNode!.children ?? []).map((i) => nodes[i].name ?? '')
+    expect(animChildren.some((n) => n.startsWith('voxel_'))).toBe(true)
+    expect(animChildren.some((n) => n.startsWith('arm_'))).toBe(false)
+    // The rigged voxel's mesh parents under the arm joint, mounted at the Rig container.
+    const arm = indexOf(nodes, 'arm')
+    expect(nodes[arm].children ?? []).not.toEqual([])
+    const rig = indexOf(nodes, 'Rig')
+    expect(nodes[rig].children).toContain(arm)
+  })
+
+  it('keeps cross-rig interfaces with default culling (PBR)', async () => {
+    // Two adjacent same-slot voxels, one box each: no welding across boxes, no culled seam —
+    // two whole cubes (2 × 12 tris × 3 verts).
+    const model = emptyModel()
+    model.color.set(encodeKey(0, 0, 0), { paletteSlot: base0 })
+    model.color.set(encodeKey(1, 0, 0), { paletteSlot: base0 })
+    const withBounds = { ...model, bounds: recomputeBounds(model) }
+    const split = [
+      { id: 'a', name: 'a', min: [0, 0, 0] as [number, number, number], max: [0, 0, 0] as [number, number, number], parentId: null, pivot: null },
+      { id: 'b', name: 'b', min: [1, 0, 0] as [number, number, number], max: [1, 0, 0] as [number, number, number], parentId: null, pivot: null },
+    ]
+    const rigged = positionVertexCount(
+      glbJson(await exportModelToGlb(withBounds, DEFAULT_PALETTE, 16, undefined, { includeTextureMaps: false, rigBoxes: split })),
+    )
+    expect(rigged).toBe(72)
+    // Control: no boxes welds the pair into one box (12 tris).
+    const merged = positionVertexCount(
+      glbJson(await exportModelToGlb(withBounds, DEFAULT_PALETTE, 16, undefined, { includeTextureMaps: false })),
+    )
+    expect(merged).toBe(36)
+  })
+
+  it('keeps cross-rig interfaces on the textured path', async () => {
+    const model = emptyModel()
+    model.color.set(encodeKey(0, 0, 0), { paletteSlot: base0 })
+    model.color.set(encodeKey(1, 0, 0), { paletteSlot: base0 })
+    const withBounds = { ...model, bounds: recomputeBounds(model) }
+    const texture = emptyTextureModel(16)
+    texture.faces.px[0] = 0
+    const split = [
+      { id: 'a', name: 'a', min: [0, 0, 0] as [number, number, number], max: [0, 0, 0] as [number, number, number], parentId: null, pivot: null },
+      { id: 'b', name: 'b', min: [1, 0, 0] as [number, number, number], max: [1, 0, 0] as [number, number, number], parentId: null, pivot: null },
+    ]
+    const rigged = positionVertexCount(
+      glbJson(await exportModelToGlb(withBounds, DEFAULT_PALETTE, 16, texture, { includeTextureMaps: false, rigBoxes: split })),
+    )
+    expect(rigged).toBe(72)
+  })
+
+  it('emits joints for empty boxes so the skeleton mirrors the outline', async () => {    const json = glbJson(
+      await exportModelToGlb(limbModel(), DEFAULT_PALETTE, 16, undefined, {
+        includeTextureMaps: false,
+        rigBoxes: [
+          ...rigBoxes,
+          { id: 'ghost-id', name: 'ghost', min: [5, 5, 5] as [number, number, number], max: [6, 6, 6] as [number, number, number], parentId: null, pivot: null },
+        ],
+      }),
+    )
+    const nodes = namedNodes(json)
+    expect(nodes.some((n) => n.name === 'ghost')).toBe(true)
+  })
+})
+

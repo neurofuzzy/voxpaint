@@ -14,18 +14,18 @@ export const createModeSlice: Slice = (set, get) => ({
   setMode: (mode) => {
     // Animate mode's undo/redo dispatches to the animation history stack (animUndo/animRedo),
     // which cannot revert voxel-model changes. Resolving any pending float here means Animate's
-    // mask tools (which also call bakeFloatIfAny before their own stroke, per editToolFactory)
-    // never silently commit a model change that Animate's undo can't see.
+    // rig strokes (which bracket their own undo, like the old mask tools did) never silently
+    // commit a model change that Animate's undo can't see.
     if (mode === 'animate') {
       get().bakeFloatIfAny()
     }
     set((state) => {
       state.mode = mode
-      // Animate mode only has mask paint/erase handlers (see engine/tools's animateToolMap) — land
-      // on a tool that's actually wired up there instead of leaving dispatch pointed at one that
-      // silently no-ops (e.g. 'select' or 'move' from Model mode).
-      if (mode === 'animate' && state.activeTool !== 'paint' && state.activeTool !== 'erase') {
-        state.activeTool = 'paint'
+      // Animate mode only has rig/pivot handlers wired up (see engine/tools's animateToolMap) —
+      // land on a tool that's actually wired up there instead of leaving dispatch pointed at
+      // one that silently no-ops (e.g. 'select' or 'move' from Model mode).
+      if (mode === 'animate' && state.activeTool !== 'pivot' && state.activeTool !== 'rigbox') {
+        state.activeTool = 'rigbox'
       }
     })
     // Animate and Texture modes have no 3D-only editing surface — leaving Model mode drops the

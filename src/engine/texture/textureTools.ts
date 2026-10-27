@@ -214,4 +214,6 @@ export const textureToolMap: Record<ToolId, TextureToolHandler> = {
   marker: {},
   // Wand selects voxel components, meaningless on texel grids — harmless no-op here.
   wand: {},
+  // Rig wand boxes voxel regions, meaningless on texel grids — harmless no-op here.
+  rigbox: {},
 }

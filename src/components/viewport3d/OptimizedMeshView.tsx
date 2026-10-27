@@ -8,6 +8,8 @@ import { buildTexturedGeometryByColorMerged } from '@/engine/texture/texturedGeo
 import { hasTextureContent } from '@/engine/texture/TextureStore'
 import { buildOptimizedVoxelGroups } from '@/engine/instancing/voxelMeshBuilder'
 import { buildPreviewMaterial, tickEmissiveAnimation } from '@/engine/instancing/previewMaterial'
+import { enableGhostDither, setGhostDither } from '@/engine/instancing/ghostDither'
+import { isolationPlanesForBox, setIsolationClip } from '@/engine/instancing/modelIsolate'
 import { buildEmissiveAnimIndex } from '@/engine/palette/emissiveAnimation'
 import { darkestBaseColor } from '@/engine/palette/palette'
 import { useAppStore } from '@/store/useAppStore'
@@ -46,6 +48,7 @@ export function OptimizedMeshView({ active }: { active: boolean }) {
   const palette = useAppStore((s) => s.palette)
   const texture = useAppStore((s) => s.texture)
   const wireframe = useAppStore((s) => s.wireframe)
+  const animateModelGhost = useAppStore((s) => s.mode === 'animate' && s.animateModelView === 'ghost')
   const optimizedMesh = useAppStore((s) => s.optimizedMesh)
   const ambientOcclusion = useAppStore((s) => s.ambientOcclusion)
   const noiseLevel = useAppStore((s) => s.noiseLevel)
@@ -54,6 +57,11 @@ export function OptimizedMeshView({ active }: { active: boolean }) {
   const aoStrength = useAppStore((s) => s.aoStrength)
   const glassRoughnessLevel = useAppStore((s) => s.glassRoughnessLevel)
   const gridExtent = useAppStore((s) => s.meta.gridExtent)
+  const voxelScaleY = useAppStore((s) => s.meta.voxelScaleY)
+  const mode = useAppStore((s) => s.mode)
+  const isolateRig = useAppStore((s) => s.isolateRig)
+  const rigBoxes = useAppStore((s) => s.rigBoxes)
+  const selectedRigBoxId = useAppStore((s) => s.selectedRigBoxId)
   const texelScale = useAppStore((s) => s.meta.texelScale ?? TEXEL_SCALE)
   const noiseSeed = useAppStore((s) => s.meta.noiseSeed)
 
@@ -154,6 +162,32 @@ export function OptimizedMeshView({ active }: { active: boolean }) {
     },
     [materials],
   )
+
+  // Animate-mode ghost: screen-door dither every model material (plus the wireframe overlay,
+  // which shares the module-level material) so rig boxes and pivots read through the model.
+  // No geometry or material rebuild — the injection flips via uniform on the next compile.
+  useEffect(() => {
+    enableGhostDither(wireframeOverlayMaterial)
+    setGhostDither(wireframeOverlayMaterial, animateModelGhost)
+    for (const m of materials) {
+      enableGhostDither(m)
+      setGhostDither(m, animateModelGhost)
+    }
+  }, [materials, animateModelGhost])
+
+  // Isolate mode: clip every model material (including the wireframe overlay) to the selected
+  // box, so the 3D view shows only its voxels. Null planes = no clipping. Animate-only, like
+  // the ghost toggle — the flag is meaningless outside Animate mode.
+  const isolatedBox =
+    isolateRig && mode === 'animate' ? rigBoxes.find((b) => b.id === selectedRigBoxId) ?? null : null
+  const isolatePlanes = useMemo(
+    () => (isolatedBox ? isolationPlanesForBox(isolatedBox, voxelScaleY) : null),
+    [isolatedBox, voxelScaleY],
+  )
+  useEffect(() => {
+    setIsolationClip(materials, isolatePlanes)
+    setIsolationClip([wireframeOverlayMaterial], isolatePlanes)
+  }, [materials, isolatePlanes])
 
   return (
     <group visible={active}>

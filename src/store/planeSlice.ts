@@ -1,7 +1,8 @@
 import type { StateCreator } from 'zustand'
-import { clampPlaneOffset, effectiveExtent } from '@/engine/grid/GridStore'
+import { clampPlaneOffset, decodeKey, effectiveExtent } from '@/engine/grid/GridStore'
 import type { CellKey } from '@/engine/grid/types'
 import { savePlanePref } from '@/engine/persistence/uiPrefs'
+import { rigIdForCoord } from '@/engine/rigging/types'
 import type { AppState, PlaneSlice } from './types'
 
 type Slice = StateCreator<AppState, [['zustand/immer', never]], [], PlaneSlice>
@@ -9,13 +10,6 @@ type Slice = StateCreator<AppState, [['zustand/immer', never]], [], PlaneSlice>
 export const createPlaneSlice: Slice = (set, get) => ({
   plane: { axis: 'z', orientation: 1, offset: 0 },
   objectModeTarget: null,
-  planeLocked3D: false,
-
-  setPlaneLocked3D: (v) => {
-    set((state) => {
-      state.planeLocked3D = v
-    })
-  },
 
   // A pending float's cells are offsets interpreted against the plane active at lift/bake time —
   // switching planes out from under it would bake it onto the wrong 3D cells, so bake first.
@@ -71,6 +65,18 @@ export const createPlaneSlice: Slice = (set, get) => ({
     // "Again" means the exact same face, not just the same voxel — a click on a different face
     // of the same voxel must switch the plane to that new face, not advance along the old one.
     if (current && current.cellKey === cellKey && current.axis === axis && current.orientation === orientation) {
+      // Animate mode: the second tap selects the rig box the voxel belongs to instead of
+      // stepping the plane — tapping through a posed model to chase a slice is never what you
+      // want there; wheel/keys/slider still move the plane. Voxels outside every box keep the
+      // modeling advance so empty space stays navigable.
+      if (get().mode === 'animate') {
+        const id = rigIdForCoord(get().rigBoxes, decodeKey(cellKey))
+        if (id) {
+          get().selectRigBox(id)
+          set((state) => { state.objectModeTarget = null })
+          return
+        }
+      }
       // Second click on the same face: advance one step forward through it.
       get().setPlaneOffset(current.offset + current.orientation)
       return

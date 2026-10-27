@@ -278,9 +278,9 @@ directly or import the store — they operate purely in plane-space `(u,v)` thro
 `ToolContext` passed in, keeping them plane-agnostic and unit-testable.
 
 **Mode-specific tool dispatch**: `usePixelCanvasTools.ts` picks between `toolMap` (Model/Texture modes)
-or `animateToolMap` (Animate mode) based on `store.mode`. Animate mode only has paint/erase handlers
-(which operate on slice masks, see [Animation](#animation) above); other tools are no-ops. See also the
-`maskTools.ts` discussion in the Animation tools section.
+or `animateToolMap` (Animate mode) based on `store.mode`. Animate mode only has rig handlers
+(`rigbox` select/move/box, `pivot` pin) — the voxel model is a non-interactive underlay there;
+other tools are no-ops. See the Animation section below.
 
 Selection/clipboard support lives in `selectionMask.ts` (rect/lasso regions, rotate/mirror,
 boundary tracing for the marching-ants outline) and `clipboard.ts`/`transform.ts` (copy/paste with
@@ -454,7 +454,14 @@ button, starts minimized. Settings panel (not the voxel-color palette): Ambient 
 slider 1–5×), Noise (checkbox + 0–100% slider — the AO-texture monochrome grain, `noiseLevel`), Metal noise
 (checkbox + 0–100% slider — specular noise, `specularNoiseLevel`), Glass roughness (0–100% slider, always
 enabled). Each checkbox-off zeroes the numeric value via local component state (`noiseChecked`/`metalChecked`),
-so re-enabling restores the last nonzero value. All sliders write to `store.viewSlice`.
+so re-enabling restores the last nonzero value. All sliders write to `store.viewSlice`. In Animate mode the
+top-right view pill swaps its Wireframe/Optimized toggles for a Full/Ghost/Hidden model-visibility trio
+(`store.animateModelView` — ghost screen-door-dithers every model material via
+`engine/instancing/ghostDither.ts` so the rig reads through; hidden blanks both model views) plus an
+isolate toggle (`store.isolateRig`, session-only): clipping planes on the model materials
+(`engine/instancing/modelIsolate.ts`) show only the selected box's voxels while other rig chrome
+hides; face-raycast skips hidden voxels so taps/hovers land on visible geometry (or fall through
+to the plane), and hover highlights stay off hidden voxels (taps still navigate the plane).
 
 `components/viewport3d/Compass.tsx` — always-visible top-left HUD overlay (`@react-three/drei`'s `Html`):
 a `Navigation2` icon rotated per frame to track camera yaw (`atan2(camera.position.x, camera.position.z)`),
@@ -479,7 +486,7 @@ with `enableMapSet()` since `VoxelModel` uses `Map`):
 | paintActions | `paintActions.ts` | `paintColorCell`, `paintChamferCell`, `eraseCell` |
 | toolActions | `toolActionsSlice.ts` | flood fill, clone-stamp, copy/cut/delete, float lift/move/transform/bake |
 | mode | `modeSlice.ts` | `mode` (`'model'`\|`'animate'`\|`'texture'`), `setMode` (the top-level authoring mode switch) |
-| animation | `animationSlice.ts` | `animSettings` (Map<SliceKey, SliceAnimSettings>), `sliceMasks` (Map<SliceKey, Set<CellKey>>), `animPast`/`animFuture` (separate undo/redo stack), `animBeginStroke`/`animCommitStroke`/`animUndo`/`animRedo`, mask paint/erase actions |
+| animation | `animationSlice.ts` + `riggingSlice.ts` | legacy `animSettings`/`sliceMasks`/`slicePivots` playback maps, live `rigBoxes` + selection, `animPast`/`animFuture` (separate undo/redo stack), `animBeginStroke`/`animCommitStroke`/`animUndo`/`animRedo`, rig actions |
 | texture | `textureSlice.ts` | `texture`, `activeBoxFace`, `activeGrayIndex`, separate `texturePast`/`textureFuture` history, texture-mode selection/float/clipboard, and all texture-editing actions |
 
 **Undo/redo**: atomic whole-`VoxelModel` snapshots (cheap — Immer structural sharing means a
@@ -587,15 +594,17 @@ See [Persistence](#persistence) below for schema v2 changes (optional texture se
 
 ## Animation
 
-A third top-level authoring mode (`store/modeSlice.ts`'s `EditorMode = 'model' | 'animate' | 'texture'`) lets the
-user pick a construction-plane slice and assign it a rigid-body animation (rotate CW/CCW, or slide vertical/
-horizontal), which plays live in the 3D preview and exports as a glTF `AnimationClip`. A slice can be **masked**
-— painting a subset of that slice's voxels so only they animate, while the rest stay static; an unpainted (or
-fully-erased) mask falls back to animating the whole slice.
+A third top-level authoring mode (`store/modeSlice.ts`'s `EditorMode = 'model' | 'animate' | 'texture'`)
+for rigging the model for animation. Animate mode edits the **rig** — named bounding boxes
+(`RigBox`, see `engine/rigging/types.ts`) with per-box rotation-center pivots — not the voxel
+model, which renders as a non-interactive underlay. Boxes are picked/moved in 3D and as
+footprints on the 2D slice, pivots pinned with the Pivot tool, all on the shared animation
+undo stack. Per-slice procedural loops (rotate/slide/pendulum over masked cells) are legacy
+playback state: old files still play and export them, but no UI authors them anymore.
 
-### Animation data model and engine
+### Slice-loop playback (legacy) and engine
 
-`src/engine/animation/`:
+`src/engine/animation/` (unchanged read paths — old files keep working):
 
 - `types.ts`: `AnimationType = 'none'|'rotate-cw'|'rotate-ccw'|'slide-vertical'|'slide-horizontal'`, `AnimationSpeed = 1|2|3`,
   `SliceKey = string` (`"axis,offset"`), `SliceAnimSettings = {animationType, speed, slideAmount}`, `AnimLayer = {axis, offset, settings}`.
@@ -625,59 +634,93 @@ fully-erased) mask falls back to animating the whole slice.
 
 `src/store/animationSlice.ts` (`AnimationSlice` in `store/types.ts`):
 
-- `animSettings: Map<SliceKey, SliceAnimSettings>` and `sliceMasks: Map<SliceKey, Set<CellKey>>` — masks store
-  literal occupied-cell keys, not a geometric region.
-- **One shared undo/redo stack** (`animPast`/`animFuture: AnimSnapshot[]`, `AnimSnapshot = {animSettings, sliceMasks}`)
-  independent of voxel-model history and texture history — a third parallel history system. Both maps are snapshotted/
-  restored together (`animBeginStroke`/`animCommitStroke` bracket a gesture). `animUndo`/`animRedo` swap the pair.
-- Actions: `setAnimSettingsForSlice(axis, offset, settings|null)` — set/clear a slice's animation type/speed/slide
-  amount. `paintMaskCell(u, v)` / `eraseMaskCell(coord)` — paint/erase one cell of the *current plane's* slice mask.
-  Masking only applies to cells that already hold a voxel (`model.color.has(key)`); erasing down to an empty set
-  deletes the map entry (reverting to whole-slice animation).
+- `animSettings: Map<SliceKey, SliceAnimSettings>`, `sliceMasks: Map<SliceKey, Set<CellKey>>`,
+  `slicePivots: Map<SliceKey, CellKey>` — legacy slice-loop playback state (masks store literal
+  occupied-cell keys; an empty/absent mask means "animate the whole slice"). Nothing writes
+  these anymore; persistence, rescale fan-out, and playback/export reads keep old files working.
+- Rig state and actions live in `src/store/riggingSlice.ts` (`RiggingSlice`: `rigBoxes`,
+  `selectedRigBoxId`, `addRigBox`/`renameRigBox`/`deleteRigBox`/`moveRigBox`/`setRigPivot`/
+  `translateRigBox`/`applyRigBoxAt`) — the rig's undo rides this same stack.
+- **One shared undo/redo stack** (`animPast`/`animFuture: AnimSnapshot[]`,
+  `AnimSnapshot = {animSettings, sliceMasks, slicePivots, rigBoxes}`) independent of voxel-model
+  history and texture history. Rig gestures bracket strokes (`animBeginStroke`/`animCommitStroke`);
+  `animUndo`/`animRedo` swap the snapshot pair.
 
 ### Animation tools
 
-`src/engine/tools/`: The shared paint/erase drag-state machine (`editToolFactory.ts`'s `makeEditTool`) now takes
-an optional `hooks: {beginStroke, commitStroke}` param, defaulting to the voxel model's own — this lets the new
-`maskTools.ts` (`maskPaintTool`/`maskEraseTool`) redirect drag logic onto the Animate-mode undo stack
-(`animBeginStroke`/`animCommitStroke`) with zero duplication. `engine/tools/index.ts` exports a second dispatch
-table `animateToolMap` (`{paint: maskPaintTool, erase: maskEraseTool}`, everything else no-op). `usePixelCanvasTools.ts`
-picks between the two tables based on `store.mode === 'animate'` (previously tool dispatch was blocked entirely in
-Animate mode). Switching into Animate mode via `store/modeSlice.ts`'s `setMode` resets `activeTool` to `'paint'`
-if it was something Animate mode doesn't handle (e.g. `'select'`/`'move'` from Model mode).
+`src/engine/tools/`: Animate mode dispatches through `animateToolMap` (`{pivot, rigbox}`,
+everything else no-op), picked by `usePixelCanvasTools.ts` on `store.mode === 'animate'`.
+
+- `rigWandTool.ts` — the mode's select/move gesture in 2D: tap a box footprint to select it,
+  drag to slide the box (and its subtree) across the slice in one undo step, tap anywhere else
+  to box the tapped color-connected flood into a new named rig selection. Hit-testing is
+  deepest-first via `boxSliceFootprint` display rects. (3D taps never reach tools in Animate
+  mode — they navigate the construction plane.)
+- `pivotTool.ts` — one-shot: sets the *selected* box's rotation-center pivot (no selection =
+  toast hint, no slice fallback). Plain click cycles on the clicked cell: first click centers,
+  second click pushes to the face immediately under the construction plane (half-step along
+  the plane axis, away from the viewer). Alt+click pins the box surface nearest the click
+  (`pinPivotToBoxSurface` — edge axes snap to the interface plane, so a joint lands exactly on
+  the boundary between boxes). Pivots are absolute grid points in world frame (integers =
+  centers, half-integers = boundaries). Right-click resets it via
+  `clearPivotForCurrentSlice`.
+- Shared drag machinery (`editToolFactory.ts`'s `makeEditTool`, Bresenham strokes) remains for
+  the voxel tools; switching into Animate mode via `store/modeSlice.ts`'s `setMode` lands on
+  `'rigbox'` if the previous tool has no animate handler.
 
 ### Animation UI
 
-- `components/panels/AnimationPalette.tsx` (mounted by `FloatingPalette.tsx` in place of the color palette when
-  `mode === 'animate'`) — 5 animation-type buttons (×/↻/↺/↕/↔ symbols), speed selector (1–3×), slide-amount slider
-  (1–8, shown only for slide types). Reads/writes whichever slice the construction plane currently sits on (`plane.axis`/
-  `plane.offset`) — the system is plane-centric: "select a slice" means "move the construction plane there."
+- `components/panels/RigInspectorCard.tsx` (mounted by `FloatingPalette.tsx` in place of the
+  color palette when `mode === 'animate'`) — inspector for the selected rig box: name, dims,
+  pivot (with reset-to-center), parent/children summary; empty state otherwise.
 
-- `components/panels/ToolPalette.tsx` — shows Paint Mask / Erase Mask toggle group in Animate mode.
+- `components/panels/ToolPalette.tsx` — shows Rig Box / Pivot Point toggle pair in Animate mode.
 
-- `components/editor2d/PixelCanvas.tsx` — renders violet tint + outline over any cell in the current slice's mask,
-  only if that slice has a non-empty mask (an unpainted slice shows no overlay, signaling "whole slice will animate").
+- `components/viewport3d/RiggingPalette.tsx` — left outline mirror of the right settings panel:
+  depth-first box tree with drag reorder/nest, rename, delete, collapse, per-row pivot indicator.
 
-- `components/viewport3d/AnimatedModelView.tsx` — live 3D preview: builds one `THREE.Group` per animated slice at
-  its pivot center, drives rotation/slide live via `useFrame` (sine-wave slide matching the CUBICSPLINE curve),
+- `components/editor2d/PixelCanvas.tsx` — draws every box intersecting the slice as a footprint
+  rect (amber; selected white with fill), plus a white dot for the selected box's pivot when its
+  world point sits on the slice. Slice-loop masks no longer render (unauthorable); the legacy
+  slice-pivot violet dot stays as a playback indicator.
+
+- `components/viewport3d/RigBoxHighlight.tsx` + `PivotGizmo.tsx` + `RigLinkLines.tsx` — amber
+  wire boxes in 3D (selected white, rendered on top), one pivot sphere per box colored like its
+  outline, and dotted parent→child pivot links (white while that child is selected, amber
+  otherwise; `engine/rigging/types.ts`'s `rigPivotLinks`). Display only: Animate mode never
+  edits in 3D (taps navigate the construction plane, like orbit).
+
+- `components/viewport3d/AnimatedModelView.tsx` — legacy live 3D preview for slice loops (no
+  authoring UI): builds one `THREE.Group` per animated slice at its pivot center, drives
+  rotation/slide live via `useFrame` (sine-wave slide matching the CUBICSPLINE curve),
   everything not assigned to a slice renders as an unanimated remainder group.
 
 - `components/panels/ModeTabs.tsx` — third `'animate'` tab, between Model and Texture.
 
 ### Animation export
 
-`engine/export/gltfExport.ts`: when `animSettings` is non-empty, `assignVoxelsToNodes` (also passed `sliceMasks`)
-partitions voxels into per-slice `THREE.Group` nodes (named `anim_<sliceKey>`), each positioned at its (mask-aware)
-pivot center via `bboxCenterOfKeys`; meshes are recentered by `-center` so geometry (absolute grid coordinates) and
+`engine/export/gltfExport.ts`: when `animSettings` is non-empty, `assignVoxelsToNodes` (also passed `sliceMasks`
+and `rigBoxes` — rigged voxels are excluded from slice nodes, rig wins) partitions voxels into per-slice
+`THREE.Group` nodes (named `anim_<sliceKey>`), each positioned at its (mask-aware) pivot center via
+`bboxCenterOfKeys`; meshes are recentered by `-center` so geometry (absolute grid coordinates) and
 group transform don't double-offset. `buildAllAnimationClips` generates clips, passed via `options.animations`
 (three's `GLTFExporter` ignores `Object3D.animations`, must use the option). **AO exclusion**: animated voxels are
 excluded from AO occupancy grid (`buildOccGrid`'s `excludeKeys`) since they move independently and shouldn't occlude
-the static rest-pose bake.
+the static rest-pose bake — rigged voxels join that exclusion (externally poseable for the same reason).
+
+Rig boxes export as a poseable joint tree instead of names only (`buildRigTree`): one `Group` per box under a
+`Rig` container at the root, nested to mirror the outline, each positioned at its pivot relative to its parent
+(`childPivot − parentPivot`, absolute for roots) with meshes recentered by `−pivot` — the slice pattern, so a
+joint rotation orbits the part around the authored center. Cross-rig interfaces are never culled (PBR
+`meshOptimizer` node key and shell `removeInteriorFaces` both compare slice + rig), so touching joints stay
+separable downstream; same-rig voxels weld/union normally. See `docs/gltf-export-contract.md` for the consumer
+contract.
 
 ### Animation known limitations
 
-- Masking only supports whole-cell inclusion/exclusion (`Set<CellKey>`), not soft masks — matches voxel painting's
-  all-or-nothing nature elsewhere in the app.
+- Slice loops are authoring-frozen: masks only support whole-cell inclusion/exclusion
+  (`Set<CellKey>`), and old files' loops can't be retargeted — rig keyframes (planned) are the
+  path forward for motion authoring.
 
 ---
 

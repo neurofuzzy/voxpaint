@@ -28,6 +28,7 @@ export function shortcutGroups(mod: string): ShortcutGroup[] {
         { keys: ['K'], label: 'Fill' },
         { keys: ['V'], label: 'Move' },
         { keys: ['D'], label: 'Marker' },
+        { keys: ['Alt (hold)'], label: 'Pivot tool while rigging (Animate)' },
       ],
     },
     {

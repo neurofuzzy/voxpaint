@@ -8,9 +8,11 @@ import { scaleGeometryY } from './scaleGeometry'
 /**
  * STL export — a print-oriented sibling of `gltfExport.ts`, reusing the same watertight,
  * CSG-unioned per-(materialClass, colorKey) geometry the PBR GLTF path builds (chamfers included:
- * they're unioned by the same pass). STL carries no material/color at all, so unlike the GLTF
- * exporter this only ever needs position + normal, and simply concatenates every kept group's mesh
- * into one scene — `STLExporter` merges multiple mesh children into a single solid on its own.
+ * they're unioned by the same pass; `cullInteriorFaces: false` additionally keeps cross-material
+ * interface faces, which breaks watertightness — print at your own risk). STL carries no
+ * material/color at all, so unlike the GLTF exporter this only ever needs position + normal, and
+ * simply concatenates every kept group's mesh into a single scene — `STLExporter` merges multiple
+ * mesh children into a single solid on its own.
  */
 
 export type StlExportAnchor = 'center' | 'bottom' | 'back'
@@ -39,6 +41,10 @@ export type StlExportOptions = {
   /** Project-level Y voxel scale (0.5 = flat, 1 = cubic, 2 = tall; default 1). Baked into the
    * vertices before centering/anchoring, so the print matches the scaled 3D view. */
   voxelScaleY?: VoxelScaleY
+  /** Cull hidden faces between touching voxels (default true, keeping the single watertight
+   * mesh). Set false to keep every voxel's full shell — the mesh is no longer manifold, so
+   * only use this when a downstream tool needs the parts separable. */
+  cullInteriorFaces?: boolean
 }
 
 const PRINT_ORIENT_Z = Math.PI / 4
@@ -63,7 +69,7 @@ export function exportModelToStl(model: VoxelModel, palette: PaletteState, optio
     }
     buildModel = { color, chamfer, bounds: model.bounds }
   }
-  const groups = buildOptimizedVoxelGeometryByMaterial(buildModel, palette, true)
+  const groups = buildOptimizedVoxelGeometryByMaterial(buildModel, palette, true, options.cullInteriorFaces ?? true)
   const geometries: THREE.BufferGeometry[] = []
   const content = new THREE.Group()
 

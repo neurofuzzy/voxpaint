@@ -46,11 +46,16 @@ describe('rescaleProject', () => {
     s0.setPlaneOffset(3)
     s0.addMarker([1, 2, 3])
     const markerId = useAppStore.getState().selectedMarkerId!
-    s0.setAnimSettingsForSlice('z', 0, defaultAnimationSettings())
+    // Legacy slice-loop settings (seeded directly — authoring is gone) plus mask/pivot
+    // reads, all of which the rescale must fan out. Bracketed so the animPast assertion below
+    // still sees a stroke, like the removed setAnimSettingsForSlice action used to push.
+    s0.animBeginStroke()
     useAppStore.setState((state) => {
+      state.animSettings.set(encodeSliceKey('z', 0), defaultAnimationSettings())
       state.sliceMasks.set(encodeSliceKey('z', 0), new Set([encodeKey(0, 0, 0)]))
       state.slicePivots.set(encodeSliceKey('z', 0), encodeKey(0, 0, 0))
     })
+    s0.animCommitStroke()
     expect(useAppStore.getState().past.length).toBeGreaterThan(0)
     expect(useAppStore.getState().animPast.length).toBeGreaterThan(0)
 

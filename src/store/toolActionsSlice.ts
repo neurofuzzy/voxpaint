@@ -5,7 +5,7 @@ import { gridCoordFromPixel, pixelFromGridCoord } from '@/engine/plane/construct
 import { rebaseChamferCell } from '@/engine/chamfer/faceBasis'
 import { fillLeaksToEdges, floodFillOccupied3D, floodFillRegion, floodFillRegion3D } from '@/engine/tools/floodFill'
 import { applyClipboardAt, clipboardDepthBase, clearRegion, copyRegionToClipboard, transformClipboardToPlane } from '@/engine/tools/clipboard'
-import { copyCellsToClipboard, rotateCellsInPlane, selectionMatchesClipboard, snapshotCells } from '@/engine/tools/cellSetOps'
+import { copyCellsToClipboard, isCoplanarWithPlane, rotateCellsInPlane, selectionMatchesClipboard, selectionRegionFromCoplanarCells, snapshotCells } from '@/engine/tools/cellSetOps'
 import { placedFloatCoords } from '@/engine/instancing/ghostBatches'
 import { mirrorClipboard, rotateClipboard90 } from '@/engine/tools/transform'
 import { forEachSelectedCell, isCellSelected, mirrorRegion, rotateRegion90 } from '@/engine/tools/selectionMask'
@@ -322,6 +322,22 @@ export const createToolActionsSlice: Slice = (set, get) => ({
     get().bakeFloatIfAny()
     const { model, plane, selectedCells } = get()
     if (selectedCells.size === 0) return
+    // Parity rule: a selection lying entirely on the active construction plane copies
+    // through the 2D slice-anchored path, so moving the plane then pasting lands the
+    // content on the new plane (`clipboardDepthBase` follows the destination slice).
+    // Multi-depth selections fall back to the bbox-anchored volumetric copy below.
+    if (isCoplanarWithPlane(selectedCells, plane)) {
+      const live = [...selectedCells].filter((key) => model.color.has(key))
+      if (live.length === 0) return
+      const region = selectionRegionFromCoplanarCells(live, plane)
+      if (!region) return
+      const clipboard = copyRegionToClipboard(model, plane, region)
+      if (clipboard.cells.length === 0) return
+      set((state) => {
+        state.clipboard = clipboard
+      })
+      return
+    }
     const clipboard = copyCellsToClipboard(model, selectedCells, plane)
     if (clipboard.cells.length === 0) return
     set((state) => {

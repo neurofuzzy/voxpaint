@@ -49,6 +49,8 @@ export function buildTexturedGeometryByColorMerged(
   gridExtent: GridExtent,
   mergeCoplanar: boolean,
   texelScale: number = TEXEL_SCALE,
+  cullInteriorFaces = true,
+  rigAssignment?: Map<CellKey, string>,
 ): TexturedGroupsResult {
   const tagFor: TagForTexturedFace = (chamfer, normal) => boxFaceForCell(chamfer, [normal.x, normal.y, normal.z])
   // Sound: this module's tags are always the `boxFaceForCell` page, i.e. a BoxFace.
@@ -57,7 +59,7 @@ export function buildTexturedGeometryByColorMerged(
     const [tu, tv] = worldToTexel(face, vertex.x, vertex.y, vertex.z, gridExtent, texelScale)
     return atlasUVFor(face, tu, tv, gridExtent, texelScale)
   }
-  return buildTexturedShellGeometryByColorMerged(model, palette, tagFor, uvForTag, mergeCoplanar)
+  return buildTexturedShellGeometryByColorMerged(model, palette, tagFor, uvForTag, mergeCoplanar, cullInteriorFaces, rigAssignment)
 }
 
 /** Box-mapped shell geometry split per (color, emissive class, animation slice) for animated GLTF export. */
@@ -67,6 +69,8 @@ export function buildTexturedGeometryBySlice(
   nodeAssignment: Map<CellKey, SliceKey>,
   gridExtent: GridExtent,
   texelScale: number = TEXEL_SCALE,
+  cullInteriorFaces = true,
+  rigAssignment?: Map<CellKey, string>,
 ): SliceGroupGeometry[] {
-  return buildTexturedShellGeometryBySliceColor(model, palette, uvForExtent(gridExtent, texelScale), nodeAssignment)
+  return buildTexturedShellGeometryBySliceColor(model, palette, uvForExtent(gridExtent, texelScale), nodeAssignment, cullInteriorFaces, rigAssignment)
 }

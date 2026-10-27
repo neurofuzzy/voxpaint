@@ -28,6 +28,9 @@ export const createViewSlice: Slice = (set, get) => ({
   chamferHoverValid: null,
   hoveredFace: null,
   wireframe: false,
+  // Animate-mode model visibility (full/ghost/hidden), remembered across refreshes like the
+  // layout prefs. Pure view chrome — never dirties the project.
+  animateModelView: loadUiPrefs().animateModelView ?? 'full',
   textureFaceMap: false,
   optimizedMesh: false,
   ambientOcclusion: AO_DEFAULT_ENABLED,
@@ -46,6 +49,7 @@ export const createViewSlice: Slice = (set, get) => ({
   exportAnchor: 'center',
   exportAlignToObjectBounds: false,
   exportDisableMeshOptimization: false,
+  exportCullInteriorFaces: true,
   exportIncludeTextureMaps: true,
   exportIncludeAOMaps: true,
   exportIncludeMarkers: true,
@@ -68,6 +72,12 @@ export const createViewSlice: Slice = (set, get) => ({
     })
   },
   setWireframe: (v) => set((state) => { state.wireframe = v }),
+  setAnimateModelView: (v) => {
+    saveUiPrefs({ ...loadUiPrefs(), animateModelView: v })
+    set((state) => { state.animateModelView = v })
+  },
+  isolateRig: false,
+  setIsolateRig: (v) => set((state) => { state.isolateRig = v }),
   setTextureFaceMap: (v) => set((state) => { state.textureFaceMap = v }),
   setOptimizedMesh: (v) => set((state) => { state.optimizedMesh = v }),
   setAmbientOcclusion: (v) => set((state) => { state.ambientOcclusion = v; state.dirty = true }),
@@ -109,6 +119,7 @@ export const createViewSlice: Slice = (set, get) => ({
   setExportAnchor: (v) => set((state) => { state.exportAnchor = v; state.dirty = true }),
   setExportAlignToObjectBounds: (v) => set((state) => { state.exportAlignToObjectBounds = v; state.dirty = true }),
   setExportDisableMeshOptimization: (v) => set((state) => { state.exportDisableMeshOptimization = v; state.dirty = true }),
+  setExportCullInteriorFaces: (v) => set((state) => { state.exportCullInteriorFaces = v; state.dirty = true }),
   setExportIncludeTextureMaps: (v) => set((state) => { state.exportIncludeTextureMaps = v; state.dirty = true }),
   setExportIncludeAOMaps: (v) => set((state) => { state.exportIncludeAOMaps = v; state.dirty = true }),
   setExportIncludeMarkers: (v) => set((state) => { state.exportIncludeMarkers = v; state.dirty = true }),

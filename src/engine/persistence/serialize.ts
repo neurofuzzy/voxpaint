@@ -1,6 +1,7 @@
-import { decodeKey, emptyModel, encodeKey, recomputeBounds, withinWorkingBounds } from '@/engine/grid/GridStore'
+import { decodeKey, effectiveExtent, emptyModel, encodeKey, recomputeBounds, withinWorkingBounds } from '@/engine/grid/GridStore'
 import type { CellKey, GridExtent, VoxelModel } from '@/engine/grid/types'
 import type { Marker, SerializedMarkerPosition } from '@/engine/markers/types'
+import type { RigBox } from '@/engine/rigging/types'
 import { MARKER_COLORS } from '@/engine/markers/types'
 import { DEFAULT_PALETTE } from '@/engine/palette/defaultPalette'
 import type { PaletteState } from '@/engine/palette/types'
@@ -9,7 +10,7 @@ import { BOX_FACES, faceSizeFor, TEXEL_SCALE } from '@/engine/texture/types'
 import { emptyTextureModel, normalizeTexelScale } from '@/engine/texture/TextureStore'
 import type { SliceAnimSettings, SliceKey } from '@/engine/animation/types'
 import { encodeSliceKey } from '@/engine/animation/animationLayers'
-import { CURRENT_SCHEMA_VERSION, type ProjectMeta, type SerializedAnimLayer, type SerializedSliceMask, type SerializedSlicePivot, type SerializedTexture, type ViewSettings, type VoxPaintProjectFile } from './schema'
+import { CURRENT_SCHEMA_VERSION, type ProjectMeta, type SerializedAnimLayer, type SerializedRigBox, type SerializedSliceMask, type SerializedSlicePivot, type SerializedTexture, type ViewSettings, type VoxPaintProjectFile } from './schema'
 
 function u8ToBase64(a: Uint8Array): string {
   let s = ''
@@ -112,6 +113,87 @@ function serializeMarkers(markers: Marker[]): SerializedMarkerPosition[] {
   }))
 }
 
+function serializeRigBoxes(rigBoxes: RigBox[]): SerializedRigBox[] {
+  return rigBoxes.map((b) => ({
+    id: b.id,
+    name: b.name,
+    min: [b.min[0], b.min[1], b.min[2]],
+    max: [b.max[0], b.max[1], b.max[2]],
+    parentId: b.parentId,
+    ...(b.pivot ? { pivot: [b.pivot[0], b.pivot[1], b.pivot[2]] as [number, number, number] } : {}),
+  }))
+}
+
+function deserializeRigBoxes(entries: SerializedRigBox[] | undefined, gridExtent: GridExtent): RigBox[] {
+  if (!entries) return []
+  const out: RigBox[] = []
+  const seen = new Set<string>()
+  const rawParents = new Map<string, string | null>()
+  // Stale exact duplicates (same clamped bounds — creatable before footprint hit-testing
+  // selected first, or by hand-editing): keep the first, fold the rest into it. Export
+  // ties break by order anyway, so dropping twins is behavior-preserving.
+  const seenBounds = new Map<string, string>()
+  const dupeOf = new Map<string, string>()
+  for (const e of entries) {
+    if (typeof e?.id !== 'string' || typeof e?.name !== 'string') continue
+    if (seen.has(e.id)) continue
+    seen.add(e.id)
+    const nums = [...(e.min ?? []), ...(e.max ?? [])]
+    if (nums.length !== 6 || !nums.every((n) => Number.isInteger(n))) continue
+    const [x0, y0, z0, x1, y1, z1] = nums
+    // Clamp into working bounds; drop inverted/empty boxes (hand-edited or resized-away).
+    const lo: [number, number, number] = [Math.min(x0, x1), Math.min(y0, y1), Math.min(z0, z1)]
+    const hi: [number, number, number] = [Math.max(x0, x1), Math.max(y0, y1), Math.max(z0, z1)]
+    if (!withinWorkingBounds(lo, gridExtent) && !withinWorkingBounds(hi, gridExtent)) continue
+    const min: [number, number, number] = [
+      Math.max(lo[0], -gridExtent / 2), Math.max(lo[1], -gridExtent / 2), Math.max(lo[2], -gridExtent / 2),
+    ]
+    const max: [number, number, number] = [
+      Math.min(hi[0], gridExtent / 2 - 1), Math.min(hi[1], gridExtent / 2 - 1), Math.min(hi[2], gridExtent / 2 - 1),
+    ]
+    if (min[0] > max[0] || min[1] > max[1] || min[2] > max[2]) continue
+    const boundsKey = `${min[0]},${min[1]},${min[2]}|${max[0]},${max[1]},${max[2]}`
+    const survivor = seenBounds.get(boundsKey)
+    if (survivor !== undefined) {
+      dupeOf.set(e.id, survivor)
+      continue
+    }
+    seenBounds.set(boundsKey, e.id)
+    // Pivot override: a grid point inside the working cube's gridlines (integers = cell
+    // centers, half-integers = cell-boundary joint faces). It may sit outside the box itself.
+    // Malformed entries fall back to the box center.
+    let pivot: [number, number, number] | null = null
+    const p = e.pivot
+    if (Array.isArray(p) && p.length === 3 && p.every((n) => Number.isFinite(n))) {
+      const half = effectiveExtent(gridExtent) / 2
+      if (p.every((n) => n >= -half && n <= half)) pivot = [p[0], p[1], p[2]]
+    }
+    out.push({ id: e.id, name: e.name.slice(0, 64) || 'rig', min, max, parentId: null, pivot })
+    rawParents.set(e.id, typeof e.parentId === 'string' ? e.parentId : null)
+  }
+  // Resolve parents second: keep the link only when the parent survived, isn't self, and the
+  // chain terminates without a cycle (hand-edited files) — otherwise root the box. Parent ids
+  // pointing at a collapsed duplicate follow it to the survivor (identical bounds, so the
+  // nesting means exactly the same thing).
+  const byId = new Map(out.map((b) => [b.id, b]))
+  for (const box of out) {
+    let parentId = rawParents.get(box.id) ?? null
+    if (parentId && dupeOf.has(parentId)) parentId = dupeOf.get(parentId)!
+    if (!parentId || parentId === box.id || !byId.has(parentId)) continue
+    const seenChain = new Set<string>([box.id])
+    let current: string | null = parentId
+    let cyclic = false
+    while (current) {
+      if (seenChain.has(current)) { cyclic = true; break }
+      seenChain.add(current)
+      current = rawParents.get(current) ?? null
+      if (current && !byId.has(current)) { current = null; break }
+    }
+    if (!cyclic) box.parentId = parentId
+  }
+  return out
+}
+
 function deserializeMarkers(entries: SerializedMarkerPosition[] | undefined, gridExtent: GridExtent): Marker[] {
   if (!entries) return []
   const out: Marker[] = []
@@ -135,7 +217,7 @@ function deserializeMarkers(entries: SerializedMarkerPosition[] | undefined, gri
   return out
 }
 
-export function serializeProject(model: VoxelModel, palette: PaletteState, meta: ProjectMeta, texture: TextureModel, view?: ViewSettings, animSettings?: Map<SliceKey, SliceAnimSettings>, sliceMasks?: Map<SliceKey, Set<CellKey>>, slicePivots?: Map<SliceKey, CellKey>, markers?: Marker[]): VoxPaintProjectFile {
+export function serializeProject(model: VoxelModel, palette: PaletteState, meta: ProjectMeta, texture: TextureModel, view?: ViewSettings, animSettings?: Map<SliceKey, SliceAnimSettings>, sliceMasks?: Map<SliceKey, Set<CellKey>>, slicePivots?: Map<SliceKey, CellKey>, markers?: Marker[], rigBoxes?: RigBox[]): VoxPaintProjectFile {
   const colorCells = Array.from(model.color.entries()).map(([key, cell]) => {
     const [x, y, z] = decodeKey(key)
     return { x, y, z, paletteSlot: cell.paletteSlot }
@@ -155,10 +237,11 @@ export function serializeProject(model: VoxelModel, palette: PaletteState, meta:
     masks: sliceMasks ? serializeSliceMasks(sliceMasks) : undefined,
     pivots: slicePivots ? serializeSlicePivots(slicePivots) : undefined,
     markers: markers ? serializeMarkers(markers) : undefined,
+    rigBoxes: rigBoxes ? serializeRigBoxes(rigBoxes) : undefined,
   }
 }
 
-export function deserializeProject(file: VoxPaintProjectFile): { model: VoxelModel; palette: PaletteState; meta: ProjectMeta; texture: TextureModel; view: ViewSettings; animSettings: Map<SliceKey, SliceAnimSettings>; sliceMasks: Map<SliceKey, Set<CellKey>>; slicePivots: Map<SliceKey, CellKey>; markers: Marker[] } {
+export function deserializeProject(file: VoxPaintProjectFile): { model: VoxelModel; palette: PaletteState; meta: ProjectMeta; texture: TextureModel; view: ViewSettings; animSettings: Map<SliceKey, SliceAnimSettings>; sliceMasks: Map<SliceKey, Set<CellKey>>; slicePivots: Map<SliceKey, CellKey>; markers: Marker[]; rigBoxes: RigBox[] } {
   const model = emptyModel()
   const color = new Map(model.color)
   const chamfer = new Map(model.chamfer)
@@ -185,7 +268,7 @@ export function deserializeProject(file: VoxPaintProjectFile): { model: VoxelMod
   const texture = file.texture
     ? deserializeTexture(file.texture, meta.gridExtent, meta.texelScale!)
     : emptyTextureModel(meta.gridExtent, meta.texelScale!)
-  const view: ViewSettings = { ambientOcclusion: false, noiseLevel: 0, specularNoiseLevel: 0, noiseScale: 1, aoStrength: 1, glassRoughnessLevel: 0.3, exposure: 1, exportScaleFactor: 100, exportAnchor: 'center', exportAlignToObjectBounds: false, exportDisableMeshOptimization: false, exportIncludeTextureMaps: true, exportIncludeAOMaps: true, exportIncludeMarkers: true, ...file.view }
+  const view: ViewSettings = { ambientOcclusion: false, noiseLevel: 0, specularNoiseLevel: 0, noiseScale: 1, aoStrength: 1, glassRoughnessLevel: 0.3, exposure: 1, exportScaleFactor: 100, exportAnchor: 'center', exportAlignToObjectBounds: false, exportDisableMeshOptimization: false, exportCullInteriorFaces: true, exportIncludeTextureMaps: true, exportIncludeAOMaps: true, exportIncludeMarkers: true, ...file.view }
   const animSettings = file.animations ? deserializeAnimations(file.animations) : new Map()
   const sliceMasks = file.masks ? deserializeSliceMasks(file.masks) : new Map()
   const slicePivots = file.pivots ? deserializeSlicePivots(file.pivots) : new Map()
@@ -194,5 +277,6 @@ export function deserializeProject(file: VoxPaintProjectFile): { model: VoxelMod
   // (same treatment `exportAlignToObjectBounds` got for `view`).
   const palette: PaletteState = { ...DEFAULT_PALETTE, ...file.palette }
   const markers = deserializeMarkers(file.markers, meta.gridExtent)
-  return { model: { ...built, bounds: recomputeBounds(built) }, palette, meta, texture, view, animSettings, sliceMasks, slicePivots, markers }
+  const rigBoxes = deserializeRigBoxes(file.rigBoxes, meta.gridExtent)
+  return { model: { ...built, bounds: recomputeBounds(built) }, palette, meta, texture, view, animSettings, sliceMasks, slicePivots, markers, rigBoxes }
 }

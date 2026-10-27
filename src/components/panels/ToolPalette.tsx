@@ -1,6 +1,6 @@
 import * as ToggleGroup from '@radix-ui/react-toggle-group'
 import * as Tooltip from '@radix-ui/react-tooltip'
-import { Brush, Droplet, Eraser, MapPin, Move, Pin, Pipette, SquareArrowOutDownLeft, SquareDashedMousePointer, PaintBucket } from 'lucide-react'
+import { Bone, Brush, Droplet, Eraser, MapPin, Move, Pin, Pipette, SquareArrowOutDownLeft, SquareDashedMousePointer, PaintBucket } from 'lucide-react'
 import { useAppStore } from '@/store/useAppStore'
 import type { ToolId } from '@/store/types'
 
@@ -16,12 +16,12 @@ const TOOLS: Array<{ id: ToolId; label: string; icon: typeof Brush; hint: string
   { id: 'marker', label: 'Marker', icon: MapPin, hint: 'click empty space to place a marker · tap a marker to recolor it, tap again to delete · drag to move · right-click: delete' },
 ]
 
-/** Animate mode only supports masking which voxels of the current slice animate — paint/erase
- * repurposed to mark/unmark cells instead of color, everything else hidden. */
+/** Animate mode edits the rig, not the voxel model (which is a non-interactive underlay
+ * there) — box regions into named selections, drag them across the slice, pin pivots. Mask
+ * paint/erase are gone: slice loops still play back for old files, but only whole-slice. */
 const ANIMATE_TOOLS: Array<{ id: ToolId; label: string; icon: typeof Brush; hint: string }> = [
-  { id: 'paint', label: 'Paint Mask', icon: Brush, hint: 'click or drag to mark voxels to animate · unpainted = whole slice animates' },
-  { id: 'erase', label: 'Erase Mask', icon: Eraser, hint: 'click or drag to unmark voxels · right-click: quick erase' },
-  { id: 'pivot', label: 'Pivot Point', icon: Pin, hint: 'click to pin the rotation/pendulum pivot for this slice · right-click: clear' },
+  { id: 'rigbox', label: 'Rig Box', icon: Bone, hint: 'click a voxel to box its color-connected region · click a box to select it · drag a box to move it on this slice · hold Alt for Pivot' },
+  { id: 'pivot', label: 'Pivot Point', icon: Pin, hint: 'click: place pivot on the half-grid · rotate the plane for depth · right-click: reset to center' },
 ]
 
 export function ToolPalette() {

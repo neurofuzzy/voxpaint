@@ -87,12 +87,17 @@ function unionAll(bsps: ThreeBSP[]): ThreeBSP | null {
  * occupied grid cell (see `removeOccludedGlassFaces`) — right after the CSG union, before the
  * coplanar merge, while triangles still correspond ~1:1 to per-voxel faces.
  *
+ * With `cullInteriorFaces: false` the cross-group cull is skipped: same-group voxels still
+ * union into one watertight solid, but interfaces between different (materialClass, colorKey)
+ * groups keep both sides, so touching parts stay separable downstream (rigging-friendly
+ * export — limbs split apart instead of welding). The coplanar merge still runs (it is
+ * per-group, so it can never weld across a kept seam). The glass occlusion cull still runs —
+ * a glass face coincident with a kept solid face would z-fight rather than separate.
+ *
  * Two-sided flats (`flat`/`flatwedge`, marked `userData.twoSidedFlat` by the builder) bypass
- * the union — an open quad is undefined behaviour for ThreeBSP — and are appended to their
- * group's output after the union (and after the glass cull, which samples outward normals and
- * would eat a glass flat's hidden-side winding) but before the coplanar merge, so same-facing
- * flats in adjacent cells still weld. The merge itself is same-facing-only, so a flat's own
- * opposite-winding pair always survives.
+ * the union — an open quad is undefined behaviour for ThreeBSP — and get their OWN optimization
+ * pass below: flats merge only with flats, never with solids. The merge itself is same-facing-only,
+ * so a flat's own opposite-winding pair always survives.
  */
 /** Empty position+normal shell — the attribute shape every merge/output stage reads and writes. */
 function emptyShellGeometry(): THREE.BufferGeometry {
@@ -139,6 +144,7 @@ export function optimizeGroupsByCSG<T extends VoxelGroup>(
   groups: T[],
   mergeCoplanar = true,
   isOccupied?: (x: number, y: number, z: number) => boolean,
+  cullInteriorFaces = true,
 ): (ColorGroupGeometry & Omit<T, keyof VoxelGroup>)[] {
   const postUnion: { group: T; geometry: THREE.BufferGeometry; flatGeoms: THREE.BufferGeometry[] }[] = []
 
@@ -169,10 +175,15 @@ export function optimizeGroupsByCSG<T extends VoxelGroup>(
     }
   }
 
-  // Cross-group interior cull while triangles still correspond ~1:1 to per-voxel faces (the
-  // coplanar merge below re-triangulates them into multi-cell polygons that no longer match).
-  // Flat pairs are intra-group (one entry's own two windings), so they never match across entries.
-  cullCoincidentOpaqueInterfaces(postUnion)
+  // No-cull mode keeps cross-group interfaces: same-group voxels still union above, but the
+  // coincident back-to-back patches between different groups are left alone so touching parts
+  // stay separable downstream. Runs while triangles still correspond ~1:1 to per-voxel faces
+  // (the coplanar merge below re-triangulates them into multi-cell polygons that no longer
+  // match). Flat pairs are intra-group (one entry's own two windings), so they never match
+  // across entries.
+  if (cullInteriorFaces) {
+    cullCoincidentOpaqueInterfaces(postUnion)
+  }
 
   const results: (ColorGroupGeometry & Omit<T, keyof VoxelGroup>)[] = []
   for (const { group, geometry, flatGeoms } of postUnion) {
@@ -289,8 +300,8 @@ export function removeOccludedGlassFaces(
  * Deliberately conservative, mirroring `removeInteriorFaces`:
  * - Glass-involved pairs are skipped — the glass side is owned by `removeOccludedGlassFaces`
  *   (which runs before this), and the solid neighbour's face must stay visible through it.
- * - Pairs spanning different animation `sliceKey`s are skipped — those cells move apart
- *   independently at runtime, so the face between them is real, not hidden.
+ * - Pairs spanning different animation `sliceKey`s or different rig boxes are skipped — those
+ *   cells move apart independently at runtime, so the face between them is real, not hidden.
  * - Only exactly-coincident patches (same quantized corners, back-to-back normals, precisely
  *   one patch per side) are culled. Partial chamfer overlaps never match, so exposed
  *   remainders survive.
@@ -350,16 +361,21 @@ function cullCoincidentOpaqueInterfaces(entries: { group: VoxelGroup; geometry: 
     return list
   })
 
-  const sliceOf = (group: VoxelGroup): string =>
-    ((group as unknown as { sliceKey?: unknown }).sliceKey as string | undefined) ?? ''
+  // Animation/rig node identity: pairs spanning different sliceKeys OR different rig boxes
+  // never share a culled interface. Groups without either key share the '' identity, so files
+  // without animations or rigs behave exactly as before.
+  const nodeOf = (group: VoxelGroup): string => {
+    const g = group as unknown as { sliceKey?: unknown; rigId?: unknown }
+    return `${(g.sliceKey as string | undefined) ?? ''}\0${(g.rigId as string | undefined) ?? ''}`
+  }
 
-  /** True when two entries may share a culled interface (both opaque, same animation node). */
+  /** True when two entries may share a culled interface (both opaque, same animation/rig node). */
   const eligiblePair = (aEntry: number, bEntry: number): boolean => {
     if (aEntry === bEntry) return false // within-group coincidence is the union's own job
     const groupA = entries[aEntry].group
     const groupB = entries[bEntry].group
     if (groupA.materialClass === 'glass' || groupB.materialClass === 'glass') return false
-    return sliceOf(groupA) === sliceOf(groupB)
+    return nodeOf(groupA) === nodeOf(groupB)
   }
 
   const condemned = new Map<number, Set<number>>()

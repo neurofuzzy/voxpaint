@@ -1,9 +1,9 @@
 import { describe, expect, it } from 'vitest'
-import type { Axis, Orientation } from '@/engine/grid/types'
+import type { Axis, Coord, Orientation } from '@/engine/grid/types'
 import type { ConstructionPlane } from './types'
-import { gridCoordFromPixel } from './constructionPlane'
+import { gridCoordFromPixel, pixelFromGridCoord } from './constructionPlane'
 import { axisIndex } from './planeGeometry'
-import { displayViewCenter, toDisplayGridlineU, toDisplayGridlineV, toDisplayU, toDisplayV } from './planeDisplay'
+import { displayPointForGridPoint, displayViewCenter, toDisplayGridlineU, toDisplayGridlineV, toDisplayU, toDisplayV } from './planeDisplay'
 
 const AXES: Axis[] = ['x', 'y', 'z']
 const ORIENTATIONS: Orientation[] = [1, -1]
@@ -106,5 +106,35 @@ describe('gridline vs cell display transforms', () => {
     const plane: ConstructionPlane = { axis: 'z', orientation: 1, offset: 0 }
     expect(toDisplayGridlineU(plane, 3)).toBe(toDisplayU(plane, 3))
     expect(toDisplayGridlineV(plane, 3)).toBe(toDisplayV(plane, 3))
+  })
+})
+
+describe('displayPointForGridPoint', () => {
+  const ALL_PLANES: ConstructionPlane[] = AXES.flatMap((axis) =>
+    ORIENTATIONS.map((orientation) => ({ axis, orientation, offset: 0 })),
+  )
+
+  it('agrees with the cell-center formula for integer cell centers on every plane', () => {
+    const cells: Coord[] = [[0, 0, 0], [1, 2, 3], [-4, 5, -2]]
+    for (const plane of ALL_PLANES) {
+      for (const cell of cells) {
+        const { u: pu, v: pv } = pixelFromGridCoord(plane, cell)
+        const center: Coord = [cell[0] + 0.5, cell[1] + 0.5, cell[2] + 0.5]
+        expect(displayPointForGridPoint(plane, center)).toEqual({
+          u: toDisplayU(plane, pu) + 0.5,
+          v: toDisplayV(plane, pv) + 0.5,
+        })
+      }
+    }
+  })
+
+  it('lands a cell-boundary point exactly on the shared gridline', () => {
+    // z-plane: u is unmirrored at orientation 1, mirrored at -1. Grid point x=2 is the
+    // boundary between cells 1 and 2, whose centers sit at display 1.5/2.5 (ori 1) and
+    // -1.5/-2.5 (ori -1).
+    const fwd: ConstructionPlane = { axis: 'z', orientation: 1, offset: 0 }
+    expect(displayPointForGridPoint(fwd, [2, 0.5, 0.5]).u).toBe(2)
+    const mir: ConstructionPlane = { axis: 'z', orientation: -1, offset: 0 }
+    expect(displayPointForGridPoint(mir, [2, 0.5, 0.5]).u).toBe(-2)
   })
 })

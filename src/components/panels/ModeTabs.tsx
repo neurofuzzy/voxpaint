@@ -27,7 +27,7 @@ export function ModeTabs() {
             role="tab"
             aria-selected={active}
             onClick={() => setMode(id)}
-            onPointerEnter={() => setStatusMessage(id === 'model' ? 'Switch to voxel modeling mode' : 'Switch to texture painting mode')}
+            onPointerEnter={() => setStatusMessage(id === 'model' ? 'Switch to voxel modeling mode' : id === 'animate' ? 'Switch to rig animation mode' : 'Switch to texture painting mode')}
             onPointerLeave={() => setStatusMessage(null)}
             className={
               'rounded-md px-3 py-1 text-sm font-medium transition ' +
