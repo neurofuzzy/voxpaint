@@ -21,6 +21,7 @@ import type { SliceAnimSettings, SliceKey } from '@/engine/animation/types'
 import { assignVoxelsToNodes, hasActiveAnimations, resolveAnimCenter } from '@/engine/animation/animationLayers'
 import { buildAllAnimationClips, type AnimNodeInfo } from '@/engine/animation/animationGLTF'
 import { rigIdForCoord, rigPivotOf, sanitizeRigName, type RigBox } from '@/engine/rigging/types'
+import { buildRigLoopClip, isLoopActive } from '@/engine/rigging/rigLoop'
 import { registerEmissiveAnimationExtension, type EmissiveAnimExportTarget } from './emissiveAnimationExport'
 import { scaleGeometryY } from './scaleGeometry'
 
@@ -601,6 +602,19 @@ export async function exportModelToGlb(
   // Build animation clips — GLTFExporter reads these from `options.animations`, not
   // `Object3D.animations` (which it ignores entirely).
   const clips = animNodes && animNodes.length > 0 ? buildAllAnimationClips(animNodes) : []
+  // Rig loops ride the joint tree: one clip per looped box, authored in the joint's local
+  // frame (rotation is origin-centered so relativity is free; slide oscillates around the
+  // joint's rest position, Y-scaled like the tree itself).
+  if (rigTree) {
+    for (const box of options.rigBoxes ?? []) {
+      const loop = box.loop
+      if (!isLoopActive(loop)) continue
+      const group = rigTree.groups.get(box.id)
+      if (!group) continue
+      const clip = buildRigLoopClip(group, loop, group.position.clone(), voxelScaleY)
+      if (clip) clips.push(clip)
+    }
+  }
 
   const scale = (options.scaleFactor ?? 100) / 100
   const anchor = options.anchor ?? 'center'

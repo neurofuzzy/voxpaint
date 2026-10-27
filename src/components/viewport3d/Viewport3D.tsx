@@ -6,6 +6,7 @@ import type { OrbitControls as OrbitControlsImpl } from 'three-stdlib'
 import { decodeKey, encodeKey, effectiveExtent, viewOriginShift, withinWorkingBounds } from '@/engine/grid/GridStore'
 import { rigBoxContains, rigIdForCoord, rigPivotOf } from '@/engine/rigging/types'
 import { angleAroundAxis, composeAxisAngle, gizmoRadiusForBox, intersectAxisPlane, nearestRingHit, parentChainMatrix, projectToTrackball, trackballEuler } from '@/engine/rigging/pose'
+import { hasActiveRigLoops, isLoopActive } from '@/engine/rigging/rigLoop'
 import type { Axis, CellKey, Coord } from '@/engine/grid/types'
 import { hasActiveAnimations } from '@/engine/animation/animationLayers'
 import type { InstancingManager } from '@/engine/instancing/InstancingManager'
@@ -601,7 +602,12 @@ function VoxelInteractionHandler({ managerRef, controlsRef }: {
       if (e.button === 0 && e.isPrimary && modeRef.current === 'animate' && activeToolRef.current === 'pose') {
         const st = useAppStore.getState()
         const box = st.rigBoxes.find((b) => b.id === st.selectedRigBoxId) ?? null
-        if (box) {
+        // Looped joints are driven by their cycle — gizmo/trackball drags would no-op, so
+        // the press falls through to normal tap handling with a hint instead.
+        if (box && isLoopActive(box.loop)) {
+          setStatusMessage('That box has a looping motion — clear it in the inspector to pose')
+        }
+        if (box && !isLoopActive(box.loop)) {
           const rect = dom.getBoundingClientRect()
           const sy = st.meta.voxelScaleY
           const pv = new THREE.Vector3()
@@ -1594,10 +1600,15 @@ export function Viewport3D() {
   const poseToolActive = useAppStore((s) => s.mode === 'animate' && s.activeTool === 'pose')
   const hasAnimations = animateMode && hasActiveAnimations(animSettings)
   const animateModelHidden = useAppStore((s) => s.mode === 'animate' && s.animateModelView === 'hidden')
+  const rigBoxes = useAppStore((s) => s.rigBoxes)
+  // Looped joints drive the same pose-view scene graph as gizmo posing (per-box groups,
+  // zero rebuilds per frame) — the view stays live while any loop exists, even with an
+  // empty pose. Slice loops keep their own legacy view; rig loops take over when present.
+  const hasRigLoops = animateMode && hasActiveRigLoops(rigBoxes)
   // Pose preview takes over the model views while a non-empty pose exists (hidden blanks it
   // like the others); the static views stay mounted with frozen builds underneath. The drag
   // latch keeps it mounted through exact-zero crossings mid-gesture.
-  const poseActive = useAppStore((s) => s.mode === 'animate' && (s.poseRotations.size > 0 || s.poseDragging) && s.animateModelView !== 'hidden')
+  const poseActive = useAppStore((s) => s.mode === 'animate' && (s.poseRotations.size > 0 || s.poseDragging) && s.animateModelView !== 'hidden') || (hasRigLoops && !animateModelHidden)
   // Exactly one model view is live at a time; the others stay mounted but hidden with frozen
   // builds (see useActiveMemo), so mode switches never tear down GPU resources.
   // (textureMode and hasAnimations are mutually exclusive — hasAnimations requires animateMode.)

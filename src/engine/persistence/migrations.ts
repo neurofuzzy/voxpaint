@@ -94,6 +94,10 @@ MIGRATIONS[11] = (doc) => ({ ...doc, schemaVersion: 12 })
  * rigs simply have no pivot recorded (box center), matching their pre-pivot posing behavior. */
 MIGRATIONS[12] = (doc) => ({ ...doc, schemaVersion: 13 })
 
+/** v13 → v14: rig boxes gain an optional `loop` procedural motion. Nothing to reshape —
+ * pre-v14 rigs simply have no loop recorded (static joints), matching pre-loop behavior. */
+MIGRATIONS[13] = (doc) => ({ ...doc, schemaVersion: 14 })
+
 export class UnsupportedSchemaVersionError extends Error {
   constructor(foundVersion: unknown) {
     super(`This file is from a newer version of VoxPaint (schemaVersion=${String(foundVersion)}). Please update the app.`)

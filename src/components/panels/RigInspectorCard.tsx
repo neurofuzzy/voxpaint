@@ -1,13 +1,18 @@
 import { useEffect, useState } from 'react'
-import { Bone, Crosshair, RotateCcw } from 'lucide-react'
-import { rigPivotOf } from '@/engine/rigging/types'
+import { ArrowLeftRight, Ban, Bone, Crosshair, RotateCcw, RotateCw } from 'lucide-react'
+import type { Axis } from '@/engine/grid/types'
+import { rigPivotOf, type RigBox, type RigLoop } from '@/engine/rigging/types'
+import type { AnimationSpeed } from '@/engine/animation/types'
+import { SLIDE_AMOUNT_MAX, SLIDE_AMOUNT_MIN } from '@/engine/animation/animationLayers'
+import { defaultRigLoop, isLoopActive } from '@/engine/rigging/rigLoop'
 import { useAppStore } from '@/store/useAppStore'
 import type { PaletteOrientation } from './FloatingPalette'
 
 /**
  * Animate-mode floating panel content: an inspector for the selected rig box (the mode's
- * primary object). Shows identity (name, dims), rotation center (with reset), and outline
- * position (parent/children) — everything else lives in the outline, toolbar, and viewport.
+ * primary object). Shows identity (name, dims), rotation center (with reset), looping
+ * motion (rotate/slide cycles, mutually exclusive with posing), and outline position
+ * (parent/children) — everything else lives in the outline, toolbar, and viewport.
  * Slice-loop authoring used to live here (`AnimationPalette`, deleted); slice loops from old
  * files still play back, they just can't be authored anymore.
  */
@@ -16,6 +21,7 @@ export function RigInspectorCard({ orientation = 'horizontal' }: { orientation?:
   const selectedRigBoxId = useAppStore((s) => s.selectedRigBoxId)
   const renameRigBox = useAppStore((s) => s.renameRigBox)
   const setRigPivot = useAppStore((s) => s.setRigPivot)
+  const setRigLoop = useAppStore((s) => s.setRigLoop)
   const poseCount = useAppStore((s) => s.poseRotations.size)
   const resetPose = useAppStore((s) => s.resetPose)
   const vertical = orientation === 'vertical'
@@ -115,6 +121,7 @@ export function RigInspectorCard({ orientation = 'horizontal' }: { orientation?:
               return parts.join(' · ')
             })()}
           </div>
+          <LoopControls box={box} setRigLoop={setRigLoop} vertical={vertical} />
         </>
       )}
       {poseCount > 0 && (
@@ -128,6 +135,113 @@ export function RigInspectorCard({ orientation = 'horizontal' }: { orientation?:
             posing · reset
           </button>
         </div>
+      )}
+    </div>
+  )
+}
+
+/**
+ * Looping-motion controls for the selected box: None / Rotate / Slide, then (when looped)
+ * axis, direction, cycle speed, and slide distance. A looped joint is driven by its cycle —
+ * posing it is disabled until the loop clears (see `setRigLoop`), and the loop previews
+ * live in the 3D view and exports as a glTF animation clip on the joint.
+ */
+function LoopControls({ box, setRigLoop, vertical }: {
+  box: RigBox
+  setRigLoop: (id: string, loop: RigLoop | null) => void
+  vertical: boolean
+}) {
+  const loop = isLoopActive(box.loop) ? box.loop : null
+  const base: RigLoop = box.loop ?? defaultRigLoop()
+
+  function patch(next: Partial<RigLoop>) {
+    setRigLoop(box.id, { ...base, ...next })
+  }
+
+  const seg = (on: boolean) =>
+    'flex h-5 items-center justify-center rounded px-1.5 text-[10px] font-medium transition ' +
+    (on ? 'bg-violet-500/60 text-white' : 'text-neutral-400 hover:bg-neutral-800 hover:text-neutral-200')
+
+  return (
+    <div className={'flex items-center gap-1.5 ' + (vertical ? 'flex-wrap' : 'whitespace-nowrap border-l border-neutral-800 pl-2')}>
+      <div className="flex items-center gap-0.5" role="group" aria-label="Looping motion">
+        <button
+          aria-label="No loop"
+          title="No loop — static joint (poseable)"
+          onClick={() => setRigLoop(box.id, null)}
+          className={seg(!loop)}
+        >
+          <Ban size={12} />
+        </button>
+        <button
+          aria-label="Loop rotation"
+          title="Loop rotation — full spin about an axis (not poseable while looping)"
+          onClick={() => patch({ kind: 'rotate' })}
+          className={seg(loop?.kind === 'rotate')}
+        >
+          <RotateCw size={12} />
+        </button>
+        <button
+          aria-label="Loop slide"
+          title="Loop slide — shuttle back and forth along an axis (not poseable while looping)"
+          onClick={() => patch({ kind: 'slide' })}
+          className={seg(loop?.kind === 'slide')}
+        >
+          <ArrowLeftRight size={12} />
+        </button>
+      </div>
+      {loop && (
+        <>
+          <div className="flex items-center gap-0.5" role="group" aria-label="Loop axis">
+            {(['x', 'y', 'z'] as Axis[]).map((axis) => (
+              <button
+                key={axis}
+                aria-label={`Loop axis ${axis.toUpperCase()}`}
+                title={loop.kind === 'rotate' ? `Spin about ${axis.toUpperCase()}` : `Slide along ${axis.toUpperCase()}`}
+                onClick={() => patch({ axis })}
+                className={seg(loop.axis === axis) + ' w-5 font-mono uppercase'}
+              >
+                {axis}
+              </button>
+            ))}
+          </div>
+          <button
+            aria-label="Flip loop direction"
+            title={loop.kind === 'rotate' ? (loop.direction === 1 ? 'Counter-clockwise — click for clockwise' : 'Clockwise — click for counter-clockwise') : (loop.direction === 1 ? 'Slide +axis — click for −axis' : 'Slide −axis — click for +axis')}
+            onClick={() => patch({ direction: (loop.direction === 1 ? -1 : 1) as 1 | -1 })}
+            className={seg(false) + ' w-5 font-mono'}
+          >
+            {loop.kind === 'rotate' ? (loop.direction === 1 ? '↻' : '↺') : (loop.direction === 1 ? '+' : '−')}
+          </button>
+          <div className="flex items-center gap-0.5" role="group" aria-label="Loop speed">
+            {([1, 2, 3] as AnimationSpeed[]).map((speed) => (
+              <button
+                key={speed}
+                aria-label={`Loop speed ${speed}x`}
+                title={`Loop cycle speed ${speed}x`}
+                onClick={() => patch({ speed })}
+                className={seg(loop.speed === speed) + ' px-1 font-mono'}
+              >
+                {speed}x
+              </button>
+            ))}
+          </div>
+          {loop.kind === 'slide' && (
+            <span className="flex items-center gap-1">
+              <input
+                type="range"
+                aria-label="Slide distance"
+                title="Slide distance in voxels"
+                min={SLIDE_AMOUNT_MIN}
+                max={SLIDE_AMOUNT_MAX}
+                value={loop.amount}
+                onChange={(e) => patch({ amount: Number(e.target.value) })}
+                className="h-4 w-14 accent-violet-500"
+              />
+              <span className="w-3 text-center font-mono text-[10px] tabular-nums text-neutral-400">{loop.amount}</span>
+            </span>
+          )}
+        </>
       )}
     </div>
   )

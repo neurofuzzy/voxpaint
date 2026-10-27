@@ -1,5 +1,7 @@
 import type { StateCreator } from 'zustand'
+import { isLoopActive } from '@/engine/rigging/rigLoop'
 import type { JointEuler } from '@/engine/rigging/pose'
+import { showToast } from '@/components/ui/toastBus'
 import type { AppState, PoseSlice } from './types'
 
 type Slice = StateCreator<AppState, [['zustand/immer', never]], [], PoseSlice>
@@ -13,11 +15,18 @@ const EPSILON = 1e-9
  * persistence (cleared on project load by construction — `newProject` rebuilds state — and on
  * leaving Animate mode). Keyframes (Phase 2) will snapshot this representation.
  */
-export const createPoseSlice: Slice = (set) => ({
+export const createPoseSlice: Slice = (set, get) => ({
   poseRotations: new Map<string, JointEuler>(),
   poseDragging: false,
 
   setJointRotation: (id, euler) => {
+    const box = get().rigBoxes.find((b) => b.id === id)
+    if (!box) return
+    // Mutually exclusive with looping: a looped joint is driven by its cycle, not the gizmo.
+    if (isLoopActive(box.loop)) {
+      showToast('That box has a looping motion — clear it before posing')
+      return
+    }
     set((state) => {
       if (!state.rigBoxes.some((b) => b.id === id)) return
       if (Math.abs(euler[0]) < EPSILON && Math.abs(euler[1]) < EPSILON && Math.abs(euler[2]) < EPSILON) {

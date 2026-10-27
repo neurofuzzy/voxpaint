@@ -3,7 +3,8 @@ import { decodeKey, encodeKey } from '@/engine/grid/GridStore'
 import type { Coord } from '@/engine/grid/types'
 import { bboxOfCoords } from '@/engine/tools/cellSetOps'
 import { floodFillRegion3D } from '@/engine/tools/floodFill'
-import type { RigBox } from '@/engine/rigging/types'
+import type { RigBox, RigLoop } from '@/engine/rigging/types'
+import { isLoopActive } from '@/engine/rigging/rigLoop'
 import { moveRigBoxInList, translateRigSubtree, type RigMovePosition } from '@/engine/rigging/types'
 import { showToast } from '@/components/ui/toastBus'
 import type { AppState, RiggingSlice } from './types'
@@ -41,7 +42,7 @@ export const createRiggingSlice: Slice = (set, get) => ({
     set((state) => {
       const name = uniqueRigName(box.name.trim() || nextDefaultName(state.rigBoxes), state.rigBoxes)
       const parentId = box.parentId && state.rigBoxes.some((b) => b.id === box.parentId) ? box.parentId : null
-      state.rigBoxes.push({ ...box, id: box.id || newRigId(), name, parentId, pivot: box.pivot ?? null })
+      state.rigBoxes.push({ ...box, id: box.id || newRigId(), name, parentId, pivot: box.pivot ?? null, loop: box.loop ?? null })
       state.selectedRigBoxId = state.rigBoxes[state.rigBoxes.length - 1].id
       state.dirty = true
     })
@@ -117,6 +118,20 @@ export const createRiggingSlice: Slice = (set, get) => ({
     })
   },
 
+  setRigLoop: (id: string, loop: RigLoop | null) => {
+    if (loop && !isLoopActive(loop)) loop = null
+    get().animBeginStroke()
+    set((state) => {
+      const box = state.rigBoxes.find((b) => b.id === id)
+      if (!box) return
+      box.loop = loop ? { ...loop } : null
+      // Mutual exclusion with posing: a looped joint is driven by the cycle, not the gizmo.
+      if (loop) state.poseRotations.delete(id)
+      state.dirty = true
+    })
+    get().animCommitStroke()
+  },
+
   setSelectedRigPivot: (pivot) => {
     const { selectedRigBoxId, rigBoxes } = get()
     if (!selectedRigBoxId || !rigBoxes.some((b) => b.id === selectedRigBoxId)) {
@@ -168,6 +183,7 @@ export const createRiggingSlice: Slice = (set, get) => ({
         max: [...bbox.max] as Coord,
         parentId: null,
         pivot: null,
+        loop: null,
       }
       state.rigBoxes.push(box)
       state.selectedRigBoxId = box.id

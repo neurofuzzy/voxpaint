@@ -83,6 +83,11 @@ interface GlbJson {
     pbrMetallicRoughness?: { baseColorFactor?: number[] }
   }>
   meshes?: Array<{ primitives: Array<{ attributes: Record<string, number> }> }>
+  animations?: Array<{
+    name?: string
+    channels?: Array<{ sampler?: number; target?: { node?: number; path?: string } }>
+    samplers?: Array<{ interpolation?: string }>
+  }>
 }
 
 /** Parse the JSON chunk out of a binary .glb buffer. */
@@ -470,6 +475,38 @@ describe('exportModelToGlb rig boxes', () => {
     expect(nodes[arm].children ?? []).not.toEqual([])
     const rig = indexOf(nodes, 'Rig')
     expect(nodes[rig].children).toContain(arm)
+  })
+
+  it('exports loop clips on looped joints (and none for static joints)', async () => {
+    const boxes = [
+      { id: 'torso-id', name: 'torso', min: [-1, -1, -1] as [number, number, number], max: [3, 1, 1] as [number, number, number], parentId: null, pivot: null, loop: { kind: 'rotate', axis: 'y', direction: 1, speed: 1, amount: 4 } as const },
+      { id: 'arm-id', name: 'arm', min: [2, 0, 0] as [number, number, number], max: [2, 0, 0] as [number, number, number], parentId: 'torso-id', pivot: null, loop: { kind: 'slide', axis: 'x', direction: -1, speed: 2, amount: 3 } as const },
+    ]
+    const json = glbJson(
+      await exportModelToGlb(limbModel(), DEFAULT_PALETTE, 16, undefined, { includeTextureMaps: false, rigBoxes: boxes }),
+    )
+    const nodes = namedNodes(json)
+    const torso = indexOf(nodes, 'torso')
+    const clips = json.animations ?? []
+    expect(clips).toHaveLength(2)
+    // Rotate drives the joint quaternion (linear full-turn loop)…
+    const spin = clips.find((c) => c.name === 'anim_torso')
+    expect(spin).toBeDefined()
+    expect(spin!.channels?.[0].target?.node).toBe(torso)
+    expect(spin!.channels?.[0].target?.path).toBe('rotation')
+    expect(spin!.samplers?.[0].interpolation).toBe('LINEAR')
+    // …slide drives position with a CUBICSPLINE sine around the rest pose.
+    const arm = indexOf(nodes, 'arm')
+    const shuttle = clips.find((c) => c.name === 'anim_arm')
+    expect(shuttle).toBeDefined()
+    expect(shuttle!.channels?.[0].target?.node).toBe(arm)
+    expect(shuttle!.channels?.[0].target?.path).toBe('translation')
+    expect(shuttle!.samplers?.[0].interpolation).toBe('CUBICSPLINE')
+    // Static rigs export no clips at all.
+    const still = glbJson(
+      await exportModelToGlb(limbModel(), DEFAULT_PALETTE, 16, undefined, { includeTextureMaps: false, rigBoxes }),
+    )
+    expect(still.animations ?? []).toEqual([])
   })
 
   it('keeps cross-rig interfaces with default culling (PBR)', async () => {

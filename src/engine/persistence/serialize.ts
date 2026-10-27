@@ -2,6 +2,7 @@ import { decodeKey, effectiveExtent, emptyModel, encodeKey, recomputeBounds, wit
 import type { CellKey, GridExtent, VoxelModel } from '@/engine/grid/types'
 import type { Marker, SerializedMarkerPosition } from '@/engine/markers/types'
 import type { RigBox } from '@/engine/rigging/types'
+import { sanitizeRigLoop } from '@/engine/rigging/types'
 import { MARKER_COLORS } from '@/engine/markers/types'
 import { DEFAULT_PALETTE } from '@/engine/palette/defaultPalette'
 import type { PaletteState } from '@/engine/palette/types'
@@ -121,6 +122,7 @@ function serializeRigBoxes(rigBoxes: RigBox[]): SerializedRigBox[] {
     max: [b.max[0], b.max[1], b.max[2]],
     parentId: b.parentId,
     ...(b.pivot ? { pivot: [b.pivot[0], b.pivot[1], b.pivot[2]] as [number, number, number] } : {}),
+    ...(b.loop ? { loop: { ...b.loop } } : {}),
   }))
 }
 
@@ -168,7 +170,9 @@ function deserializeRigBoxes(entries: SerializedRigBox[] | undefined, gridExtent
       const half = effectiveExtent(gridExtent) / 2
       if (p.every((n) => n >= -half && n <= half)) pivot = [p[0], p[1], p[2]]
     }
-    out.push({ id: e.id, name: e.name.slice(0, 64) || 'rig', min, max, parentId: null, pivot })
+    // Loop motion (v14): malformed entries fall back to no loop (static joint).
+    const loop = sanitizeRigLoop(e.loop)
+    out.push({ id: e.id, name: e.name.slice(0, 64) || 'rig', min, max, parentId: null, pivot, loop })
     rawParents.set(e.id, typeof e.parentId === 'string' ? e.parentId : null)
   }
   // Resolve parents second: keep the link only when the parent survived, isn't self, and the

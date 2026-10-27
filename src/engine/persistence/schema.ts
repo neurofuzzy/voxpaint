@@ -1,11 +1,12 @@
 import type { AnimationType, AnimationSpeed } from '@/engine/animation/types'
+import type { RigLoop } from '@/engine/rigging/types'
 import type { Axis, BBox, ChamferClassification, GridExtent, Orientation, VoxelScaleY } from '@/engine/grid/types'
 import type { SerializedMarkerPosition } from '@/engine/markers/types'
 import type { PaletteSlotRef, PaletteState } from '@/engine/palette/types'
 import type { BoxFace } from '@/engine/texture/types'
 import type { GltfExportAnchor } from '@/engine/export/gltfExport'
 
-export const CURRENT_SCHEMA_VERSION = 13 as const
+export const CURRENT_SCHEMA_VERSION = 14 as const
 
 export type ViewSettings = {
   ambientOcclusion: boolean
@@ -111,6 +112,8 @@ export type SerializedRigBox = {
   parentId?: string | null
   /** Absent on pre-pivot (v12) files — loads as the box center. */
   pivot?: [number, number, number] | null
+  /** Absent on pre-loop (v13) files — loads with no loop. */
+  loop?: RigLoop | null
 }
 
 export type VoxPaintProjectFileV1 = {
@@ -170,7 +173,10 @@ export type VoxPaintProjectFileV2 = {
  * files load with no rig boxes.
  *
  * v12 → v13: rig boxes gain an optional `pivot` rotation-center override. Older files load
- * with every pivot unset (box center), matching their pre-pivot behavior. */
+ * with every pivot unset (box center), matching their pre-pivot behavior.
+ *
+ * v13 → v14: rig boxes gain an optional `loop` procedural motion. Older files load
+ * with no loop (static joints), matching their pre-loop behavior. */
 export type VoxPaintProjectFile = {
   schemaVersion: typeof CURRENT_SCHEMA_VERSION
   meta: ProjectMeta

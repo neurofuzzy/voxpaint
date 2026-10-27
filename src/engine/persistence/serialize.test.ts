@@ -278,14 +278,16 @@ describe('serialize rig boxes', () => {
   it('round-trips the outline hierarchy through serialize → deserialize', () => {
     const texture = emptyTextureModel(meta.gridExtent)
     const rigBoxes = [
-      { id: 'a', name: 'torso', min: [0, 0, 0] as [number, number, number], max: [3, 3, 3] as [number, number, number], parentId: null, pivot: null },
+      { id: 'a', name: 'torso', min: [0, 0, 0] as [number, number, number], max: [3, 3, 3] as [number, number, number], parentId: null, pivot: null, loop: null },
       // Half-integer pivots (cell-boundary joint faces) must survive the trip, not just ints.
-      { id: 'b', name: 'arm', min: [1, 0, 1] as [number, number, number], max: [2, 3, 2] as [number, number, number], parentId: 'a', pivot: [0.5, 1, 1] as [number, number, number] },
+      { id: 'b', name: 'arm', min: [1, 0, 1] as [number, number, number], max: [2, 3, 2] as [number, number, number], parentId: 'a', pivot: [0.5, 1, 1] as [number, number, number], loop: { kind: 'slide', axis: 'x', direction: -1, speed: 2, amount: 5 } as const },
     ]
     const file = serializeProject(emptyModel(), DEFAULT_PALETTE, meta, texture, undefined, undefined, undefined, undefined, undefined, rigBoxes)
     expect(file.rigBoxes).toHaveLength(2)
     expect(file.rigBoxes?.[0]).not.toHaveProperty('pivot')
+    expect(file.rigBoxes?.[0]).not.toHaveProperty('loop')
     expect(file.rigBoxes?.[1].pivot).toEqual([0.5, 1, 1])
+    expect(file.rigBoxes?.[1].loop).toEqual({ kind: 'slide', axis: 'x', direction: -1, speed: 2, amount: 5 })
     const restored = deserializeProject(file)
     expect(restored.rigBoxes).toEqual(rigBoxes)
   })
@@ -304,6 +306,22 @@ describe('serialize rig boxes', () => {
     expect(restored.find((b) => b.id === 'a')?.pivot).toBeNull()
     expect(restored.find((b) => b.id === 'b')?.pivot).toBeNull()
     expect(restored.find((b) => b.id === 'c')?.pivot).toBeNull()
+  })
+
+  it('loads v13 files with loops unset and drops malformed loops', () => {
+    const texture = emptyTextureModel(meta.gridExtent)
+    const v13 = {
+      ...serializeProject(emptyModel(), DEFAULT_PALETTE, meta, texture),
+      rigBoxes: [
+        { id: 'a', name: 'a', min: [0, 0, 0] as [number, number, number], max: [1, 1, 1] as [number, number, number], parentId: null },
+        { id: 'b', name: 'b', min: [2, 2, 2] as [number, number, number], max: [3, 3, 3] as [number, number, number], parentId: null, loop: { kind: 'spin', axis: 'y', direction: 1, speed: 1, amount: 4 } as never },
+        { id: 'c', name: 'c', min: [4, 4, 4] as [number, number, number], max: [5, 5, 5] as [number, number, number], parentId: null, loop: { kind: 'rotate', axis: 'y', direction: 1, speed: 3, amount: 4 } as const },
+      ],
+    }
+    const restored = deserializeProject(v13).rigBoxes
+    expect(restored.find((b) => b.id === 'a')?.loop ?? null).toBeNull()
+    expect(restored.find((b) => b.id === 'b')?.loop ?? null).toBeNull()
+    expect(restored.find((b) => b.id === 'c')?.loop).toEqual({ kind: 'rotate', axis: 'y', direction: 1, speed: 3, amount: 4 })
   })
 
   it('collapses stale duplicate bounds on load, reparenting their children', () => {

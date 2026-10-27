@@ -1,6 +1,7 @@
 import { useMemo } from 'react'
 import * as THREE from 'three'
 import { rigPivotOf } from '@/engine/rigging/types'
+import { isLoopActive } from '@/engine/rigging/rigLoop'
 import { gizmoRadiusForBox, parentChainMatrix } from '@/engine/rigging/pose'
 import type { Axis } from '@/engine/grid/types'
 import { useAppStore } from '@/store/useAppStore'
@@ -46,7 +47,9 @@ export function PoseGizmo() {
     return { position, quaternion, radius: gizmoRadiusForBox(box) }
   }, [box, rigBoxes, poseRotations])
 
-  if (mode !== 'animate' || activeTool !== 'pose' || !box || !transform) return null
+  // Looped joints are driven by their cycle, not the gizmo — posing one is a no-op,
+  // so the rings hide (the inspector explains how to clear the loop to pose again).
+  if (mode !== 'animate' || activeTool !== 'pose' || !box || !transform || isLoopActive(box.loop)) return null
 
   return (
     <group position={transform.position} quaternion={transform.quaternion}>

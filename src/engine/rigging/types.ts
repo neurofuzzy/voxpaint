@@ -1,4 +1,4 @@
-import type { Coord, GridExtent } from '@/engine/grid/types'
+import type { Axis, Coord, GridExtent } from '@/engine/grid/types'
 import { effectiveExtent } from '@/engine/grid/GridStore'
 import type { ConstructionPlane } from '@/engine/plane/types'
 import { toDisplayGridlineU, toDisplayGridlineV } from '@/engine/plane/planeDisplay'
@@ -28,9 +28,41 @@ export type RigBox = {
   parentId: string | null
   /** Rotation-center grid point override, or null for the box center. */
   pivot: Coord | null
+  /** Looping procedural motion — absent/null for a static (pose-only) joint (pre-loop
+   * boxes and fixtures omit it; treat absent as no loop via `isLoopActive`). */
+  loop?: RigLoop | null
 }
 
-/** Serialized rig box (project file v12+; `pivot` added in v13). Coords are plain triples. */
+/** Looping procedural motion on a rig box (Animate mode): a turntable spin or an
+ * axial shuttle, both cycling forever. `axis` is the world axis the motion runs on,
+ * `direction` flips its sense (CW vs CCW, ± slide), `speed` is the 1x/2x/3x cycle-rate
+ * multiplier shared with slice loops, and `amount` is the slide amplitude in voxels
+ * (unused by rotate). Null on the box = no loop. */
+export type RigLoopKind = 'rotate' | 'slide'
+export type RigLoop = {
+  kind: RigLoopKind
+  axis: Axis
+  direction: 1 | -1
+  speed: import('@/engine/animation/types').AnimationSpeed
+  /** Slide amplitude in voxels (unused by rotate). */
+  amount: number
+}
+
+/** Sanitizes a deserialized loop (hand-edited files): unknown shapes fall back to null. */
+export function sanitizeRigLoop(raw: unknown): RigLoop | null {
+  if (!raw || typeof raw !== 'object') return null
+  const l = raw as Partial<RigLoop>
+  if (l.kind !== 'rotate' && l.kind !== 'slide') return null
+  if (l.axis !== 'x' && l.axis !== 'y' && l.axis !== 'z') return null
+  if (l.direction !== 1 && l.direction !== -1) return null
+  if (l.speed !== 1 && l.speed !== 2 && l.speed !== 3) return null
+  if (typeof l.amount !== 'number' || !Number.isFinite(l.amount)) return null
+  const amount = Math.max(1, Math.min(8, l.amount))
+  return { kind: l.kind, axis: l.axis, direction: l.direction, speed: l.speed, amount }
+}
+
+/** Serialized rig box (project file v12+; `pivot` added in v13; `loop` added in v14).
+ * Coords are plain triples. */
 export type SerializedRigBox = {
   id: string
   name: string
@@ -40,6 +72,8 @@ export type SerializedRigBox = {
   parentId?: string | null
   /** Absent on pre-pivot (v12) files — loads as the box center. */
   pivot?: [number, number, number] | null
+  /** Absent on pre-loop (v13) files — loads with no loop. */
+  loop?: RigLoop | null
 }
 
 /** GLTF-safe mesh name: letters, digits, `_`, `-` ( Blender/Unity-friendly). */

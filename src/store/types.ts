@@ -1,6 +1,6 @@
 import type { Axis, CellKey, ChamferCell, Coord, GridExtent, Orientation, Rotation, VoxelModel, VoxelScaleY } from '@/engine/grid/types'
 import type { Marker } from '@/engine/markers/types'
-import type { RigBox } from '@/engine/rigging/types'
+import type { RigBox, RigLoop } from '@/engine/rigging/types'
 import type { JointEuler } from '@/engine/rigging/pose'
 import type { GltfExportAnchor } from '@/engine/export/gltfExport'
 import type { EmissiveAnimMode, PaletteSlotRef, PaletteState } from '@/engine/palette/types'
@@ -740,6 +740,10 @@ export type RiggingSlice = {
   /** Sets a box's rotation-center grid point (null = box center). Integers are cell centers,
    * half-integers are cell boundaries. No-op on unknown ids. Self-brackets undo. */
   setRigPivot: (id: string, pivot: Coord | null) => void
+  /** Sets a box's looping motion (null = no loop). Mutually exclusive with posing: setting
+   * a loop clears that joint's pose preview, and `setJointRotation` refuses looped boxes.
+   * No-op on unknown ids. Self-brackets undo. */
+  setRigLoop: (id: string, loop: RigLoop | null) => void
   /**
    * Pivot setter for whichever box is selected (the Pivot tool's target in 2D and 3D):
    * toasts a hint and returns false when nothing is selected, otherwise sets the pivot

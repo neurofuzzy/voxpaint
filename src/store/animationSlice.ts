@@ -33,7 +33,7 @@ function cloneSnapshot(state: { animSettings: Map<SliceKey, SliceAnimSettings>; 
     animSettings: cloneAnimSettings(state.animSettings),
     sliceMasks: cloneSliceMasks(state.sliceMasks),
     slicePivots: cloneSlicePivots(state.slicePivots),
-    rigBoxes: state.rigBoxes.map((b) => ({ ...b, min: [...b.min] as Coord, max: [...b.max] as Coord, pivot: b.pivot ? ([...b.pivot] as Coord) : null })),
+    rigBoxes: state.rigBoxes.map((b) => ({ ...b, min: [...b.min] as Coord, max: [...b.max] as Coord, pivot: b.pivot ? ([...b.pivot] as Coord) : null, loop: b.loop ? { ...b.loop } : null })),
   }
 }
 
@@ -161,6 +161,10 @@ function rigBoxesEqual(a: RigBox[], b: RigBox[]): boolean {
     const yp = y.pivot ?? null
     if (!xp !== !yp) return false
     if (xp && yp && (xp[0] !== yp[0] || xp[1] !== yp[1] || xp[2] !== yp[2])) return false
+    const xl = x.loop ?? null
+    const yl = y.loop ?? null
+    if (!xl !== !yl) return false
+    if (xl && yl && (xl.kind !== yl.kind || xl.axis !== yl.axis || xl.direction !== yl.direction || xl.speed !== yl.speed || xl.amount !== yl.amount)) return false
   }
   return true
 }
