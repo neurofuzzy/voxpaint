@@ -3,20 +3,24 @@ import * as THREE from 'three'
 import { useAppStore } from '@/store/useAppStore'
 
 const RIG_AMBER = 0xf59e0b
-const RIG_ACTIVE = 0xc084fc
+const RIG_ACTIVE = 0xffffff
 const FILL_OPACITY = 0.06
 const FRAME_OPACITY = 0.55
 const PAD = 0.03
 
 /**
- * Renders every named rig bounding box as an amber wire box in the 3D view (Animate mode only):
- * the export-time mesh-naming overlay. Selected box highlights violet; raycast disabled so
- * boxes never intercept picking. Lives under Viewport3D's Y-scale group (grid coordinates).
+ * Renders every named rig bounding box as an amber wire box in the 3D view (Animate mode only).
+ * The selected box draws white outlines rendered on top of the model so list selection is
+ * unmistakable. Display only — Animate mode never edits in 3D, so raycast stays disabled and
+ * taps fall through to plane navigation. Lives under Viewport3D's Y-scale group (grid
+ * coordinates).
  */
 export function RigBoxHighlight() {
   const rigBoxes = useAppStore((s) => s.rigBoxes)
   const selectedRigBoxId = useAppStore((s) => s.selectedRigBoxId)
   const isAnimate = useAppStore((s) => s.mode === 'animate')
+  // Isolate mode shows only the selected box — every other box's chrome hides with its voxels.
+  const isolating = useAppStore((s) => s.isolateRig)
 
   const shapes = useMemo(() => {
     return rigBoxes.map((box) => {
@@ -47,10 +51,12 @@ export function RigBoxHighlight() {
   )
 
   if (!isAnimate || shapes.length === 0) return null
+  const shown = isolating ? shapes.filter((s) => s.id === selectedRigBoxId) : shapes
+  if (shown.length === 0) return null
 
   return (
     <group>
-      {shapes.map((s) => {
+      {shown.map((s) => {
         const active = s.id === selectedRigBoxId
         const color = active ? RIG_ACTIVE : RIG_AMBER
         return (
@@ -66,13 +72,14 @@ export function RigBoxHighlight() {
                 side={THREE.DoubleSide}
               />
             </mesh>
-            <lineSegments geometry={s.edges} raycast={() => null}>
+            <lineSegments geometry={s.edges} raycast={() => null} renderOrder={active ? 10 : 0}>
               <lineBasicMaterial
                 color={color}
                 toneMapped={false}
                 transparent
                 opacity={active ? 1 : FRAME_OPACITY}
                 depthWrite={false}
+                depthTest={active ? false : true}
               />
             </lineSegments>
           </group>

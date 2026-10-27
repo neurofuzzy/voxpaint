@@ -6,6 +6,7 @@ import { downloadGlb, exportModelToGlb } from '@/engine/export/gltfExport'
 import { isIPad } from '@/engine/input/isIPad'
 import { TEXEL_SCALE } from '@/engine/texture/types'
 import { normalizeProjectFilename } from '@/engine/persistence/projectFile'
+import { hasActiveAnimations } from '@/engine/animation/animationLayers'
 import { useAppStore } from '@/store/useAppStore'
 import { showToast } from '@/components/ui/toastBus'
 
@@ -13,6 +14,19 @@ const ANCHOR_LABELS: Record<GltfExportAnchor, string> = {
   center: 'Center',
   bottom: 'Bottom',
   back: 'Back',
+}
+
+/** Heads-up when both systems are in play: rigged voxels export as poseable joints under the
+ * Rig node and are excluded from slice-loop animation. */
+function RigWinsNote() {
+  const rigBoxes = useAppStore((s) => s.rigBoxes)
+  const animSettings = useAppStore((s) => s.animSettings)
+  if (rigBoxes.length === 0 || !hasActiveAnimations(animSettings)) return null
+  return (
+    <p className="mt-2 rounded-md border border-violet-500/30 bg-violet-500/10 px-3 py-1.5 text-xs text-violet-200">
+      Rigged voxels export as poseable joints and skip slice-loop animation.
+    </p>
+  )
 }
 
 export function ExportGltfDialog({ open, onOpenChange }: { open: boolean; onOpenChange: (v: boolean) => void }) {
@@ -111,6 +125,7 @@ export function ExportGltfDialog({ open, onOpenChange }: { open: boolean; onOpen
             Exports optimized meshes — one per material class (matte, emissive, metal, glass) — with
             baked ambient occlusion and texture maps.
           </Dialog.Description>
+          <RigWinsNote />
 
           <div className="mt-5 flex flex-col gap-4">
             <div className="flex items-center gap-2.5">

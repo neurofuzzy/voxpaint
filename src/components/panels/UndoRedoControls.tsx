@@ -16,8 +16,9 @@ export function UndoRedoControls() {
   const isAnimate = mode === 'animate'
   const past = isTexture ? texturePast : isAnimate ? animPast : modelPast
   const future = isTexture ? textureFuture : isAnimate ? animFuture : modelFuture
-  // Animate undo/redo only rewinds animSettings/sliceMasks — it can't revert a voxel-model float,
-  // so a pending modelFloat must never factor into Animate mode's Undo enablement.
+  // Animate undo/redo only rewinds rig edits (and legacy slice-loop settings) — it can't
+  // revert a voxel-model float, so a pending modelFloat must never factor into Animate mode's
+  // Undo enablement.
   const floatContent = isTexture ? textureFloat : isAnimate ? null : modelFloat
   const undo = useAppStore((s) => (isTexture ? s.textureUndo : isAnimate ? s.animUndo : s.undo))
   const redo = useAppStore((s) => (isTexture ? s.textureRedo : isAnimate ? s.animRedo : s.redo))

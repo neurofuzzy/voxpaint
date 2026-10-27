@@ -1,4 +1,4 @@
-import { decodeKey, emptyModel, encodeKey, recomputeBounds, withinWorkingBounds } from '@/engine/grid/GridStore'
+import { decodeKey, effectiveExtent, emptyModel, encodeKey, recomputeBounds, withinWorkingBounds } from '@/engine/grid/GridStore'
 import type { CellKey, GridExtent, VoxelModel } from '@/engine/grid/types'
 import type { Marker, SerializedMarkerPosition } from '@/engine/markers/types'
 import type { RigBox } from '@/engine/rigging/types'
@@ -120,6 +120,7 @@ function serializeRigBoxes(rigBoxes: RigBox[]): SerializedRigBox[] {
     min: [b.min[0], b.min[1], b.min[2]],
     max: [b.max[0], b.max[1], b.max[2]],
     parentId: b.parentId,
+    ...(b.pivot ? { pivot: [b.pivot[0], b.pivot[1], b.pivot[2]] as [number, number, number] } : {}),
   }))
 }
 
@@ -128,6 +129,11 @@ function deserializeRigBoxes(entries: SerializedRigBox[] | undefined, gridExtent
   const out: RigBox[] = []
   const seen = new Set<string>()
   const rawParents = new Map<string, string | null>()
+  // Stale exact duplicates (same clamped bounds — creatable before footprint hit-testing
+  // selected first, or by hand-editing): keep the first, fold the rest into it. Export
+  // ties break by order anyway, so dropping twins is behavior-preserving.
+  const seenBounds = new Map<string, string>()
+  const dupeOf = new Map<string, string>()
   for (const e of entries) {
     if (typeof e?.id !== 'string' || typeof e?.name !== 'string') continue
     if (seen.has(e.id)) continue
@@ -146,14 +152,33 @@ function deserializeRigBoxes(entries: SerializedRigBox[] | undefined, gridExtent
       Math.min(hi[0], gridExtent / 2 - 1), Math.min(hi[1], gridExtent / 2 - 1), Math.min(hi[2], gridExtent / 2 - 1),
     ]
     if (min[0] > max[0] || min[1] > max[1] || min[2] > max[2]) continue
-    out.push({ id: e.id, name: e.name.slice(0, 64) || 'rig', min, max, parentId: null })
+    const boundsKey = `${min[0]},${min[1]},${min[2]}|${max[0]},${max[1]},${max[2]}`
+    const survivor = seenBounds.get(boundsKey)
+    if (survivor !== undefined) {
+      dupeOf.set(e.id, survivor)
+      continue
+    }
+    seenBounds.set(boundsKey, e.id)
+    // Pivot override: a grid point inside the working cube's gridlines (integers = cell
+    // centers, half-integers = cell-boundary joint faces). It may sit outside the box itself.
+    // Malformed entries fall back to the box center.
+    let pivot: [number, number, number] | null = null
+    const p = e.pivot
+    if (Array.isArray(p) && p.length === 3 && p.every((n) => Number.isFinite(n))) {
+      const half = effectiveExtent(gridExtent) / 2
+      if (p.every((n) => n >= -half && n <= half)) pivot = [p[0], p[1], p[2]]
+    }
+    out.push({ id: e.id, name: e.name.slice(0, 64) || 'rig', min, max, parentId: null, pivot })
     rawParents.set(e.id, typeof e.parentId === 'string' ? e.parentId : null)
   }
   // Resolve parents second: keep the link only when the parent survived, isn't self, and the
-  // chain terminates without a cycle (hand-edited files) — otherwise root the box.
+  // chain terminates without a cycle (hand-edited files) — otherwise root the box. Parent ids
+  // pointing at a collapsed duplicate follow it to the survivor (identical bounds, so the
+  // nesting means exactly the same thing).
   const byId = new Map(out.map((b) => [b.id, b]))
   for (const box of out) {
-    const parentId = rawParents.get(box.id)
+    let parentId = rawParents.get(box.id) ?? null
+    if (parentId && dupeOf.has(parentId)) parentId = dupeOf.get(parentId)!
     if (!parentId || parentId === box.id || !byId.has(parentId)) continue
     const seenChain = new Set<string>([box.id])
     let current: string | null = parentId

@@ -12,6 +12,7 @@ import { buildPreviewMaterial } from '@/engine/instancing/previewMaterial'
 import { buildEmissiveAnimIndex } from '@/engine/palette/emissiveAnimation'
 import { darkestBaseColor } from '@/engine/palette/palette'
 import { assignVoxelsToNodes, resolveAnimCenter } from './animationLayers'
+import type { RigBox } from '@/engine/rigging/types'
 import type { SliceAnimSettings, SliceKey } from './types'
 
 export type AnimatedSliceMeshes = {
@@ -38,9 +39,10 @@ export function buildAnimatedSliceMeshes(
   glassRoughnessLevel: number,
   slicePivots: Map<SliceKey, CellKey>,
   texelScale: number = TEXEL_SCALE,
+  rigBoxes?: RigBox[],
 ): AnimatedSliceMeshes | null {
   if (animSettings.size === 0) return null
-  const { nodes } = assignVoxelsToNodes(model, animSettings, sliceMasks)
+  const { nodes } = assignVoxelsToNodes(model, animSettings, sliceMasks, rigBoxes)
 
   const nodeAssignment = new Map<CellKey, SliceKey>()
   for (const [sliceKey, entry] of nodes) {

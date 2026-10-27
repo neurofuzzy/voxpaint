@@ -28,6 +28,9 @@ export const createViewSlice: Slice = (set, get) => ({
   chamferHoverValid: null,
   hoveredFace: null,
   wireframe: false,
+  // Animate-mode model visibility (full/ghost/hidden), remembered across refreshes like the
+  // layout prefs. Pure view chrome — never dirties the project.
+  animateModelView: loadUiPrefs().animateModelView ?? 'full',
   textureFaceMap: false,
   optimizedMesh: false,
   ambientOcclusion: AO_DEFAULT_ENABLED,
@@ -69,6 +72,12 @@ export const createViewSlice: Slice = (set, get) => ({
     })
   },
   setWireframe: (v) => set((state) => { state.wireframe = v }),
+  setAnimateModelView: (v) => {
+    saveUiPrefs({ ...loadUiPrefs(), animateModelView: v })
+    set((state) => { state.animateModelView = v })
+  },
+  isolateRig: false,
+  setIsolateRig: (v) => set((state) => { state.isolateRig = v }),
   setTextureFaceMap: (v) => set((state) => { state.textureFaceMap = v }),
   setOptimizedMesh: (v) => set((state) => { state.optimizedMesh = v }),
   setAmbientOcclusion: (v) => set((state) => { state.ambientOcclusion = v; state.dirty = true }),

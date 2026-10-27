@@ -5,8 +5,9 @@ import { createMarker } from '@/engine/markers/markers'
 import type { Marker } from '@/engine/markers/types'
 import { displayViewCenter, toDisplayU, toDisplayV } from '@/engine/plane/planeDisplay'
 import { toNormalizedPointerEvent } from '@/engine/input/PointerInputController'
-import { animateToolMap, toolMap } from '@/engine/tools'
+import { animateToolMap, resolveGestureTool, toolMap } from '@/engine/tools'
 import type { ToolContext, ToolDragState } from '@/engine/tools/types'
+import type { ToolId } from '@/store/types'
 import type { ConstructionPlane } from '@/engine/plane/types'
 import { useAppStore } from '@/store/useAppStore'
 import type { CanvasPan, CanvasSize } from './cameraTransform'
@@ -26,6 +27,21 @@ const PAN_DRAG_THRESHOLD_PX = 3
  * applying them again here converts the *displayed* u/v (what's visually under the cursor,
  * post-mirroring) back to the logical u/v the rest of the app (tool handlers, gridCoordFromPixel)
  * expects. */
+/** Screen pixel -> continuous display-space (u,v), pre-floor. `pixelToCell` floors this into
+ * the logical cell; pivot placement keeps the fraction to snap onto the 2x lattice. */
+function pixelToDisplayFloat(
+  canvas: HTMLCanvasElement,
+  clientX: number,
+  clientY: number,
+  size: CanvasSize,
+  pan: CanvasPan,
+  zoom: number,
+  vScale: number,
+): [number, number] {
+  const rect = canvas.getBoundingClientRect()
+  return screenToWorld(clientX - rect.left, clientY - rect.top, size, pan, zoom, vScale)
+}
+
 function pixelToCell(
   canvas: HTMLCanvasElement,
   clientX: number,
@@ -36,8 +52,7 @@ function pixelToCell(
   plane: ConstructionPlane,
   vScale: number,
 ): [number, number] {
-  const rect = canvas.getBoundingClientRect()
-  const [wu, wv] = screenToWorld(clientX - rect.left, clientY - rect.top, size, pan, zoom, vScale)
+  const [wu, wv] = pixelToDisplayFloat(canvas, clientX, clientY, size, pan, zoom, vScale)
   return [toDisplayU(plane, Math.floor(wu)), toDisplayV(plane, Math.floor(wv))]
 }
 
@@ -65,6 +80,11 @@ export function usePixelCanvasTools(canvasRef: React.RefObject<HTMLCanvasElement
   const activeTouchesRef = useRef<Map<number, { clientX: number; clientY: number }>>(new Map())
   const pinchRef = useRef<{ startDist: number; anchorU: number; anchorV: number; startZoom: number } | null>(null)
   const touchHoldRef = useRef<{ pointerId: number; timer: ReturnType<typeof setTimeout> } | null>(null)
+  // Gesture-tool affinity: which tool received each active pointer's onDown. Move/up dispatch
+  // follows the down tool (not the toolbar's current tool), so a spring-loaded tool switch
+  // mid-gesture — Alt released before the mouse button, or pressed after it — can't route a
+  // gesture's tail to the wrong tool and orphan an open undo stroke or drag state.
+  const gestureToolRef = useRef<Map<number, ToolId>>(new Map())
 
   const [size, setSize] = useState<CanvasSize>({ width: 0, height: 0 })
   const [pan, setPan] = useState<CanvasPan>({ x: 0, y: 0 })
@@ -188,6 +208,8 @@ export function usePixelCanvasTools(canvasRef: React.RefObject<HTMLCanvasElement
   const activeTool = useAppStore((s) => s.activeTool)
   const markers = useAppStore((s) => s.markers)
   const selectedMarkerId = useAppStore((s) => s.selectedMarkerId)
+  const rigBoxes = useAppStore((s) => s.rigBoxes)
+  const selectedRigBoxId = useAppStore((s) => s.selectedRigBoxId)
   vScaleRef.current = vScaleForPlane(plane.axis, voxelScaleY)
 
   const activeToolRef = useRef(activeTool)
@@ -261,9 +283,8 @@ export function usePixelCanvasTools(canvasRef: React.RefObject<HTMLCanvasElement
     rebaseRampCell: store.rebaseRampCell,
     floodFill: store.floodFill,
     floodFill3D: store.floodFill3D,
-    paintMaskCell: store.paintMaskCell,
-    eraseMaskCell: store.eraseMaskCell,
     setPivotForCurrentSlice: store.setPivotForCurrentSlice,
+    setRigPivot: store.setRigPivot,
     clearPivotForCurrentSlice: store.clearPivotForCurrentSlice,
     animBeginStroke: store.animBeginStroke,
     animCommitStroke: store.animCommitStroke,
@@ -276,6 +297,10 @@ export function usePixelCanvasTools(canvasRef: React.RefObject<HTMLCanvasElement
     setSelection: store.setSelection,
     applyWandAt: store.applyWandAt,
     applyRigBoxAt: store.applyRigBoxAt,
+    rigBoxes,
+    selectedRigBoxId,
+    selectRigBox: store.selectRigBox,
+    translateRigBox: store.translateRigBox,
     liftSelectionToFloat: store.liftSelectionToFloat,
     moveFloatTo: store.moveFloatTo,
     transformFloat: store.transformFloat,
@@ -296,6 +321,7 @@ export function usePixelCanvasTools(canvasRef: React.RefObject<HTMLCanvasElement
   // own onUp — as if the finger had simply been lifted — using its last known touch position. Every
   // tool's onUp already no-ops when no matching drag is in progress (each checks `drag.current.kind`
   // itself), so this is safe to call defensively whenever a second finger interrupts a solo touch.
+  // Dispatches to the gesture's down tool (affinity), not the toolbar's current tool.
   const finishTouchDrag = useCallback(
     (pointerId: number) => {
       const canvas = canvasRef.current
@@ -308,7 +334,9 @@ export function usePixelCanvasTools(canvasRef: React.RefObject<HTMLCanvasElement
       )
       const store = useAppStore.getState()
       const map = store.mode === 'animate' ? animateToolMap : toolMap
-      map[activeToolRef.current]?.onUp?.(ctxRef.current, normalized)
+      const downTool = gestureToolRef.current.get(pointerId) ?? activeToolRef.current
+      gestureToolRef.current.delete(pointerId)
+      map[downTool]?.onUp?.(ctxRef.current, normalized)
       canvas.releasePointerCapture(pointerId)
     },
     [canvasRef],
@@ -357,14 +385,17 @@ export function usePixelCanvasTools(canvasRef: React.RefObject<HTMLCanvasElement
         const cell = pixelToCell(canvas, e.clientX, e.clientY, size, pan, zoom, ctxRef.current.plane, vScaleRef.current)
         hoverCellRef.current = cell
         setHoverCell(gridCoordFromPixel(ctxRef.current.plane, cell[0], cell[1]), null)
-        const normalized = toNormalizedPointerEvent(e, cell)
+        const [hcu, hcv] = pixelToDisplayFloat(canvas, e.clientX, e.clientY, size, pan, zoom, vScaleRef.current)
+        const normalized = { ...toNormalizedPointerEvent(e, cell), cu: hcu, cv: hcv }
         touchHoldRef.current = {
           pointerId: e.pointerId,
           timer: setTimeout(() => {
             touchHoldRef.current = null
             const store = useAppStore.getState()
             const map = store.mode === 'animate' ? animateToolMap : toolMap
-            map[activeToolRef.current]?.onDown?.(ctxRef.current, normalized)
+            const downTool = resolveGestureTool(store.mode, activeToolRef.current, normalized.altKey)
+            gestureToolRef.current.set(e.pointerId, downTool)
+            map[downTool]?.onDown?.(ctxRef.current, normalized)
           }, TOUCH_GESTURE_DELAY_MS),
         }
         return
@@ -376,7 +407,13 @@ export function usePixelCanvasTools(canvasRef: React.RefObject<HTMLCanvasElement
       canvas.setPointerCapture(e.pointerId)
       const store = useAppStore.getState()
       const map = store.mode === 'animate' ? animateToolMap : toolMap
-      map[activeToolRef.current]?.onDown?.(ctxRef.current, toNormalizedPointerEvent(e, cell))
+      // Spring-loaded pivot resolves from the pointer event's own Alt — the Alt-keydown toolbar
+      // switch may never have fired (e.g. focus in the rig-name field) — and the gesture's
+      // move/up follow this same tool via gestureToolRef below.
+      const downTool = resolveGestureTool(store.mode, activeToolRef.current, e.altKey)
+      gestureToolRef.current.set(e.pointerId, downTool)
+      const [dcu, dcv] = pixelToDisplayFloat(canvas, e.clientX, e.clientY, size, pan, zoom, vScaleRef.current)
+      map[downTool]?.onDown?.(ctxRef.current, { ...toNormalizedPointerEvent(e, cell), cu: dcu, cv: dcv })
     },
     [canvasRef, size, pan, zoom, setHoverCell, finishTouchDrag],
   )
@@ -438,7 +475,12 @@ export function usePixelCanvasTools(canvasRef: React.RefObject<HTMLCanvasElement
       }
       const store = useAppStore.getState()
       const map = store.mode === 'animate' ? animateToolMap : toolMap
-      map[activeToolRef.current]?.onMove?.(ctxRef.current, toNormalizedPointerEvent(e, cell))
+      // Move follows the gesture's down tool (affinity) while buttons are held; a bare hover
+      // (no buttons) always uses the toolbar's current tool, and any entry found with no
+      // buttons held is stale (e.g. a swallowed pointerup) so it is dropped.
+      if (e.buttons === 0) gestureToolRef.current.delete(e.pointerId)
+      const moveTool = e.buttons === 0 ? activeToolRef.current : (gestureToolRef.current.get(e.pointerId) ?? activeToolRef.current)
+      map[moveTool]?.onMove?.(ctxRef.current, toNormalizedPointerEvent(e, cell))
     },
     [canvasRef, size, pan, zoom, setHoverCell, gridExtent],
   )
@@ -460,10 +502,12 @@ export function usePixelCanvasTools(canvasRef: React.RefObject<HTMLCanvasElement
         canvas.releasePointerCapture(e.pointerId)
         // A stationary right-click (no drag) erases the cell under the cursor — a quick-erase
         // shortcut on the paint/erase tools now that right-click-drag means "pan the camera."
-        // The pivot tool (Animate mode only) reuses this same gesture to clear its slice's pivot.
+        // The pivot tool reuses this same gesture to reset the selected rig box's pivot — but
+        // not while Alt is held (spring-loaded pivot + an unmoved right-drag pan would otherwise
+        // wipe the pivot you just placed).
         // The marker tool reuses it to delete the marker under the cursor.
         const store = useAppStore.getState()
-        const isAnimatePivot = store.mode === 'animate' && activeToolRef.current === 'pivot'
+        const isAnimatePivot = store.mode === 'animate' && activeToolRef.current === 'pivot' && !e.altKey
         if (!panDrag.hasMoved && isAnimatePivot) {
           ctxRef.current.clearPivotForCurrentSlice() // self-brackets its own undo stroke
         } else if (!panDrag.hasMoved && activeToolRef.current === 'marker') {
@@ -473,16 +517,10 @@ export function usePixelCanvasTools(canvasRef: React.RefObject<HTMLCanvasElement
         } else if (!panDrag.hasMoved && (activeToolRef.current === 'paint' || activeToolRef.current === 'erase')) {
           const cell = pixelToCell(canvas, e.clientX, e.clientY, size, pan, zoom, ctxRef.current.plane, vScaleRef.current)
           const c = ctxRef.current
-          if (store.mode === 'animate') {
-            c.animBeginStroke()
-            c.eraseMaskCell(gridCoordFromPixel(c.plane, cell[0], cell[1]))
-            c.animCommitStroke()
-          } else {
-            c.bakeFloatIfAny()
-            c.beginStroke()
-            c.eraseCell(gridCoordFromPixel(c.plane, cell[0], cell[1]))
-            c.commitStroke()
-          }
+          c.bakeFloatIfAny()
+          c.beginStroke()
+          c.eraseCell(gridCoordFromPixel(c.plane, cell[0], cell[1]))
+          c.commitStroke()
         }
         return
       }
@@ -498,11 +536,13 @@ export function usePixelCanvasTools(canvasRef: React.RefObject<HTMLCanvasElement
           touchHoldRef.current = null
           canvas.releasePointerCapture(e.pointerId)
           const cell = pixelToCell(canvas, e.clientX, e.clientY, size, pan, zoom, ctxRef.current.plane, vScaleRef.current)
-          const normalized = toNormalizedPointerEvent(e, cell)
+          const [tcu, tcv] = pixelToDisplayFloat(canvas, e.clientX, e.clientY, size, pan, zoom, vScaleRef.current)
+          const normalized = { ...toNormalizedPointerEvent(e, cell), cu: tcu, cv: tcv }
           const store = useAppStore.getState()
           const map = store.mode === 'animate' ? animateToolMap : toolMap
-          map[activeToolRef.current]?.onDown?.(ctxRef.current, normalized)
-          map[activeToolRef.current]?.onUp?.(ctxRef.current, normalized)
+          const downTool = resolveGestureTool(store.mode, activeToolRef.current, normalized.altKey)
+          map[downTool]?.onDown?.(ctxRef.current, normalized)
+          map[downTool]?.onUp?.(ctxRef.current, normalized)
           return
         }
 
@@ -518,7 +558,11 @@ export function usePixelCanvasTools(canvasRef: React.RefObject<HTMLCanvasElement
       const cell = pixelToCell(canvas, e.clientX, e.clientY, size, pan, zoom, ctxRef.current.plane, vScaleRef.current)
       const store = useAppStore.getState()
       const map = store.mode === 'animate' ? animateToolMap : toolMap
-      map[activeToolRef.current]?.onUp?.(ctxRef.current, toNormalizedPointerEvent(e, cell))
+      // Up follows the gesture's down tool (affinity) — releasing Alt before the mouse button
+      // (or pressing it after) must not reroute the tail of a pin/drag to the other tool.
+      const upTool = gestureToolRef.current.get(e.pointerId) ?? activeToolRef.current
+      gestureToolRef.current.delete(e.pointerId)
+      map[upTool]?.onUp?.(ctxRef.current, toNormalizedPointerEvent(e, cell))
       canvas.releasePointerCapture(e.pointerId)
     },
     [canvasRef, size, pan, zoom],

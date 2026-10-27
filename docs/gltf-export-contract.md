@@ -31,6 +31,7 @@ This is **not** a general glTF tutorial, and **not** an internal architecture do
 
 - Indexed triangle meshes (no point clouds, no line lists).
 - One mesh per `(materialClass, colorKey)` pair when untextured and unanimated; one mesh per `(materialClass, colorKey, animationSlice)` when animated.
+- One mesh per `(materialClass, colorKey, rigBox)` for voxels inside a rig box (rig-split, never welded across boxes) — rigged voxels never appear in slice meshes (see Rig joints below).
 - Interior faces between same-color voxels are already culled by the CSG union (watertight, non-overlapping).
 - Textured models: one mesh per `(materialClass, colorKey, animationSlice)` with box-mapped UVs.
 
@@ -113,6 +114,32 @@ Animated voxels are attached to child nodes (one per slice) positioned at the sl
 - No morph targets.
 - No channels targeting anything other than node TRS.
 
+### Rig joints — poseable skeleton, no clips
+
+When the project has rig boxes, the export includes a poseable joint tree (no animation clips —
+downstream engines supply their own poses):
+
+- A top-level **`Rig`** node under the root, containing one joint `Group` per rig box, nested to
+  mirror the outline (empty boxes still get joints, so the skeleton always matches the outline).
+- Each joint sits at its authored pivot (explicit override, else the box center), expressed in
+  scaled voxel units like slice pivots. Nested joints are **relative** to their parent
+  (`child.position = childPivot − parentPivot`); meshes hang under their joint recentered by
+  `−pivot`, so the rest pose renders exactly as modeled and rotating a joint orbits the part
+  around the authored center. Posing uses plain node TRS — no `skin`, no
+  `inverseBindMatrices`, no `JOINTS_0`/`WEIGHTS_0` attributes.
+- **Rig wins over slice loops:** a voxel inside a rig box is never assigned to a slice node,
+  even when that slice animates. Slice clips cover only unrigged voxels; joint meshes always
+  mount under the rig tree. (Files without rig boxes export exactly as before.)
+- **Seams:** faces between different rig boxes are never culled (PBR or textured path), so
+  touching parts stay separable when joints move apart. Faces *within* one rig box merge
+  normally — a joint's voxels move as one rigid part.
+- **Naming:** joint nodes (and their meshes, `{rigName}_{hex6}_{materialClass}`) use the
+  sanitized, de-duplicated rig name; the mesh-to-box prefix convention matches the old
+  naming-only export, so existing name-based pipelines keep working.
+- **Ambient occlusion:** rigged voxels neither cast into nor rely on the baked AO occupancy
+  grid (same rule as slice-animated voxels) — a joint rotated downstream would otherwise drag a
+  stale baked shadow with it.
+
 ---
 
 ## Emissive Animation via `KHR_animation_pointer`
@@ -146,7 +173,7 @@ Both channels sync to the same 1-second cycle (`EMISSIVE_ANIM_CYCLE_SECONDS = 1`
 - Multiple primitives per mesh (each material gets its own mesh object).
 - Cameras.
 - Punctual lights (`KHR_lights_punctual`).
-- Scene graphs with non-identity top-level transforms (the root node is used; child animation nodes are present only if animations exist).
+- Scene graphs with non-identity top-level transforms (the root node is used; child animation nodes are present only if animations exist; `Rig` joint nodes are present only if rig boxes exist).
 
 ---
 
@@ -158,6 +185,7 @@ This contract should be **revisited whenever**:
 - Extension support changes (new KHR extensions added, or old ones removed).
 - Emissive animation behavior changes (`EMISSIVE_ANIM_CYCLE_SECONDS`, interpolation modes, channel paths, off-color behavior).
 - Animation interpolation modes change in `src/engine/animation/animationGLTF.ts`.
+- Rig joint behavior changes (transform layout, rig-wins rule, seam handling in `meshOptimizer.ts` / `voxelMeshBuilder.ts`).
 - Marker export surface changes — see `marker-export-contract.md` (payload, naming, orientation).
 
 Mirror the upkeep expectation stated in `docs/ARCHITECTURE.md`'s opening section.

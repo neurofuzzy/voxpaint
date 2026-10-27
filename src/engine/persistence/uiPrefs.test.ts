@@ -62,4 +62,11 @@ describe('construction-plane prefs', () => {
     localStorage.setItem('voxpaint:ui-prefs:v1', JSON.stringify({ modelLayout: 'fullscreen' }))
     expect(loadUiPrefs().modelLayout).toBeUndefined()
   })
+
+  it('round-trips the animate model view and sanitizes bad values', () => {
+    saveUiPrefs({ dontShowSplash: false, animateModelView: 'ghost' })
+    expect(loadUiPrefs().animateModelView).toBe('ghost')
+    localStorage.setItem('voxpaint:ui-prefs:v1', JSON.stringify({ animateModelView: 'xray' }))
+    expect(loadUiPrefs().animateModelView).toBeUndefined()
+  })
 })

@@ -21,9 +21,8 @@ const defaultHooks: EditToolHooks = {
 }
 
 /**
- * `hooks` lets a caller redirect which undo stack a stroke lands on (e.g. the animation-mask tools
- * use the Animate-mode history instead of the voxel-model one) without duplicating the drag-state
- * machine — defaults to the voxel model's own beginStroke/commitStroke.
+ * `hooks` lets a caller redirect which undo stack a stroke lands on without duplicating the
+ * drag-state machine — defaults to the voxel model's own beginStroke/commitStroke.
  */
 export function makeEditTool(apply: (ctx: ToolContext, u: number, v: number) => void, hooks: EditToolHooks = defaultHooks): ToolHandler {
   return {

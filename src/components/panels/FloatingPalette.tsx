@@ -4,9 +4,9 @@ import { useAppStore } from '@/store/useAppStore'
 import { MARKER_COLORS } from '@/engine/markers/types'
 import type { PaletteSlotKind } from '@/engine/palette/types'
 import { GRAYSCALE } from '@/engine/texture/types'
-import { AnimationPalette } from './AnimationPalette'
 import { MovePalette } from './MovePalette'
 import { PaletteThemeMenu } from './PaletteThemeMenu'
+import { RigInspectorCard } from './RigInspectorCard'
 import { SelectionPalette } from './SelectionPalette'
 
 /** Layout direction of a palette row: the 2D pane's bottom-center pill is horizontal, the
@@ -173,7 +173,7 @@ export function FloatingPalette({ orientation = 'horizontal' }: { orientation?: 
       ) : mode === 'texture' ? (
         <GrayscalePalette orientation={orientation} />
       ) : mode === 'animate' ? (
-        <AnimationPalette orientation={orientation} />
+        <RigInspectorCard orientation={orientation} />
       ) : activeTool === 'marker' ? (
         <MarkerPalette orientation={orientation} />
       ) : (

@@ -1,9 +1,11 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { decodeKey, encodeKey } from '@/engine/grid/GridStore'
 import { gridCoordFromPixel, pixelFromGridCoord } from '@/engine/plane/constructionPlane'
-import { displayViewCenter, toDisplayGridlineU, toDisplayGridlineV, toDisplayU, toDisplayV } from '@/engine/plane/planeDisplay'
+import { displayPointForGridPoint, displayViewCenter, toDisplayGridlineU, toDisplayGridlineV, toDisplayU, toDisplayV } from '@/engine/plane/planeDisplay'
+import { axisIndex } from '@/engine/plane/planeGeometry'
 import { resolveSlotColor, shadeColor } from '@/engine/palette/palette'
 import { markerColorHex } from '@/engine/markers/markers'
+import { boxSliceFootprint, rigPivotOf } from '@/engine/rigging/types'
 import { forEachSelectedCell, traceSelectionOutline } from '@/engine/tools/selectionMask'
 import { encodeSliceKey } from '@/engine/animation/animationLayers'
 import { useAppStore } from '@/store/useAppStore'
@@ -84,8 +86,9 @@ export function PixelCanvas() {
   const floatContent = useAppStore((s) => s.floatContent)
   const floatOrigin = useAppStore((s) => s.floatOrigin)
   const mode = useAppStore((s) => s.mode)
-  const sliceMasks = useAppStore((s) => s.sliceMasks)
   const slicePivots = useAppStore((s) => s.slicePivots)
+  const rigBoxes = useAppStore((s) => s.rigBoxes)
+  const selectedRigBoxId = useAppStore((s) => s.selectedRigBoxId)
   const gridExtent = useAppStore((s) => s.meta.gridExtent)
   const voxelScaleY = useAppStore((s) => s.meta.voxelScaleY)
   const markers = useAppStore((s) => s.markers)
@@ -110,6 +113,27 @@ export function PixelCanvas() {
     raf = requestAnimationFrame(tick)
     return () => cancelAnimationFrame(raf)
   }, [selection, selectPreview])
+
+  // Alt-held tracking: pinning mode reveals every rig box's pivot (amber for the rest), so
+  // the pin target stays visible while aiming — including pivots living off this slice.
+  const [altHeld, setAltHeld] = useState(false)
+  useEffect(() => {
+    const down = (e: KeyboardEvent) => {
+      if (e.key === 'Alt') setAltHeld(true)
+    }
+    const up = (e: KeyboardEvent) => {
+      if (e.key === 'Alt' || !e.altKey) setAltHeld(false)
+    }
+    const blur = () => setAltHeld(false)
+    window.addEventListener('keydown', down)
+    window.addEventListener('keyup', up)
+    window.addEventListener('blur', blur)
+    return () => {
+      window.removeEventListener('keydown', down)
+      window.removeEventListener('keyup', up)
+      window.removeEventListener('blur', blur)
+    }
+  }, [])
 
   const draw = useCallback(() => {
     const canvas = canvasRef.current
@@ -268,33 +292,35 @@ export function PixelCanvas() {
     }
     ctx.globalAlpha = 1
 
-    // Animate-mode mask overlay — violet tint over cells painted into the current slice's
-    // animation mask (matches AnimationPalette's accent color). No overlay at all when the slice
-    // has no mask painted, since that means "whole slice animates" (nothing to highlight).
-    if (mode === 'animate') {
-      const currentMask = sliceMasks.get(encodeSliceKey(plane.axis, plane.offset))
-      if (currentMask && currentMask.size > 0) {
-        for (let du = dLoU; du < dHiU; du++) {
-          for (let dv = dLoV; dv < dHiV; dv++) {
-            const u = toDisplayU(plane, du)
-            const v = toDisplayV(plane, dv)
-            const coord = gridCoordFromPixel(plane, u, v)
-            const key = encodeKey(...coord)
-            if (!currentMask.has(key)) continue
-            const [sx, sy] = worldToScreen(du, dv, size, pan, zoom, vScale)
-            ctx.fillStyle = 'rgba(167, 139, 250, 0.35)'
-            ctx.fillRect(sx, sy, cellPx, cellH)
-            ctx.strokeStyle = 'rgba(167, 139, 250, 0.9)'
-            ctx.lineWidth = 1
-            ctx.strokeRect(sx + 0.5, sy + 0.5, cellPx - 1, cellH - 1)
-          }
+    // Animate-mode rig footprints — the boxes are what you edit here (the voxel model is just
+    // an underlay), so every box intersecting this slice draws its outline in display space,
+    // exactly over its cells. The selected box draws last, white with a translucent fill, so
+    // it reads on top of overlaps.
+    if (mode === 'animate' && rigBoxes.length > 0) {
+      const footprints = rigBoxes.map((box) => ({ box, fp: boxSliceFootprint(box, plane) }))
+        .filter((r): r is { box: (typeof rigBoxes)[number]; fp: NonNullable<ReturnType<typeof boxSliceFootprint>> } => r.fp !== null)
+      const ordered = [
+        ...footprints.filter(({ box }) => box.id !== selectedRigBoxId),
+        ...footprints.filter(({ box }) => box.id === selectedRigBoxId),
+      ]
+      for (const { box, fp } of ordered) {
+        const active = box.id === selectedRigBoxId
+        const [x0, y0] = worldToScreen(fp.uMin, fp.vMin, size, pan, zoom, vScale)
+        const [x1, y1] = worldToScreen(fp.uMax, fp.vMax, size, pan, zoom, vScale)
+        if (active) {
+          ctx.fillStyle = 'rgba(255, 255, 255, 0.12)'
+          ctx.fillRect(x0, y0, x1 - x0, y1 - y0)
         }
+        ctx.strokeStyle = active ? '#ffffff' : 'rgba(245, 158, 11, 0.9)'
+        ctx.lineWidth = active ? 2 : 1.5
+        ctx.strokeRect(x0, y0, x1 - x0, y1 - y0)
       }
     }
 
     // Animate-mode pivot marker — a small violet dot at the current slice's rotation/pendulum
-    // pivot cell, if one is set (matches PivotGizmo.tsx's 3D marker and the mask overlay's accent
-    // color). The map is keyed by slice identity itself, so a hit here already means "on this slice".
+    // pivot cell, if one is set (matches PivotGizmo.tsx's 3D marker). Slice pivots are legacy
+    // playback state (no longer authorable), but old files still animate around them.
+    // The map is keyed by slice identity itself, so a hit here already means "on this slice".
     if (mode === 'animate') {
       const pivotKey = slicePivots.get(encodeSliceKey(plane.axis, plane.offset))
       if (pivotKey) {
@@ -308,6 +334,38 @@ export function PixelCanvas() {
         ctx.strokeStyle = '#ffffff'
         ctx.lineWidth = 1.5
         ctx.stroke()
+      }
+      // Rig box rotation centers — the selected box draws a white dot with a violet ring when
+      // its world point sits on this slice. A pivot placed on a half-step boundary can live
+      // on another slice — those draw outline-only at their exact projected position, so a pin
+      // never silently vanishes. While Alt is held (spring pivot switch) every box's pivot
+      // draws, amber for the rest, to aim the placement.
+      // Points can be fractional, so they go through displayPointForGridPoint (exact for
+      // continuous points) rather than the cell-index formula above.
+      const pivotBoxes = altHeld ? rigBoxes : rigBoxes.filter((b) => b.id === selectedRigBoxId)
+      for (const pbox of pivotBoxes) {
+        const active = pbox.id === selectedRigBoxId
+        const pivot = rigPivotOf(pbox)
+        const onSlice = Math.floor(pivot[axisIndex(plane.axis)] + 0.5) === plane.offset
+        const world: [number, number, number] = [pivot[0] + 0.5, pivot[1] + 0.5, pivot[2] + 0.5]
+        const { u: ru, v: rv } = displayPointForGridPoint(plane, world)
+        const [px, py] = worldToScreen(ru, rv, size, pan, zoom, vScale)
+        const radius = cellPx * (active ? 0.26 : 0.2)
+        ctx.beginPath()
+        ctx.arc(px, py, radius, 0, Math.PI * 2)
+        if (onSlice) {
+          ctx.fillStyle = active ? '#ffffff' : '#f59e0b'
+          ctx.fill()
+          ctx.strokeStyle = active ? '#8b5cf6' : '#ffffff'
+          ctx.lineWidth = active ? 1.5 : 1
+          ctx.stroke()
+        } else {
+          ctx.globalAlpha = 0.7
+          ctx.strokeStyle = active ? '#ffffff' : '#f59e0b'
+          ctx.lineWidth = 1.5
+          ctx.stroke()
+          ctx.globalAlpha = 1
+        }
       }
     }
 
@@ -422,7 +480,7 @@ export function PixelCanvas() {
       ctx.strokeStyle = selected ? '#ffffff' : 'rgba(0, 0, 0, 0.55)'
       ctx.stroke()
     }
-  }, [model, palette, plane, linePreview, selection, selectPreview, floatContent, floatOrigin, antPhase, size, pan, zoom, vScale, mode, sliceMasks, slicePivots, gridExtent, markers, selectedMarkerId])
+  }, [model, palette, plane, linePreview, selection, selectPreview, floatContent, floatOrigin, antPhase, altHeld, size, pan, zoom, vScale, mode, slicePivots, rigBoxes, selectedRigBoxId, gridExtent, markers, selectedMarkerId])
 
   useEffect(() => {
     draw()

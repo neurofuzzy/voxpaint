@@ -4,6 +4,7 @@ import { useEffect, useRef, useState } from 'react'
 import * as THREE from 'three'
 import type { OrbitControls as OrbitControlsImpl } from 'three-stdlib'
 import { decodeKey, encodeKey, effectiveExtent, viewOriginShift, withinWorkingBounds } from '@/engine/grid/GridStore'
+import { rigBoxContains, rigIdForCoord } from '@/engine/rigging/types'
 import type { CellKey, Coord } from '@/engine/grid/types'
 import { hasActiveAnimations } from '@/engine/animation/animationLayers'
 import type { InstancingManager } from '@/engine/instancing/InstancingManager'
@@ -30,6 +31,7 @@ import { ExposureSlider } from './ExposureSlider'
 import { MarkersView } from './MarkersView'
 import { OptimizedMeshView } from './OptimizedMeshView'
 import { PivotGizmo } from './PivotGizmo'
+import { RigLinkLines } from './RigLinkLines'
 import { ProjectBoundsBox } from './ProjectBoundsBox'
 import { SelectionHighlight } from './SelectionHighlight'
 import { SceneEnvironment } from './SceneEnvironment'
@@ -116,7 +118,8 @@ function ToneMappingController({ exposure }: { exposure: number }) {
  * between voxels) — and the click-to-set-construction-plane interaction: a click commits the
  * plane to whichever face is current at click time (spec: first click on a voxel lands the plane
  * on that voxel's own slice — "object mode"; a second click on the SAME voxel advances the plane
- * one step forward through that same face — see `handleVoxelFaceClick` in planeSlice.ts).
+ * one step forward through that same face — see `handleVoxelFaceClick` in planeSlice.ts; in
+ * Animate mode the second click instead selects the rig box the voxel belongs to).
  *
  * When the cursor hits no voxel face, hover falls back to the construction-plane cell under the
  * cursor (`resolveEmptyCell`), so the ghost preview still marks what a click would paint.
@@ -384,14 +387,25 @@ function VoxelInteractionHandler({ managerRef, controlsRef }: {
       raycaster.setFromCamera(ndcFor(clientX, clientY), camera)
       // Raycast full-cell AABBs (the invisible pick mesh), not the visible chamfer geometry, so a
       // click on a sloped chamfer face still resolves to that cell and a clean ±axis face normal.
-      const hit = raycaster.intersectObject(manager.pickObject, false)[0]
-      if (!hit || hit.instanceId === undefined || !hit.face) return null
-      const key = manager.cellKeyForPick(hit.instanceId)
-      if (!key) return null
-      const [x, y, z] = key.split(',').map(Number)
-      const worldNormal = hit.face.normal.clone().transformDirection(hit.object.matrixWorld).round()
-      const plane = planeFromFaceHit([x, y, z], [worldNormal.x, worldNormal.y, worldNormal.z])
-      return { key, plane }
+      const hits = raycaster.intersectObject(manager.pickObject, false)
+      // Isolate mode clips the model to the selected box — skip hits on hidden voxels so taps
+      // and hovers land on visible geometry (or fall through to the empty-plane cell).
+      const st = useAppStore.getState()
+      const isolateBox =
+        st.mode === 'animate' && st.isolateRig
+          ? st.rigBoxes.find((b) => b.id === st.selectedRigBoxId) ?? null
+          : null
+      for (const hit of hits) {
+        if (hit.instanceId === undefined || !hit.face) continue
+        const key = manager.cellKeyForPick(hit.instanceId)
+        if (!key) continue
+        if (isolateBox && !rigBoxContains(isolateBox, decodeKey(key))) continue
+        const [x, y, z] = key.split(',').map(Number)
+        const worldNormal = hit.face.normal.clone().transformDirection(hit.object.matrixWorld).round()
+        const plane = planeFromFaceHit([x, y, z], [worldNormal.x, worldNormal.y, worldNormal.z])
+        return { key, plane }
+      }
+      return null
     }
 
     /** Cell on the active construction plane under the cursor when no voxel was hit (painting
@@ -915,16 +929,26 @@ function VoxelInteractionHandler({ managerRef, controlsRef }: {
       // the active slice — see applyBlockingTap). Null when the ray runs parallel to the plane.
       const empty = result ? null : resolveEmptyCell(e.clientX, e.clientY)
       const hoverCoord = result ? decodeKey(result.key) : empty
+      // Isolate mode hides every voxel outside the selected box — don't light up hover chrome
+      // for voxels you can't see (taps still navigate the plane: only the highlight is gated).
+      const st = useAppStore.getState()
+      const isolateBox =
+        modeRef.current === 'animate' && st.isolateRig
+          ? st.rigBoxes.find((b) => b.id === st.selectedRigBoxId) ?? null
+          : null
+      const inBox = !isolateBox || !hoverCoord || rigBoxContains(isolateBox, hoverCoord)
+      const shownCoord = inBox ? hoverCoord : null
       const cellKey = result?.key ?? (empty ? encodeKey(...empty) : null)
-      if (cellKey !== lastCellKey) {
-        lastCellKey = cellKey
-        setHoverCell(hoverCoord, null)
+      const shownKey = inBox ? cellKey : null
+      if (shownKey !== lastCellKey) {
+        lastCellKey = shownKey
+        setHoverCell(shownCoord, null)
       }
 
-      const faceKey = result ? `${result.key}|${result.plane.axis}|${result.plane.orientation}` : null
+      const faceKey = result && inBox ? `${result.key}|${result.plane.axis}|${result.plane.orientation}` : null
       if (faceKey !== lastFaceKey) {
         lastFaceKey = faceKey
-        setHoveredFace(result ? { cellKey: result.key, axis: result.plane.axis, orientation: result.plane.orientation } : null)
+        setHoveredFace(result && inBox ? { cellKey: result.key, axis: result.plane.axis, orientation: result.plane.orientation } : null)
       }
 
       // Material drag recolors each newly crossed voxel (deduped per cell — recoloring is
@@ -944,8 +968,10 @@ function VoxelInteractionHandler({ managerRef, controlsRef }: {
         setStatusMessage(result ? 'Click to select this marker · click empty space to place a new one' : 'Click to place a marker')
         return
       }
-      if (activeToolRef.current === 'rigbox' && modeRef.current === 'animate') {
-        setStatusMessage(result ? 'Click to box this color-connected region as a named rig mesh' : 'Click a voxel to create a rig box')
+      // Animate mode never edits in 3D — rig/pivot taps fall through to plane navigation
+      // below; orbit otherwise. The 2D canvas owns all rig edits.
+      if ((activeToolRef.current === 'rigbox' || activeToolRef.current === 'pivot') && modeRef.current === 'animate') {
+        setStatusMessage(result ? voxelHint(result.plane.axis, result.plane.orientation) : ORBIT_HINT)
         return
       }
       if (isBlocking()) {
@@ -978,6 +1004,13 @@ function VoxelInteractionHandler({ managerRef, controlsRef }: {
         && result.key === target.cellKey
         && result.plane.axis === target.axis
         && result.plane.orientation === target.orientation
+      if (result && again && modeRef.current === 'animate') {
+        // The second tap selects the rig in Animate (see handleVoxelFaceClick) — say so when
+        // the voxel belongs to one; otherwise the tap still advances the plane.
+        const st = useAppStore.getState()
+        setStatusMessage(rigIdForCoord(st.rigBoxes, decodeKey(result.key)) ? 'Click again to select this rig box' : AGAIN_HINT)
+        return
+      }
       setStatusMessage(result ? (again ? AGAIN_HINT : voxelHint(result.plane.axis, result.plane.orientation)) : ORBIT_HINT)
     }
 
@@ -1200,18 +1233,10 @@ function VoxelInteractionHandler({ managerRef, controlsRef }: {
         return
       }
 
-      // Rig wand in Animate mode (split layout is orbit-only otherwise): taps box the
-      // color-connected region. Works from face hits or empty plane cells (empty
-      // toasts via the store). Never moves the construction plane.
-      if (activeToolRef.current === 'rigbox' && modeRef.current === 'animate') {
-        if (e.button !== 0) return
-        const store = useAppStore.getState()
-        const hit = resolveFaceHit(e.clientX, e.clientY)
-        const coord: Coord | null = hit ? decodeKey(hit.key) : resolveEmptyCell(e.clientX, e.clientY)
-        if (!coord) return
-        store.applyRigBoxAt(coord)
-        return
-      }
+      // Rig and pivot tools are 2D-only in Animate mode — the 3D view never edits, so taps
+      // with them fall through to plane navigation below like any other orbit tap (with one
+      // exception: a second tap on the same face selects the rig box instead of advancing —
+      // see handleVoxelFaceClick).
 
       // Fill owns its taps in 3D-only layout and never moves the construction plane: a
       // committed selection fills with the brush wherever the click landed; otherwise a
@@ -1295,11 +1320,13 @@ export function Viewport3D() {
   const textureMode = mode === 'texture'
   const animateMode = mode === 'animate'
   const hasAnimations = animateMode && hasActiveAnimations(animSettings)
+  const animateModelHidden = useAppStore((s) => s.mode === 'animate' && s.animateModelView === 'hidden')
   // Exactly one model view is live at a time; the others stay mounted but hidden with frozen
   // builds (see useActiveMemo), so mode switches never tear down GPU resources.
   // (textureMode and hasAnimations are mutually exclusive — hasAnimations requires animateMode.)
-  const voxelViewsActive = !textureMode && !hasAnimations
-  const animatedModelActive = !textureMode && hasAnimations
+  // Animate's hidden model view blanks both (rig boxes, pivots, and plane chrome stay up).
+  const voxelViewsActive = !textureMode && !hasAnimations && !animateModelHidden
+  const animatedModelActive = !textureMode && hasAnimations && !animateModelHidden
   // The off-mode views mount on first visit, then stay mounted: startup never pays for views
   // never opened (the app always boots into Model mode), and later tab switches are free.
   // Monotonic latches — safe to set during render.
@@ -1316,7 +1343,7 @@ export function Viewport3D() {
       onPointerEnter={() => setStatusMessage(ORBIT_HINT)}
       onPointerLeave={() => setStatusMessage(null)}
     >
-      <Canvas camera={{ position: cameraPosForExtent(gridExtent, voxelScaleY), fov: 45 }} gl={{ antialias: true }}>
+      <Canvas camera={{ position: cameraPosForExtent(gridExtent, voxelScaleY), fov: 45 }} gl={{ antialias: true, localClippingEnabled: true }}>
         <ToneMappingController exposure={exposure} />
         <CameraRig controlsRef={orbitControlsRef} />
         <color attach="background" args={['#111114']} />
@@ -1344,6 +1371,7 @@ export function Viewport3D() {
               <SelectionBox3D />
               <ConstructionPlaneGizmo />
               <PivotGizmo />
+              <RigLinkLines />
               <MarkersView />
               <RigBoxHighlight />
             </>

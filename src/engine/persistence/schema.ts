@@ -5,7 +5,7 @@ import type { PaletteSlotRef, PaletteState } from '@/engine/palette/types'
 import type { BoxFace } from '@/engine/texture/types'
 import type { GltfExportAnchor } from '@/engine/export/gltfExport'
 
-export const CURRENT_SCHEMA_VERSION = 12 as const
+export const CURRENT_SCHEMA_VERSION = 13 as const
 
 export type ViewSettings = {
   ambientOcclusion: boolean
@@ -100,7 +100,8 @@ export type SerializedSlicePivot = {
 
 /** A named rig bounding box (Animate-mode rigging selections). Model-decoupled: min/max are
  * inclusive grid coords, naming GLTF export meshes. `parentId` links the outline — the
- * deepest containing box wins on overlap. */
+ * deepest containing box wins on overlap. `pivot` (v13) overrides the box's rotation center
+ * (null/absent = box center). */
 export type SerializedRigBox = {
   id: string
   name: string
@@ -108,6 +109,8 @@ export type SerializedRigBox = {
   max: [number, number, number]
   /** Absent on pre-hierarchy files — loads as a root box. */
   parentId?: string | null
+  /** Absent on pre-pivot (v12) files — loads as the box center. */
+  pivot?: [number, number, number] | null
 }
 
 export type VoxPaintProjectFileV1 = {
@@ -164,7 +167,10 @@ export type VoxPaintProjectFileV2 = {
  * v10 → v11: the `flat` / `flatwedge` zero-thickness quads are introduced (see migrations.ts).
  *
  * v11 → v12: the `rigBoxes` array is added for Animate-mode named rig bounding boxes. Older
- * files load with no rig boxes. */
+ * files load with no rig boxes.
+ *
+ * v12 → v13: rig boxes gain an optional `pivot` rotation-center override. Older files load
+ * with every pivot unset (box center), matching their pre-pivot behavior. */
 export type VoxPaintProjectFile = {
   schemaVersion: typeof CURRENT_SCHEMA_VERSION
   meta: ProjectMeta

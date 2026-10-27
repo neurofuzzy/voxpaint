@@ -82,6 +82,53 @@ describe('resetPlaneToGround', () => {
   })
 })
 
+/** In Animate mode the second 3D tap selects the rig box instead of stepping the plane. */
+describe('animate second-tap selects the rig', () => {
+  beforeEach(() => {
+    useAppStore.getState().newProject('Test', 16)
+    useAppStore.getState().setMode('animate')
+    useAppStore.getState().setPlaneAxisOrientation('z', 1)
+    useAppStore.getState().setPlaneOffset(0)
+  })
+
+  function addBox(id: string, min: [number, number, number], max: [number, number, number]) {
+    useAppStore.getState().addRigBox({ id, name: id, min, max, parentId: null, pivot: null })
+  }
+
+  it('selects the containing box on the second same-face tap, plane untouched', () => {
+    addBox('arm', [0, 0, 0], [2, 2, 2])
+    const s = useAppStore.getState()
+    s.handleVoxelFaceClick('1,1,0', 'z', 1, 0)
+    s.handleVoxelFaceClick('1,1,0', 'z', 1, 0)
+    const after = useAppStore.getState()
+    expect(after.selectedRigBoxId).toBe('arm')
+    expect(after.plane.offset).toBe(0)
+    expect(after.objectModeTarget).toBeNull()
+  })
+
+  it('still advances when the voxel belongs to no box', () => {
+    addBox('arm', [0, 0, 0], [2, 2, 2])
+    useAppStore.getState().selectRigBox(null)
+    const s = useAppStore.getState()
+    s.handleVoxelFaceClick('9,9,0', 'z', 1, 0)
+    s.handleVoxelFaceClick('9,9,0', 'z', 1, 0)
+    const after = useAppStore.getState()
+    expect(after.selectedRigBoxId).toBeNull()
+    expect(after.plane.offset).toBe(1)
+  })
+
+  it('a third tap re-lands instead of advancing off the selection', () => {
+    addBox('arm', [0, 0, 0], [2, 2, 2])
+    const s = useAppStore.getState()
+    s.handleVoxelFaceClick('1,1,0', 'z', 1, 0)
+    s.handleVoxelFaceClick('1,1,0', 'z', 1, 0)
+    s.handleVoxelFaceClick('1,1,0', 'z', 1, 0)
+    const after = useAppStore.getState()
+    expect(after.selectedRigBoxId).toBe('arm')
+    expect(after.plane.offset).toBe(0)
+  })
+})
+
 /** An explicit plane change dismisses any selection; mouse-click plane moves are suppressed
  * while one is active (see Viewport3D), so reaching a setter means a deliberate change. */
 describe('plane changes clear the selection', () => {

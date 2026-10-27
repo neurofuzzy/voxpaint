@@ -145,18 +145,22 @@ export const createProjectSlice: Slice = (set, get) => ({
 
       // Rig boxes are model-decoupled but grid-bound — clamp into the new working cube,
       // dropping boxes with nothing left inside. Children of dropped boxes move up to the
-      // nearest surviving ancestor (or root).
+      // nearest surviving ancestor (or root). Pivots clamp too (they may sit outside the box
+      // itself — only the working cube binds them), into the point range: pivots are grid
+      // points, so the outer gridlines (half) are valid stops past the last cell center.
       {
         const half = effectiveExtent(extent) / 2
         const lo = -half
         const hi = half - 1
         const clamp = (v: number) => Math.max(lo, Math.min(hi, v))
+        const pclamp = (v: number) => Math.max(lo, Math.min(half, v))
         const parentOf = new Map(state.rigBoxes.map((b) => [b.id, b.parentId]))
         state.rigBoxes = state.rigBoxes
           .map((b) => ({
             ...b,
             min: [clamp(Math.min(b.min[0], b.max[0])), clamp(Math.min(b.min[1], b.max[1])), clamp(Math.min(b.min[2], b.max[2]))] as [number, number, number],
             max: [clamp(Math.max(b.min[0], b.max[0])), clamp(Math.max(b.min[1], b.max[1])), clamp(Math.max(b.min[2], b.max[2]))] as [number, number, number],
+            pivot: b.pivot ? ([pclamp(b.pivot[0]), pclamp(b.pivot[1]), pclamp(b.pivot[2])] as [number, number, number]) : null,
           }))
           .filter((b) => b.min[0] <= b.max[0] && b.min[1] <= b.max[1] && b.min[2] <= b.max[2])
         const surviving = new Set(state.rigBoxes.map((b) => b.id))
@@ -235,10 +239,12 @@ export const createProjectSlice: Slice = (set, get) => ({
         m.position = [RESCALE_FACTOR * m.position[0], RESCALE_FACTOR * m.position[1], RESCALE_FACTOR * m.position[2]]
       }
 
-      // Rig boxes double with the voxels: inclusive [min, max] → [2*min, 2*max+1].
+      // Rig boxes double with the voxels: inclusive [min, max] → [2*min, 2*max+1]. Pivots
+      // map to the min-corner child (same convention as slice pivots on rescale).
       for (const b of state.rigBoxes) {
         b.min = [RESCALE_FACTOR * b.min[0], RESCALE_FACTOR * b.min[1], RESCALE_FACTOR * b.min[2]]
         b.max = [RESCALE_FACTOR * b.max[0] + 1, RESCALE_FACTOR * b.max[1] + 1, RESCALE_FACTOR * b.max[2] + 1]
+        if (b.pivot) b.pivot = [RESCALE_FACTOR * b.pivot[0], RESCALE_FACTOR * b.pivot[1], RESCALE_FACTOR * b.pivot[2]]
       }
 
       // Animation slices fan out: old slice o becomes new slices 2o/2o+1. Settings clone onto

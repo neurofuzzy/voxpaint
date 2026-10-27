@@ -254,6 +254,8 @@ function emitChamfer(faces: Face[], base: THREE.BufferGeometry, matrix: THREE.Ma
  * When `nodeAssignment` is given (animated export), a pair spanning two *different* animation nodes
  * is never cancelled even if otherwise eligible — those cells will move apart independently, so the
  * face between them is a real (if currently coincident) surface, not a hidden interior one.
+ * `rigAssignment` extends the same rule to rig boxes: pairs spanning different rigs are never
+ * cancelled, so touching joints stay separable downstream.
  *
  * With `cullCrossGroup: false` only **same-group** pairs (identical materialClass *and* colorKey,
  * i.e. one export mesh) are culled — the union-equivalent for the shell path. Interfaces between
@@ -261,7 +263,7 @@ function emitChamfer(faces: Face[], base: THREE.BufferGeometry, matrix: THREE.Ma
  * glass-vs-solid rule is unchanged (the glass side is still dropped to avoid z-fighting); the
  * solid side's kept face still marks the seam.
  */
-export function removeInteriorFaces(faces: Face[], nodeAssignment?: Map<CellKey, SliceKey>, cullCrossGroup = true): Face[] {
+export function removeInteriorFaces(faces: Face[], nodeAssignment?: Map<CellKey, SliceKey>, cullCrossGroup = true, rigAssignment?: Map<CellKey, string>): Face[] {
   const byTri = new Map<string, number[]>()
   faces.forEach((f, i) => {
     const key = [qkey(f.a), qkey(f.b), qkey(f.c)].sort().join('|')
@@ -271,6 +273,7 @@ export function removeInteriorFaces(faces: Face[], nodeAssignment?: Map<CellKey,
   })
 
   const sliceOf = (f: Face) => nodeAssignment?.get(f.cellKey!) ?? ''
+  const rigOf = (f: Face) => rigAssignment?.get(f.cellKey!) ?? ''
 
   const removed = new Set<number>()
   for (const idxs of byTri.values()) {
@@ -280,7 +283,10 @@ export function removeInteriorFaces(faces: Face[], nodeAssignment?: Map<CellKey,
     // visible surface from opposite sides, never a hidden interior interface. Never pair them.
     if (faces[i].twoSided || faces[j].twoSided) continue
     if (faces[i].normal.dot(faces[j].normal) >= -0.9) continue // not back-to-back
-    if (nodeAssignment && sliceOf(faces[i]) !== sliceOf(faces[j])) continue // different animation nodes
+    // Faces spanning different animation nodes — or different rig boxes — will move apart
+    // independently, so their interface is real, not hidden. Never cancel it.
+    if (nodeAssignment && sliceOf(faces[i]) !== sliceOf(faces[j])) continue
+    if (rigAssignment && rigOf(faces[i]) !== rigOf(faces[j])) continue
 
     const sameGroup =
       faces[i].materialClass === faces[j].materialClass && faces[i].colorKey === faces[j].colorKey
@@ -328,6 +334,7 @@ function buildShellFaces(
   palette: PaletteState,
   nodeAssignment?: Map<CellKey, SliceKey>,
   cullInteriorFaces = true,
+  rigAssignment?: Map<CellKey, string>,
 ): { faces: Face[]; rawTriangles: number } {
   const faces: Face[] = []
   const matrix = new THREE.Matrix4()
@@ -374,7 +381,7 @@ function buildShellFaces(
   }
 
   const rawTriangles = faces.length
-  return { faces: removeInteriorFaces(faces, nodeAssignment, cullInteriorFaces), rawTriangles }
+  return { faces: removeInteriorFaces(faces, nodeAssignment, cullInteriorFaces, rigAssignment), rawTriangles }
 }
 
 export interface ColorGroupGeometry {
@@ -633,7 +640,7 @@ export function buildTexturedShellGeometryBySliceColor(  model: VoxelModel,
   cullInteriorFaces = true,
   rigAssignment?: Map<CellKey, string>,
 ): SliceGroupGeometry[] {
-  const { faces } = buildShellFaces(model, palette, nodeAssignment, cullInteriorFaces)
+  const { faces } = buildShellFaces(model, palette, nodeAssignment, cullInteriorFaces, rigAssignment)
   const byGroup = new Map<string, Face[]>()
   for (const f of faces) {
     const sliceKey = nodeAssignment.get(f.cellKey!) ?? ''
@@ -693,7 +700,7 @@ export function buildTexturedShellGeometryByColorMerged(
   cullInteriorFaces = true,
   rigAssignment?: Map<CellKey, string>,
 ): TexturedGroupsResult {
-  const { faces } = buildShellFaces(model, palette, undefined, cullInteriorFaces)
+  const { faces } = buildShellFaces(model, palette, undefined, cullInteriorFaces, rigAssignment)
   const byMaterial = new Map<string, Face[]>()
   for (const f of faces) {
     const rigId = f.cellKey ? rigAssignment?.get(f.cellKey) : undefined

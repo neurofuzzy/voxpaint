@@ -300,8 +300,8 @@ export function removeOccludedGlassFaces(
  * Deliberately conservative, mirroring `removeInteriorFaces`:
  * - Glass-involved pairs are skipped — the glass side is owned by `removeOccludedGlassFaces`
  *   (which runs before this), and the solid neighbour's face must stay visible through it.
- * - Pairs spanning different animation `sliceKey`s are skipped — those cells move apart
- *   independently at runtime, so the face between them is real, not hidden.
+ * - Pairs spanning different animation `sliceKey`s or different rig boxes are skipped — those
+ *   cells move apart independently at runtime, so the face between them is real, not hidden.
  * - Only exactly-coincident patches (same quantized corners, back-to-back normals, precisely
  *   one patch per side) are culled. Partial chamfer overlaps never match, so exposed
  *   remainders survive.
@@ -361,16 +361,21 @@ function cullCoincidentOpaqueInterfaces(entries: { group: VoxelGroup; geometry: 
     return list
   })
 
-  const sliceOf = (group: VoxelGroup): string =>
-    ((group as unknown as { sliceKey?: unknown }).sliceKey as string | undefined) ?? ''
+  // Animation/rig node identity: pairs spanning different sliceKeys OR different rig boxes
+  // never share a culled interface. Groups without either key share the '' identity, so files
+  // without animations or rigs behave exactly as before.
+  const nodeOf = (group: VoxelGroup): string => {
+    const g = group as unknown as { sliceKey?: unknown; rigId?: unknown }
+    return `${(g.sliceKey as string | undefined) ?? ''}\0${(g.rigId as string | undefined) ?? ''}`
+  }
 
-  /** True when two entries may share a culled interface (both opaque, same animation node). */
+  /** True when two entries may share a culled interface (both opaque, same animation/rig node). */
   const eligiblePair = (aEntry: number, bEntry: number): boolean => {
     if (aEntry === bEntry) return false // within-group coincidence is the union's own job
     const groupA = entries[aEntry].group
     const groupB = entries[bEntry].group
     if (groupA.materialClass === 'glass' || groupB.materialClass === 'glass') return false
-    return sliceOf(groupA) === sliceOf(groupB)
+    return nodeOf(groupA) === nodeOf(groupB)
   }
 
   const condemned = new Map<number, Set<number>>()

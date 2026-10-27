@@ -34,10 +34,40 @@ const TOOL_KEYS: Record<string, ToolId> = {
  * Mode-aware: in Texture mode every selection/history action dispatches to the parallel texture
  * actions (its own separate undo/redo history and texel selection/clipboard). Tool switching is
  * shared. Called once from MainLayout (not the 2D canvases) so bindings stay live in 3D-only mode.
+ *
+ * Spring-loaded pivot (Animate mode): holding Alt with the rig tool active temporarily switches
+ * to the pivot tool; releasing Alt restores the rig tool (see altPivotRestore below).
  */
+let altPivotRestore: ToolId | null = null
+
+function endAltPivotSwitch() {
+  if (!altPivotRestore) return
+  const store = useAppStore.getState()
+  // Only restore when the switch is still in effect — a manual tool change mid-hold wins,
+  // and a mode change mid-hold leaves the new mode's toolbar alone.
+  if (store.mode === 'animate' && store.activeTool === 'pivot') store.setActiveTool(altPivotRestore)
+  altPivotRestore = null
+}
 export function useKeyboardShortcuts() {
   useEffect(() => {
     function onKeyDown(e: KeyboardEvent) {
+      // Spring-loaded pivot: lone Alt with the rig tool active (Animate mode) arms the pivot
+      // tool until Alt releases. This sits above the INPUT/TEXTAREA guard on purpose: a lone
+      // Alt press never produces text, so arming from inside a field (e.g. the rig-name input)
+      // is harmless — it restores on keyup — and without this the switch silently fails there,
+      // sending Alt+clicks to the rig tool instead of pinning. Guarded to a clean press (no
+      // repeat, no chord) so Alt+arrows plane navigation just flickers the toolbar instead of
+      // sticking.
+      if (e.key.toLowerCase() === 'alt') {
+        const store = useAppStore.getState()
+        if (!e.repeat && !e.shiftKey && !e.ctrlKey && !e.metaKey && store.mode === 'animate' && store.activeTool === 'rigbox') {
+          altPivotRestore = 'rigbox'
+          store.setActiveTool('pivot')
+          e.preventDefault()
+        }
+        return
+      }
+
       const target = e.target as HTMLElement | null
       if (target && (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA')) return
 
@@ -122,6 +152,8 @@ export function useKeyboardShortcuts() {
         return
       }
 
+      // (Spring-loaded pivot lives at the top of this handler, above the INPUT guard.)
+
       if (e.altKey) {
         if (key === 'arrowup') {
           store.setPlaneOffset(store.plane.offset + 1)
@@ -163,9 +195,9 @@ export function useKeyboardShortcuts() {
       }
 
       const tool = TOOL_KEYS[key]
-      // Animate mode's toolbar has paint/erase (mask), pivot, and rigbox — other tool letters
-      // stay inert there rather than switching to a tool with no animate-mode handler.
-      if (tool && (!isAnimate || tool === 'paint' || tool === 'erase' || tool === 'pivot' || tool === 'rigbox')) {
+      // Animate mode's toolbar is rigbox + pivot only — other tool letters stay inert there
+      // rather than switching to a tool with no animate-mode handler.
+      if (tool && (!isAnimate || tool === 'pivot' || tool === 'rigbox')) {
         store.setActiveTool(tool)
         e.preventDefault()
         return
@@ -179,7 +211,24 @@ export function useKeyboardShortcuts() {
       }
     }
 
+    function onKeyUp(e: KeyboardEvent) {
+      if (e.key.toLowerCase() === 'alt') endAltPivotSwitch()
+    }
+
+    function onBlur() {
+      // Alt released off-window (Alt+Tab) never fires keyup — restore without sticking.
+      endAltPivotSwitch()
+    }
+
     window.addEventListener('keydown', onKeyDown)
-    return () => window.removeEventListener('keydown', onKeyDown)
+    window.addEventListener('keyup', onKeyUp)
+    window.addEventListener('blur', onBlur)
+    return () => {
+      window.removeEventListener('keydown', onKeyDown)
+      window.removeEventListener('keyup', onKeyUp)
+      window.removeEventListener('blur', onBlur)
+      // Unmount with Alt held must not leak the armed restore into the next mount.
+      altPivotRestore = null
+    }
   }, [])
 }

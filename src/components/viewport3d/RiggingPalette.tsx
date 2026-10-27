@@ -1,5 +1,5 @@
 import { useMemo, useState } from 'react'
-import { Bone, ChevronDown, ChevronRight, Trash2 } from 'lucide-react'
+import { Bone, ChevronDown, ChevronRight, Crosshair, Trash2 } from 'lucide-react'
 import type { RigBox } from '@/engine/rigging/types'
 import { rigSubtreeIds } from '@/engine/rigging/types'
 import { useAppStore } from '@/store/useAppStore'
@@ -30,8 +30,10 @@ function visibleRows(boxes: RigBox[], collapsed: Set<string>): Array<{ box: RigB
  * Animate-mode left-side rigging outline: the mirror of the right-side emissive
  * `SettingsPalette`. Lists named rig bounding boxes (wand-created, model-decoupled) as a
  * draggable tree — drop *between* rows to reorder, *onto* a row to nest as its child — for
- * GLTF export mesh naming, with rename/select/delete management. Collapsible panel, same
- * frosted styling and pointer stop-propagation as the right panel.
+ * GLTF export mesh naming, with rename/select/delete management. Rows also show each box's
+ * rotation-center pivot (crosshair): click an unset one to arm the Pivot tool, click a set
+ * one to reset it to the box center. Collapsible panel, same frosted styling and pointer
+ * stop-propagation as the right panel.
  */
 export function RiggingPalette() {
   const [minimized, setMinimized] = useState(true)
@@ -41,6 +43,8 @@ export function RiggingPalette() {
   const deleteRigBox = useAppStore((s) => s.deleteRigBox)
   const selectRigBox = useAppStore((s) => s.selectRigBox)
   const moveRigBox = useAppStore((s) => s.moveRigBox)
+  const setRigPivot = useAppStore((s) => s.setRigPivot)
+  const setActiveTool = useAppStore((s) => s.setActiveTool)
   const [editingId, setEditingId] = useState<string | null>(null)
   const [draft, setDraft] = useState('')
   const [collapsed, setCollapsed] = useState<Set<string>>(new Set())
@@ -147,7 +151,8 @@ export function RiggingPalette() {
       </div>
       <p className="text-[11px] leading-snug text-neutral-500">
         Tap the model with the Rig tool to box a region. Drag rows to reorder or nest — nested
-        boxes export as child meshes.
+        boxes export as child meshes. Select a box, then click with the Pivot tool to move its
+        rotation center.
       </p>
       {rigBoxes.length === 0 ? (
         <p className="rounded-md border border-dashed border-neutral-800 px-2 py-3 text-center text-[11px] text-neutral-500">
@@ -255,6 +260,30 @@ export function RiggingPalette() {
                     </button>
                   )}
                   <span className="shrink-0 font-mono text-[10px] text-neutral-500">{dims}</span>
+                  <button
+                    onClick={(e) => {
+                      e.stopPropagation()
+                      if (box.pivot) {
+                        setRigPivot(box.id, null)
+                      } else {
+                        // Arm the workflow: select the box so the Pivot tool targets it, and
+                        // switch to that tool so the next canvas click lands the pivot.
+                        selectRigBox(box.id)
+                        setActiveTool('pivot')
+                      }
+                    }}
+                    title={
+                      box.pivot
+                        ? `Pivot at (${box.pivot[0]}, ${box.pivot[1]}, ${box.pivot[2]}) — click to reset to box center`
+                        : 'No pivot override (rotates about box center) — click to set one with the Pivot tool'
+                    }
+                    className={
+                      'flex h-5 w-5 shrink-0 items-center justify-center rounded hover:bg-neutral-800 ' +
+                      (box.pivot ? 'text-violet-400 hover:text-violet-200' : 'text-neutral-600 hover:text-neutral-300')
+                    }
+                  >
+                    <Crosshair size={12} />
+                  </button>
                   <button
                     onClick={(e) => { e.stopPropagation(); deleteRigBox(box.id) }}
                     title={`Delete ${box.name}${kids > 0 ? ' (children move up)' : ''}`}

@@ -4,6 +4,7 @@ import type { Axis, CellKey, VoxelModel } from '@/engine/grid/types'
 import { axisIndex } from '@/engine/plane/planeGeometry'
 import { planeLogicalBasis } from '@/engine/plane/constructionPlane'
 import { outwardNormal } from '@/engine/plane/planeGeometry'
+import { rigIdForCoord, type RigBox } from '@/engine/rigging/types'
 import type { AnimLayer, AnimationType, SliceAnimSettings, SliceKey } from './types'
 
 export function encodeSliceKey(axis: Axis, offset: number): SliceKey {
@@ -166,10 +167,20 @@ export function assignVoxelsToNodes(
   model: VoxelModel,
   animSettings: Map<SliceKey, SliceAnimSettings>,
   sliceMasks?: Map<SliceKey, Set<CellKey>>,
+  rigBoxes?: RigBox[],
 ): { nodes: Map<SliceKey, { cellKeys: CellKey[]; axis: Axis; offset: number }>; remainder: CellKey[] } {
   const nodes = new Map<SliceKey, { cellKeys: CellKey[]; axis: Axis; offset: number }>()
   const assigned = new Set<CellKey>()
   const sortedLayers: AnimLayer[] = []
+  // Rig wins over slice loops: voxels inside a rig box belong to the joint tree, never to a
+  // slice node (a voxel can't ride both a procedural loop and an externally-posed joint).
+  // Skipped cells fall into `remainder`, which renders/exports static — or under a rig joint.
+  const rigged = new Set<CellKey>()
+  if (rigBoxes && rigBoxes.length > 0) {
+    for (const key of model.color.keys()) {
+      if (rigIdForCoord(rigBoxes, decodeKey(key))) rigged.add(key)
+    }
+  }
 
   for (const [key, settings] of animSettings) {
     if (!isActiveAnimation(settings.animationType)) continue
@@ -192,6 +203,7 @@ export function assignVoxelsToNodes(
     const candidates = sliceVoxelKeys(model, layer.axis, layer.offset)
     const cellKeys: CellKey[] = []
     for (const key of candidates) {
+      if (rigged.has(key)) continue
       if (mask && mask.size > 0 && !mask.has(key)) continue
       if (!assigned.has(key)) {
         assigned.add(key)

@@ -7,7 +7,7 @@ import type { ConstructionPlane } from '@/engine/plane/types'
 import type { ProjectMeta } from '@/engine/persistence/schema'
 import type { BoxFace, TexelScale, TextureModel } from '@/engine/texture/types'
 import type { TexelClip } from '@/engine/texture/texelOps'
-import type { AnimationSpeed, AnimationType, SliceAnimSettings, SliceKey } from '@/engine/animation/types'
+import type { SliceAnimSettings, SliceKey } from '@/engine/animation/types'
 
 export type ToolId = 'paint' | 'erase' | 'eyedropper' | 'select' | 'fill' | 'move' | 'material' | 'pivot' | 'textureface' | 'marker' | 'wand' | 'rigbox'
 export type VoxelKind = 'cube' | 'ramp' | 'convex' | 'concave' | 'wedge' | 'thin' | 'half' | 'post' | 'quarter' | 'flat' | 'flatwedge'
@@ -251,6 +251,10 @@ export type HoveredFace = { cellKey: CellKey; axis: Axis; orientation: Orientati
  * 1 = per-texel grain, 2/4 = chunkier 2×2 / 4×4 quantized blocks (nearest, never blurred). */
 export type NoiseScale = 1 | 2 | 4
 
+/** How the voxel model renders in Animate mode's 3D view: solid, screen-door ghosted
+ * (rig boxes and pivots read through it), or hidden (rig only). Pure view pref. */
+export type AnimateModelVisibility = 'full' | 'ghost' | 'hidden'
+
 export type ViewSlice = {
   fullscreen: boolean
   /** Pane layout: side-by-side 2D/3D split, or 3D-only (2D pane unmounted — Model mode only;
@@ -329,6 +333,13 @@ export type ViewSlice = {
   setLayoutMode: (v: 'split' | '3d-only') => void
   setHoverCell: (coord: Coord | null, chamferValid: boolean | null) => void
   setHoveredFace: (face: HoveredFace | null) => void
+  /** How the voxel model renders in Animate mode's 3D view. Pure view pref (persisted). */
+  animateModelView: AnimateModelVisibility
+  setAnimateModelView: (v: AnimateModelVisibility) => void
+  /** Isolate the selected rig box in Animate mode's 3D view: only its voxels render (clipped),
+   * other rig chrome hides. Session-only (selection isn't persisted). No-op without a selection. */
+  isolateRig: boolean
+  setIsolateRig: (v: boolean) => void
   setWireframe: (v: boolean) => void
   setTextureFaceMap: (v: boolean) => void
   setOptimizedMesh: (v: boolean) => void
@@ -611,7 +622,12 @@ export type TextureSlice = {
 }
 
 export type AnimationSlice = {
-  /** Per-slice animation settings keyed by encodeSliceKey(axis, offset). */
+  /**
+   * Per-slice animation settings keyed by encodeSliceKey(axis, offset). Legacy playback state:
+   * old files still animate from these, but nothing authors them anymore (Animate mode edits
+   * the rig now — see RiggingSlice). Same frozen-legacy status for `sliceMasks` and
+   * `slicePivots` below.
+   */
   animSettings: Map<SliceKey, SliceAnimSettings>
   /** Per-slice animation mask: which occupied cells of that slice actually animate, keyed by
    * encodeSliceKey(axis, offset). Absent or empty for a slice means "animate the whole slice"
@@ -623,41 +639,17 @@ export type AnimationSlice = {
    * animation types. At most one entry per slice — setting a new pivot replaces the old one. */
   slicePivots: Map<SliceKey, CellKey>
   /** Undo/redo stacks for animation changes (independent of model undo) — one shared stack for
-   * both animation-settings changes and mask paint strokes, since both are Animate-mode-only
-   * edits a user expects to undo together. */
+   * both legacy slice-loop edits and rig edits, since both are Animate-mode-only edits a user
+   * expects to undo together. */
   animPast: AnimSnapshot[]
   animFuture: AnimSnapshot[]
 
-  /** Set or clear the animation for a slice. Wrapped in begin/commit stroke for undo. */
-  setAnimSettingsForSlice: (axis: Axis, offset: number, settings: SliceAnimSettings | null) => void
-  /** Remove all animation settings, masks, and pivots (e.g. on new project). */
-  clearAllAnimations: () => void
-
-  /** Set the animation type for the current construction-plane slice, carrying over its existing
-   * speed/slideAmount/swingAmount (or defaults for a previously unanimated slice). Passing 'none'
-   * clears it. */
-  setAnimationTypeForCurrentSlice: (type: AnimationType) => void
-  /** Set the animation speed for the current slice, defaulting the rest of its settings if unset. */
-  setAnimationSpeedForCurrentSlice: (speed: AnimationSpeed) => void
-  /** Set the slide amount for the current slice, defaulting the rest of its settings if unset. */
-  setSlideAmountForCurrentSlice: (amount: number) => void
-  /** Set the pendulum swing amount (degrees) for the current slice, defaulting the rest of its
-   * settings if unset. */
-  setSwingAmountForCurrentSlice: (amount: number) => void
-
-  /** Paints one cell of the current plane's slice into its animation mask. Only occupied cells
-   * (voxels that already hold color) can be masked. Returns false when out of bounds or empty. */
-  paintMaskCell: (u: number, v: number) => boolean
-  /** Removes one cell from the current plane's slice's animation mask. Deletes the slice's mask
-   * entirely once it becomes empty, reverting to whole-slice-animates. */
-  eraseMaskCell: (coord: Coord) => void
-
-  /** Sets (replacing any existing one) the current construction-plane slice's rotation/pendulum
-   * pivot to the cell at plane-space (u,v) — occupied or not. Self-brackets its own undo stroke.
-   * Returns false when out of bounds. */
+  /** Pivot-tool target: the selected rig box's rotation center (see `setSelectedRigPivot` in
+   * RiggingSlice). Self-brackets its own undo stroke. Returns false when out of bounds or
+   * nothing is selected (the store toasts the hint in the latter case). */
   setPivotForCurrentSlice: (u: number, v: number) => boolean
-  /** Clears the current slice's pivot override, reverting to the inferred bounding-box center.
-   * Self-brackets its own undo stroke. */
+  /** Resets the selected rig box's rotation center to its box center. No-op without a
+   * selection. Self-brackets its own undo stroke. */
   clearPivotForCurrentSlice: () => void
 
   animBeginStroke: () => void
@@ -744,6 +736,23 @@ export type RiggingSlice = {
    * as its last child, `null` target appends at root level. No-op when invalid (unknown ids,
    * or the target sits inside the dragged subtree). Self-brackets undo. */
   moveRigBox: (dragId: string, targetId: string | null, position: 'before' | 'after' | 'child') => void
+  /** Sets a box's rotation-center grid point (null = box center). Integers are cell centers,
+   * half-integers are cell boundaries. No-op on unknown ids. Self-brackets undo. */
+  setRigPivot: (id: string, pivot: Coord | null) => void
+  /**
+   * Pivot setter for whichever box is selected (the Pivot tool's target in 2D and 3D):
+   * toasts a hint and returns false when nothing is selected, otherwise sets the pivot
+   * (self-bracketed undo) and returns true. Slice pivots are legacy playback state, no
+   * longer authorable.
+   */
+  setSelectedRigPivot: (pivot: Coord) => boolean
+  /**
+   * Translates a box and its whole subtree by `delta` grid cells, shrinking the shift so every
+   * moved box stays in the working cube (pivots ride along). No-op on unknown ids and
+   * zero-effective shifts. Does NOT bracket undo — the caller owns the stroke (the 2D rig
+   * tool brackets down/up around live drag updates).
+   */
+  translateRigBox: (id: string, delta: Coord) => void
   selectRigBox: (id: string | null) => void
   clearAllRigBoxes: () => void
   /**

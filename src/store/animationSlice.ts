@@ -1,9 +1,8 @@
 import type { StateCreator } from 'zustand'
 import type { CellKey, Coord } from '@/engine/grid/types'
-import { encodeKey, withinWorkingBounds } from '@/engine/grid/GridStore'
+import { withinWorkingBounds } from '@/engine/grid/GridStore'
 import type { RigBox } from '@/engine/rigging/types'
-import type { AnimationSpeed, AnimationType, SliceAnimSettings, SliceKey } from '@/engine/animation/types'
-import { defaultAnimationSettings, encodeSliceKey } from '@/engine/animation/animationLayers'
+import type { SliceAnimSettings, SliceKey } from '@/engine/animation/types'
 import { gridCoordFromPixel } from '@/engine/plane/constructionPlane'
 import type { AnimSnapshot, AppState, AnimationSlice } from './types'
 
@@ -34,7 +33,7 @@ function cloneSnapshot(state: { animSettings: Map<SliceKey, SliceAnimSettings>; 
     animSettings: cloneAnimSettings(state.animSettings),
     sliceMasks: cloneSliceMasks(state.sliceMasks),
     slicePivots: cloneSlicePivots(state.slicePivots),
-    rigBoxes: state.rigBoxes.map((b) => ({ ...b, min: [...b.min] as Coord, max: [...b.max] as Coord })),
+    rigBoxes: state.rigBoxes.map((b) => ({ ...b, min: [...b.min] as Coord, max: [...b.max] as Coord, pivot: b.pivot ? ([...b.pivot] as Coord) : null })),
   }
 }
 
@@ -45,119 +44,23 @@ export const createAnimationSlice: Slice = (set, get) => ({
   animPast: [],
   animFuture: [],
 
-  setAnimSettingsForSlice: (axis, offset, settings) => {
-    const sliceKey = encodeSliceKey(axis, offset)
-    get().animBeginStroke()
-    set((state) => {
-      if (settings === null) {
-        state.animSettings.delete(sliceKey)
-      } else {
-        state.animSettings.set(sliceKey, settings)
-      }
-      state.dirty = true
-    })
-    get().animCommitStroke()
-  },
-
-  clearAllAnimations: () =>
-    set((state) => {
-      state.animSettings = new Map()
-      state.sliceMasks = new Map()
-      state.slicePivots = new Map()
-      state.animPast = []
-      state.animFuture = []
-    }),
-  setAnimationTypeForCurrentSlice: (type: AnimationType) => {
-    const { axis, offset } = get().plane
-    if (type === 'none') {
-      get().setAnimSettingsForSlice(axis, offset, null)
-      return
-    }
-    const key = encodeSliceKey(axis, offset)
-    const prev = get().animSettings.get(key) ?? defaultAnimationSettings()
-    get().setAnimSettingsForSlice(axis, offset, { ...prev, animationType: type })
-  },
-
-  setAnimationSpeedForCurrentSlice: (speed: AnimationSpeed) => {
-    const { axis, offset } = get().plane
-    const key = encodeSliceKey(axis, offset)
-    const prev = get().animSettings.get(key) ?? defaultAnimationSettings()
-    get().setAnimSettingsForSlice(axis, offset, { ...prev, speed })
-  },
-
-  setSlideAmountForCurrentSlice: (amount: number) => {
-    const { axis, offset } = get().plane
-    const key = encodeSliceKey(axis, offset)
-    const prev = get().animSettings.get(key) ?? defaultAnimationSettings()
-    get().setAnimSettingsForSlice(axis, offset, { ...prev, slideAmount: amount })
-  },
-
-  setSwingAmountForCurrentSlice: (amount: number) => {
-    const { axis, offset } = get().plane
-    const key = encodeSliceKey(axis, offset)
-    const prev = get().animSettings.get(key) ?? defaultAnimationSettings()
-    get().setAnimSettingsForSlice(axis, offset, { ...prev, swingAmount: amount })
-  },
-
-  paintMaskCell: (u: number, v: number) => {
-    const { plane, model, meta } = get()
-    const coord = gridCoordFromPixel(plane, u, v)
-    if (!withinWorkingBounds(coord, meta.gridExtent)) return false
-    const key = encodeKey(...coord)
-    // Masking only ever makes sense over voxels that exist — painting empty space would be a no-op
-    // that silently does nothing once intersected against sliceVoxelKeys anyway.
-    if (!model.color.has(key)) return false
-    const sliceKey = encodeSliceKey(plane.axis, plane.offset)
-    set((state) => {
-      let mask = state.sliceMasks.get(sliceKey)
-      if (!mask) {
-        mask = new Set()
-        state.sliceMasks.set(sliceKey, mask)
-      }
-      mask.add(key)
-      state.dirty = true
-    })
-    return true
-  },
-
-  eraseMaskCell: (coord: Coord) => {
-    const { plane } = get()
-    const sliceKey = encodeSliceKey(plane.axis, plane.offset)
-    set((state) => {
-      const mask = state.sliceMasks.get(sliceKey)
-      if (!mask) return
-      const key = encodeKey(...coord)
-      mask.delete(key)
-      // An emptied mask reverts the slice to "animate the whole slice" — matches an unpainted slice.
-      if (mask.size === 0) state.sliceMasks.delete(sliceKey)
-      state.dirty = true
-    })
-  },
-
   setPivotForCurrentSlice: (u: number, v: number) => {
     const { plane, meta } = get()
     const coord = gridCoordFromPixel(plane, u, v)
     if (!withinWorkingBounds(coord, meta.gridExtent)) return false
-    const sliceKey = encodeSliceKey(plane.axis, plane.offset)
-    const cellKey = encodeKey(...coord)
-    get().animBeginStroke()
-    set((state) => {
-      state.slicePivots.set(sliceKey, cellKey)
-      state.dirty = true
-    })
-    get().animCommitStroke()
-    return true
+    // Animate mode edits the rig, not slices: the Pivot tool sets the selected box's rotation
+    // center (shared selection gating + toast via setSelectedRigPivot; setRigPivot self-brackets
+    // the same undo stroke, so no double bracketing here). Slice pivots are legacy playback
+    // state — without a selection there is nothing to pin.
+    return get().setSelectedRigPivot(coord)
   },
 
   clearPivotForCurrentSlice: () => {
-    const { plane } = get()
-    const sliceKey = encodeSliceKey(plane.axis, plane.offset)
-    get().animBeginStroke()
-    set((state) => {
-      state.slicePivots.delete(sliceKey)
-      state.dirty = true
-    })
-    get().animCommitStroke()
+    // Mirrors setPivotForCurrentSlice: right-click resets the selected box's pivot override.
+    // Slice pivots are no longer authorable — no selection means nothing to clear.
+    const { selectedRigBoxId, rigBoxes } = get()
+    if (!selectedRigBoxId || !rigBoxes.some((b) => b.id === selectedRigBoxId)) return
+    get().setRigPivot(selectedRigBoxId, null)
   },
 
   animBeginStroke: () => {
@@ -254,6 +157,10 @@ function rigBoxesEqual(a: RigBox[], b: RigBox[]): boolean {
     if ((x.parentId ?? null) !== (y.parentId ?? null)) return false
     if (x.min[0] !== y.min[0] || x.min[1] !== y.min[1] || x.min[2] !== y.min[2]) return false
     if (x.max[0] !== y.max[0] || x.max[1] !== y.max[1] || x.max[2] !== y.max[2]) return false
+    const xp = x.pivot ?? null
+    const yp = y.pivot ?? null
+    if (!xp !== !yp) return false
+    if (xp && yp && (xp[0] !== yp[0] || xp[1] !== yp[1] || xp[2] !== yp[2])) return false
   }
   return true
 }

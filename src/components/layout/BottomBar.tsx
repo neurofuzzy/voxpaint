@@ -12,8 +12,8 @@ const TOOL_HINTS: Record<ToolId, string> = {
   fill: 'click to flood-fill connected cells in 2d, ALT-click to flood fill in 3d',
   move: 'drag to shift every pixel on this slice',
   marker: 'click empty space to place a marker · tap a marker to recolor it, tap again to delete · drag to move',
-  pivot: 'click to pin the rotation/pendulum pivot for this slice · right-click: clear',
-  rigbox: 'click a voxel to box its color-connected region as a named rig mesh for GLTF export',
+  pivot: 'click: place pivot on the half-grid · rotate the plane for depth · right-click: reset to center',
+  rigbox: 'click a voxel to box its color-connected region · click a box to select it · drag to move it on this slice',
   textureface: 'click or drag ramps, wedges + thin slabs to re-map their texture face to the current plane · geometry unchanged',
 }
 
@@ -50,11 +50,9 @@ export function BottomBar() {
   const suffix = layoutMode === '3d-only' && mode === 'model' ? LAYOUT_3D_HINTS[activeTool] : undefined
 
   const defaultHint = mode === 'animate'
-    ? (activeTool === 'paint'
-        ? 'paint a mask to animate only part of this slice · leave unpainted to animate the whole slice'
-        : activeTool === 'erase'
-          ? 'erase mask cells · right-click: quick erase · unmark all to animate the whole slice again'
-          : 'assign animation to the current slice · use construction plane to navigate')
+    ? (activeTool === 'rigbox'
+        ? 'click a voxel to box its region · click a box to select · drag a box to move it on this slice · hold Alt for Pivot'
+        : 'click: center the pivot on the voxel · click again: face under the plane · select a box in the outline first')
     : suffix
       ? `${selectHint} · ${suffix}`
       : selectHint

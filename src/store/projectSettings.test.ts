@@ -71,8 +71,12 @@ describe('updateProjectSettings', () => {
     paintTexels('px', [32, 32, 5]) // face centre at 16³ (64² faces)
     const s = useAppStore.getState()
     s.setPlaneOffset(7)
-    s.setAnimSettingsForSlice('z', 7, defaultAnimationSettings())
-    s.setAnimSettingsForSlice('z', 0, defaultAnimationSettings())
+    // Slice-loop settings are legacy playback state (no authoring UI writes them anymore),
+    // so seed them directly rather than through the removed setAnimSettingsForSlice action.
+    useAppStore.setState((state) => {
+      state.animSettings.set(encodeSliceKey('z', 7), defaultAnimationSettings())
+      state.animSettings.set(encodeSliceKey('z', 0), defaultAnimationSettings())
+    })
 
     useAppStore.getState().updateProjectSettings('Test', 8)
 

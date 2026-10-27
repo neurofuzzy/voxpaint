@@ -4,7 +4,7 @@ import type { Coord } from '@/engine/grid/types'
 import { bboxOfCoords } from '@/engine/tools/cellSetOps'
 import { floodFillRegion3D } from '@/engine/tools/floodFill'
 import type { RigBox } from '@/engine/rigging/types'
-import { moveRigBoxInList, type RigMovePosition } from '@/engine/rigging/types'
+import { moveRigBoxInList, translateRigSubtree, type RigMovePosition } from '@/engine/rigging/types'
 import { showToast } from '@/components/ui/toastBus'
 import type { AppState, RiggingSlice } from './types'
 
@@ -41,7 +41,7 @@ export const createRiggingSlice: Slice = (set, get) => ({
     set((state) => {
       const name = uniqueRigName(box.name.trim() || nextDefaultName(state.rigBoxes), state.rigBoxes)
       const parentId = box.parentId && state.rigBoxes.some((b) => b.id === box.parentId) ? box.parentId : null
-      state.rigBoxes.push({ ...box, id: box.id || newRigId(), name, parentId })
+      state.rigBoxes.push({ ...box, id: box.id || newRigId(), name, parentId, pivot: box.pivot ?? null })
       state.selectedRigBoxId = state.rigBoxes[state.rigBoxes.length - 1].id
       state.dirty = true
     })
@@ -94,6 +94,39 @@ export const createRiggingSlice: Slice = (set, get) => ({
     })
   },
 
+  setRigPivot: (id, pivot) => {
+    // Pivots are continuous grid points (integers = cell centers, half-integers = cell
+    // boundaries for joint faces) — only finiteness is required, not integrality.
+    if (pivot && !pivot.every((n) => Number.isFinite(n))) return
+    get().animBeginStroke()
+    set((state) => {
+      const box = state.rigBoxes.find((b) => b.id === id)
+      if (!box) return
+      box.pivot = pivot ? ([...pivot] as Coord) : null
+      state.dirty = true
+    })
+    get().animCommitStroke()
+  },
+
+  translateRigBox: (id, delta) => {
+    const next = translateRigSubtree(get().rigBoxes, id, delta, get().meta.gridExtent)
+    if (!next) return
+    set((state) => {
+      state.rigBoxes = next
+      state.dirty = true
+    })
+  },
+
+  setSelectedRigPivot: (pivot) => {
+    const { selectedRigBoxId, rigBoxes } = get()
+    if (!selectedRigBoxId || !rigBoxes.some((b) => b.id === selectedRigBoxId)) {
+      showToast('Select a rig box in the outline first — the Pivot tool sets the selected box\u2019s rotation center')
+      return false
+    }
+    get().setRigPivot(selectedRigBoxId, pivot)
+    return true
+  },
+
   clearAllRigBoxes: () =>
     set((state) => {
       state.rigBoxes = []
@@ -112,6 +145,19 @@ export const createRiggingSlice: Slice = (set, get) => ({
     const coords = keys.map((k) => decodeKey(k))
     const bbox = bboxOfCoords(coords)
     if (!bbox) return
+    // An exact twin adds nothing (export ties break by list order, so it could never win) —
+    // select it instead of duplicating. Unreachable from the 2D tool (footprint hit-testing
+    // selects first), but guards stale double-fires and any future caller.
+    const dupe = get().rigBoxes.find(
+      (b) =>
+        b.min[0] === bbox.min[0] && b.min[1] === bbox.min[1] && b.min[2] === bbox.min[2] &&
+        b.max[0] === bbox.max[0] && b.max[1] === bbox.max[1] && b.max[2] === bbox.max[2],
+    )
+    if (dupe) {
+      get().selectRigBox(dupe.id)
+      showToast(`Rig: already boxed as ${dupe.name}`)
+      return
+    }
     get().animBeginStroke()
     set((state) => {
       const name = nextDefaultName(state.rigBoxes)
@@ -121,6 +167,7 @@ export const createRiggingSlice: Slice = (set, get) => ({
         min: [...bbox.min] as Coord,
         max: [...bbox.max] as Coord,
         parentId: null,
+        pivot: null,
       }
       state.rigBoxes.push(box)
       state.selectedRigBoxId = box.id

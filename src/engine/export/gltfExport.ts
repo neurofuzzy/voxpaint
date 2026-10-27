@@ -2,7 +2,7 @@ import * as THREE from 'three'
 import { GLTFExporter } from 'three/addons/exporters/GLTFExporter.js'
 import { decodeKey, viewOriginShift } from '@/engine/grid/GridStore'
 import { outwardNormal } from '@/engine/plane/planeGeometry'
-import type { Axis, VoxelModel, CellKey, GridExtent, VoxelScaleY } from '@/engine/grid/types'
+import type { Axis, VoxelModel, CellKey, Coord, GridExtent, VoxelScaleY } from '@/engine/grid/types'
 import type { Marker } from '@/engine/markers/types'
 import { markerColorHex, markerNodeName, markerWorldCenter } from '@/engine/markers/markers'
 import type { PaletteState } from '@/engine/palette/types'
@@ -20,7 +20,7 @@ import { buildEmissiveAnimIndex } from '@/engine/palette/emissiveAnimation'
 import type { SliceAnimSettings, SliceKey } from '@/engine/animation/types'
 import { assignVoxelsToNodes, hasActiveAnimations, resolveAnimCenter } from '@/engine/animation/animationLayers'
 import { buildAllAnimationClips, type AnimNodeInfo } from '@/engine/animation/animationGLTF'
-import { rigIdForCoord, sanitizeRigName, type RigBox } from '@/engine/rigging/types'
+import { rigIdForCoord, rigPivotOf, sanitizeRigName, type RigBox } from '@/engine/rigging/types'
 import { registerEmissiveAnimationExtension, type EmissiveAnimExportTarget } from './emissiveAnimationExport'
 import { scaleGeometryY } from './scaleGeometry'
 
@@ -114,8 +114,10 @@ export type GltfExportOptions = {
   /** Emit the `markers` as empty nodes (default true). Off skips them — the .glb carries voxels only. */
   includeMarkers?: boolean
   /** Named rig bounding boxes: voxels inside a box export under a `Group` named for the box
-   * (first match wins on overlap); voxels outside all boxes export as today. Boxes are
-   * model-decoupled bboxes — containment is tested at export time. */
+   * (deepest containing box wins on overlap, list order breaks ties); voxels outside all
+   * boxes export as today. Boxes are model-decoupled bboxes — containment is tested at
+   * export time. Rigged voxels are excluded from slice-loop nodes (rig wins) so the joint
+   * tree stays independent of procedural animation. */
   rigBoxes?: RigBox[]
 }
 
@@ -153,43 +155,66 @@ export function buildRigAssignment(model: VoxelModel, rigBoxes: RigBox[] | undef
  * center are expressed in *scaled* world units (`center.y * voxelScaleY`) to agree with the
  * scale-baked vertices — animation clips author absolute positions around that center.
  *
- * With `rig` set, the mesh instead parents under a `Group` named for the rig box — nested
- * under its ancestors' groups (child of the slice node when animated, of root otherwise —
- * keyed per slice, since one rig box can span slices that move independently). Rig groups
- * carry no transform; the mesh keeps the same `-center` offset as the non-rig path.
+ * With `rig` set, the mesh instead parents under its prebuilt joint `Group` (see buildRigTree):
+ * the joint sits at the rig pivot and the mesh is recentered by `-pivot` — the exact slice
+ * pattern, so rotating the joint orbits the part around the authored center and downstream
+ * engines can pose the skeleton with plain node TRS (no skinning). Rig joints never nest under
+ * slice nodes: rigged voxels are excluded from slice assignment upstream, so rigged meshes
+ * always arrive here sliceless and mount straight under the rig tree.
  */
 type RigAttachContext = {
   rigId: string
-  rigName: string
-  rigGroups: Map<string, THREE.Group>
-  rigParents: Map<string, string | null>
-  rigNames: Map<string, string>
+  /** Prebuilt joint groups, keyed by rig id (full outline tree, including empty boxes). */
+  groups: Map<string, THREE.Group>
+  /** Joint translations in scaled world units, for mesh recentering. */
+  scaledPivots: Map<string, THREE.Vector3>
 }
 
-/** Ensures the rig group for `rigId` exists under `branchParent`, creating ancestors first so
- * the outline nests. The threaded `seen` set stops a corrupt cyclic parent chain at the
- * first repeat (store moves and file loading both guarantee acyclic input — this is
- * defense for direct API callers). */
-function ensureRigGroup(
-  rigId: string,
-  sliceKey: SliceKey | undefined,
-  branchParent: THREE.Group,
-  rig: RigAttachContext,
-  seen: Set<string> = new Set(),
-): THREE.Group {
-  const groupKey = `${sliceKey ?? ''}:${rigId}`
-  const existing = rig.rigGroups.get(groupKey)
-  if (existing) return existing
-  const group = new THREE.Group()
-  group.name = rig.rigNames.get(rigId) ?? rigId
-  rig.rigGroups.set(groupKey, group)
-  const parentId = rig.rigParents.get(rigId) ?? null
-  const chainParent =
-    parentId && !seen.has(parentId)
-      ? ensureRigGroup(parentId, sliceKey, branchParent, rig, new Set([...seen, rigId]))
-      : branchParent
-  chainParent.add(group)
-  return group
+/**
+ * Builds the poseable joint tree for the rig outline: one `Group` per box (named for it),
+ * nested to mirror the outline, each positioned at its pivot *relative to its parent joint*
+ * (absolute for roots). Meshes parent under their joint recentered by `-pivot`, so a joint
+ * rotation orbits the part around the authored center. Empty boxes still get joints — the tree
+ * always mirrors the outline, and an empty parent still poses its children. Dangling and
+ * self-referential parents (hand-edited files) fall back to the rig root; the store guarantees
+ * acyclic input, and this double-guards it.
+ */
+function buildRigTree(
+  boxes: RigBox[],
+  names: Map<string, string>,
+  voxelScaleY: number,
+): { root: THREE.Group; groups: Map<string, THREE.Group>; scaledPivots: Map<string, THREE.Vector3> } {
+  const root = new THREE.Group()
+  root.name = 'Rig'
+  const groups = new Map<string, THREE.Group>()
+  const scaledPivots = new Map<string, THREE.Vector3>()
+  const byId = new Map(boxes.map((b) => [b.id, b]))
+  const scaled = (p: Coord) => new THREE.Vector3(p[0], p[1] * voxelScaleY, p[2])
+  const build = (id: string, chain: Set<string>): THREE.Group => {
+    const existing = groups.get(id)
+    if (existing) return existing
+    const group = new THREE.Group()
+    group.name = names.get(id) ?? id
+    groups.set(id, group)
+    const box = byId.get(id)
+    const pivot = box ? scaled(rigPivotOf(box)) : new THREE.Vector3()
+    scaledPivots.set(id, pivot)
+    const parentId =
+      box && box.parentId && box.parentId !== id && !chain.has(box.parentId) && byId.has(box.parentId)
+        ? box.parentId
+        : null
+    if (parentId) {
+      const parent = build(parentId, new Set([...chain, id]))
+      parent.add(group)
+      group.position.copy(pivot).sub(scaledPivots.get(parentId) ?? new THREE.Vector3())
+    } else {
+      root.add(group)
+      group.position.copy(pivot)
+    }
+    return group
+  }
+  for (const box of boxes) build(box.id, new Set())
+  return { root, groups, scaledPivots }
 }
 
 function attachToSliceOrRoot(
@@ -224,7 +249,16 @@ function attachToSliceOrRoot(
     parent = root
   }
   if (rig) {
-    ensureRigGroup(rig.rigId, sliceKey, parent, rig).add(mesh)
+    const group = rig.groups.get(rig.rigId)
+    if (group) {
+      group.add(mesh)
+      // Recenter by -pivot (the slice-branch pattern): vertices are absolute, so without this
+      // the joint offset and the vertex positions would stack.
+      const pivot = rig.scaledPivots.get(rig.rigId)
+      if (pivot) mesh.position.copy(pivot).negate()
+    } else {
+      parent.add(mesh)
+    }
   } else {
     parent.add(mesh)
   }
@@ -290,7 +324,7 @@ export async function exportModelToGlb(
   let sliceNodes: Map<SliceKey, THREE.Group> | undefined
 
   if (hasAnimations) {
-    const { nodes } = assignVoxelsToNodes(model, animSettings, sliceMasks)
+    const { nodes } = assignVoxelsToNodes(model, animSettings, sliceMasks, options.rigBoxes)
     sliceNodeInfo = nodes
     nodeAssignment = new Map()
     for (const [sliceKey, entry] of nodes) {
@@ -302,19 +336,27 @@ export async function exportModelToGlb(
     sliceNodes = new Map()
   }
 
-  // Animated voxels move independently at runtime, so they must not act as AO occluders for the
-  // rest of the (baked-once, rest-pose) model — see bakeAOToAtlas calls below.
-  const animatedKeys = nodeAssignment ? new Set(nodeAssignment.keys()) : undefined
-
+  // Animated voxels move independently at runtime, so they must not act as AO occluders for
+  // the rest of the (baked-once, rest-pose) model — see bakeAOToAtlas calls below. Rigged
+  // voxels join the exclusion for the same reason: joints are externally poseable, so a
+  // rotated joint would otherwise drag a stale baked shadow with it (and leave a phantom
+  // one behind).
+  const animatedKeys = new Set<CellKey>(nodeAssignment ? nodeAssignment.keys() : [])
   // Named rig boxes: deepest-box-wins containment tested at export time (model-decoupled).
+  // Rigged voxels are excluded from slice assignment above (rig wins), so joint meshes never
+  // land under slice nodes — the tree mounts at the root under one Rig container instead.
   const { assignment: rigAssignment, names: rigNames } = buildRigAssignment(model, options.rigBoxes)
-  const rigGroups = new Map<string, THREE.Group>()
-  const rigParents = new Map((options.rigBoxes ?? []).map((b) => [b.id, b.parentId]))
+  if (rigAssignment) {
+    for (const key of rigAssignment.keys()) animatedKeys.add(key)
+  }
+  const rigTree =
+    options.rigBoxes && options.rigBoxes.length > 0
+      ? buildRigTree(options.rigBoxes, rigNames, options.voxelScaleY ?? 1)
+      : null
+  if (rigTree) root.add(rigTree.root)
   const rigContextFor = (rigId: string | undefined): RigAttachContext | undefined => {
-    if (!rigId) return undefined
-    const rigName = rigNames.get(rigId)
-    if (!rigName) return undefined
-    return { rigId, rigName, rigGroups, rigParents, rigNames }
+    if (!rigId || !rigTree || !rigTree.groups.has(rigId)) return undefined
+    return { rigId, groups: rigTree.groups, scaledPivots: rigTree.scaledPivots }
   }
   const meshDisplayName = (rigId: string | undefined, colorKey: number, materialClass: MaterialClass) => {
     const rigName = rigId ? rigNames.get(rigId) : undefined
