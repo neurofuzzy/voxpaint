@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import * as THREE from 'three'
 import type { Coord } from '@/engine/grid/types'
-import type { RigBox, RigTween } from './types'
+import type { Pose, RigBox, RigTween } from './types'
 import { sanitizeRigTween } from './types'
 import {
   activeTweens,
@@ -18,6 +18,7 @@ import {
   pivotWorldFromMatrix,
   TWEEN_CYCLE_SECONDS,
 } from './rigLoop'
+import { evaluatePoseCycle, poseCycleDuration } from './pose'
 
 function tween(over: Partial<RigTween> = {}): RigTween {
   return { id: 'tw-1', kind: 'rotate', axis: 'y', direction: 1, speed: 1, amount: 4, enabled: true, ...over }
@@ -250,6 +251,94 @@ describe('bakeRigClips', () => {
       expect(pz).toBeCloseTo(ep.z, 1)
       const [qx, qy, qz, qw] = sample(quatTrack, 4, t)
       // Quaternion double-cover: compare with sign normalized.
+      const dot = qx * eq.x + qy * eq.y + qz * eq.z + qw * eq.w
+      expect(Math.abs(dot)).toBeCloseTo(1, 2)
+    }
+  })
+})
+
+describe('bakeRigClips with a pose cycle', () => {
+  function groupsFor(boxes: RigBox[]): Map<string, THREE.Group> {
+    const map = new Map<string, THREE.Group>()
+    for (const b of boxes) {
+      const g = new THREE.Group()
+      g.name = b.name
+      map.set(b.id, g)
+    }
+    return map
+  }
+
+  const poses: Pose[] = [
+    { id: 'a', name: 'A', joints: {} },
+    { id: 'b', name: 'B', joints: { c: [0, Math.PI / 2, 0] } },
+  ]
+  const cycle = { fromId: 'a', toId: 'b', mode: 'once' as const, speed: 1 as const }
+  const pose = {
+    at: (t: number) => evaluatePoseCycle(poses, cycle, t) ?? new Map(),
+    duration: poseCycleDuration(cycle),
+  }
+
+  it('emits clips for posed joints even with no tweens, sized to the cycle pass', () => {
+    // No tweens anywhere — the posed child still bakes; the static parent emits nothing.
+    const boxes = [box('p'), box('c', 'p')]
+    const clips = bakeRigClips(boxes, groupsFor(boxes), 1, 30, pose)
+    expect(clips.map((c) => c.name)).toEqual(['anim_c'])
+    // Once at 1x covers a single 2s half cycle.
+    expect(clips[0].duration).toBeCloseTo(2, 10)
+  })
+
+  it('extends the window to a full ping-pong pass', () => {
+    const boxes = [box('c')]
+    const pingpong = { ...cycle, mode: 'pingpong' as const }
+    const clips = bakeRigClips(boxes, groupsFor(boxes), 1, 30, {
+      at: (t: number) => evaluatePoseCycle(poses, pingpong, t) ?? new Map(),
+      duration: poseCycleDuration(pingpong),
+    })
+    expect(clips[0].duration).toBeCloseTo(4, 10)
+  })
+
+  it('matches the live preview with pose + tween composed', () => {
+    // Parent spins (tween), child holds a posed rotation: the baked child clip must carry
+    // the parent's motion in its parent-relative frame plus its own pose offset.
+    const parent = box('p', null, [tween({ id: 's', kind: 'rotate', axis: 'y', speed: 1 })])
+    const child = box('c', 'p')
+    const boxes = [parent, child]
+    const posed = {
+      at: (t: number) => evaluatePoseCycle(poses, cycle, t) ?? new Map(),
+      duration: poseCycleDuration(cycle),
+    }
+    const [clip] = bakeRigClips(boxes, groupsFor(boxes), 1, 30, posed).filter((c) => c.name === 'anim_c')
+    expect(clip).toBeDefined()
+    const posTrack = clip.tracks.find((t) => t.name.endsWith('.position'))! as unknown as { times: ArrayLike<number>; values: ArrayLike<number> }
+    const quatTrack = clip.tracks.find((t) => t.name.endsWith('.quaternion'))! as unknown as { times: ArrayLike<number>; values: ArrayLike<number> }
+    const sample = (track: { times: ArrayLike<number>; values: ArrayLike<number> }, size: number, t: number) => {
+      const times = track.times
+      let i = 0
+      while (i < times.length - 2 && times[i + 1] < t) i++
+      const t0 = times[i]
+      const t1 = times[i + 1]
+      const f = t1 > t0 ? (t - t0) / (t1 - t0) : 0
+      const out: number[] = []
+      for (let k = 0; k < size; k++) out.push(track.values[i * size + k] * (1 - f) + track.values[(i + 1) * size + k] * f)
+      return out
+    }
+    for (const t of [0.25, 0.75, 1.5]) {
+      const worlds = composeTweenMatrices(boxes, t)
+      void worlds
+      const animated = composeAnimatedMatrices(boxes, posed.at(t), t)
+      const expected = new THREE.Matrix4()
+        .makeTranslation(-1.5, -1.5, -1.5)
+        .multiply(new THREE.Matrix4().copy(animated.get('p')!).invert())
+        .multiply(animated.get('c')!)
+        .multiply(new THREE.Matrix4().makeTranslation(1.5, 1.5, 1.5))
+      const ep = new THREE.Vector3()
+      const eq = new THREE.Quaternion()
+      expected.decompose(ep, eq, new THREE.Vector3())
+      const [px, py, pz] = sample(posTrack, 3, t)
+      expect(px).toBeCloseTo(ep.x, 1)
+      expect(py).toBeCloseTo(ep.y, 1)
+      expect(pz).toBeCloseTo(ep.z, 1)
+      const [qx, qy, qz, qw] = sample(quatTrack, 4, t)
       const dot = qx * eq.x + qy * eq.y + qz * eq.z + qw * eq.w
       expect(Math.abs(dot)).toBeCloseTo(1, 2)
     }

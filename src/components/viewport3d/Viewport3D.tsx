@@ -5,7 +5,7 @@ import * as THREE from 'three'
 import type { OrbitControls as OrbitControlsImpl } from 'three-stdlib'
 import { decodeKey, encodeKey, effectiveExtent, viewOriginShift, withinWorkingBounds } from '@/engine/grid/GridStore'
 import { rigBoxContains, rigIdForCoord, rigPivotOf } from '@/engine/rigging/types'
-import { angleAroundAxis, composeAxisAngle, gizmoRadiusForBox, intersectAxisPlane, nearestRingHit, parentChainMatrix, projectToTrackball, trackballEuler } from '@/engine/rigging/pose'
+import { angleAroundAxis, composeAxisAngle, gizmoRadiusForBox, intersectAxisPlane, nearestRingHit, parentChainMatrix, projectToTrackball, resolvePreviewPose, trackballEuler } from '@/engine/rigging/pose'
 import { chainHasActiveTweens, hasActiveTweens } from '@/engine/rigging/rigLoop'
 import type { Axis, CellKey, Coord } from '@/engine/grid/types'
 import { hasActiveAnimations } from '@/engine/animation/animationLayers'
@@ -617,15 +617,21 @@ function VoxelInteractionHandler({ managerRef, controlsRef }: {
             return [rect.left + ((pv.x + 1) / 2) * rect.width, rect.top + ((1 - pv.y) / 2) * rect.height]
           }
           const ray = gridSpaceRay(e.clientX, e.clientY)
+          // Hit-test in the resolved preview frame (cycle included) — matches the rings.
+          const cycleTime = st.cyclePlaying && st.poseCycle ? performance.now() / 1000 - st.cycleStartedAt : null
+          const preview = resolvePreviewPose(st.poses, st.stagedPoseId, st.poseRotations, st.poseCycle, cycleTime)
           const axis = ray
-            ? nearestRingHit(st.rigBoxes, st.poseRotations, box, ray.origin, ray.dir, project, e.clientX, e.clientY, e.pointerType === 'touch' ? 24 : 14)
+            ? nearestRingHit(st.rigBoxes, preview, box, ray.origin, ray.dir, project, e.clientX, e.clientY, e.pointerType === 'touch' ? 24 : 14)
             : null
           if (axis) {
             const pivot = rigPivotOf(box)
             const pw: Coord = [pivot[0] + 0.5, pivot[1] + 0.5, pivot[2] + 0.5]
             const pt = ray ? intersectAxisPlane(ray.origin, ray.dir, pw, axis) : null
             if (pt) {
-              const euler = st.poseRotations.get(box.id) ?? [0, 0, 0]
+              // Grabbing loads what's shown into the scratch first (freezing any cycle),
+              // so the drag continues from the visible pose instead of jumping.
+              st.grabPoseForEdit()
+              const euler = useAppStore.getState().poseRotations.get(box.id) ?? [0, 0, 0]
               poseDrag = {
                 kind: 'axis',
                 boxId: box.id,
@@ -924,14 +930,18 @@ function VoxelInteractionHandler({ managerRef, controlsRef }: {
           pendingPoseDrag = null
           // Re-check the frame at conversion: a tween may have started mid-gesture.
           if (box && !chainHasActiveTweens(st.rigBoxes, box)) {
+            // Grabbing loads what's shown into the scratch first (see ring path).
+            st.grabPoseForEdit()
+            const fresh = useAppStore.getState()
             const ray = gridSpaceRay(e.clientX, e.clientY)
             const pivot = rigPivotOf(box)
             const center: Coord = [pivot[0] + 0.5, pivot[1] + 0.5, pivot[2] + 0.5]
             const radius = gizmoRadiusForBox(box)
             const start = ray ? projectToTrackball(ray.origin, ray.dir, center, radius) : null
             if (start) {
-              const parent = parentChainMatrix(st.rigBoxes, st.poseRotations, box)
-              const euler = st.poseRotations.get(box.id) ?? [0, 0, 0]
+              const preview = resolvePreviewPose(fresh.poses, fresh.stagedPoseId, fresh.poseRotations)
+              const parent = parentChainMatrix(fresh.rigBoxes, preview, box)
+              const euler = fresh.poseRotations.get(box.id) ?? [0, 0, 0]
               poseDrag = {
                 kind: 'track',
                 boxId: box.id,
@@ -1191,7 +1201,9 @@ function VoxelInteractionHandler({ managerRef, controlsRef }: {
           const pv = new THREE.Vector3()
           const ray = gridSpaceRay(e.clientX, e.clientY)
           if (ray) {
-            ringAxis = nearestRingHit(st.rigBoxes, st.poseRotations, box, ray.origin, ray.dir,
+            const cycleTime = st.cyclePlaying && st.poseCycle ? performance.now() / 1000 - st.cycleStartedAt : null
+            const preview = resolvePreviewPose(st.poses, st.stagedPoseId, st.poseRotations, st.poseCycle, cycleTime)
+            ringAxis = nearestRingHit(st.rigBoxes, preview, box, ray.origin, ray.dir,
               (p) => {
                 pv.set(p[0], p[1] * sy, p[2]).project(camera)
                 if (pv.z > 1 || pv.z < -1) return null
@@ -1609,7 +1621,7 @@ export function Viewport3D() {
   // Pose preview takes over the model views while a non-empty pose exists (hidden blanks it
   // like the others); the static views stay mounted with frozen builds underneath. The drag
   // latch keeps it mounted through exact-zero crossings mid-gesture.
-  const poseActive = useAppStore((s) => s.mode === 'animate' && (s.poseRotations.size > 0 || s.poseDragging) && s.animateModelView !== 'hidden') || (hasTweenedJoints && !animateModelHidden)
+  const poseActive = useAppStore((s) => s.mode === 'animate' && (s.poseRotations.size > 0 || s.poseDragging || s.stagedPoseId !== null || s.cyclePlaying) && s.animateModelView !== 'hidden') || (hasTweenedJoints && !animateModelHidden)
   // Exactly one model view is live at a time; the others stay mounted but hidden with frozen
   // builds (see useActiveMemo), so mode switches never tear down GPU resources.
   // (textureMode and hasAnimations are mutually exclusive — hasAnimations requires animateMode.)

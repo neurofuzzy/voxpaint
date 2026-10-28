@@ -1,6 +1,6 @@
 import type { Axis, CellKey, ChamferCell, Coord, GridExtent, Orientation, Rotation, VoxelModel, VoxelScaleY } from '@/engine/grid/types'
 import type { Marker } from '@/engine/markers/types'
-import type { RigBox, RigTween } from '@/engine/rigging/types'
+import type { Pose, PoseCycle, RigBox, RigTween } from '@/engine/rigging/types'
 import type { JointEuler } from '@/engine/rigging/pose'
 import type { GltfExportAnchor } from '@/engine/export/gltfExport'
 import type { EmissiveAnimMode, PaletteSlotRef, PaletteState } from '@/engine/palette/types'
@@ -327,6 +327,9 @@ export type ViewSlice = {
   /** GLTF export: emit design markers as empty nodes with `extras.voxpaint` payloads
    * (default true). Off exports voxels only. */
   exportIncludeMarkers: boolean
+  /** GLTF export: emit animation clips for slice loops, tween stacks, and the pose cycle
+   * (default true). Off exports the same joint/node structure posed at bind. */
+  exportIncludeAnimations: boolean
   setFullscreen: (v: boolean) => void
   /** Sets the pane layout. Requests for 3D-only outside Model mode land on split instead —
    * Animate/Texture have no 3D-only editing surface. Model-mode changes also record Model's
@@ -367,6 +370,7 @@ export type ViewSlice = {
   setExportIncludeTextureMaps: (v: boolean) => void
   setExportIncludeAOMaps: (v: boolean) => void
   setExportIncludeMarkers: (v: boolean) => void
+  setExportIncludeAnimations: (v: boolean) => void
 }
 
 export type PersistenceSlice = {
@@ -690,6 +694,8 @@ export type AnimSnapshot = {
   sliceMasks: Map<SliceKey, Set<CellKey>>
   slicePivots: Map<SliceKey, CellKey>
   rigBoxes: RigBox[]
+  poses: Pose[]
+  poseCycle: PoseCycle | null
 }
 
 export type MarkerSlice = {
@@ -784,9 +790,41 @@ export type PoseSlice = {
   /** Ephemeral pose preview: joint id → local rotation (radians, intrinsic XYZ). Empty = bind.
    * Never undoable, never persisted; cleared when leaving Animate mode. */
   poseRotations: Map<string, JointEuler>
+  /** Named joint snapshots. Undoable + persisted (they ride the animate undo stack). */
+  poses: Pose[]
+  /** Pose currently staged for preview (view-only; not undoable, not persisted). Null =
+   * the live scratch drives the preview. */
+  stagedPoseId: string | null
   /** Sets a joint's local rotation (no-op on unknown ids; near-zero collapses to bind). */
   setJointRotation: (id: string, euler: JointEuler) => void
-  /** Drops the whole preview back to bind. */
+  /** Snapshots the live scratch into a new named pose, stages it, and clears the scratch.
+   * No-op (with a toast) when the scratch is empty. Self-brackets undo. */
+  capturePose: () => string | null
+  /** Renames a pose (auto-uniquified; no-op on empty/unknown). Self-brackets undo. */
+  renamePose: (id: string, name: string) => void
+  /** Deletes a pose (clears staging if it pointed at it). Self-brackets undo. */
+  deletePose: (id: string) => void
+  /** Stages a pose for preview, or null for the live scratch. Grabbing the gizmo while a
+   * pose is staged adopts it into the scratch first, so you grab what you see. */
+  stagePose: (id: string | null) => void
+  /** Copies the staged pose into the live scratch and unstages (gizmo-grab handoff).
+   * No-op without a staged pose; never undoable (scratch never is). */
+  adoptStagedPose: () => void
+  /** The pose-to-pose playback loop definition (undoable + persisted). Null = no cycle. */
+  poseCycle: PoseCycle | null
+  /** Cycle transport: playing flag + start timestamp. Ephemeral (not undoable, not persisted). */
+  cyclePlaying: boolean
+  cycleStartedAt: number
+  /** Sets the cycle definition. Self-brackets undo. Stops transport (a redefined cycle
+   * restarts from its top on next play). */
+  setPoseCycle: (cycle: PoseCycle | null) => void
+  /** Starts/stops cycle transport (records the start timestamp on play). */
+  setCyclePlaying: (playing: boolean) => void
+  /** Loads whatever the preview currently shows (cycle frame, staged pose, or scratch)
+   * into the scratch, then clears staging and stops transport — so a gizmo grab
+   * continues from what's on screen instead of jumping. Never undoable. */
+  grabPoseForEdit: () => void
+  /** Drops the whole preview back to bind (clears scratch + staging, stops transport). */
   resetPose: () => void
   /** True while a gizmo drag is open — keeps the pose view mounted through exact-zero
    * crossings (which collapse back to bind mid-drag) instead of flickering view swaps. */

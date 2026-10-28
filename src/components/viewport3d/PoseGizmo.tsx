@@ -1,8 +1,9 @@
-import { useMemo } from 'react'
+import { useMemo, useRef } from 'react'
 import * as THREE from 'three'
+import { useFrame } from '@react-three/fiber'
 import { rigPivotOf } from '@/engine/rigging/types'
 import { chainHasActiveTweens } from '@/engine/rigging/rigLoop'
-import { gizmoRadiusForBox, parentChainMatrix } from '@/engine/rigging/pose'
+import { gizmoRadiusForBox, parentChainMatrix, resolvePreviewPose } from '@/engine/rigging/pose'
 import type { Axis } from '@/engine/grid/types'
 import { useAppStore } from '@/store/useAppStore'
 
@@ -34,27 +35,36 @@ export function PoseGizmo() {
   const activeTool = useAppStore((s) => s.activeTool)
   const rigBoxes = useAppStore((s) => s.rigBoxes)
   const selectedRigBoxId = useAppStore((s) => s.selectedRigBoxId)
-  const poseRotations = useAppStore((s) => s.poseRotations)
 
   const box = rigBoxes.find((b) => b.id === selectedRigBoxId) ?? null
-  // Hook order must stay stable — compute the transform memo unconditionally.
-  const transform = useMemo(() => {
-    if (!box) return null
-    const parent = parentChainMatrix(rigBoxes, poseRotations, box)
-    const pivot = rigPivotOf(box)
-    const position = new THREE.Vector3(pivot[0] + 0.5, pivot[1] + 0.5, pivot[2] + 0.5).applyMatrix4(parent)
-    const quaternion = new THREE.Quaternion().setFromRotationMatrix(parent)
-    return { position, quaternion, radius: gizmoRadiusForBox(box) }
-  }, [box, rigBoxes, poseRotations])
+  const group = useRef<THREE.Group>(null)
+  // Rings track the resolved preview — including a playing cycle — so they sit where the
+  // joints are drawn. Written per frame like the other rig chrome; grabbing freezes the
+  // cycle into the scratch first (see Viewport3D), so the drag math stays consistent.
+  useFrame(() => {
+    const g = group.current
+    const st = useAppStore.getState()
+    if (!g || st.mode !== 'animate') return
+    const selected = st.rigBoxes.find((b) => b.id === st.selectedRigBoxId) ?? null
+    if (!selected || chainHasActiveTweens(st.rigBoxes, selected)) return
+    const now = performance.now() / 1000
+    const cycleTime = st.cyclePlaying && st.poseCycle ? now - st.cycleStartedAt : null
+    const preview = resolvePreviewPose(st.poses, st.stagedPoseId, st.poseRotations, st.poseCycle, cycleTime)
+    const parent = parentChainMatrix(st.rigBoxes, preview, selected)
+    const pivot = rigPivotOf(selected)
+    g.position.set(pivot[0] + 0.5, pivot[1] + 0.5, pivot[2] + 0.5).applyMatrix4(parent)
+    g.quaternion.setFromRotationMatrix(parent)
+  })
+  const radius = useMemo(() => (box ? gizmoRadiusForBox(box) : 0), [box])
 
-  // Posing needs a static frame: the rings and every drag path sample the bind/pose-only
-  // parent chain, so a tween anywhere up the chain hides them (the panel explains how to
-  // mute tweens to pose again). Without motion the memo below is exact — no per-frame
-  // updates needed.
-  if (mode !== 'animate' || activeTool !== 'pose' || !box || !transform || chainHasActiveTweens(rigBoxes, box)) return null
+  // Posing needs a static tween frame: the rings and every drag path sample the
+  // pose-only parent chain, so a tween anywhere up the chain hides them (the panel
+  // explains how to mute tweens to pose again). A playing *pose* cycle is fine — grabs
+  // freeze it into the scratch first.
+  if (mode !== 'animate' || activeTool !== 'pose' || !box || chainHasActiveTweens(rigBoxes, box)) return null
 
   return (
-    <group position={transform.position} quaternion={transform.quaternion}>
+    <group ref={group} matrixAutoUpdate={false}>
       {RING_AXES.map((axis) => (
         <mesh
           key={axis}
@@ -62,7 +72,7 @@ export function PoseGizmo() {
           renderOrder={11}
           raycast={() => null}
         >
-          <torusGeometry args={[transform.radius, 0.06, 12, 72]} />
+          <torusGeometry args={[radius, 0.06, 12, 72]} />
           <meshStandardMaterial
             color={RING_COLORS[axis]}
             emissive={RING_COLORS[axis]}

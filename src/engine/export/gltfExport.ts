@@ -20,8 +20,9 @@ import { buildEmissiveAnimIndex } from '@/engine/palette/emissiveAnimation'
 import type { SliceAnimSettings, SliceKey } from '@/engine/animation/types'
 import { assignVoxelsToNodes, hasActiveAnimations, resolveAnimCenter } from '@/engine/animation/animationLayers'
 import { buildAllAnimationClips, type AnimNodeInfo } from '@/engine/animation/animationGLTF'
-import { rigIdForCoord, rigPivotOf, sanitizeRigName, type RigBox } from '@/engine/rigging/types'
+import { rigIdForCoord, rigPivotOf, sanitizeRigName, type Pose, type PoseCycle, type RigBox } from '@/engine/rigging/types'
 import { bakeRigClips } from '@/engine/rigging/rigLoop'
+import { evaluatePoseCycle, poseCycleDuration } from '@/engine/rigging/pose'
 import { registerEmissiveAnimationExtension, type EmissiveAnimExportTarget } from './emissiveAnimationExport'
 import { scaleGeometryY } from './scaleGeometry'
 
@@ -114,6 +115,10 @@ export type GltfExportOptions = {
   markers?: Marker[]
   /** Emit the `markers` as empty nodes (default true). Off skips them — the .glb carries voxels only. */
   includeMarkers?: boolean
+  /** Emit animation clips for slice loops, tween stacks, and the pose cycle (default true).
+   * Off exports the same joint/node structure posed at bind with no `animations` — useful
+   * for downstream tools that can't consume clips or when only the static model matters. */
+  includeAnimations?: boolean
   /** Named rig bounding boxes: voxels inside a box export under a `Group` named for the box
    * (deepest containing box wins on overlap, list order breaks ties); voxels outside all
    * boxes export as today. Boxes are model-decoupled bboxes — containment is tested at
@@ -308,6 +313,8 @@ export async function exportModelToGlb(
   animSettings?: Map<SliceKey, SliceAnimSettings>,
   sliceMasks?: Map<SliceKey, Set<CellKey>>,
   slicePivots?: Map<SliceKey, CellKey>,
+  poses?: Pose[],
+  poseCycle?: PoseCycle | null,
 ): Promise<ArrayBuffer> {
   const textured = !!texture && hasTextureContent(texture)
   const root = new THREE.Group()
@@ -318,7 +325,8 @@ export async function exportModelToGlb(
   const emissiveAnimIndex = buildEmissiveAnimIndex(palette)
   const emissiveAnimTargets: EmissiveAnimExportTarget[] = []
 
-  const hasAnimations = !!animSettings && hasActiveAnimations(animSettings)
+  const includeAnimations = options.includeAnimations ?? true
+  const hasAnimations = includeAnimations && !!animSettings && hasActiveAnimations(animSettings)
   let nodeAssignment: Map<CellKey, SliceKey> | undefined
   let sliceNodeInfo: Map<SliceKey, { cellKeys: CellKey[]; axis: Axis; offset: number }> | undefined
   let animNodes: AnimNodeInfo[] | undefined
@@ -602,10 +610,18 @@ export async function exportModelToGlb(
   // Build animation clips — GLTFExporter reads these from `options.animations`, not
   // `Object3D.animations` (which it ignores entirely).
   const clips = animNodes && animNodes.length > 0 ? buildAllAnimationClips(animNodes) : []
-  // Tween stacks bake to one looping clip per animated joint (sampled over the 2s
-  // universal cycle, authored in the parent's animated frame — see `bakeRigClips`).
-  if (rigTree) {
-    clips.push(...bakeRigClips(options.rigBoxes ?? [], rigTree.groups, voxelScaleY))
+  // Tween stacks (+ the pose cycle, when one is defined) bake to one looping clip per
+  // animated joint (sampled over the universal cycle, authored in the parent's animated
+  // frame — see `bakeRigClips`). The cycle definition bakes from its top regardless of
+  // transport state, so export is deterministic. With `includeAnimations: false` the
+  // joint/node structure still exports, posed at bind.
+  if (rigTree && includeAnimations) {
+    const boxes = options.rigBoxes ?? []
+    const cycle = poseCycle ?? null
+    const poseBake = cycle
+      ? { at: (t: number) => evaluatePoseCycle(poses ?? [], cycle, t) ?? new Map(), duration: poseCycleDuration(cycle) }
+      : undefined
+    clips.push(...bakeRigClips(boxes, rigTree.groups, voxelScaleY, 30, poseBake))
   }
 
   const scale = (options.scaleFactor ?? 100) / 100

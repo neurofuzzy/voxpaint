@@ -5,7 +5,7 @@ import { emptyTextureModel, getTexel } from '@/engine/texture/TextureStore'
 import { faceSizeFor } from '@/engine/texture/types'
 import { migrateToCurrent } from './migrations'
 import { deserializeProject, serializeProject } from './serialize'
-import type { RigBox } from '@/engine/rigging/types'
+import type { Pose, RigBox } from '@/engine/rigging/types'
 import type { ProjectMeta, VoxPaintProjectFileV1 } from './schema'
 import { CURRENT_SCHEMA_VERSION } from './schema'
 
@@ -370,5 +370,72 @@ describe('serialize rig boxes', () => {
     // The cycle breaks: at least one of the two links roots.
     const links = restored.filter((b) => b.id === 'a' || b.id === 'b').map((b) => b.parentId)
     expect(links).toContain(null)
+  })
+})
+
+describe('serialize pose library', () => {
+  it('round-trips poses and the cycle definition', () => {
+    const boxes = [
+      { id: 'arm', name: 'arm', min: [0, 0, 0] as [number, number, number], max: [2, 2, 2] as [number, number, number], parentId: null, pivot: null, tweens: [] },
+      { id: 'leg', name: 'leg', min: [4, 0, 0] as [number, number, number], max: [6, 2, 2] as [number, number, number], parentId: null, pivot: null, tweens: [] },
+    ]
+    const poses: Pose[] = [
+      { id: 'p1', name: 'Wave', joints: { arm: [0.5, 0, 0] } },
+      { id: 'p2', name: 'Kick', joints: { leg: [0, 0, 0.25], ghost: [1, 0, 0] } },
+    ]
+    const cycle = { fromId: 'p1', toId: 'p2', mode: 'pingpong' as const, speed: 2 as const }
+    const file = serializeProject(emptyModel(), DEFAULT_PALETTE, meta, emptyTextureModel(meta.gridExtent), undefined, undefined, undefined, undefined, undefined, boxes, poses, cycle)
+    expect(file.schemaVersion).toBe(CURRENT_SCHEMA_VERSION)
+    // Unknown joints are pruned on load (ghost box is not in the file).
+    const restored = deserializeProject(file)
+    expect(restored.poses).toEqual([
+      { id: 'p1', name: 'Wave', joints: { arm: [0.5, 0, 0] } },
+      { id: 'p2', name: 'Kick', joints: { leg: [0, 0, 0.25] } },
+    ])
+    expect(restored.poseCycle).toEqual(cycle)
+  })
+
+  it('omits empty poses and a null cycle', () => {
+    const file = serializeProject(emptyModel(), DEFAULT_PALETTE, meta, emptyTextureModel(meta.gridExtent), undefined, undefined, undefined, undefined, undefined, [], [], null)
+    expect(file).not.toHaveProperty('poses')
+    expect(file).not.toHaveProperty('poseCycle')
+    const restored = deserializeProject(file)
+    expect(restored.poses).toEqual([])
+    expect(restored.poseCycle).toBeNull()
+  })
+
+  it('drops malformed poses and cycles on load', () => {
+    const boxes = [
+      { id: 'arm', name: 'arm', min: [0, 0, 0] as [number, number, number], max: [2, 2, 2] as [number, number, number], parentId: null, pivot: null, tweens: [] },
+    ]
+    const file = {
+      ...serializeProject(emptyModel(), DEFAULT_PALETTE, meta, emptyTextureModel(meta.gridExtent), undefined, undefined, undefined, undefined, undefined, boxes),
+      poses: [
+        { id: 'good', name: 'Good', joints: { arm: [0.5, 0, 0] } },
+        { id: 'bad', name: 'Bad', joints: { arm: [0.5, 'x', 0] } },
+        { id: 'good', name: 'Dupe', joints: {} },
+        { id: '', name: 'Empty', joints: {} },
+      ],
+      poseCycle: { fromId: 'good', toId: 'missing', mode: 'loop', speed: 1 },
+    }
+    const restored = deserializeProject(file as any)
+    // Bad joints pruned (pose survives, possibly jointless); dupe + empty ids dropped;
+    // dangling cycle dropped.
+    expect(restored.poses).toEqual([
+      { id: 'good', name: 'Good', joints: { arm: [0.5, 0, 0] } },
+      { id: 'bad', name: 'Bad', joints: {} },
+    ])
+    expect(restored.poseCycle).toBeNull()
+  })
+
+  it('migrates v15 files with an empty library and no cycle', () => {
+    const texture = emptyTextureModel(meta.gridExtent)
+    const v15 = {
+      ...serializeProject(emptyModel(), DEFAULT_PALETTE, meta, texture),
+      schemaVersion: 15,
+    }
+    const restored = deserializeProject(migrateToCurrent(v15))
+    expect(restored.poses).toEqual([])
+    expect(restored.poseCycle).toBeNull()
   })
 })

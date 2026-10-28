@@ -53,6 +53,7 @@ export const createViewSlice: Slice = (set, get) => ({
   exportIncludeTextureMaps: true,
   exportIncludeAOMaps: true,
   exportIncludeMarkers: true,
+  exportIncludeAnimations: true,
 
   setFullscreen: (v) => set((state) => { state.fullscreen = v }),
   setLayoutMode: (v) => {
@@ -123,4 +124,5 @@ export const createViewSlice: Slice = (set, get) => ({
   setExportIncludeTextureMaps: (v) => set((state) => { state.exportIncludeTextureMaps = v; state.dirty = true }),
   setExportIncludeAOMaps: (v) => set((state) => { state.exportIncludeAOMaps = v; state.dirty = true }),
   setExportIncludeMarkers: (v) => set((state) => { state.exportIncludeMarkers = v; state.dirty = true }),
+  setExportIncludeAnimations: (v) => set((state) => { state.exportIncludeAnimations = v; state.dirty = true }),
 })

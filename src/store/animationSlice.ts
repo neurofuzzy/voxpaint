@@ -1,7 +1,8 @@
 import type { StateCreator } from 'zustand'
 import type { CellKey, Coord } from '@/engine/grid/types'
 import { withinWorkingBounds } from '@/engine/grid/GridStore'
-import type { RigBox } from '@/engine/rigging/types'
+import type { Pose, PoseCycle, RigBox } from '@/engine/rigging/types'
+import type { JointEuler } from '@/engine/rigging/pose'
 import type { SliceAnimSettings, SliceKey } from '@/engine/animation/types'
 import { gridCoordFromPixel } from '@/engine/plane/constructionPlane'
 import type { AnimSnapshot, AppState, AnimationSlice } from './types'
@@ -35,12 +36,18 @@ function cloneSlicePivots(map: Map<SliceKey, CellKey>): Map<SliceKey, CellKey> {
   return new Map(map)
 }
 
-function cloneSnapshot(state: { animSettings: Map<SliceKey, SliceAnimSettings>; sliceMasks: Map<SliceKey, Set<CellKey>>; slicePivots: Map<SliceKey, CellKey>; rigBoxes: RigBox[] }): AnimSnapshot {
+function clonePoses(poses: Pose[]): Pose[] {
+  return poses.map((p) => ({ ...p, joints: Object.fromEntries(Object.entries(p.joints).map(([id, e]) => [id, [...e] as JointEuler])) }))
+}
+
+function cloneSnapshot(state: { animSettings: Map<SliceKey, SliceAnimSettings>; sliceMasks: Map<SliceKey, Set<CellKey>>; slicePivots: Map<SliceKey, CellKey>; rigBoxes: RigBox[]; poses: Pose[]; poseCycle: PoseCycle | null }): AnimSnapshot {
   return {
     animSettings: cloneAnimSettings(state.animSettings),
     sliceMasks: cloneSliceMasks(state.sliceMasks),
     slicePivots: cloneSlicePivots(state.slicePivots),
     rigBoxes: state.rigBoxes.map((b) => ({ ...b, min: [...b.min] as Coord, max: [...b.max] as Coord, pivot: b.pivot ? ([...b.pivot] as Coord) : null, tweens: (b.tweens ?? []).map((t) => ({ ...t })) })),
+    poses: clonePoses(state.poses),
+    poseCycle: state.poseCycle ? { ...state.poseCycle } : null,
   }
 }
 
@@ -105,8 +112,19 @@ export const createAnimationSlice: Slice = (set, get) => ({
       state.sliceMasks = prev.sliceMasks
       state.slicePivots = prev.slicePivots
       state.rigBoxes = prev.rigBoxes
+      state.poses = prev.poses
+      state.poseCycle = prev.poseCycle
+      // Undo can orphan the cycle's pose refs (eval falls back to bind) — stop transport
+      // rather than silently playing a degraded cycle.
+      if (state.cyclePlaying && state.poseCycle && !state.poses.some((p) => p.id === state.poseCycle!.fromId && state.poses.some((q) => q.id === state.poseCycle!.toId))) {
+        state.cyclePlaying = false
+      }
       if (state.selectedRigBoxId && !state.rigBoxes.some((b) => b.id === state.selectedRigBoxId)) {
         state.selectedRigBoxId = null
+      }
+      // Staging is view state, not undo state — drop it if its pose didn't survive.
+      if (state.stagedPoseId && !state.poses.some((p) => p.id === state.stagedPoseId)) {
+        state.stagedPoseId = null
       }
       state.dirty = true
     })
@@ -121,8 +139,16 @@ export const createAnimationSlice: Slice = (set, get) => ({
       state.sliceMasks = next.sliceMasks
       state.slicePivots = next.slicePivots
       state.rigBoxes = next.rigBoxes
+      state.poses = next.poses
+      state.poseCycle = next.poseCycle
+      if (state.cyclePlaying && state.poseCycle && !state.poses.some((p) => p.id === state.poseCycle!.fromId && state.poses.some((q) => q.id === state.poseCycle!.toId))) {
+        state.cyclePlaying = false
+      }
       if (state.selectedRigBoxId && !state.rigBoxes.some((b) => b.id === state.selectedRigBoxId)) {
         state.selectedRigBoxId = null
+      }
+      if (state.stagedPoseId && !state.poses.some((p) => p.id === state.stagedPoseId)) {
+        state.stagedPoseId = null
       }
       state.dirty = true
     })
@@ -185,6 +211,29 @@ function rigBoxesEqual(a: RigBox[], b: RigBox[]): boolean {
   return true
 }
 
-function snapshotsEqual(a: AnimSnapshot, b: { animSettings: Map<SliceKey, SliceAnimSettings>; sliceMasks: Map<SliceKey, Set<CellKey>>; slicePivots: Map<SliceKey, CellKey>; rigBoxes: RigBox[] }): boolean {
-  return mapsEqual(a.animSettings, b.animSettings) && sliceMasksEqual(a.sliceMasks, b.sliceMasks) && slicePivotsEqual(a.slicePivots, b.slicePivots) && rigBoxesEqual(a.rigBoxes, b.rigBoxes)
+function posesEqual(a: Pose[], b: Pose[]): boolean {
+  if (a.length !== b.length) return false
+  for (let i = 0; i < a.length; i++) {
+    const x = a[i]
+    const y = b[i]
+    if (x.id !== y.id || x.name !== y.name) return false
+    const xk = Object.keys(x.joints)
+    const yk = Object.keys(y.joints)
+    if (xk.length !== yk.length) return false
+    for (const key of xk) {
+      const xe = x.joints[key]
+      const ye = y.joints[key]
+      if (!ye || xe[0] !== ye[0] || xe[1] !== ye[1] || xe[2] !== ye[2]) return false
+    }
+  }
+  return true
+}
+
+function poseCycleEqual(a: PoseCycle | null, b: PoseCycle | null): boolean {
+  if (!a || !b) return a === b
+  return a.fromId === b.fromId && a.toId === b.toId && a.mode === b.mode && a.speed === b.speed
+}
+
+function snapshotsEqual(a: AnimSnapshot, b: { animSettings: Map<SliceKey, SliceAnimSettings>; sliceMasks: Map<SliceKey, Set<CellKey>>; slicePivots: Map<SliceKey, CellKey>; rigBoxes: RigBox[]; poses: Pose[]; poseCycle: PoseCycle | null }): boolean {
+  return mapsEqual(a.animSettings, b.animSettings) && sliceMasksEqual(a.sliceMasks, b.sliceMasks) && slicePivotsEqual(a.slicePivots, b.slicePivots) && rigBoxesEqual(a.rigBoxes, b.rigBoxes) && posesEqual(a.poses, b.poses) && poseCycleEqual(a.poseCycle, b.poseCycle)
 }

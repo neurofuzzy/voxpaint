@@ -1,12 +1,27 @@
 import type { AnimationType, AnimationSpeed } from '@/engine/animation/types'
-import type { RigTween } from '@/engine/rigging/types'
+import type { PoseCycleMode, RigTween } from '@/engine/rigging/types'
 import type { Axis, BBox, ChamferClassification, GridExtent, Orientation, VoxelScaleY } from '@/engine/grid/types'
 import type { SerializedMarkerPosition } from '@/engine/markers/types'
 import type { PaletteSlotRef, PaletteState } from '@/engine/palette/types'
 import type { BoxFace } from '@/engine/texture/types'
 import type { GltfExportAnchor } from '@/engine/export/gltfExport'
 
-export const CURRENT_SCHEMA_VERSION = 15 as const
+export const CURRENT_SCHEMA_VERSION = 16 as const
+
+/** A named joint snapshot: per-box local euler rotations (radians, intrinsic XYZ). */
+export type SerializedPose = {
+  id: string
+  name: string
+  joints: Record<string, [number, number, number]>
+}
+
+/** A pose-to-pose playback loop definition (transport state is never persisted). */
+export type SerializedPoseCycle = {
+  fromId: string
+  toId: string
+  mode: PoseCycleMode
+  speed: AnimationSpeed
+}
 
 export type ViewSettings = {
   ambientOcclusion: boolean
@@ -31,6 +46,9 @@ export type ViewSettings = {
   exportIncludeAOMaps?: boolean
   /** GLTF export: emit design markers as empty nodes. Defaults true. */
   exportIncludeMarkers?: boolean
+  /** GLTF export: emit animation clips for slice loops, tween stacks, and the pose cycle.
+   * Defaults true. */
+  exportIncludeAnimations?: boolean
 }
 
 export type ProjectMeta = {
@@ -181,7 +199,10 @@ export type VoxPaintProjectFileV2 = {
  * with no loop (static joints), matching their pre-loop behavior.
  *
  * v14 → v15: the single `loop` becomes an ordered `tweens` stack (one entry per old loop,
- * enabled). Older files load with equivalent motion under the new composition. */
+ * enabled). Older files load with equivalent motion under the new composition.
+ *
+ * v15 → v16: named joint snapshots (`poses`) plus the pose-cycle definition (`poseCycle`)
+ * are added. Older files load with an empty library and no cycle. */
 export type VoxPaintProjectFile = {
   schemaVersion: typeof CURRENT_SCHEMA_VERSION
   meta: ProjectMeta
@@ -198,4 +219,6 @@ export type VoxPaintProjectFile = {
   pivots?: SerializedSlicePivot[]
   markers?: SerializedMarkerPosition[]
   rigBoxes?: SerializedRigBox[]
+  poses?: SerializedPose[]
+  poseCycle?: SerializedPoseCycle
 }

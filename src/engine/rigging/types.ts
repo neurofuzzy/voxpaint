@@ -1,4 +1,5 @@
 import type { Axis, Coord, GridExtent } from '@/engine/grid/types'
+import type { JointEuler } from './pose'
 import { effectiveExtent } from '@/engine/grid/GridStore'
 import type { ConstructionPlane } from '@/engine/plane/types'
 import { toDisplayGridlineU, toDisplayGridlineV } from '@/engine/plane/planeDisplay'
@@ -52,6 +53,55 @@ export type RigTween = {
   /** Slide amplitude in voxels (unused by rotate). */
   amount: number
   enabled: boolean
+}
+
+/**
+ * A named joint snapshot: per-box local rotations (radians, intrinsic XYZ, same
+ * representation as the live gizmo scratch). Sparse — only non-bind joints are stored.
+ * Poses are data: undoable, persisted, and (phase 2) interpolated by pose cycles.
+ */
+export type Pose = {
+  id: string
+  name: string
+  joints: Record<string, JointEuler>
+}
+
+/**
+ * A pose-to-pose playback loop (timeline-less): interpolates every joint from one pose
+ * to another, then — per mode — holds (`once`), jumps back (`loop`), or eases back
+ * (`pingpong`, seamless). `speed` reuses the 1x/2x/3x cycle-rate scale. Poses are looked
+ * up by id at eval time; a dangling side reads as bind.
+ */
+export type PoseCycleMode = 'once' | 'loop' | 'pingpong'
+export type PoseCycle = {
+  fromId: string
+  toId: string
+  mode: PoseCycleMode
+  speed: import('@/engine/animation/types').AnimationSpeed
+}
+
+export function newPoseId(): string {
+  try {
+    return `pose-${crypto.randomUUID().slice(0, 8)}`
+  } catch {
+    return `pose-${Date.now().toString(36)}-${Math.floor(Math.random() * 0xffff).toString(16)}`
+  }
+}
+
+/** Sanitizes a deserialized pose (hand-edited files): unknown shapes fall back to null. */
+export function sanitizePose(raw: unknown, validBoxIds?: Set<string>): Pose | null {
+  if (!raw || typeof raw !== 'object') return null
+  const p = raw as Partial<Pose>
+  if (typeof p.id !== 'string' || p.id.length === 0) return null
+  if (typeof p.name !== 'string') return null
+  if (!p.joints || typeof p.joints !== 'object') return null
+  const joints: Pose['joints'] = {}
+  for (const [boxId, euler] of Object.entries(p.joints)) {
+    if (validBoxIds && !validBoxIds.has(boxId)) continue
+    if (!Array.isArray(euler) || euler.length !== 3 || !euler.every((n) => Number.isFinite(n))) continue
+    joints[boxId] = [euler[0], euler[1], euler[2]]
+  }
+  return { id: p.id.slice(0, 64), name: p.name.slice(0, 64) || 'pose', joints }
 }
 
 export function newTweenId(): string {

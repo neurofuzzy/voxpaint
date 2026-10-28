@@ -3,6 +3,7 @@ import * as THREE from 'three'
 import { useFrame } from '@react-three/fiber'
 import { decodeKey } from '@/engine/grid/GridStore'
 import { encodeSliceKey } from '@/engine/animation/animationLayers'
+import { resolvePreviewPose } from '@/engine/rigging/pose'
 import { composeAnimatedMatrices, pivotWorldFromMatrix } from '@/engine/rigging/rigLoop'
 import { useAppStore } from '@/store/useAppStore'
 
@@ -36,7 +37,10 @@ export function PivotGizmo() {
   useFrame(() => {
     const st = useAppStore.getState()
     if (st.mode !== 'animate' || markers.current.size === 0) return
-    const matrices = composeAnimatedMatrices(st.rigBoxes, st.poseRotations, performance.now() / 1000)
+    const now = performance.now() / 1000
+    const cycleTime = st.cyclePlaying && st.poseCycle ? now - st.cycleStartedAt : null
+    const preview = resolvePreviewPose(st.poses, st.stagedPoseId, st.poseRotations, st.poseCycle, cycleTime)
+    const matrices = composeAnimatedMatrices(st.rigBoxes, preview, now)
     const byId = new Map(st.rigBoxes.map((b) => [b.id, b]))
     for (const [id, mesh] of markers.current) {
       const box = byId.get(id)

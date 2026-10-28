@@ -1,7 +1,8 @@
 import * as THREE from 'three'
 import type { Axis, Coord } from '@/engine/grid/types'
+import { BASE_CYCLE_SECONDS } from '@/engine/animation/animationLayers'
 import { axisIndex } from '@/engine/plane/planeGeometry'
-import { rigPivotOf, type RigBox } from './types'
+import { rigPivotOf, type Pose, type PoseCycle, type RigBox } from './types'
 
 /**
  * Ephemeral pose preview for Animate mode (Phase 1 — no keyframes yet): per-joint local
@@ -30,6 +31,75 @@ function eulerOf(pose: Map<string, JointEuler>, id: string): JointEuler {
 /** Rotation-only part of an euler as a quaternion. */
 export function eulerToQuaternion(e: JointEuler): THREE.Quaternion {
   return new THREE.Quaternion().setFromEuler(new THREE.Euler(e[0], e[1], e[2], 'XYZ'))
+}
+
+/**
+ * Full baked length of one cycle pass: once/loop cover a single half cycle (once holds B
+ * past it), ping-pong covers out-and-back. The exporter samples this whole window so the
+ * baked clip loops seamlessly.
+ */
+export function poseCycleDuration(cycle: PoseCycle): number {
+  const half = BASE_CYCLE_SECONDS / cycle.speed
+  return cycle.mode === 'pingpong' ? half * 2 : half
+}
+
+/**
+ * Evaluates a pose cycle at cycle-local seconds (time since transport start). Per joint,
+ * quaternion slerp between the from/to snapshots (a missing side reads as bind), so every
+ * joint eases along the shortest rotational path. Once holds B past the half cycle;
+ * loop jumps B→A (the pop is inherent); ping-pong eases out and back, seamless.
+ * Returns null when there is no cycle to play.
+ */
+export function evaluatePoseCycle(
+  poses: Pose[],
+  cycle: PoseCycle | null,
+  cycleSeconds: number,
+): Map<string, JointEuler> | null {
+  if (!cycle) return null
+  const half = BASE_CYCLE_SECONDS / cycle.speed
+  let phase: number
+  if (cycle.mode === 'loop') {
+    phase = (cycleSeconds % half) / half
+  } else if (cycle.mode === 'pingpong') {
+    const u = (cycleSeconds % (half * 2)) / half
+    phase = 0.5 - 0.5 * Math.cos(Math.PI * (u < 1 ? u : 2 - u))
+  } else {
+    phase = 0.5 - 0.5 * Math.cos(Math.PI * Math.min(cycleSeconds / half, 1))
+  }
+  const from = poses.find((p) => p.id === cycle.fromId)
+  const to = poses.find((p) => p.id === cycle.toId)
+  const ids = new Set([...Object.keys(from?.joints ?? {}), ...Object.keys(to?.joints ?? {})])
+  const out = new Map<string, JointEuler>()
+  for (const id of ids) {
+    const a = from?.joints[id] ?? [0, 0, 0]
+    const b = to?.joints[id] ?? [0, 0, 0]
+    const q = eulerToQuaternion(a).slerp(eulerToQuaternion(b), phase)
+    const e = new THREE.Euler().setFromQuaternion(q, 'XYZ')
+    out.set(id, [e.x, e.y, e.z])
+  }
+  return out
+}
+
+/**
+ * The pose every animated view agrees on: the playing cycle when transport runs, else the
+ * staged snapshot when one is staged, else the live gizmo scratch. Pass the cycle-local
+ * time (or null when not playing). Single choke point so the voxel meshes, wire outlines,
+ * pivot markers, link lines, and pose rings can never disagree about where a joint is.
+ */
+export function resolvePreviewPose(
+  poses: Pose[],
+  stagedPoseId: string | null,
+  scratch: Map<string, JointEuler>,
+  cycle: PoseCycle | null = null,
+  cycleSeconds: number | null = null,
+): Map<string, JointEuler> {
+  if (cycle && cycleSeconds !== null) {
+    return evaluatePoseCycle(poses, cycle, cycleSeconds) ?? scratch
+  }
+  if (!stagedPoseId) return scratch
+  const staged = poses.find((p) => p.id === stagedPoseId)
+  if (!staged) return scratch
+  return new Map(Object.entries(staged.joints))
 }
 
 /**

@@ -168,25 +168,30 @@ export function tweenDuration(speed: AnimationSpeed): number {
 }
 
 /**
- * Bakes one looping `AnimationClip` per tween-animated joint by sampling the composed
- * motion over the 2s universal cycle (`TWEEN_CYCLE_SECONDS`). Each joint's track is
+ * Bakes one looping `AnimationClip` per animated joint by sampling the composed
+ * (tween × pose) motion over the universal cycle (`TWEEN_CYCLE_SECONDS`, extended to
+ * cover a pose cycle's full pass when one is provided). Each joint's track is
  * authored in its parent's *animated* frame —
  * `local(t) = T(−parentPivot) · parentMotion⁻¹(t) · selfMotion(t) · T(pivot)` (grid
  * units, identity at rest so clips start pop-free) — with Y scaled to export space on
- * write, matching the joint tree's rest translations. LINEAR TRS at 30fps: 61 keys per
- * joint, sub-voxel error, plays in every downstream player (unlike N simultaneous
- * analytic clips, which no standard player composes).
+ * write, matching the joint tree's rest translations. LINEAR TRS at 30fps: sub-voxel
+ * error, plays in every downstream player (unlike N simultaneous analytic clips, which
+ * no standard player composes).
  */
 export function bakeRigClips(
   boxes: RigBox[],
   groups: Map<string, THREE.Group>,
   voxelScaleY = 1,
   fps = 30,
+  pose?: { at: (t: number) => Map<string, JointEuler>; duration: number },
 ): THREE.AnimationClip[] {
-  const animated = boxes.filter(boxHasActiveTweens)
+  const posedIds = new Set(pose ? [...pose.at(0).keys()] : [])
+  const animated = boxes.filter((b) => boxHasActiveTweens(b) || posedIds.has(b.id))
   if (animated.length === 0) return []
+  // Static children ride animated parents through the hierarchy — no clip needed.
   const byId = new Map(boxes.map((b) => [b.id, b]))
-  const steps = Math.round(TWEEN_CYCLE_SECONDS * fps)
+  const duration = Math.max(TWEEN_CYCLE_SECONDS, pose?.duration ?? 0)
+  const steps = Math.round(duration * fps)
   const clips: THREE.AnimationClip[] = []
   const pos = new THREE.Vector3()
   const quat = new THREE.Quaternion()
@@ -206,8 +211,8 @@ export function bakeRigClips(
     const positions: number[] = []
     const quaternions: number[] = []
     for (let i = 0; i <= steps; i++) {
-      const t = (i / steps) * TWEEN_CYCLE_SECONDS
-      const worlds = composeTweenMatrices(boxes, t)
+      const t = (i / steps) * duration
+      const worlds = composeAnimatedMatrices(boxes, pose ? pose.at(t) : EMPTY_POSE, t)
       const self = worlds.get(box.id) ?? new THREE.Matrix4()
       const parentWorld = parent ? (worlds.get(parent.id) ?? new THREE.Matrix4()) : new THREE.Matrix4()
       // local(t) in grid units; translation Y scaled to export space on write.
@@ -226,7 +231,9 @@ export function bakeRigClips(
     }
     const posTrack = new THREE.VectorKeyframeTrack(`${group.name}.position`, times, positions)
     const quatTrack = new THREE.QuaternionKeyframeTrack(`${group.name}.quaternion`, times, quaternions)
-    clips.push(new THREE.AnimationClip(`anim_${group.name}`, TWEEN_CYCLE_SECONDS, [posTrack, quatTrack]))
+    clips.push(new THREE.AnimationClip(`anim_${group.name}`, duration, [posTrack, quatTrack]))
   }
   return clips
 }
+
+const EMPTY_POSE = new Map<string, JointEuler>()

@@ -284,3 +284,25 @@ describe('rigPivotLinks', () => {
     expect(rigPivotLinks(boxes)).toEqual([])
   })
 })
+
+describe('sanitizePose', () => {
+  it('accepts well-formed poses and prunes unknown box ids', async () => {
+    const { sanitizePose } = await import('./types')
+    const valid = new Set(['arm'])
+    expect(sanitizePose({ id: 'p1', name: 'Wave', joints: { arm: [0.5, 0, 0] } }, valid)).toEqual({
+      id: 'p1',
+      name: 'Wave',
+      joints: { arm: [0.5, 0, 0] },
+    })
+    // Unknown box ids are dropped, not fatal.
+    expect(sanitizePose({ id: 'p1', name: 'Wave', joints: { arm: [0.5, 0, 0], ghost: [1, 0, 0] } }, valid)?.joints).toEqual({
+      arm: [0.5, 0, 0],
+    })
+    // Malformed joints are skipped, not fatal.
+    expect(sanitizePose({ id: 'p1', name: 'Wave', joints: { arm: [0.5, 'x', 0] } }, valid)?.joints).toEqual({})
+    // Malformed entries fall back to null.
+    expect(sanitizePose(null, valid)).toBeNull()
+    expect(sanitizePose({ id: 'p1', name: 'Wave', joints: 'nope' }, valid)).toBeNull()
+    expect(sanitizePose({ id: '', name: 'Wave', joints: {} }, valid)).toBeNull()
+  })
+})

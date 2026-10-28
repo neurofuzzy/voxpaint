@@ -72,6 +72,14 @@ export const createRiggingSlice: Slice = (set, get) => ({
         // Promote orphans: children of the deleted box move up to its parent.
         .map((b) => (b.parentId === id ? { ...b, parentId: deleted?.parentId ?? null } : b))
       if (state.selectedRigBoxId === id) state.selectedRigBoxId = null
+      // A deleted joint can't hold a pose — strip it from every snapshot (empty poses
+      // survive; they read as bind and can be re-targeted or deleted).
+      for (const pose of state.poses) {
+        if (pose.joints[id] !== undefined) {
+          const { [id]: _dropped, ...rest } = pose.joints
+          pose.joints = rest
+        }
+      }
       state.dirty = true
     })
     get().animCommitStroke()

@@ -376,6 +376,13 @@ export const createProjectSlice: Slice = (set, get) => ({
       state.selectedMarkerId = null
       state.rigBoxes = []
       state.selectedRigBoxId = null
+      // Pose state is per-project too — scratch, library, staging, and drag latch.
+      state.poseRotations = new Map()
+      state.poses = []
+      state.stagedPoseId = null
+      state.poseCycle = null
+      state.cyclePlaying = false
+      state.poseDragging = false
       state.dirty = true
       // A new project starts grounded (see resetPlaneToGround) instead of inheriting a stale
       // mid-air slice — applied after this block so it reads the fresh extent.

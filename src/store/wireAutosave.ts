@@ -11,7 +11,7 @@ export function restoreAutosave(): void {
   try {
     const file = loadAutosave()
     if (!file) return
-    const { model, palette, meta, texture, view, animSettings, sliceMasks, slicePivots, markers, rigBoxes } = deserializeProject(file)
+    const { model, palette, meta, texture, view, animSettings, sliceMasks, slicePivots, markers, rigBoxes, poses, poseCycle } = deserializeProject(file)
     useAppStore.getState().setModel(model)
     useAppStore.getState().setPalette(palette)
     useAppStore.getState().setTexture(texture)
@@ -36,6 +36,11 @@ export function restoreAutosave(): void {
       state.rigBoxes = rigBoxes
       state.selectedRigBoxId = null
       state.selectedMarkerId = null
+      // Poses persist; staging and transport are session-only and start cleared.
+      state.poses = poses
+      state.poseCycle = poseCycle
+      state.stagedPoseId = null
+      state.cyclePlaying = false
     })
     // A refresh restores the same project, so the persisted plane pose comes back with it
     // (clamped — a hand-edited autosave could carry an out-of-range offset). Explicit project
@@ -62,12 +67,14 @@ const flush = debounce(() => {
       state.palette,
       state.meta,
       state.texture,
-      { ambientOcclusion: state.ambientOcclusion, noiseLevel: state.noiseLevel, specularNoiseLevel: state.specularNoiseLevel, noiseScale: state.noiseScale, aoStrength: state.aoStrength, glassRoughnessLevel: state.glassRoughnessLevel, exposure: state.exposure, exportScaleFactor: state.exportScaleFactor, exportAnchor: state.exportAnchor, exportAlignToObjectBounds: state.exportAlignToObjectBounds, exportDisableMeshOptimization: state.exportDisableMeshOptimization, exportCullInteriorFaces: state.exportCullInteriorFaces, exportIncludeTextureMaps: state.exportIncludeTextureMaps, exportIncludeAOMaps: state.exportIncludeAOMaps, exportIncludeMarkers: state.exportIncludeMarkers },
+      { ambientOcclusion: state.ambientOcclusion, noiseLevel: state.noiseLevel, specularNoiseLevel: state.specularNoiseLevel, noiseScale: state.noiseScale, aoStrength: state.aoStrength, glassRoughnessLevel: state.glassRoughnessLevel, exposure: state.exposure, exportScaleFactor: state.exportScaleFactor, exportAnchor: state.exportAnchor, exportAlignToObjectBounds: state.exportAlignToObjectBounds, exportDisableMeshOptimization: state.exportDisableMeshOptimization, exportCullInteriorFaces: state.exportCullInteriorFaces, exportIncludeTextureMaps: state.exportIncludeTextureMaps, exportIncludeAOMaps: state.exportIncludeAOMaps, exportIncludeMarkers: state.exportIncludeMarkers, exportIncludeAnimations: state.exportIncludeAnimations },
       state.animSettings,
       state.sliceMasks,
       state.slicePivots,
       state.markers,
       state.rigBoxes,
+      state.poses,
+      state.poseCycle,
     )
     saveAutosave(file)
     state.markSaved(new Date().toISOString())

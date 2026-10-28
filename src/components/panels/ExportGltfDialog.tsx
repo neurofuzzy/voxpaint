@@ -22,13 +22,22 @@ const ANCHOR_LABELS: Record<GltfExportAnchor, string> = {
 function RigWinsNote() {
   const rigBoxes = useAppStore((s) => s.rigBoxes)
   const animSettings = useAppStore((s) => s.animSettings)
+  const poseCycle = useAppStore((s) => s.poseCycle)
+  const exportIncludeAnimations = useAppStore((s) => s.exportIncludeAnimations)
   if (rigBoxes.length === 0) return null
   const tweened = rigBoxes.filter(boxHasActiveTweens).length
-  if (!hasActiveAnimations(animSettings) && tweened === 0) return null
+  if (!hasActiveAnimations(animSettings) && tweened === 0 && !poseCycle) return null
   return (
     <p className="mt-2 rounded-md border border-violet-500/30 bg-violet-500/10 px-3 py-1 text-xs text-violet-200">
       Rigged voxels export as poseable joints and skip slice-loop animation.
-      {tweened > 0 && ` ${tweened} tweened joint${tweened === 1 ? '' : 's'} export${tweened === 1 ? 's' : ''} as baked animation clips.`}
+      {exportIncludeAnimations ? (
+        <>
+          {tweened > 0 && ` ${tweened} tweened joint${tweened === 1 ? '' : 's'} export${tweened === 1 ? 's' : ''} as baked animation clips.`}
+          {poseCycle && ` The pose cycle bakes into the joint clips.`}
+        </>
+      ) : (
+        ` Animation is off — joints export posed at bind with no clips.`
+      )}
     </p>
   )
 }
@@ -44,6 +53,7 @@ export function ExportGltfDialog({ open, onOpenChange }: { open: boolean; onOpen
   const exportIncludeTextureMaps = useAppStore((s) => s.exportIncludeTextureMaps)
   const exportIncludeAOMaps = useAppStore((s) => s.exportIncludeAOMaps)
   const exportIncludeMarkers = useAppStore((s) => s.exportIncludeMarkers)
+  const exportIncludeAnimations = useAppStore((s) => s.exportIncludeAnimations)
   const setExportScaleFactor = useAppStore((s) => s.setExportScaleFactor)
   const setExportAnchor = useAppStore((s) => s.setExportAnchor)
   const setExportAlignToObjectBounds = useAppStore((s) => s.setExportAlignToObjectBounds)
@@ -52,6 +62,7 @@ export function ExportGltfDialog({ open, onOpenChange }: { open: boolean; onOpen
   const setExportIncludeTextureMaps = useAppStore((s) => s.setExportIncludeTextureMaps)
   const setExportIncludeAOMaps = useAppStore((s) => s.setExportIncludeAOMaps)
   const setExportIncludeMarkers = useAppStore((s) => s.setExportIncludeMarkers)
+  const setExportIncludeAnimations = useAppStore((s) => s.setExportIncludeAnimations)
 
   useEffect(() => {
     if (open) setScaleInput(String(exportScaleFactor))
@@ -71,7 +82,7 @@ export function ExportGltfDialog({ open, onOpenChange }: { open: boolean; onOpen
 
   async function run() {
     const state = useAppStore.getState()
-    const { model, palette, meta, texture, noiseLevel, specularNoiseLevel, aoStrength, glassRoughnessLevel, animSettings, sliceMasks, slicePivots, markers, rigBoxes } = state
+    const { model, palette, meta, texture, noiseLevel, specularNoiseLevel, aoStrength, glassRoughnessLevel, animSettings, sliceMasks, slicePivots, markers, rigBoxes, poses, poseCycle } = state
     const { gridExtent } = meta
     const sf = state.exportScaleFactor
     const anchor = state.exportAnchor
@@ -102,8 +113,9 @@ export function ExportGltfDialog({ open, onOpenChange }: { open: boolean; onOpen
         voxelScaleY: meta.voxelScaleY,
         markers,
         includeMarkers: state.exportIncludeMarkers,
+        includeAnimations: state.exportIncludeAnimations,
         rigBoxes,
-      }, animSettings, sliceMasks, slicePivots)
+      }, animSettings, sliceMasks, slicePivots, poses, poseCycle)
       downloadGlb(glb, normalizeProjectFilename(meta.name || 'voxpaint-model'))
       showToast('GLTF exported.')
       onOpenChange(false)
@@ -191,6 +203,21 @@ export function ExportGltfDialog({ open, onOpenChange }: { open: boolean; onOpen
                 className="h-4 w-4 shrink-0 cursor-pointer accent-violet-500"
               />
               <span className="text-sm text-neutral-400">Include AO maps</span>
+            </label>
+
+            <label className="flex items-start gap-2.5 ml-[4.5rem] cursor-pointer select-none" title="Off exports the joint/node structure posed at bind with no animation clips">
+              <input
+                type="checkbox"
+                checked={exportIncludeAnimations}
+                onChange={(e) => setExportIncludeAnimations(e.target.checked)}
+                className="mt-0.5 h-4 w-4 shrink-0 cursor-pointer accent-violet-500"
+              />
+              <span className="text-sm text-neutral-400">
+                Include animations
+                <span className="block text-xs text-neutral-500">
+                  Off exports joints posed at bind, no clips
+                </span>
+              </span>
             </label>
 
             <label className="flex items-center gap-2.5 ml-[4.5rem] cursor-pointer select-none" title="Emit design markers as empty nodes (name + extras.voxpaint payload) for composing external content downstream">

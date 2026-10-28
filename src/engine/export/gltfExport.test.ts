@@ -7,7 +7,7 @@ import type { TextureModel } from '@/engine/texture/types'
 import { emptyTextureModel } from '@/engine/texture/TextureStore'
 import { MARKER_COLORS } from '@/engine/markers/types'
 import { defaultAnimationSettings, encodeSliceKey } from '@/engine/animation/animationLayers'
-import type { RigBox } from '@/engine/rigging/types'
+import type { Pose, RigBox } from '@/engine/rigging/types'
 import { exportModelToGlb } from './gltfExport'
 
 // three's GLTFExporter rasterizes every texture image through a 2D canvas — also absent in
@@ -513,6 +513,54 @@ describe('exportModelToGlb rig boxes', () => {
       await exportModelToGlb(limbModel(), DEFAULT_PALETTE, 16, undefined, { includeTextureMaps: false, rigBoxes }),
     )
     expect(still.animations ?? []).toEqual([])
+  })
+
+  it('bakes the pose cycle into joint clips even with no tweens', async () => {
+    const boxes: RigBox[] = [
+      { id: 'arm-id', name: 'arm', min: [2, 0, 0] as [number, number, number], max: [2, 0, 0] as [number, number, number], parentId: null, pivot: null, tweens: [] },
+    ]
+    const poses: Pose[] = [
+      { id: 'pa', name: 'Bind', joints: {} },
+      { id: 'pb', name: 'Wave', joints: { 'arm-id': [0, Math.PI / 2, 0] } },
+    ]
+    const json = glbJson(
+      await exportModelToGlb(limbModel(), DEFAULT_PALETTE, 16, undefined, { includeTextureMaps: false, rigBoxes: boxes }, undefined, undefined, undefined, poses, { fromId: 'pa', toId: 'pb', mode: 'once', speed: 1 }),
+    )
+    const nodes = namedNodes(json)
+    const arm = indexOf(nodes, 'arm')
+    const clips = json.animations ?? []
+    expect(clips).toHaveLength(1)
+    const clip = clips.find((c) => c.name === 'anim_arm')
+    expect(clip).toBeDefined()
+    // Once at 1x covers a single 2s pass (61 LINEAR keys at 30fps).
+    expect(clip!.channels?.every((ch) => ch.target?.node === arm)).toBe(true)
+    expect(clip!.samplers?.every((s) => s.interpolation === 'LINEAR')).toBe(true)
+    // Without a cycle definition, poses alone export nothing.
+    const noCycle = glbJson(
+      await exportModelToGlb(limbModel(), DEFAULT_PALETTE, 16, undefined, { includeTextureMaps: false, rigBoxes: boxes }, undefined, undefined, undefined, poses, null),
+    )
+    expect(noCycle.animations ?? []).toEqual([])
+  })
+
+  it('emits no animation clips with includeAnimations:false, joints still export', async () => {
+    const boxes: RigBox[] = [
+      { id: 'arm-id', name: 'arm', min: [2, 0, 0] as [number, number, number], max: [2, 0, 0] as [number, number, number], parentId: null, pivot: null, tweens: [{ id: 'tw-1', kind: 'rotate', axis: 'y', direction: 1, speed: 1, amount: 4, enabled: true }] },
+    ]
+    const poses: Pose[] = [
+      { id: 'pa', name: 'Bind', joints: {} },
+      { id: 'pb', name: 'Wave', joints: { 'arm-id': [0, Math.PI / 2, 0] } },
+    ]
+    const sliceAnims = new Map([
+      [encodeSliceKey('z', 0), { ...defaultAnimationSettings(), animationType: 'rotate-cw' as const }],
+    ])
+    const json = glbJson(
+      await exportModelToGlb(limbModel(), DEFAULT_PALETTE, 16, undefined, { includeTextureMaps: false, includeAnimations: false, rigBoxes: boxes }, sliceAnims, undefined, undefined, poses, { fromId: 'pa', toId: 'pb', mode: 'loop', speed: 1 }),
+    )
+    expect(json.animations ?? []).toEqual([])
+    // The joint structure still exports — posed at bind.
+    const nodes = namedNodes(json)
+    expect(nodes.findIndex((n) => n.name === 'arm')).toBeGreaterThanOrEqual(0)
+    expect(nodes.findIndex((n) => n.name?.startsWith('arm_') && n.mesh !== undefined)).toBeGreaterThanOrEqual(0)
   })
 
   it('keeps cross-rig interfaces with default culling (PBR)', async () => {

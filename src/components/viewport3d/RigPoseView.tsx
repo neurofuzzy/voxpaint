@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef } from 'react'
 import * as THREE from 'three'
 import { useFrame } from '@react-three/fiber'
 import { buildRigPoseMeshes } from '@/engine/animation/rigPoseBuild'
-import { applyPoseMatrices } from '@/engine/rigging/pose'
+import { applyPoseMatrices, resolvePreviewPose } from '@/engine/rigging/pose'
 import { composeAnimatedMatrices, hasActiveTweens } from '@/engine/rigging/rigLoop'
 import { TEXEL_SCALE } from '@/engine/texture/types'
 import { tickEmissiveAnimation } from '@/engine/instancing/previewMaterial'
@@ -119,12 +119,14 @@ export function RigPoseView({ active }: { active: boolean }) {
     if (!active || !built) return
     const st = useAppStore.getState()
     const tweening = hasActiveTweens(st.rigBoxes)
-    if (st.poseRotations.size === 0 && !tweening) return
     const elapsed = performance.now() / 1000
+    const cycleTime = st.cyclePlaying && st.poseCycle ? elapsed - st.cycleStartedAt : null
+    const preview = resolvePreviewPose(st.poses, st.stagedPoseId, st.poseRotations, st.poseCycle, cycleTime)
+    if (preview.size === 0 && !tweening) return
     // World = tween-chain × pose-chain per box (see `composeAnimatedMatrices`) — a box
     // never carries both (mutually exclusive), but a tweened parent still carries a
     // posed child and vice versa.
-    const combined = composeAnimatedMatrices(st.rigBoxes, st.poseRotations, elapsed)
+    const combined = composeAnimatedMatrices(st.rigBoxes, preview, elapsed)
     applyPoseMatrices(boxGroups.current, combined)
     // TEMP-DEBUG: throttled matrix trace for the frozen-pose report.
     frameRef.current += 1

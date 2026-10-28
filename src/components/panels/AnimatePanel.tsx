@@ -1,14 +1,38 @@
 import { useMemo, useRef, useState } from 'react'
-import { Bone, ChevronDown, ChevronRight, ChevronUp, Crosshair, Eye, EyeOff, Plus, RotateCcw, RotateCw, Trash2 } from 'lucide-react'
+import { Bone, ChevronDown, ChevronRight, ChevronUp, Crosshair, Eye, EyeOff, Pause, Play, Plus, RotateCcw, RotateCw, Trash2 } from 'lucide-react'
 import type { Axis } from '@/engine/grid/types'
 import { SLIDE_AMOUNT_MAX, SLIDE_AMOUNT_MIN } from '@/engine/animation/animationLayers'
-import type { RigBox, RigTween } from '@/engine/rigging/types'
+import type { PoseCycleMode, RigBox, RigTween } from '@/engine/rigging/types'
 import { activeTweens } from '@/engine/rigging/rigLoop'
 import { rigPivotOf, rigSubtreeIds } from '@/engine/rigging/types'
 import type { AnimationSpeed } from '@/engine/animation/types'
 import { useAppStore } from '@/store/useAppStore'
 
 type DropPosition = 'before' | 'after' | 'child'
+
+/** Collapsible section header: chevron + label, optional right-side actions. */
+function SectionHeader({ title, open, onToggle, right }: {
+  title: string
+  open: boolean
+  onToggle: () => void
+  right?: React.ReactNode
+}) {
+  return (
+    <div className="mb-1 flex items-center gap-1">
+      <button
+        onClick={onToggle}
+        title={open ? 'Collapse section' : 'Expand section'}
+        className="flex min-w-0 flex-1 items-center gap-1.5 text-left"
+      >
+        {open ? <ChevronDown size={13} className="shrink-0 text-neutral-500" /> : <ChevronRight size={13} className="shrink-0 text-neutral-500" />}
+        <span className="truncate text-xs font-semibold uppercase tracking-wider text-neutral-400 select-none">
+          {title}
+        </span>
+      </button>
+      {right}
+    </div>
+  )
+}
 
 /** Visible outline rows: depth-first, honoring collapsed subtrees. */
 function visibleRows(boxes: RigBox[], collapsed: Set<string>): Array<{ box: RigBox; depth: number }> {
@@ -49,6 +73,8 @@ export function AnimatePanel() {
         <OutlineSection rigBoxes={rigBoxes} selectedRigBoxId={selectedRigBoxId} />
         <div className="-mx-3 border-t border-neutral-800" />
         <InspectorSection box={box} rigBoxes={rigBoxes} />
+        <div className="-mx-3 border-t border-neutral-800" />
+        <PosesSection />
       </div>
     </div>
   )
@@ -66,6 +92,7 @@ function OutlineSection({ rigBoxes, selectedRigBoxId }: { rigBoxes: RigBox[]; se
   const [collapsed, setCollapsed] = useState<Set<string>>(new Set())
   const [dragId, setDragId] = useState<string | null>(null)
   const [drop, setDrop] = useState<{ id: string; position: DropPosition } | null>(null)
+  const [open, setOpen] = useState(true)
 
   const rows = useMemo(() => visibleRows(rigBoxes, collapsed), [rigBoxes, collapsed])
   const childCounts = useMemo(() => {
@@ -125,12 +152,9 @@ function OutlineSection({ rigBoxes, selectedRigBoxId }: { rigBoxes: RigBox[]; se
 
   return (
     <section>
-      <div className="mb-1 flex items-center gap-1.5">
-        <Bone size={13} className="text-violet-400" />
-        <span className="text-xs font-semibold uppercase tracking-wider text-neutral-400 select-none">
-          Rig ({rigBoxes.length})
-        </span>
-      </div>
+      <SectionHeader title={`Rig (${rigBoxes.length})`} open={open} onToggle={() => setOpen((v) => !v)} />
+      {open && (
+      <>
       <p className="mb-2 text-[11px] leading-snug text-neutral-500">
         Tap the model with the Rig tool to box a region. Drag rows to reorder or nest.
       </p>
@@ -278,6 +302,8 @@ function OutlineSection({ rigBoxes, selectedRigBoxId }: { rigBoxes: RigBox[]; se
           })}
         </ul>
       )}
+      </>
+      )}
     </section>
   )
 }
@@ -289,24 +315,23 @@ function InspectorSection({ box, rigBoxes }: { box: RigBox | null; rigBoxes: Rig
   const resetPose = useAppStore((s) => s.resetPose)
   const [editing, setEditing] = useState(false)
   const [draft, setDraft] = useState('')
+  const [open, setOpen] = useState(true)
 
   if (!box) {
     return (
       <section>
-        <div className="mb-1 flex items-center gap-1.5">
-          <span className="text-xs font-semibold uppercase tracking-wider text-neutral-400 select-none">
-            Properties
-          </span>
-        </div>
-        <div className="flex items-center gap-2 text-neutral-500">
-          <Bone size={16} className="shrink-0" />
-          <div>
-            <p className="text-[11px] font-medium text-neutral-300">
-              {rigBoxes.length === 0 ? 'No rig boxes yet' : 'No box selected'}
-            </p>
-            <p className="text-[10px]">pick it in the outline or tap its footprint in 2D</p>
+        <SectionHeader title="Properties" open={open} onToggle={() => setOpen((v) => !v)} />
+        {open && (
+          <div className="flex items-center gap-2 text-neutral-500">
+            <Bone size={16} className="shrink-0" />
+            <div>
+              <p className="text-[11px] font-medium text-neutral-300">
+                {rigBoxes.length === 0 ? 'No rig boxes yet' : 'No box selected'}
+              </p>
+              <p className="text-[10px]">pick it in the outline or tap its footprint in 2D</p>
+            </div>
           </div>
-        </div>
+        )}
       </section>
     )
   }
@@ -322,11 +347,9 @@ function InspectorSection({ box, rigBoxes }: { box: RigBox | null; rigBoxes: Rig
 
   return (
     <section className="flex flex-col gap-2">
-      <div className="mb-1 flex items-center gap-1.5">
-        <span className="text-xs font-semibold uppercase tracking-wider text-neutral-400 select-none">
-          Properties
-        </span>
-      </div>
+      <SectionHeader title="Properties" open={open} onToggle={() => setOpen((v) => !v)} />
+      {open && (
+      <>
       <div className="flex min-w-0 items-center gap-2">
         {editing ? (
           <input
@@ -379,6 +402,8 @@ function InspectorSection({ box, rigBoxes }: { box: RigBox | null; rigBoxes: Rig
         </button>
       )}
       <TweenStack box={box} />
+      </>
+      )}
     </section>
   )
 }
@@ -578,5 +603,228 @@ function TweenRow({ boxId, tween, index, count }: { boxId: string; tween: RigTwe
         </div>
       )}
     </li>
+  )
+}
+
+/**
+ * The pose library: named joint snapshots captured from the gizmo scratch. Click a row
+ * to stage it for preview (click again to unstage back to the scratch); grabbing the
+ * gizmo while staged adopts it into the scratch first, so you grab what you see.
+ * Capture freezes the current scratch into a new pose and stages it.
+ */
+function PosesSection() {
+  const poses = useAppStore((s) => s.poses)
+  const stagedPoseId = useAppStore((s) => s.stagedPoseId)
+  const scratchSize = useAppStore((s) => s.poseRotations.size)
+  const capturePose = useAppStore((s) => s.capturePose)
+  const renamePose = useAppStore((s) => s.renamePose)
+  const deletePose = useAppStore((s) => s.deletePose)
+  const stagePose = useAppStore((s) => s.stagePose)
+  const [editingId, setEditingId] = useState<string | null>(null)
+  const [draft, setDraft] = useState('')
+  const [open, setOpen] = useState(true)
+
+  function commitRename(id: string) {
+    if (draft.trim()) renamePose(id, draft)
+    setEditingId(null)
+    setDraft('')
+  }
+
+  return (
+    <section className="flex flex-col gap-1.5">
+      <SectionHeader
+        title={`Poses (${poses.length})`}
+        open={open}
+        onToggle={() => setOpen((v) => !v)}
+        right={
+          <button
+            onClick={() => capturePose()}
+            disabled={scratchSize === 0}
+            title={scratchSize === 0 ? 'Pose something first — the scratch is at bind' : 'Freeze the current gizmo pose into a named pose'}
+            className="flex items-center gap-1 rounded px-1.5 py-0.5 text-[10px] font-medium text-violet-300 hover:bg-neutral-800 hover:text-violet-100 disabled:opacity-30 disabled:hover:bg-transparent"
+          >
+            <Plus size={12} />
+            capture
+          </button>
+        }
+      />
+      {open && (
+      <>
+      <CycleBar />
+      {poses.length === 0 ? (
+        <p className="rounded-md border border-dashed border-neutral-800 px-2 py-2 text-[10px] leading-snug text-neutral-500">
+          No poses yet — pose with the gizmo, then capture it here to keep it.
+        </p>
+      ) : (
+        <ul className="flex flex-col gap-1">
+          {poses.map((pose) => {
+            const staged = pose.id === stagedPoseId
+            const joints = Object.keys(pose.joints).length
+            return (
+              <li key={pose.id}>
+                <div
+                  onClick={() => stagePose(staged ? null : pose.id)}
+                  title={staged ? 'Unstage — back to the live scratch' : 'Stage for preview (gizmo grabs adopt it)'}
+                  className={
+                    'flex cursor-pointer items-center gap-1 rounded-md border px-1.5 py-1 ' +
+                    (staged ? 'border-violet-500/60 bg-violet-500/10' : 'border-neutral-800 hover:bg-neutral-800/60')
+                  }
+                >
+                  {editingId === pose.id ? (
+                    <input
+                      autoFocus
+                      value={draft}
+                      onChange={(e) => setDraft(e.target.value)}
+                      onBlur={() => commitRename(pose.id)}
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter') commitRename(pose.id)
+                        if (e.key === 'Escape') { setEditingId(null); setDraft('') }
+                      }}
+                      onClick={(e) => e.stopPropagation()}
+                      className="min-w-0 flex-1 rounded bg-neutral-800 px-1 py-0.5 text-[11px] text-neutral-100 focus:outline-none focus:ring-1 focus:ring-violet-500"
+                    />
+                  ) : (
+                    <button
+                      onDoubleClick={() => { setEditingId(pose.id); setDraft(pose.name) }}
+                      title="Double-click to rename"
+                      className="min-w-0 flex-1 truncate text-left text-[11px] font-medium text-neutral-200"
+                    >
+                      {pose.name}
+                    </button>
+                  )}
+                  <span className="shrink-0 font-mono text-[10px] text-neutral-500">
+                    {joints} joint{joints === 1 ? '' : 's'}
+                  </span>
+                  <button
+                    onClick={(e) => { e.stopPropagation(); deletePose(pose.id) }}
+                    title={`Delete ${pose.name}`}
+                    className="flex h-5 w-5 shrink-0 items-center justify-center rounded text-neutral-500 hover:bg-neutral-800 hover:text-red-400"
+                  >
+                    <Trash2 size={12} />
+                  </button>
+                </div>
+              </li>
+            )
+          })}
+        </ul>
+      )}
+      </>
+      )}
+    </section>
+  )
+}
+
+/**
+ * Pose-to-pose playback bar: From → To pickers, Once/Loop/Ping-pong mode, speed, and
+ * transport. The cycle interpolates every joint and loops without a timeline; grabbing
+ * the gizmo freezes the current frame into the scratch and stops transport.
+ */
+function CycleBar() {
+  const poses = useAppStore((s) => s.poses)
+  const poseCycle = useAppStore((s) => s.poseCycle)
+  const cyclePlaying = useAppStore((s) => s.cyclePlaying)
+  const setPoseCycle = useAppStore((s) => s.setPoseCycle)
+  const setCyclePlaying = useAppStore((s) => s.setCyclePlaying)
+
+  const canDefine = poses.length >= 2
+  function patch(next: Partial<NonNullable<typeof poseCycle>> & { fromId: string; toId: string }) {
+    if (!canDefine) return
+    const base = poseCycle ?? { fromId: next.fromId, toId: next.toId, mode: 'pingpong' as const, speed: 1 as const }
+    setPoseCycle({ ...base, ...next })
+  }
+
+  const canPlay = canDefine && poseCycle !== null
+
+  return (
+    <div className="flex flex-col gap-1.5 rounded-md border border-neutral-800 px-2 py-2">
+      <div className="flex items-center gap-1.5">
+        <span className="text-[10px] text-neutral-500">Cycle</span>
+        <span className="min-w-0 flex-1" />
+        <button
+          onClick={() => setCyclePlaying(!cyclePlaying)}
+          disabled={!canPlay}
+          title={!canPlay ? 'Define a from/to pair first' : cyclePlaying ? 'Stop the cycle' : 'Play the cycle'}
+          className="flex h-5 w-5 items-center justify-center rounded text-violet-300 hover:bg-neutral-800 hover:text-violet-100 disabled:opacity-30 disabled:hover:bg-transparent"
+        >
+          {cyclePlaying ? <Pause size={12} /> : <Play size={12} />}
+        </button>
+      </div>
+      {!canDefine && (
+        <p className="text-[10px] leading-snug text-neutral-500">
+          Capture at least two poses to loop between them.
+        </p>
+      )}
+      <div className="flex items-center gap-1.5">
+        <span className="w-10 shrink-0 text-[10px] text-neutral-500">From</span>
+        <select
+          value={poseCycle?.fromId ?? ''}
+          onChange={(e) => {
+            const fromId = e.target.value
+            if (!fromId) return
+            patch({ fromId, toId: poseCycle?.toId && poses.some((p) => p.id === poseCycle.toId) ? poseCycle.toId : fromId })
+          }}
+          disabled={!canDefine}
+          className="min-w-0 flex-1 rounded bg-neutral-800 px-1 py-0.5 text-[11px] text-neutral-200 focus:outline-none focus:ring-1 focus:ring-violet-500 disabled:opacity-40"
+        >
+          {poses.length === 0 && <option value="">—</option>}
+          {poses.map((p) => (
+            <option key={p.id} value={p.id}>{p.name}</option>
+          ))}
+        </select>
+      </div>
+      <div className="flex items-center gap-1.5">
+        <span className="w-10 shrink-0 text-[10px] text-neutral-500">To</span>
+        <select
+          value={poseCycle?.toId ?? ''}
+          onChange={(e) => {
+            const toId = e.target.value
+            if (!toId || !poseCycle) return
+            patch({ fromId: poseCycle.fromId, toId })
+          }}
+          disabled={!canDefine}
+          className="min-w-0 flex-1 rounded bg-neutral-800 px-1 py-0.5 text-[11px] text-neutral-200 focus:outline-none focus:ring-1 focus:ring-violet-500 disabled:opacity-40"
+        >
+          {poses.length === 0 && <option value="">—</option>}
+          {poses.map((p) => (
+            <option key={p.id} value={p.id}>{p.name}</option>
+          ))}
+        </select>
+      </div>
+      <div className="flex items-center gap-1.5">
+        <div className="flex items-center gap-0.5" role="group" aria-label="Cycle mode">
+          {(['once', 'loop', 'pingpong'] as PoseCycleMode[]).map((mode) => (
+            <button
+              key={mode}
+              onClick={() => poseCycle && setPoseCycle({ ...poseCycle, mode })}
+              disabled={!poseCycle}
+              title={mode === 'once' ? 'Play A→B once, then hold B' : mode === 'loop' ? 'Loop A→B with a jump back' : 'Ease A→B→A seamlessly'}
+              className={
+                'flex h-5 items-center justify-center rounded px-1.5 text-[10px] font-medium transition disabled:opacity-30 ' +
+                (poseCycle?.mode === mode ? 'bg-violet-500/60 text-white' : 'text-neutral-400 hover:bg-neutral-800 hover:text-neutral-200')
+              }
+            >
+              {mode === 'once' ? 'Once' : mode === 'loop' ? 'Loop' : 'Ping-pong'}
+            </button>
+          ))}
+        </div>
+        <span className="min-w-0 flex-1" />
+        <div className="flex items-center gap-0.5" role="group" aria-label="Cycle speed">
+          {([1, 2, 3] as AnimationSpeed[]).map((speed) => (
+            <button
+              key={speed}
+              onClick={() => poseCycle && setPoseCycle({ ...poseCycle, speed })}
+              disabled={!poseCycle}
+              title={`Cycle speed ${speed}x`}
+              className={
+                'flex h-5 items-center justify-center rounded px-1 font-mono text-[10px] transition disabled:opacity-30 ' +
+                (poseCycle?.speed === speed ? 'bg-violet-500/60 text-white' : 'text-neutral-400 hover:bg-neutral-800 hover:text-neutral-200')
+              }
+            >
+              {speed}×
+            </button>
+          ))}
+        </div>
+      </div>
+    </div>
   )
 }

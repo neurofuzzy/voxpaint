@@ -116,6 +116,10 @@ MIGRATIONS[14] = (doc) => ({
     : doc.rigBoxes,
 })
 
+/** v15 → v16: named joint snapshots (`poses`) plus the pose-cycle definition (`poseCycle`).
+ * Nothing to reshape — pre-v16 files simply have no pose library (empty, no cycle). */
+MIGRATIONS[15] = (doc) => ({ ...doc, schemaVersion: 16 })
+
 export class UnsupportedSchemaVersionError extends Error {
   constructor(foundVersion: unknown) {
     super(`This file is from a newer version of VoxPaint (schemaVersion=${String(foundVersion)}). Please update the app.`)
