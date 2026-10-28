@@ -6,10 +6,21 @@ type Slice = StateCreator<AppState, [['zustand/immer', never]], [], ToolSlice>
 
 export const createToolSlice: Slice = (set, get) => ({
   activeTool: 'paint',
+  animateTab: 'rig',
   activeVoxelKind: 'cube',
   activePaletteSlot: { kind: 'base', index: 0 },
   brushRotation: 0,
   paintLineAnchor: null,
+
+  setAnimateTab: (tab) => {
+    if (get().animateTab === tab) return
+    set((state) => {
+      state.animateTab = tab
+      // Each tab owns its tools — arm the primary one so taps always dispatch to a
+      // handler that makes sense for what's on screen (the stale-tool toast trap).
+      state.activeTool = tab === 'rig' ? 'rigbox' : tab === 'tweens' ? 'select' : 'pose'
+    })
+  },
 
   setActiveTool: (tool) => {
     set((state) => { state.activeTool = tool })

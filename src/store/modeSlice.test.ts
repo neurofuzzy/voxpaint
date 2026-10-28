@@ -94,3 +94,58 @@ describe('model layout memory', () => {
     expect(useAppStore.getState().layoutMode).toBe('3d-only')
   })
 })
+
+/** Animate panel tabs own the toolbar: switching tabs arms that tab's primary tool, and
+ * entering Animate mode lands on the tab matching the current tool (rigbox default). */
+describe('animate tab/tool sync', () => {
+  beforeEach(() => {
+    const s = useAppStore.getState()
+    s.newProject('Test', 16)
+    s.setMode('model')
+    s.setActiveTool('paint')
+  })
+
+  it('entering animate from an unwired tool lands on rig + rigbox', () => {
+    const s = useAppStore.getState()
+    s.setActiveTool('move')
+    s.setMode('animate')
+    expect(useAppStore.getState().animateTab).toBe('rig')
+    expect(useAppStore.getState().activeTool).toBe('rigbox')
+  })
+
+  it('entering animate with select lands on the tweens tab', () => {
+    const s = useAppStore.getState()
+    s.setActiveTool('select')
+    s.setMode('animate')
+    expect(useAppStore.getState().animateTab).toBe('tweens')
+    expect(useAppStore.getState().activeTool).toBe('select')
+  })
+
+  it('entering animate keeps a wired tool and matches its tab', () => {
+    const s = useAppStore.getState()
+    s.setActiveTool('pose')
+    s.setMode('animate')
+    expect(useAppStore.getState().animateTab).toBe('poses')
+    expect(useAppStore.getState().activeTool).toBe('pose')
+  })
+
+  it('switching tabs arms the tab tool', () => {
+    const s = useAppStore.getState()
+    s.setMode('animate')
+    s.setAnimateTab('tweens')
+    expect(useAppStore.getState().activeTool).toBe('select')
+    s.setAnimateTab('poses')
+    expect(useAppStore.getState().activeTool).toBe('pose')
+    s.setAnimateTab('rig')
+    expect(useAppStore.getState().activeTool).toBe('rigbox')
+  })
+
+  it('re-clicking the active tab keeps an explicitly chosen tool', () => {
+    const s = useAppStore.getState()
+    s.setMode('animate')
+    s.setAnimateTab('rig')
+    s.setActiveTool('pivot')
+    s.setAnimateTab('rig')
+    expect(useAppStore.getState().activeTool).toBe('pivot')
+  })
+})

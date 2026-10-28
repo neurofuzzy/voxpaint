@@ -6,33 +6,10 @@ import type { PoseCycleMode, RigBox, RigTween } from '@/engine/rigging/types'
 import { activeTweens } from '@/engine/rigging/rigLoop'
 import { rigPivotOf, rigSubtreeIds } from '@/engine/rigging/types'
 import type { AnimationSpeed } from '@/engine/animation/types'
+import type { AnimateTab } from '@/store/types'
 import { useAppStore } from '@/store/useAppStore'
 
 type DropPosition = 'before' | 'after' | 'child'
-
-/** Collapsible section header: chevron + label, optional right-side actions. */
-function SectionHeader({ title, open, onToggle, right }: {
-  title: string
-  open: boolean
-  onToggle: () => void
-  right?: React.ReactNode
-}) {
-  return (
-    <div className="mb-1 flex items-center gap-1">
-      <button
-        onClick={onToggle}
-        title={open ? 'Collapse section' : 'Expand section'}
-        className="flex min-w-0 flex-1 items-center gap-1.5 text-left"
-      >
-        {open ? <ChevronDown size={13} className="shrink-0 text-neutral-500" /> : <ChevronRight size={13} className="shrink-0 text-neutral-500" />}
-        <span className="truncate text-xs font-semibold uppercase tracking-wider text-neutral-400 select-none">
-          {title}
-        </span>
-      </button>
-      {right}
-    </div>
-  )
-}
 
 /** Visible outline rows: depth-first, honoring collapsed subtrees. */
 function visibleRows(boxes: RigBox[], collapsed: Set<string>): Array<{ box: RigBox; depth: number }> {
@@ -55,26 +32,52 @@ function visibleRows(boxes: RigBox[], collapsed: Set<string>): Array<{ box: RigB
 }
 
 /**
- * Animate-mode docked panel (between the tool rail and the 2D view): the rig outline,
- * the selected box's inspector, and its tween stack. Consolidates what used to be three
- * surfaces (3D overlay outline, bottom-pill inspector) so all rig state lives in one
- * place. Tweens are looping procedural motions that evaluate simultaneously, composing
- * top-first — stack order is motion order (rotations don't commute), so rows reorder.
+ * Animate-mode docked panel (left of the tool rail), tabbed into three concerns:
+ * Rig (outline + selected-box properties), Tweens (the selected box's motion stack),
+ * and Poses (named snapshots + the playback cycle). The focused tab drives the
+ * contextual toolbar next to it, so taps always dispatch somewhere sensible. Tweens
+ * are looping procedural motions that evaluate simultaneously, composing top-first —
+ * stack order is motion order (rotations don't commute), so rows reorder.
  */
+const TABS: Array<{ id: AnimateTab; label: string }> = [
+  { id: 'rig', label: 'Rig' },
+  { id: 'tweens', label: 'Tweens' },
+  { id: 'poses', label: 'Poses' },
+]
+
 export function AnimatePanel() {
   const rigBoxes = useAppStore((s) => s.rigBoxes)
   const selectedRigBoxId = useAppStore((s) => s.selectedRigBoxId)
+  const tab = useAppStore((s) => s.animateTab)
+  const setTab = useAppStore((s) => s.setAnimateTab)
 
   const box = rigBoxes.find((b) => b.id === selectedRigBoxId) ?? null
 
   return (
     <div className="flex w-64 min-h-0 shrink-0 flex-col border-r border-neutral-800 bg-neutral-900">
+      <div className="flex gap-1 border-b border-neutral-800 p-2" role="tablist" aria-label="Animate panel tabs">
+        {TABS.map(({ id, label }) => (
+          <button
+            key={id}
+            role="tab"
+            aria-selected={tab === id}
+            onClick={() => setTab(id)}
+            className={seg(tab === id) + ' flex-1'}
+          >
+            {label}
+          </button>
+        ))}
+      </div>
       <div className="flex min-h-0 flex-1 flex-col gap-4 overflow-y-auto p-3">
-        <OutlineSection rigBoxes={rigBoxes} selectedRigBoxId={selectedRigBoxId} />
-        <div className="-mx-3 border-t border-neutral-800" />
-        <InspectorSection box={box} rigBoxes={rigBoxes} />
-        <div className="-mx-3 border-t border-neutral-800" />
-        <PosesSection />
+        {tab === 'rig' && (
+          <>
+            <OutlineSection rigBoxes={rigBoxes} selectedRigBoxId={selectedRigBoxId} />
+            <div className="-mx-3 border-t border-neutral-800" />
+            <InspectorSection box={box} rigBoxes={rigBoxes} />
+          </>
+        )}
+        {tab === 'tweens' && <TweensSection box={box} />}
+        {tab === 'poses' && <PosesSection />}
       </div>
     </div>
   )
@@ -92,7 +95,6 @@ function OutlineSection({ rigBoxes, selectedRigBoxId }: { rigBoxes: RigBox[]; se
   const [collapsed, setCollapsed] = useState<Set<string>>(new Set())
   const [dragId, setDragId] = useState<string | null>(null)
   const [drop, setDrop] = useState<{ id: string; position: DropPosition } | null>(null)
-  const [open, setOpen] = useState(true)
 
   const rows = useMemo(() => visibleRows(rigBoxes, collapsed), [rigBoxes, collapsed])
   const childCounts = useMemo(() => {
@@ -152,9 +154,6 @@ function OutlineSection({ rigBoxes, selectedRigBoxId }: { rigBoxes: RigBox[]; se
 
   return (
     <section>
-      <SectionHeader title={`Rig (${rigBoxes.length})`} open={open} onToggle={() => setOpen((v) => !v)} />
-      {open && (
-      <>
       <p className="mb-2 text-[11px] leading-snug text-neutral-500">
         Tap the model with the Rig tool to box a region. Drag rows to reorder or nest.
       </p>
@@ -302,8 +301,6 @@ function OutlineSection({ rigBoxes, selectedRigBoxId }: { rigBoxes: RigBox[]; se
           })}
         </ul>
       )}
-      </>
-      )}
     </section>
   )
 }
@@ -311,27 +308,21 @@ function OutlineSection({ rigBoxes, selectedRigBoxId }: { rigBoxes: RigBox[]; se
 function InspectorSection({ box, rigBoxes }: { box: RigBox | null; rigBoxes: RigBox[] }) {
   const renameRigBox = useAppStore((s) => s.renameRigBox)
   const setRigPivot = useAppStore((s) => s.setRigPivot)
-  const poseCount = useAppStore((s) => s.poseRotations.size)
-  const resetPose = useAppStore((s) => s.resetPose)
   const [editing, setEditing] = useState(false)
   const [draft, setDraft] = useState('')
-  const [open, setOpen] = useState(true)
 
   if (!box) {
     return (
       <section>
-        <SectionHeader title="Properties" open={open} onToggle={() => setOpen((v) => !v)} />
-        {open && (
-          <div className="flex items-center gap-2 text-neutral-500">
-            <Bone size={16} className="shrink-0" />
-            <div>
-              <p className="text-[11px] font-medium text-neutral-300">
-                {rigBoxes.length === 0 ? 'No rig boxes yet' : 'No box selected'}
-              </p>
-              <p className="text-[10px]">pick it in the outline or tap its footprint in 2D</p>
-            </div>
+        <div className="flex items-center gap-2 text-neutral-500">
+          <Bone size={16} className="shrink-0" />
+          <div>
+            <p className="text-[11px] font-medium text-neutral-300">
+              {rigBoxes.length === 0 ? 'No rig boxes yet' : 'No box selected'}
+            </p>
+            <p className="text-[10px]">pick it in the outline or tap its footprint in 2D</p>
           </div>
-        )}
+        </div>
       </section>
     )
   }
@@ -347,9 +338,6 @@ function InspectorSection({ box, rigBoxes }: { box: RigBox | null; rigBoxes: Rig
 
   return (
     <section className="flex flex-col gap-2">
-      <SectionHeader title="Properties" open={open} onToggle={() => setOpen((v) => !v)} />
-      {open && (
-      <>
       <div className="flex min-w-0 items-center gap-2">
         {editing ? (
           <input
@@ -391,19 +379,24 @@ function InspectorSection({ box, rigBoxes }: { box: RigBox | null; rigBoxes: Rig
           </button>
         )}
       </div>
-      {poseCount > 0 && (
-        <button
-          onClick={resetPose}
-          title="Reset the pose preview to bind (posing is preview — Esc works too)"
-          className="flex w-fit items-center gap-1 rounded px-1 py-0.5 text-[10px] font-medium text-amber-300 hover:bg-neutral-800 hover:text-amber-100"
-        >
-          <RotateCcw size={12} />
-          posing · reset
-        </button>
-      )}
+    </section>
+  )
+}
+
+/** The selected box's tween stack. Needs a box — the tab shows a hint otherwise. */
+function TweensSection({ box }: { box: RigBox | null }) {
+  if (!box) {
+    return (
+      <section>
+        <p className="rounded-md border border-dashed border-neutral-800 px-2 py-3 text-center text-[11px] text-neutral-500">
+          No box selected — pick one in the Rig tab to edit its tweens.
+        </p>
+      </section>
+    )
+  }
+  return (
+    <section className="flex flex-col gap-2">
       <TweenStack box={box} />
-      </>
-      )}
     </section>
   )
 }
@@ -620,9 +613,9 @@ function PosesSection() {
   const renamePose = useAppStore((s) => s.renamePose)
   const deletePose = useAppStore((s) => s.deletePose)
   const stagePose = useAppStore((s) => s.stagePose)
+  const resetPose = useAppStore((s) => s.resetPose)
   const [editingId, setEditingId] = useState<string | null>(null)
   const [draft, setDraft] = useState('')
-  const [open, setOpen] = useState(true)
 
   function commitRename(id: string) {
     if (draft.trim()) renamePose(id, draft)
@@ -632,24 +625,30 @@ function PosesSection() {
 
   return (
     <section className="flex flex-col gap-1.5">
-      <SectionHeader
-        title={`Poses (${poses.length})`}
-        open={open}
-        onToggle={() => setOpen((v) => !v)}
-        right={
+      <div className="flex items-center gap-1">
+        <span className="min-w-0 flex-1 truncate text-xs font-semibold uppercase tracking-wider text-neutral-400 select-none">
+          Poses ({poses.length})
+        </span>
+        {scratchSize > 0 && (
           <button
-            onClick={() => capturePose()}
-            disabled={scratchSize === 0}
-            title={scratchSize === 0 ? 'Pose something first — the scratch is at bind' : 'Freeze the current gizmo pose into a named pose'}
-            className="flex items-center gap-1 rounded px-1.5 py-0.5 text-[10px] font-medium text-violet-300 hover:bg-neutral-800 hover:text-violet-100 disabled:opacity-30 disabled:hover:bg-transparent"
+            onClick={resetPose}
+            title="Reset the pose preview to bind (posing is preview — Esc works too)"
+            className="flex items-center gap-1 rounded px-1.5 py-0.5 text-[10px] font-medium text-amber-300 hover:bg-neutral-800 hover:text-amber-100"
           >
-            <Plus size={12} />
-            capture
+            <RotateCcw size={12} />
+            reset
           </button>
-        }
-      />
-      {open && (
-      <>
+        )}
+        <button
+          onClick={() => capturePose()}
+          disabled={scratchSize === 0}
+          title={scratchSize === 0 ? 'Pose something first — the scratch is at bind' : 'Freeze the current gizmo pose into a named pose'}
+          className="flex items-center gap-1 rounded px-1.5 py-0.5 text-[10px] font-medium text-violet-300 hover:bg-neutral-800 hover:text-violet-100 disabled:opacity-30 disabled:hover:bg-transparent"
+        >
+          <Plus size={12} />
+          capture
+        </button>
+      </div>
       <CycleBar />
       {poses.length === 0 ? (
         <p className="rounded-md border border-dashed border-neutral-800 px-2 py-2 text-[10px] leading-snug text-neutral-500">
@@ -707,8 +706,6 @@ function PosesSection() {
             )
           })}
         </ul>
-      )}
-      </>
       )}
     </section>
   )

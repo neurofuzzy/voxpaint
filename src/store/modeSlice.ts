@@ -26,11 +26,21 @@ export const createModeSlice: Slice = (set, get) => ({
     }
     set((state) => {
       state.mode = mode
-      // Animate mode only has rig/pivot/pose handlers wired up (see engine/tools's animateToolMap) —
-      // land on a tool that's actually wired up there instead of leaving dispatch pointed at
-      // one that silently no-ops (e.g. 'select' or 'move' from Model mode).
-      if (mode === 'animate' && state.activeTool !== 'pivot' && state.activeTool !== 'rigbox' && state.activeTool !== 'pose') {
-        state.activeTool = 'rigbox'
+      // Animate tools follow the panel tab (see animateToolMap + ANIMATE_TOOLS) — land on a
+      // tab whose toolbar actually wires the current tool up instead of leaving dispatch
+      // pointed at one that silently no-ops. Unknown tools fall back to rig + rigbox.
+      if (mode === 'animate') {
+        const t = state.activeTool
+        if (t === 'pose') {
+          state.animateTab = 'poses'
+        } else if (t === 'select') {
+          state.animateTab = 'tweens'
+        } else if (t === 'rigbox' || t === 'pivot') {
+          state.animateTab = 'rig'
+        } else {
+          state.animateTab = 'rig'
+          state.activeTool = 'rigbox'
+        }
       }
     })
     // Animate and Texture modes have no 3D-only editing surface — leaving Model mode drops the

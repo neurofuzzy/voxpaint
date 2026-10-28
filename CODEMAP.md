@@ -1,8 +1,8 @@
 ```
 # Auto-generated project map
-# Last updated: 2026-10-28 01:06:05
-# Files: 258
-# Lines of code: ~40227
+# Last updated: 2026-10-28 01:43:58
+# Files: 260
+# Lines of code: ~40461
 ```
 - **/assets**
 - **/components**
@@ -85,7 +85,7 @@
       - Variable: `TOUR_STEPS` - The ordered spotlight interface tour. Each step...
   - **/panels**
     - [AnimatePanel.tsx](../src/components/panels/AnimatePanel.tsx)
-      - Function: `AnimatePanel` - Animate-mode docked panel (between the tool rai...
+      - Function: `AnimatePanel`
     - [EditMenu.tsx](../src/components/panels/EditMenu.tsx)
       - Function: `EditMenu` - Edit menu: touch/mouse path for the selection c...
     - [ExportGltfDialog.tsx](../src/components/panels/ExportGltfDialog.tsx)
@@ -738,7 +738,7 @@
     - [gestureTool.test.ts](../src/engine/tools/gestureTool.test.ts)
     - [index.ts](../src/engine/tools/index.ts)
       - Variable: `toolMap`
-      - Variable: `animateToolMap` - Animate-mode tool dispatch: only the rig tools ...
+      - Variable: `animateToolMap` - Animate-mode tool dispatch, mirroring the panel...
       - Function: `resolveGestureTool` - Gesture-tool resolution for pointer dispatch (s...
     - [lineUtils.test.ts](../src/engine/tools/lineUtils.test.ts)
     - [lineUtils.ts](../src/engine/tools/lineUtils.ts) - Bresenham line, inclusive of both endpoints.
@@ -760,6 +760,9 @@
     - [poseTool.test.ts](../src/engine/tools/poseTool.test.ts)
     - [poseTool.ts](../src/engine/tools/poseTool.ts)
       - Variable: `poseTool` - Pose tool's 2D half (Animate mode): selection o...
+    - [rigSelectTool.test.ts](../src/engine/tools/rigSelectTool.test.ts)
+    - [rigSelectTool.ts](../src/engine/tools/rigSelectTool.ts)
+      - Variable: `rigSelectTool` - Rig select tool (Animate mode, Tweens tab): sel...
     - [rigWandTool.test.ts](../src/engine/tools/rigWandTool.test.ts)
     - [rigWandTool.ts](../src/engine/tools/rigWandTool.ts)
       - Variable: `rigWandTool` - Rig tool (Animate mode): the mode's primary sel...
@@ -864,6 +867,7 @@
     - Type: `ModelSnapshot` - One model-mode undo/redo snapshot: the voxel mo...
     - Type: `ObjectModeTarget` - The voxel/face last landed on via a 3D face-cli...
     - Type: `PlaneSlice`
+    - Type: `AnimateTab`
     - Type: `ToolSlice`
     - Type: `FloatOrigin`
     - Type: `SelectionSlice`

@@ -151,8 +151,16 @@ export type PlaneSlice = {
   handleVoxelFaceClick: (cellKey: CellKey, axis: Axis, orientation: Orientation, offset: number) => void
 }
 
+export type AnimateTab = 'rig' | 'tweens' | 'poses'
+
 export type ToolSlice = {
   activeTool: ToolId
+  /** Which Animate-panel tab is focused. Drives the contextual toolbar: rig → rigbox +
+   * pivot, tweens → select, poses → pose. Ignored outside Animate mode. */
+  animateTab: AnimateTab
+  /** Switches the panel tab and arms that tab's primary tool (rig→rigbox,
+   * tweens→select, poses→pose), so the tool can never go stale for the tab. */
+  setAnimateTab: (tab: AnimateTab) => void
   activeVoxelKind: VoxelKind
   activePaletteSlot: PaletteSlotRef
   /** Brush rotation in quarter-turns (0-3), applied additively at paint time for orientable

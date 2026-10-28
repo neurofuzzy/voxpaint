@@ -32,8 +32,8 @@ export function MainLayout() {
     <div className="flex h-full flex-col">
       <TopToolbar />
       <div className="relative flex min-h-0 flex-1">
-        <LeftPanel />
         {animateMode && <AnimatePanel />}
+        <LeftPanel />
         {collapsed ? (
           <>
             <CollapsedRail onExpand={expandEditor} />
