@@ -7,6 +7,7 @@ import type { TextureModel } from '@/engine/texture/types'
 import { emptyTextureModel } from '@/engine/texture/TextureStore'
 import { MARKER_COLORS } from '@/engine/markers/types'
 import { defaultAnimationSettings, encodeSliceKey } from '@/engine/animation/animationLayers'
+import type { RigBox } from '@/engine/rigging/types'
 import { exportModelToGlb } from './gltfExport'
 
 // three's GLTFExporter rasterizes every texture image through a 2D canvas — also absent in
@@ -477,32 +478,37 @@ describe('exportModelToGlb rig boxes', () => {
     expect(nodes[rig].children).toContain(arm)
   })
 
-  it('exports loop clips on looped joints (and none for static joints)', async () => {
-    const boxes = [
-      { id: 'torso-id', name: 'torso', min: [-1, -1, -1] as [number, number, number], max: [3, 1, 1] as [number, number, number], parentId: null, pivot: null, loop: { kind: 'rotate', axis: 'y', direction: 1, speed: 1, amount: 4 } as const },
-      { id: 'arm-id', name: 'arm', min: [2, 0, 0] as [number, number, number], max: [2, 0, 0] as [number, number, number], parentId: 'torso-id', pivot: null, loop: { kind: 'slide', axis: 'x', direction: -1, speed: 2, amount: 3 } as const },
+  it('bakes one 2s clip per tweened joint (stacks compose, static joints emit none)', async () => {
+    const boxes: RigBox[] = [
+      { id: 'torso-id', name: 'torso', min: [-1, -1, -1] as [number, number, number], max: [3, 1, 1] as [number, number, number], parentId: null, pivot: null, tweens: [{ id: 'tw-1', kind: 'rotate', axis: 'y', direction: 1, speed: 1, amount: 4, enabled: true }] },
+      // Stacked spin + shuttle on the child: a single clip carrying both.
+      { id: 'arm-id', name: 'arm', min: [2, 0, 0] as [number, number, number], max: [2, 0, 0] as [number, number, number], parentId: 'torso-id', pivot: null, tweens: [{ id: 'tw-2', kind: 'rotate', axis: 'y', direction: 1, speed: 1, amount: 4, enabled: true }, { id: 'tw-3', kind: 'slide', axis: 'x', direction: -1, speed: 2, amount: 3, enabled: true }] },
     ]
     const json = glbJson(
-      await exportModelToGlb(limbModel(), DEFAULT_PALETTE, 16, undefined, { includeTextureMaps: false, rigBoxes: boxes }),
+      await exportModelToGlb(limbModel(), DEFAULT_PALETTE, 16, undefined, { includeTextureMaps: false, rigBoxes: [...boxes] }),
     )
     const nodes = namedNodes(json)
     const torso = indexOf(nodes, 'torso')
+    const arm = indexOf(nodes, 'arm')
     const clips = json.animations ?? []
     expect(clips).toHaveLength(2)
-    // Rotate drives the joint quaternion (linear full-turn loop)…
-    const spin = clips.find((c) => c.name === 'anim_torso')
-    expect(spin).toBeDefined()
-    expect(spin!.channels?.[0].target?.node).toBe(torso)
-    expect(spin!.channels?.[0].target?.path).toBe('rotation')
-    expect(spin!.samplers?.[0].interpolation).toBe('LINEAR')
-    // …slide drives position with a CUBICSPLINE sine around the rest pose.
-    const arm = indexOf(nodes, 'arm')
-    const shuttle = clips.find((c) => c.name === 'anim_arm')
-    expect(shuttle).toBeDefined()
-    expect(shuttle!.channels?.[0].target?.node).toBe(arm)
-    expect(shuttle!.channels?.[0].target?.path).toBe('translation')
-    expect(shuttle!.samplers?.[0].interpolation).toBe('CUBICSPLINE')
-    // Static rigs export no clips at all.
+    // Each clip drives both TRS channels of its joint with LINEAR baked samples.
+    for (const [name, node] of [['anim_torso', torso], ['anim_arm', arm]] as const) {
+      const clip = clips.find((c) => c.name === name)
+      expect(clip).toBeDefined()
+      const paths = (clip!.channels ?? []).map((ch) => ch.target?.path).sort()
+      expect(clip!.channels?.every((ch) => ch.target?.node === node)).toBe(true)
+      expect(paths).toEqual(['rotation', 'translation'])
+      expect(clip!.samplers?.every((s) => s.interpolation === 'LINEAR')).toBe(true)
+    }
+    // Muted tweens and static rigs export no clips at all.
+    const muted = glbJson(
+      await exportModelToGlb(limbModel(), DEFAULT_PALETTE, 16, undefined, {
+        includeTextureMaps: false,
+        rigBoxes: boxes.map((b) => ({ ...b, tweens: (b.tweens ?? []).map((t) => ({ ...t, enabled: false })) })),
+      }),
+    )
+    expect(muted.animations ?? []).toEqual([])
     const still = glbJson(
       await exportModelToGlb(limbModel(), DEFAULT_PALETTE, 16, undefined, { includeTextureMaps: false, rigBoxes }),
     )

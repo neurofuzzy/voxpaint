@@ -1,6 +1,7 @@
 import { Editor2D } from '@/components/editor2d/Editor2D'
 import { PlaneEdgeSlider } from '@/components/editor2d/PlaneEdgeSlider'
 import { useKeyboardShortcuts } from '@/components/editor2d/useKeyboardShortcuts'
+import { AnimatePanel } from '@/components/panels/AnimatePanel'
 import { Viewport3D } from '@/components/viewport3d/Viewport3D'
 import { useAppStore } from '@/store/useAppStore'
 import { BottomBar } from './BottomBar'
@@ -13,6 +14,7 @@ export function MainLayout() {
   // over the 3D viewport — texture mode has no construction plane, so it hides there.
   // It stays mounted in 3D-only mode: the plane still drives empty-space paint + slab facing.
   const showPlaneSlider = useAppStore((s) => s.mode !== 'texture')
+  const animateMode = useAppStore((s) => s.mode === 'animate')
   const collapsed = useAppStore((s) => s.layoutMode === '3d-only')
   // Global shortcuts live here (not in the 2D canvases) so they stay active when the 2D pane
   // is collapsed. The canvases must not call this hook themselves.
@@ -31,6 +33,7 @@ export function MainLayout() {
       <TopToolbar />
       <div className="relative flex min-h-0 flex-1">
         <LeftPanel />
+        {animateMode && <AnimatePanel />}
         {collapsed ? (
           <>
             <CollapsedRail onExpand={expandEditor} />

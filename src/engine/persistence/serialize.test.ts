@@ -5,6 +5,7 @@ import { emptyTextureModel, getTexel } from '@/engine/texture/TextureStore'
 import { faceSizeFor } from '@/engine/texture/types'
 import { migrateToCurrent } from './migrations'
 import { deserializeProject, serializeProject } from './serialize'
+import type { RigBox } from '@/engine/rigging/types'
 import type { ProjectMeta, VoxPaintProjectFileV1 } from './schema'
 import { CURRENT_SCHEMA_VERSION } from './schema'
 
@@ -277,17 +278,17 @@ describe('flats persistence (v11)', () => {
 describe('serialize rig boxes', () => {
   it('round-trips the outline hierarchy through serialize → deserialize', () => {
     const texture = emptyTextureModel(meta.gridExtent)
-    const rigBoxes = [
-      { id: 'a', name: 'torso', min: [0, 0, 0] as [number, number, number], max: [3, 3, 3] as [number, number, number], parentId: null, pivot: null, loop: null },
+    const rigBoxes: RigBox[] = [
+      { id: 'a', name: 'torso', min: [0, 0, 0] as [number, number, number], max: [3, 3, 3] as [number, number, number], parentId: null, pivot: null, tweens: [] },
       // Half-integer pivots (cell-boundary joint faces) must survive the trip, not just ints.
-      { id: 'b', name: 'arm', min: [1, 0, 1] as [number, number, number], max: [2, 3, 2] as [number, number, number], parentId: 'a', pivot: [0.5, 1, 1] as [number, number, number], loop: { kind: 'slide', axis: 'x', direction: -1, speed: 2, amount: 5 } as const },
+      { id: 'b', name: 'arm', min: [1, 0, 1] as [number, number, number], max: [2, 3, 2] as [number, number, number], parentId: 'a', pivot: [0.5, 1, 1] as [number, number, number], tweens: [{ id: 'tw-1', kind: 'slide', axis: 'x', direction: -1, speed: 2, amount: 5, enabled: true }] },
     ]
     const file = serializeProject(emptyModel(), DEFAULT_PALETTE, meta, texture, undefined, undefined, undefined, undefined, undefined, rigBoxes)
     expect(file.rigBoxes).toHaveLength(2)
     expect(file.rigBoxes?.[0]).not.toHaveProperty('pivot')
-    expect(file.rigBoxes?.[0]).not.toHaveProperty('loop')
+    expect(file.rigBoxes?.[0]).not.toHaveProperty('tweens')
     expect(file.rigBoxes?.[1].pivot).toEqual([0.5, 1, 1])
-    expect(file.rigBoxes?.[1].loop).toEqual({ kind: 'slide', axis: 'x', direction: -1, speed: 2, amount: 5 })
+    expect(file.rigBoxes?.[1].tweens).toEqual([{ id: 'tw-1', kind: 'slide', axis: 'x', direction: -1, speed: 2, amount: 5, enabled: true }])
     const restored = deserializeProject(file)
     expect(restored.rigBoxes).toEqual(rigBoxes)
   })
@@ -308,20 +309,33 @@ describe('serialize rig boxes', () => {
     expect(restored.find((b) => b.id === 'c')?.pivot).toBeNull()
   })
 
-  it('loads v13 files with loops unset and drops malformed loops', () => {
+  it('loads v14 files by folding the single loop into a one-entry tween stack', () => {
     const texture = emptyTextureModel(meta.gridExtent)
-    const v13 = {
+    const v14 = {
       ...serializeProject(emptyModel(), DEFAULT_PALETTE, meta, texture),
       rigBoxes: [
         { id: 'a', name: 'a', min: [0, 0, 0] as [number, number, number], max: [1, 1, 1] as [number, number, number], parentId: null },
-        { id: 'b', name: 'b', min: [2, 2, 2] as [number, number, number], max: [3, 3, 3] as [number, number, number], parentId: null, loop: { kind: 'spin', axis: 'y', direction: 1, speed: 1, amount: 4 } as never },
-        { id: 'c', name: 'c', min: [4, 4, 4] as [number, number, number], max: [5, 5, 5] as [number, number, number], parentId: null, loop: { kind: 'rotate', axis: 'y', direction: 1, speed: 3, amount: 4 } as const },
+        { id: 'b', name: 'b', min: [2, 2, 2] as [number, number, number], max: [3, 3, 3] as [number, number, number], parentId: null, loop: { kind: 'rotate', axis: 'y', direction: 1, speed: 3, amount: 4 } },
+      ],
+      schemaVersion: 14,
+    }
+    const restored = deserializeProject(migrateToCurrent(v14)).rigBoxes
+    expect(restored.find((b) => b.id === 'a')?.tweens ?? []).toEqual([])
+    expect(restored.find((b) => b.id === 'b')?.tweens).toEqual([
+      { id: 'tw-b-1', kind: 'rotate', axis: 'y', direction: 1, speed: 3, amount: 4, enabled: true },
+    ])
+  })
+
+  it('drops malformed tweens on load', () => {
+    const texture = emptyTextureModel(meta.gridExtent)
+    const file = {
+      ...serializeProject(emptyModel(), DEFAULT_PALETTE, meta, texture),
+      rigBoxes: [
+        { id: 'a', name: 'a', min: [0, 0, 0] as [number, number, number], max: [1, 1, 1] as [number, number, number], parentId: null, tweens: [{ kind: 'spin', axis: 'y', direction: 1, speed: 1, amount: 4 }] as never },
       ],
     }
-    const restored = deserializeProject(v13).rigBoxes
-    expect(restored.find((b) => b.id === 'a')?.loop ?? null).toBeNull()
-    expect(restored.find((b) => b.id === 'b')?.loop ?? null).toBeNull()
-    expect(restored.find((b) => b.id === 'c')?.loop).toEqual({ kind: 'rotate', axis: 'y', direction: 1, speed: 3, amount: 4 })
+    const restored = deserializeProject(file).rigBoxes
+    expect(restored.find((b) => b.id === 'a')?.tweens ?? []).toEqual([])
   })
 
   it('collapses stale duplicate bounds on load, reparenting their children', () => {

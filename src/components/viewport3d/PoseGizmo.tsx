@@ -1,7 +1,7 @@
 import { useMemo } from 'react'
 import * as THREE from 'three'
 import { rigPivotOf } from '@/engine/rigging/types'
-import { isLoopActive } from '@/engine/rigging/rigLoop'
+import { chainHasActiveTweens } from '@/engine/rigging/rigLoop'
 import { gizmoRadiusForBox, parentChainMatrix } from '@/engine/rigging/pose'
 import type { Axis } from '@/engine/grid/types'
 import { useAppStore } from '@/store/useAppStore'
@@ -47,9 +47,11 @@ export function PoseGizmo() {
     return { position, quaternion, radius: gizmoRadiusForBox(box) }
   }, [box, rigBoxes, poseRotations])
 
-  // Looped joints are driven by their cycle, not the gizmo — posing one is a no-op,
-  // so the rings hide (the inspector explains how to clear the loop to pose again).
-  if (mode !== 'animate' || activeTool !== 'pose' || !box || !transform || isLoopActive(box.loop)) return null
+  // Posing needs a static frame: the rings and every drag path sample the bind/pose-only
+  // parent chain, so a tween anywhere up the chain hides them (the panel explains how to
+  // mute tweens to pose again). Without motion the memo below is exact — no per-frame
+  // updates needed.
+  if (mode !== 'animate' || activeTool !== 'pose' || !box || !transform || chainHasActiveTweens(rigBoxes, box)) return null
 
   return (
     <group position={transform.position} quaternion={transform.quaternion}>

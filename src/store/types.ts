@@ -1,6 +1,6 @@
 import type { Axis, CellKey, ChamferCell, Coord, GridExtent, Orientation, Rotation, VoxelModel, VoxelScaleY } from '@/engine/grid/types'
 import type { Marker } from '@/engine/markers/types'
-import type { RigBox, RigLoop } from '@/engine/rigging/types'
+import type { RigBox, RigTween } from '@/engine/rigging/types'
 import type { JointEuler } from '@/engine/rigging/pose'
 import type { GltfExportAnchor } from '@/engine/export/gltfExport'
 import type { EmissiveAnimMode, PaletteSlotRef, PaletteState } from '@/engine/palette/types'
@@ -740,10 +740,22 @@ export type RiggingSlice = {
   /** Sets a box's rotation-center grid point (null = box center). Integers are cell centers,
    * half-integers are cell boundaries. No-op on unknown ids. Self-brackets undo. */
   setRigPivot: (id: string, pivot: Coord | null) => void
-  /** Sets a box's looping motion (null = no loop). Mutually exclusive with posing: setting
-   * a loop clears that joint's pose preview, and `setJointRotation` refuses looped boxes.
+  /** Appends a tween (default spin) to the box's stack; clears that joint's pose preview
+   * (tweened joints can't be posed). Returns the tween id, or null on unknown box.
+   * Self-brackets undo. */
+  addTween: (boxId: string) => string | null
+  /** Removes a tween from the stack. No-op on unknown ids. Self-brackets undo. */
+  removeTween: (boxId: string, tweenId: string) => void
+  /** Reorders within the stack (±1): stack order is composition order (first = outermost).
+   * No-op at the ends or on unknown ids. Self-brackets undo. */
+  moveTween: (boxId: string, tweenId: string, dir: -1 | 1) => void
+  /** Mutes/unmutes a tween (params kept). Enabling clears that joint's pose preview.
    * No-op on unknown ids. Self-brackets undo. */
-  setRigLoop: (id: string, loop: RigLoop | null) => void
+  setTweenEnabled: (boxId: string, tweenId: string, enabled: boolean) => void
+  /** Patches tween params through the nesting-aware stroke: lone calls record one undo
+   * entry; drag callers bracket externally (begin on down, commit on up) to coalesce the
+   * whole gesture into one. Enabling clears that joint's pose preview. */
+  patchTween: (boxId: string, tweenId: string, patch: Partial<Omit<RigTween, 'id'>>) => void
   /**
    * Pivot setter for whichever box is selected (the Pivot tool's target in 2D and 3D):
    * toasts a hint and returns false when nothing is selected, otherwise sets the pivot

@@ -6,7 +6,6 @@ import type { PaletteSlotKind } from '@/engine/palette/types'
 import { GRAYSCALE } from '@/engine/texture/types'
 import { MovePalette } from './MovePalette'
 import { PaletteThemeMenu } from './PaletteThemeMenu'
-import { RigInspectorCard } from './RigInspectorCard'
 import { SelectionPalette } from './SelectionPalette'
 
 /** Layout direction of a palette row: the 2D pane's bottom-center pill is horizontal, the
@@ -155,6 +154,9 @@ export function FloatingPalette({ orientation = 'horizontal' }: { orientation?: 
   // either, but whole-model voxel transforms don't apply there, so the gray palette stays.
   const showMoveTools = activeTool === 'move' && mode === 'model'
 
+  // Animate mode's rig UI lives in the docked AnimatePanel — no floating palette there.
+  if (mode === 'animate') return null
+
   return (
     <div
       className={
@@ -172,8 +174,6 @@ export function FloatingPalette({ orientation = 'horizontal' }: { orientation?: 
         <MovePalette orientation={orientation} />
       ) : mode === 'texture' ? (
         <GrayscalePalette orientation={orientation} />
-      ) : mode === 'animate' ? (
-        <RigInspectorCard orientation={orientation} />
       ) : activeTool === 'marker' ? (
         <MarkerPalette orientation={orientation} />
       ) : (

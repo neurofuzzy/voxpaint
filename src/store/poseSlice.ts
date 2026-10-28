@@ -1,5 +1,5 @@
 import type { StateCreator } from 'zustand'
-import { isLoopActive } from '@/engine/rigging/rigLoop'
+import { chainHasActiveTweens } from '@/engine/rigging/rigLoop'
 import type { JointEuler } from '@/engine/rigging/pose'
 import { showToast } from '@/components/ui/toastBus'
 import type { AppState, PoseSlice } from './types'
@@ -22,9 +22,11 @@ export const createPoseSlice: Slice = (set, get) => ({
   setJointRotation: (id, euler) => {
     const box = get().rigBoxes.find((b) => b.id === id)
     if (!box) return
-    // Mutually exclusive with looping: a looped joint is driven by its cycle, not the gizmo.
-    if (isLoopActive(box.loop)) {
-      showToast('That box has a looping motion — clear it before posing')
+    // Mutually exclusive with tweening: posing samples the static parent chain, so a
+    // tween anywhere up the chain refuses (the press-time guards normally get here first —
+    // this is the backstop for in-flight drags).
+    if (chainHasActiveTweens(get().rigBoxes, box)) {
+      showToast('That joint rides an active tween — mute tweens in the panel to pose')
       return
     }
     set((state) => {

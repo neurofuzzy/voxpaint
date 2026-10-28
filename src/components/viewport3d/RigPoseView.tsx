@@ -2,8 +2,8 @@ import { useEffect, useMemo, useRef } from 'react'
 import * as THREE from 'three'
 import { useFrame } from '@react-three/fiber'
 import { buildRigPoseMeshes } from '@/engine/animation/rigPoseBuild'
-import { applyPoseMatrices, composePoseMatrices } from '@/engine/rigging/pose'
-import { composeLoopMatrices, hasActiveRigLoops } from '@/engine/rigging/rigLoop'
+import { applyPoseMatrices } from '@/engine/rigging/pose'
+import { composeAnimatedMatrices, hasActiveTweens } from '@/engine/rigging/rigLoop'
 import { TEXEL_SCALE } from '@/engine/texture/types'
 import { tickEmissiveAnimation } from '@/engine/instancing/previewMaterial'
 import { enableGhostDither, setGhostDither } from '@/engine/instancing/ghostDither'
@@ -13,14 +13,14 @@ import { useAppStore } from '@/store/useAppStore'
 
 /**
  * Animate-mode pose + loop preview: the model partitioned into one static group (unrigged
- * voxels) plus one group per rig box, each posed per frame from `poseRotations` via
- * `composePoseMatrices` and looped via `composeLoopMatrices` (world = loop × pose, so a
- * looped parent still carries a posed child). Geometry rebuilds only when the model/rigs
+ * voxels) plus one group per rig box, each driven per frame from `poseRotations` and the
+ * tween stacks via `composeAnimatedMatrices` (world = tween × pose, so a tweened parent
+ * still carries a posed child). Geometry rebuilds only when the model/rigs
  * change — drags and cycles just re-matrix groups (matrixAutoUpdate off), so playback stays
  * at frame rate with zero rebuilds.
  *
- * Active while a non-empty pose exists or any box loops; the static model views hide
- * underneath. Materials come from the same builder recipe as the animated preview, so
+ * Active while a non-empty pose exists or any box has active tweens; the static model
+ * views hide underneath. Materials come from the same builder recipe as the animated preview, so
  * ghost/isolate apply the same way; emissive animation ticks along too.
  */
 export function RigPoseView({ active }: { active: boolean }) {
@@ -118,19 +118,13 @@ export function RigPoseView({ active }: { active: boolean }) {
   useFrame(() => {
     if (!active || !built) return
     const st = useAppStore.getState()
-    const looping = hasActiveRigLoops(st.rigBoxes)
-    if (st.poseRotations.size === 0 && !looping) return
+    const tweening = hasActiveTweens(st.rigBoxes)
+    if (st.poseRotations.size === 0 && !tweening) return
     const elapsed = performance.now() / 1000
-    // World = loop-chain × pose-chain per box: a box never carries both (mutually
-    // exclusive), but a looped parent still carries a posed child and vice versa.
-    const loops = composeLoopMatrices(st.rigBoxes, elapsed)
-    const poses = composePoseMatrices(st.rigBoxes, st.poseRotations)
-    const combined = new Map<string, THREE.Matrix4>()
-    for (const b of st.rigBoxes) {
-      const l = loops.get(b.id)
-      const p = poses.get(b.id)
-      combined.set(b.id, l && p ? l.multiply(p) : (l ?? p!))
-    }
+    // World = tween-chain × pose-chain per box (see `composeAnimatedMatrices`) — a box
+    // never carries both (mutually exclusive), but a tweened parent still carries a
+    // posed child and vice versa.
+    const combined = composeAnimatedMatrices(st.rigBoxes, st.poseRotations, elapsed)
     applyPoseMatrices(boxGroups.current, combined)
     // TEMP-DEBUG: throttled matrix trace for the frozen-pose report.
     frameRef.current += 1

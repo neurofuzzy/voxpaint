@@ -7,7 +7,7 @@ import { isIPad } from '@/engine/input/isIPad'
 import { TEXEL_SCALE } from '@/engine/texture/types'
 import { normalizeProjectFilename } from '@/engine/persistence/projectFile'
 import { hasActiveAnimations } from '@/engine/animation/animationLayers'
-import { isLoopActive } from '@/engine/rigging/rigLoop'
+import { boxHasActiveTweens } from '@/engine/rigging/rigLoop'
 import { useAppStore } from '@/store/useAppStore'
 import { showToast } from '@/components/ui/toastBus'
 
@@ -18,17 +18,17 @@ const ANCHOR_LABELS: Record<GltfExportAnchor, string> = {
 }
 
 /** Heads-up when both systems are in play: rigged voxels export as poseable joints under the
- * Rig node and are excluded from slice-loop animation. Looped joints add their own clips. */
+ * Rig node and are excluded from slice-loop animation. Tweened joints add baked clips. */
 function RigWinsNote() {
   const rigBoxes = useAppStore((s) => s.rigBoxes)
   const animSettings = useAppStore((s) => s.animSettings)
   if (rigBoxes.length === 0) return null
-  const loops = rigBoxes.filter((b) => isLoopActive(b.loop)).length
-  if (!hasActiveAnimations(animSettings) && loops === 0) return null
+  const tweened = rigBoxes.filter(boxHasActiveTweens).length
+  if (!hasActiveAnimations(animSettings) && tweened === 0) return null
   return (
     <p className="mt-2 rounded-md border border-violet-500/30 bg-violet-500/10 px-3 py-1 text-xs text-violet-200">
       Rigged voxels export as poseable joints and skip slice-loop animation.
-      {loops > 0 && ` ${loops} looping joint${loops === 1 ? '' : 's'} export${loops === 1 ? 's' : ''} as animation clips.`}
+      {tweened > 0 && ` ${tweened} tweened joint${tweened === 1 ? '' : 's'} export${tweened === 1 ? 's' : ''} as baked animation clips.`}
     </p>
   )
 }

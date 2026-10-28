@@ -1,8 +1,9 @@
 import { decodeKey, effectiveExtent, emptyModel, encodeKey, recomputeBounds, withinWorkingBounds } from '@/engine/grid/GridStore'
 import type { CellKey, GridExtent, VoxelModel } from '@/engine/grid/types'
 import type { Marker, SerializedMarkerPosition } from '@/engine/markers/types'
-import type { RigBox } from '@/engine/rigging/types'
-import { sanitizeRigLoop } from '@/engine/rigging/types'
+import type { RigBox, RigTween } from '@/engine/rigging/types'
+import { newTweenId } from '@/engine/rigging/types'
+import { sanitizeRigTween } from '@/engine/rigging/types'
 import { MARKER_COLORS } from '@/engine/markers/types'
 import { DEFAULT_PALETTE } from '@/engine/palette/defaultPalette'
 import type { PaletteState } from '@/engine/palette/types'
@@ -122,7 +123,7 @@ function serializeRigBoxes(rigBoxes: RigBox[]): SerializedRigBox[] {
     max: [b.max[0], b.max[1], b.max[2]],
     parentId: b.parentId,
     ...(b.pivot ? { pivot: [b.pivot[0], b.pivot[1], b.pivot[2]] as [number, number, number] } : {}),
-    ...(b.loop ? { loop: { ...b.loop } } : {}),
+    ...((b.tweens ?? []).length > 0 ? { tweens: (b.tweens ?? []).map((t) => ({ ...t })) } : {}),
   }))
 }
 
@@ -170,9 +171,18 @@ function deserializeRigBoxes(entries: SerializedRigBox[] | undefined, gridExtent
       const half = effectiveExtent(gridExtent) / 2
       if (p.every((n) => n >= -half && n <= half)) pivot = [p[0], p[1], p[2]]
     }
-    // Loop motion (v14): malformed entries fall back to no loop (static joint).
-    const loop = sanitizeRigLoop(e.loop)
-    out.push({ id: e.id, name: e.name.slice(0, 64) || 'rig', min, max, parentId: null, pivot, loop })
+    // Tween stack (v15; v14 files carry a single `loop` — folded in by the migration).
+    // Malformed entries are dropped; an id collision within the box falls back to a fresh id.
+    const tweens: RigTween[] = []
+    const seenTweenIds = new Set<string>()
+    for (const raw of e.tweens ?? []) {
+      const tween = sanitizeRigTween(raw)
+      if (!tween) continue
+      if (seenTweenIds.has(tween.id)) tween.id = newTweenId()
+      seenTweenIds.add(tween.id)
+      tweens.push(tween)
+    }
+    out.push({ id: e.id, name: e.name.slice(0, 64) || 'rig', min, max, parentId: null, pivot, tweens })
     rawParents.set(e.id, typeof e.parentId === 'string' ? e.parentId : null)
   }
   // Resolve parents second: keep the link only when the parent survived, isn't self, and the

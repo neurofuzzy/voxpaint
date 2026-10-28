@@ -11,6 +11,13 @@ type Slice = StateCreator<AppState, [['zustand/immer', never]], [], AnimationSli
 const MAX_HISTORY = 100
 
 let animStrokeBaseline: AnimSnapshot | null = null
+/**
+ * Nesting depth for coalesced strokes (slider drags): `animBeginStroke` inside an open
+ * stroke only deepens it instead of re-baselining, so a pointer-down → N updates →
+ * pointer-up sequence records a single undo entry. Single-shot edits bracket singly and
+ * behave exactly as before.
+ */
+let animStrokeDepth = 0
 
 function cloneAnimSettings(map: Map<SliceKey, SliceAnimSettings>): Map<SliceKey, SliceAnimSettings> {
   const clone = new Map<SliceKey, SliceAnimSettings>()
@@ -33,7 +40,7 @@ function cloneSnapshot(state: { animSettings: Map<SliceKey, SliceAnimSettings>; 
     animSettings: cloneAnimSettings(state.animSettings),
     sliceMasks: cloneSliceMasks(state.sliceMasks),
     slicePivots: cloneSlicePivots(state.slicePivots),
-    rigBoxes: state.rigBoxes.map((b) => ({ ...b, min: [...b.min] as Coord, max: [...b.max] as Coord, pivot: b.pivot ? ([...b.pivot] as Coord) : null, loop: b.loop ? { ...b.loop } : null })),
+    rigBoxes: state.rigBoxes.map((b) => ({ ...b, min: [...b.min] as Coord, max: [...b.max] as Coord, pivot: b.pivot ? ([...b.pivot] as Coord) : null, tweens: (b.tweens ?? []).map((t) => ({ ...t })) })),
   }
 }
 
@@ -64,10 +71,14 @@ export const createAnimationSlice: Slice = (set, get) => ({
   },
 
   animBeginStroke: () => {
-    animStrokeBaseline = cloneSnapshot(get())
+    if (animStrokeDepth === 0) animStrokeBaseline = cloneSnapshot(get())
+    animStrokeDepth++
   },
 
   animCommitStroke: () => {
+    if (animStrokeDepth === 0) return
+    animStrokeDepth--
+    if (animStrokeDepth > 0) return
     const baseline = animStrokeBaseline
     animStrokeBaseline = null
     if (!baseline) return
@@ -82,6 +93,7 @@ export const createAnimationSlice: Slice = (set, get) => ({
 
   animCancelStroke: () => {
     animStrokeBaseline = null
+    animStrokeDepth = 0
   },
 
   animUndo: () => {
@@ -161,10 +173,14 @@ function rigBoxesEqual(a: RigBox[], b: RigBox[]): boolean {
     const yp = y.pivot ?? null
     if (!xp !== !yp) return false
     if (xp && yp && (xp[0] !== yp[0] || xp[1] !== yp[1] || xp[2] !== yp[2])) return false
-    const xl = x.loop ?? null
-    const yl = y.loop ?? null
-    if (!xl !== !yl) return false
-    if (xl && yl && (xl.kind !== yl.kind || xl.axis !== yl.axis || xl.direction !== yl.direction || xl.speed !== yl.speed || xl.amount !== yl.amount)) return false
+    const xt = x.tweens ?? []
+    const yt = y.tweens ?? []
+    if (xt.length !== yt.length) return false
+    for (let k = 0; k < xt.length; k++) {
+      const a = xt[k]
+      const c = yt[k]
+      if (a.id !== c.id || a.kind !== c.kind || a.axis !== c.axis || a.direction !== c.direction || a.speed !== c.speed || a.amount !== c.amount || a.enabled !== c.enabled) return false
+    }
   }
   return true
 }

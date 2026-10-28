@@ -1,8 +1,9 @@
 import * as THREE from 'three'
-import type { Axis } from '@/engine/grid/types'
+import type { Axis, Coord } from '@/engine/grid/types'
 import type { AnimationSpeed } from '@/engine/animation/types'
 import { BASE_CYCLE_SECONDS } from '@/engine/animation/animationLayers'
-import { rigPivotOf, type RigBox, type RigLoop } from './types'
+import { newTweenId, rigPivotOf, type RigBox, type RigTween } from './types'
+import { composePoseMatrices, type JointEuler } from './pose'
 
 const AXIS_UNIT: Record<Axis, [number, number, number]> = {
   x: [1, 0, 0],
@@ -10,49 +11,118 @@ const AXIS_UNIT: Record<Axis, [number, number, number]> = {
   z: [0, 0, 1],
 }
 
-/** Default loop for a freshly-enabled box: a 1x turntable spin about world Y. */
-export function defaultRigLoop(): RigLoop {
-  return { kind: 'rotate', axis: 'y', direction: 1, speed: 1, amount: 4 }
+/**
+ * Every tween period divides the 2s base cycle (speeds 1/2/3 → periods 2/1/⅔s), so any
+ * stack — any box, any combination — repeats exactly every 2 seconds. The exporter bakes
+ * over this window (see `bakeRigClips`); nothing ever drifts.
+ */
+export const TWEEN_CYCLE_SECONDS = BASE_CYCLE_SECONDS
+
+/** A fresh enabled turntable spin about world Y — what "add tween" starts from. */
+export function newRigTween(): RigTween {
+  return { id: newTweenId(), kind: 'rotate', axis: 'y', direction: 1, speed: 1, amount: 4, enabled: true }
 }
 
-export function isLoopActive(loop: RigLoop | null | undefined): loop is RigLoop {
-  return !!loop && (loop.kind === 'rotate' || loop.kind === 'slide')
+export function isTweenActive(tween: RigTween | null | undefined): tween is RigTween {
+  return !!tween && tween.enabled && (tween.kind === 'rotate' || tween.kind === 'slide')
 }
 
-export function hasActiveRigLoops(boxes: RigBox[]): boolean {
-  return boxes.some((b) => isLoopActive(b.loop))
+/** Enabled tweens of a box, in stack order. Absent array = no tweens. */
+export function activeTweens(box: RigBox): RigTween[] {
+  return (box.tweens ?? []).filter(isTweenActive)
 }
 
-/** A loop's rotation center in world units: the box pivot's +0.5 cell-center offset. */
-export function resolveRigLoopCenter(box: RigBox): THREE.Vector3 {
-  const p = rigPivotOf(box)
-  return new THREE.Vector3(p[0] + 0.5, p[1] + 0.5, p[2] + 0.5)
+export function boxHasActiveTweens(box: RigBox): boolean {
+  return activeTweens(box).length > 0
+}
+
+export function hasActiveTweens(boxes: RigBox[]): boolean {
+  return boxes.some(boxHasActiveTweens)
 }
 
 /**
- * One box's local loop matrix at `elapsedSeconds` (world-frame rigid transform, already
- * pivot-relative for rotate). Identity when the loop is null/inactive — so unlooped boxes
- * cost nothing in the per-frame compose below.
+ * Self or any ancestor has an enabled tween. Pose interaction (rings, ring/trackball
+ * drags) needs a static frame — the drag math samples the bind/pose-only parent chain —
+ * so a tweened chain can't be posed until its tweens mute. The pose *value* itself stays
+ * well-defined under motion (world = loop × pose); only targeting it is disabled.
  */
-export function localLoopMatrix(box: RigBox, loop: RigLoop | null | undefined, elapsedSeconds: number): THREE.Matrix4 {
+export function chainHasActiveTweens(boxes: RigBox[], box: RigBox): boolean {
+  const byId = new Map(boxes.map((b) => [b.id, b]))
+  let cur: RigBox | undefined = box
+  const seen = new Set<string>()
+  while (cur && !seen.has(cur.id)) {
+    if (boxHasActiveTweens(cur)) return true
+    seen.add(cur.id)
+    cur = cur.parentId ? byId.get(cur.parentId) : undefined
+  }
+  return false
+}
+
+/**
+ * Full animated world matrix per box: tween-chain × pose-chain. The single choke point
+ * for everything that must track motion — voxel meshes (RigPoseView), wire outlines,
+ * pivot markers, and parent→child links all read these, so chrome can never disagree
+ * with the model about where a joint is.
+ */
+export function composeAnimatedMatrices(
+  boxes: RigBox[],
+  poseRotations: Map<string, JointEuler>,
+  elapsedSeconds: number,
+): Map<string, THREE.Matrix4> {
+  const loops = composeTweenMatrices(boxes, elapsedSeconds)
+  const poses = composePoseMatrices(boxes, poseRotations)
+  const out = new Map<string, THREE.Matrix4>()
+  for (const box of boxes) {
+    out.set(box.id, loops.get(box.id)!.multiply(poses.get(box.id)!))
+  }
+  return out
+}
+
+/**
+ * A box's pivot in world space under full animation: its own local fixes its own pivot
+ * (rotation about / translation of the joint never moves its own center), so the combined
+ * world matrix carries the pivot exactly where the joint is.
+ */
+export function pivotWorldFromMatrix(matrix: THREE.Matrix4, box: RigBox): Coord {
+  const pivot = rigPivotOf(box)
+  const v = new THREE.Vector3(pivot[0] + 0.5, pivot[1] + 0.5, pivot[2] + 0.5).applyMatrix4(matrix)
+  return [v.x, v.y, v.z]
+}
+
+/**
+ * One tween's local matrix at `elapsedSeconds` (world-frame rigid transform, already
+ * pivot-relative for rotate). Identity for disabled tweens — muted entries cost nothing.
+ */
+export function localTweenMatrix(box: RigBox, tween: RigTween, elapsedSeconds: number): THREE.Matrix4 {
   const out = new THREE.Matrix4()
-  if (!isLoopActive(loop)) return out
-  const l = loop as RigLoop
-  const duration = BASE_CYCLE_SECONDS / l.speed
+  if (!isTweenActive(tween)) return out
+  const duration = BASE_CYCLE_SECONDS / tween.speed
   const t = (elapsedSeconds % duration) / duration
-  if (l.kind === 'rotate') {
+  if (tween.kind === 'rotate') {
     const pivot = rigPivotOf(box)
     const pw = new THREE.Vector3(pivot[0] + 0.5, pivot[1] + 0.5, pivot[2] + 0.5)
-    const axis = new THREE.Vector3(...AXIS_UNIT[l.axis])
-    const angle = l.direction * t * Math.PI * 2
-    const r = new THREE.Matrix4().makeRotationAxis(axis, angle)
+    const axis = new THREE.Vector3(...AXIS_UNIT[tween.axis])
+    const r = new THREE.Matrix4().makeRotationAxis(axis, tween.direction * t * Math.PI * 2)
     const tr = new THREE.Matrix4().makeTranslation(pw.x, pw.y, pw.z)
     const tn = new THREE.Matrix4().makeTranslation(-pw.x, -pw.y, -pw.z)
     return out.multiplyMatrices(tr, r).multiply(tn)
   }
-  const axis = new THREE.Vector3(...AXIS_UNIT[l.axis])
-  const offset = l.direction * l.amount * Math.sin(t * Math.PI * 2)
+  const axis = new THREE.Vector3(...AXIS_UNIT[tween.axis])
+  const offset = tween.direction * tween.amount * Math.sin(t * Math.PI * 2)
   return out.makeTranslation(axis.x * offset, axis.y * offset, axis.z * offset)
+}
+
+/**
+ * One box's own motion at time t: enabled tweens folded top-first. Stack order is
+ * load-bearing — rotations don't commute — so the array order IS the composition order
+ * (first entry = outermost). Identity when nothing is enabled.
+ */
+export function boxTweenMatrix(box: RigBox, elapsedSeconds: number): THREE.Matrix4 {
+  const out = new THREE.Matrix4()
+  for (const tween of activeTweens(box)) {
+    out.multiply(localTweenMatrix(box, tween, elapsedSeconds))
+  }
+  return out
 }
 
 function ancestorChain(boxes: RigBox[], box: RigBox): RigBox[] {
@@ -72,11 +142,11 @@ function ancestorChain(boxes: RigBox[], box: RigBox): RigBox[] {
 }
 
 /**
- * Looped world matrix per box: ancestors' loop locals composed root-first (a looped parent
- * carries its whole subtree, exactly like the pose chain in `pose.ts`), then the box's own
- * local. Unlooped boxes map to identity — callers can skip them or write identity cheaply.
+ * Animated world matrix per box: ancestors' tween stacks composed root-first (an animated
+ * parent carries its whole subtree), then the box's own stack. Unanimated boxes map to
+ * identity.
  */
-export function composeLoopMatrices(
+export function composeTweenMatrices(
   boxes: RigBox[],
   elapsedSeconds: number,
 ): Map<string, THREE.Matrix4> {
@@ -85,130 +155,78 @@ export function composeLoopMatrices(
     const chain = ancestorChain(boxes, box)
     const m = new THREE.Matrix4()
     for (const b of chain) {
-      m.multiply(localLoopMatrix(b, b.loop, elapsedSeconds))
+      m.multiply(boxTweenMatrix(b, elapsedSeconds))
     }
     out.set(box.id, m)
   }
   return out
 }
 
-/**
- * Per-frame transform for one looped joint group in the pose-view scene graph (mirrors
- * `updateAnimatedGroupTransform` for slices): the group sits at the loop center, so the
- * mesh inside is recentered by `-center` at build time and only TRS is driven here.
- */
-export function updateRigLoopGroupTransform(
-  group: THREE.Group,
-  box: RigBox,
-  loop: RigLoop,
-  elapsedSeconds: number,
-): void {
-  const center = resolveRigLoopCenter(box)
-  const duration = BASE_CYCLE_SECONDS / loop.speed
-  const t = (elapsedSeconds % duration) / duration
-  if (loop.kind === 'rotate') {
-    const axis = new THREE.Vector3(...AXIS_UNIT[loop.axis])
-    group.position.copy(center)
-    group.quaternion.setFromAxisAngle(axis, loop.direction * t * Math.PI * 2)
-  } else {
-    const axis = new THREE.Vector3(...AXIS_UNIT[loop.axis])
-    const offset = Math.sin(t * Math.PI * 2) * loop.amount
-    group.position.copy(center).addScaledVector(axis, loop.direction * offset)
-    group.quaternion.identity()
-  }
-}
-
-/** Signed angle/direction helpers shared with the clip builder below. */
-export function loopDuration(speed: AnimationSpeed): number {
+/** Cycle length for a speed — shared with the slice-loop path's timing. */
+export function tweenDuration(speed: AnimationSpeed): number {
   return BASE_CYCLE_SECONDS / speed
 }
 
-/** glTF CUBICSPLINE Hermite evaluator (spec appendix C) — mirrors `animationGLTF.ts`'s
- * private interpolant, which isn't exported. Sample values are laid out per keyframe as
- * `[inTangent, value, outTangent]`; stored tangents are raw derivatives scaled here by
- * the interval duration, matching the spec formula. */
-class CubicSplineVectorInterpolant extends THREE.Interpolant {
-  interpolate_(i1: number, t0: number, t: number, t1: number): Float32Array {
-    const result = this.resultBuffer as Float32Array
-    const values = this.sampleValues as Float32Array
-    const stride = this.valueSize
-    const stride2 = stride * 2
-    const stride3 = stride * 3
-    const td = t1 - t0
-    const p = (t - t0) / td
-    const pp = p * p
-    const ppp = pp * p
-    const offset1 = i1 * stride3
-    const offset0 = offset1 - stride3
-    const s2 = -2 * ppp + 3 * pp
-    const s3 = ppp - pp
-    const s0 = 1 - s2
-    const s1 = s3 - pp + p
-    for (let i = 0; i !== stride; i++) {
-      const p0 = values[offset0 + i + stride]
-      const m0 = values[offset0 + i + stride2] * td
-      const p1 = values[offset1 + i + stride]
-      const m1 = values[offset1 + i] * td
-      result[i] = s0 * p0 + s1 * m0 + s2 * p1 + s3 * m1
-    }
-    return result
-  }
-}
-
-/** Marks `track` so `GLTFExporter` serializes it with `interpolation: "CUBICSPLINE"`. */
-function markCubicSpline(track: THREE.VectorKeyframeTrack | THREE.QuaternionKeyframeTrack): void {
-  const t = track as unknown as { createInterpolant: ((result?: Float32Array) => THREE.Interpolant) & { isInterpolantFactoryMethodGLTFCubicSpline?: boolean } }
-  t.createInterpolant = function (this: THREE.VectorKeyframeTrack | THREE.QuaternionKeyframeTrack, result?: Float32Array) {
-    return new CubicSplineVectorInterpolant(this.times, this.values, this.getValueSize() / 3, result)
-  } as typeof t.createInterpolant
-  t.createInterpolant.isInterpolantFactoryMethodGLTFCubicSpline = true
-}
-
 /**
- * glTF clip for one looped joint. Rotation is a 3-keyframe linear loop (full 2π/cycle);
- * slide is a 5-keyframe CUBICSPLINE sine with analytic tangents — the same encodings the
- * slice-loop path (`animationGLTF.ts`) uses, so preview and export agree exactly.
+ * Bakes one looping `AnimationClip` per tween-animated joint by sampling the composed
+ * motion over the 2s universal cycle (`TWEEN_CYCLE_SECONDS`). Each joint's track is
+ * authored in its parent's *animated* frame —
+ * `local(t) = T(−parentPivot) · parentMotion⁻¹(t) · selfMotion(t) · T(pivot)` (grid
+ * units, identity at rest so clips start pop-free) — with Y scaled to export space on
+ * write, matching the joint tree's rest translations. LINEAR TRS at 30fps: 61 keys per
+ * joint, sub-voxel error, plays in every downstream player (unlike N simultaneous
+ * analytic clips, which no standard player composes).
  */
-export function buildRigLoopClip(
-  node: THREE.Group,
-  loop: RigLoop,
-  center: THREE.Vector3,
+export function bakeRigClips(
+  boxes: RigBox[],
+  groups: Map<string, THREE.Group>,
   voxelScaleY = 1,
-): THREE.AnimationClip | null {
-  if (!isLoopActive(loop)) return null
-  const duration = loopDuration(loop.speed)
-  if (loop.kind === 'rotate') {
-    const axis = new THREE.Vector3(...AXIS_UNIT[loop.axis])
-    const angle = loop.direction * Math.PI * 2
-    const times = new Float32Array([0, duration / 2, duration])
-    const values = new Float32Array(12)
-    new THREE.Quaternion().toArray(values as unknown as number[], 0)
-    new THREE.Quaternion().setFromAxisAngle(axis, angle / 2).toArray(values as unknown as number[], 4)
-    new THREE.Quaternion().setFromAxisAngle(axis, angle).toArray(values as unknown as number[], 8)
-    const track = new THREE.QuaternionKeyframeTrack(
-      `${node.name}.quaternion`,
-      times as unknown as number[],
-      values as unknown as number[],
-      THREE.InterpolateLinear,
-    )
-    return new THREE.AnimationClip(`anim_${node.name}`, duration, [track])
+  fps = 30,
+): THREE.AnimationClip[] {
+  const animated = boxes.filter(boxHasActiveTweens)
+  if (animated.length === 0) return []
+  const byId = new Map(boxes.map((b) => [b.id, b]))
+  const steps = Math.round(TWEEN_CYCLE_SECONDS * fps)
+  const clips: THREE.AnimationClip[] = []
+  const pos = new THREE.Vector3()
+  const quat = new THREE.Quaternion()
+  const scl = new THREE.Vector3()
+  const parentInv = new THREE.Matrix4()
+  const unparent = new THREE.Matrix4()
+  const repivot = new THREE.Matrix4()
+  const local = new THREE.Matrix4()
+
+  for (const box of animated) {
+    const group = groups.get(box.id)
+    if (!group) continue
+    const pivot = rigPivotOf(box)
+    const parent = box.parentId ? byId.get(box.parentId) : undefined
+    const parentPivot = parent ? rigPivotOf(parent) : null
+    const times: number[] = []
+    const positions: number[] = []
+    const quaternions: number[] = []
+    for (let i = 0; i <= steps; i++) {
+      const t = (i / steps) * TWEEN_CYCLE_SECONDS
+      const worlds = composeTweenMatrices(boxes, t)
+      const self = worlds.get(box.id) ?? new THREE.Matrix4()
+      const parentWorld = parent ? (worlds.get(parent.id) ?? new THREE.Matrix4()) : new THREE.Matrix4()
+      // local(t) in grid units; translation Y scaled to export space on write.
+      unparent.makeTranslation(
+        parentPivot ? -(parentPivot[0] + 0.5) : 0,
+        parentPivot ? -(parentPivot[1] + 0.5) : 0,
+        parentPivot ? -(parentPivot[2] + 0.5) : 0,
+      )
+      repivot.makeTranslation(pivot[0] + 0.5, pivot[1] + 0.5, pivot[2] + 0.5)
+      parentInv.copy(parentWorld).invert()
+      local.copy(unparent).multiply(parentInv).multiply(self).multiply(repivot)
+      local.decompose(pos, quat, scl)
+      times.push(t)
+      positions.push(pos.x, pos.y * voxelScaleY, pos.z)
+      quaternions.push(quat.x, quat.y, quat.z, quat.w)
+    }
+    const posTrack = new THREE.VectorKeyframeTrack(`${group.name}.position`, times, positions)
+    const quatTrack = new THREE.QuaternionKeyframeTrack(`${group.name}.quaternion`, times, quaternions)
+    clips.push(new THREE.AnimationClip(`anim_${group.name}`, TWEEN_CYCLE_SECONDS, [posTrack, quatTrack]))
   }
-  const axis = new THREE.Vector3(...AXIS_UNIT[loop.axis])
-  // The joint's rest position lives in Y-scaled export space (see buildRigTree), so the
-  // slide offset scales along Y to match — exactly like the slice path's scaled centers.
-  const dir = axis.clone().multiplyScalar(loop.direction)
-  dir.y *= voxelScaleY
-  const omega = (2 * Math.PI) / duration
-  const times = [0, duration / 4, duration / 2, (duration * 3) / 4, duration]
-  const values: number[] = []
-  for (const t of times) {
-    const pos = center.clone().addScaledVector(dir, loop.amount * Math.sin(omega * t))
-    const tangent = dir.clone().multiplyScalar(loop.amount * omega * Math.cos(omega * t))
-    values.push(tangent.x, tangent.y, tangent.z, pos.x, pos.y, pos.z, tangent.x, tangent.y, tangent.z)
-  }
-  const track = new THREE.VectorKeyframeTrack(`${node.name}.position`, times, values)
-  markCubicSpline(track)
-  return new THREE.AnimationClip(`anim_${node.name}`, duration, [track])
+  return clips
 }
-
-

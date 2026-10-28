@@ -3,8 +3,8 @@ import { decodeKey, encodeKey } from '@/engine/grid/GridStore'
 import type { Coord } from '@/engine/grid/types'
 import { bboxOfCoords } from '@/engine/tools/cellSetOps'
 import { floodFillRegion3D } from '@/engine/tools/floodFill'
-import type { RigBox, RigLoop } from '@/engine/rigging/types'
-import { isLoopActive } from '@/engine/rigging/rigLoop'
+import type { RigBox, RigTween } from '@/engine/rigging/types'
+import { newRigTween } from '@/engine/rigging/rigLoop'
 import { moveRigBoxInList, translateRigSubtree, type RigMovePosition } from '@/engine/rigging/types'
 import { showToast } from '@/components/ui/toastBus'
 import type { AppState, RiggingSlice } from './types'
@@ -42,7 +42,7 @@ export const createRiggingSlice: Slice = (set, get) => ({
     set((state) => {
       const name = uniqueRigName(box.name.trim() || nextDefaultName(state.rigBoxes), state.rigBoxes)
       const parentId = box.parentId && state.rigBoxes.some((b) => b.id === box.parentId) ? box.parentId : null
-      state.rigBoxes.push({ ...box, id: box.id || newRigId(), name, parentId, pivot: box.pivot ?? null, loop: box.loop ?? null })
+      state.rigBoxes.push({ ...box, id: box.id || newRigId(), name, parentId, pivot: box.pivot ?? null, tweens: box.tweens ? box.tweens.map((t) => ({ ...t })) : [] })
       state.selectedRigBoxId = state.rigBoxes[state.rigBoxes.length - 1].id
       state.dirty = true
     })
@@ -118,15 +118,82 @@ export const createRiggingSlice: Slice = (set, get) => ({
     })
   },
 
-  setRigLoop: (id: string, loop: RigLoop | null) => {
-    if (loop && !isLoopActive(loop)) loop = null
+  addTween: (boxId: string) => {
+    let tweenId: string | null = null
     get().animBeginStroke()
     set((state) => {
-      const box = state.rigBoxes.find((b) => b.id === id)
+      const box = state.rigBoxes.find((b) => b.id === boxId)
       if (!box) return
-      box.loop = loop ? { ...loop } : null
-      // Mutual exclusion with posing: a looped joint is driven by the cycle, not the gizmo.
-      if (loop) state.poseRotations.delete(id)
+      const tween = newRigTween()
+      tweenId = tween.id
+      if (!box.tweens) box.tweens = []
+      box.tweens.push(tween)
+      // Mutual exclusion with posing: a tweened joint is driven by its stack, not the gizmo.
+      state.poseRotations.delete(boxId)
+      state.dirty = true
+    })
+    get().animCommitStroke()
+    return tweenId
+  },
+
+  removeTween: (boxId, tweenId) => {
+    get().animBeginStroke()
+    set((state) => {
+      const box = state.rigBoxes.find((b) => b.id === boxId)
+      if (!box || !box.tweens) return
+      box.tweens = box.tweens.filter((t) => t.id !== tweenId)
+      state.dirty = true
+    })
+    get().animCommitStroke()
+  },
+
+  moveTween: (boxId, tweenId, dir: -1 | 1) => {
+    get().animBeginStroke()
+    set((state) => {
+      const box = state.rigBoxes.find((b) => b.id === boxId)
+      const list = box?.tweens
+      if (!box || !list) return
+      const i = list.findIndex((t) => t.id === tweenId)
+      const j = i + dir
+      if (i < 0 || j < 0 || j >= list.length) return
+      // Stack order is composition order (first = outermost) — reorder recomposes motion.
+      const [tween] = list.splice(i, 1)
+      list.splice(j, 0, tween)
+      state.dirty = true
+    })
+    get().animCommitStroke()
+  },
+
+  setTweenEnabled: (boxId, tweenId, enabled) => {
+    get().animBeginStroke()
+    set((state) => {
+      const tween = state.rigBoxes.find((b) => b.id === boxId)?.tweens?.find((t) => t.id === tweenId)
+      if (!tween) return
+      tween.enabled = enabled
+      if (enabled) state.poseRotations.delete(boxId)
+      state.dirty = true
+    })
+    get().animCommitStroke()
+  },
+
+  /**
+   * Continuous param edit (sliders, axis/direction/speed buttons): brackets through the
+   * nesting-aware stroke, so a UI pointer-down → N updates → pointer-up sequence records
+   * ONE undo entry, while a lone call still records exactly one. Callers driving a drag
+   * must bracket externally (`animBeginStroke` on down, `animCommitStroke` on up).
+   */
+  patchTween: (boxId, tweenId, patch: Partial<Omit<RigTween, 'id'>>) => {
+    get().animBeginStroke()
+    set((state) => {
+      const tween = state.rigBoxes.find((b) => b.id === boxId)?.tweens?.find((t) => t.id === tweenId)
+      if (!tween) return
+      if (patch.kind !== undefined) tween.kind = patch.kind
+      if (patch.axis !== undefined) tween.axis = patch.axis
+      if (patch.direction !== undefined) tween.direction = patch.direction
+      if (patch.speed !== undefined) tween.speed = patch.speed
+      if (patch.amount !== undefined) tween.amount = patch.amount
+      if (patch.enabled !== undefined) tween.enabled = patch.enabled
+      if (tween.enabled) state.poseRotations.delete(boxId)
       state.dirty = true
     })
     get().animCommitStroke()
@@ -183,7 +250,7 @@ export const createRiggingSlice: Slice = (set, get) => ({
         max: [...bbox.max] as Coord,
         parentId: null,
         pivot: null,
-        loop: null,
+        tweens: [],
       }
       state.rigBoxes.push(box)
       state.selectedRigBoxId = box.id

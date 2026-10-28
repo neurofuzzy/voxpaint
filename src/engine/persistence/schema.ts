@@ -1,12 +1,12 @@
 import type { AnimationType, AnimationSpeed } from '@/engine/animation/types'
-import type { RigLoop } from '@/engine/rigging/types'
+import type { RigTween } from '@/engine/rigging/types'
 import type { Axis, BBox, ChamferClassification, GridExtent, Orientation, VoxelScaleY } from '@/engine/grid/types'
 import type { SerializedMarkerPosition } from '@/engine/markers/types'
 import type { PaletteSlotRef, PaletteState } from '@/engine/palette/types'
 import type { BoxFace } from '@/engine/texture/types'
 import type { GltfExportAnchor } from '@/engine/export/gltfExport'
 
-export const CURRENT_SCHEMA_VERSION = 14 as const
+export const CURRENT_SCHEMA_VERSION = 15 as const
 
 export type ViewSettings = {
   ambientOcclusion: boolean
@@ -112,8 +112,10 @@ export type SerializedRigBox = {
   parentId?: string | null
   /** Absent on pre-pivot (v12) files — loads as the box center. */
   pivot?: [number, number, number] | null
-  /** Absent on pre-loop (v13) files — loads with no loop. */
-  loop?: RigLoop | null
+  /** Ordered tween stack (v15+; replaces v14's single `loop`). Absent = static joint. */
+  tweens?: RigTween[]
+  /** v14 single loop — removed in v15 (folded into `tweens` by the migration). */
+  loop?: unknown
 }
 
 export type VoxPaintProjectFileV1 = {
@@ -176,7 +178,10 @@ export type VoxPaintProjectFileV2 = {
  * with every pivot unset (box center), matching their pre-pivot behavior.
  *
  * v13 → v14: rig boxes gain an optional `loop` procedural motion. Older files load
- * with no loop (static joints), matching their pre-loop behavior. */
+ * with no loop (static joints), matching their pre-loop behavior.
+ *
+ * v14 → v15: the single `loop` becomes an ordered `tweens` stack (one entry per old loop,
+ * enabled). Older files load with equivalent motion under the new composition. */
 export type VoxPaintProjectFile = {
   schemaVersion: typeof CURRENT_SCHEMA_VERSION
   meta: ProjectMeta

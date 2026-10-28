@@ -98,6 +98,24 @@ MIGRATIONS[12] = (doc) => ({ ...doc, schemaVersion: 13 })
  * pre-v14 rigs simply have no loop recorded (static joints), matching pre-loop behavior. */
 MIGRATIONS[13] = (doc) => ({ ...doc, schemaVersion: 14 })
 
+/** v14 → v15: the single `loop` becomes an ordered `tweens` stack — one enabled entry per
+ * recorded loop (id derived from the box id so the migration is deterministic). */
+MIGRATIONS[14] = (doc) => ({
+  ...doc,
+  schemaVersion: 15,
+  rigBoxes: Array.isArray(doc.rigBoxes)
+    ? doc.rigBoxes.map((b: any) => {
+      if (!b || typeof b !== 'object' || Array.isArray(b.tweens)) return b
+      const { loop, ...rest } = b
+      if (!loop || typeof loop !== 'object') return { ...rest }
+      return {
+        ...rest,
+        tweens: [{ ...loop, id: `tw-${String(b.id ?? 'box').slice(0, 48)}-1`, enabled: loop.enabled !== false }],
+      }
+    })
+    : doc.rigBoxes,
+})
+
 export class UnsupportedSchemaVersionError extends Error {
   constructor(foundVersion: unknown) {
     super(`This file is from a newer version of VoxPaint (schemaVersion=${String(foundVersion)}). Please update the app.`)
