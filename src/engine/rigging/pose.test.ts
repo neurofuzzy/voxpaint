@@ -284,74 +284,38 @@ describe('angleAroundAxis', () => {
   })
 })
 
-describe('evaluatePoseCycle', () => {
-  const A = { id: 'a', name: 'A', joints: { arm: [0, 0, 0] as [number, number, number] } }
-  const B = { id: 'b', name: 'B', joints: { arm: [0, Math.PI / 2, 0] as [number, number, number] } }
-  const poses = [A, B]
-
-  it('returns null without a cycle', async () => {
-    const { evaluatePoseCycle } = await import('./pose')
-    expect(evaluatePoseCycle(poses, null, 1)).toBeNull()
-  })
-
-  it('holds B past the half cycle in once mode', async () => {
-    const { evaluatePoseCycle } = await import('./pose')
-    const cycle = { fromId: 'a', toId: 'b', mode: 'once' as const, speed: 1 as const }
-    // Half cycle = 2s at 1x: midpoint is halfway slerped, end and beyond hold B.
-    const mid = evaluatePoseCycle(poses, cycle, 1)!.get('arm')!
-    expect(mid[1]).toBeCloseTo(Math.PI / 4, 2)
-    const end = evaluatePoseCycle(poses, cycle, 2)!.get('arm')!
-    expect(end[1]).toBeCloseTo(Math.PI / 2, 5)
-    const held = evaluatePoseCycle(poses, cycle, 99)!.get('arm')!
-    expect(held[1]).toBeCloseTo(Math.PI / 2, 5)
-  })
-
-  it('ping-pong is seamless across the loop seam', async () => {
-    const { evaluatePoseCycle } = await import('./pose')
-    const cycle = { fromId: 'a', toId: 'b', mode: 'pingpong' as const, speed: 1 as const }
-    const start = evaluatePoseCycle(poses, cycle, 0)!.get('arm')!
-    const seam = evaluatePoseCycle(poses, cycle, 4)!.get('arm')!
-    expect(start[1]).toBeCloseTo(0, 5)
-    expect(seam[1]).toBeCloseTo(0, 5)
-    // Full deflection at the turnaround (t = half cycle).
-    const peak = evaluatePoseCycle(poses, cycle, 2)!.get('arm')!
-    expect(peak[1]).toBeCloseTo(Math.PI / 2, 5)
-  })
-
-  it('loop wraps with a jump and reads missing sides as bind', async () => {
-    const { evaluatePoseCycle } = await import('./pose')
-    const cycle = { fromId: 'a', toId: 'b', mode: 'loop' as const, speed: 2 as const }
-    // Half cycle = 1s at 2x: t=0.999 near B, t=1.0 wraps to A (the pop).
-    const before = evaluatePoseCycle(poses, cycle, 0.999)!.get('arm')!
-    expect(before[1]).toBeCloseTo(Math.PI / 2, 1)
-    const wrapped = evaluatePoseCycle(poses, cycle, 1)!.get('arm')!
-    expect(wrapped[1]).toBeCloseTo(0, 5)
-    // Dangling ids fall back to bind rather than throwing.
-    const dangling = evaluatePoseCycle(poses, { fromId: 'x', toId: 'y', mode: 'once' as const, speed: 1 as const }, 1)!
-    expect(dangling.size).toBe(0)
-    // Joints present on only one side interpolate from/to bind.
-    const half = evaluatePoseCycle([{ id: 'a', name: 'A', joints: {} }, B], { fromId: 'a', toId: 'b', mode: 'once' as const, speed: 1 as const }, 1)!
-    expect(half.get('arm')![1]).toBeCloseTo(Math.PI / 4, 2)
-  })
-})
-
-describe('resolvePreviewPose', () => {
-  it('prefers the playing cycle, then staged, then scratch', async () => {
-    const { resolvePreviewPose } = await import('./pose')
+describe('previewFrame (engine/rigging/preview.ts)', () => {
+  it('prefers the playing clip, then the scrubbed frame, then staged, then scratch', async () => {
+    const { previewFrame } = await import('./preview')
     const scratch = new Map([['arm', [0.1, 0, 0] as [number, number, number]]])
     const staged = { id: 's', name: 'S', joints: { arm: [0.2, 0, 0] as [number, number, number] } }
     const plain = { id: 'p', name: 'P', joints: {} }
     const full = { id: 'f', name: 'F', joints: { arm: [0.3, 0, 0] as [number, number, number] } }
     const poses = [staged, plain, full]
-    expect(resolvePreviewPose(poses, null, scratch).get('arm')).toEqual([0.1, 0, 0])
-    expect(resolvePreviewPose(poses, 's', scratch).get('arm')).toEqual([0.2, 0, 0])
+    const box = { id: 'arm', name: 'arm', min: [0, 0, 0] as [number, number, number], max: [2, 2, 2] as [number, number, number], parentId: null, pivot: null }
+    const clip = {
+      id: 'c', name: 'c', loop: false, duration: 2,
+      keys: [
+        { id: 'k0', poseId: 'p', time: 0, ease: 'linear' as const },
+        { id: 'k1', poseId: 'f', time: 2, ease: 'linear' as const },
+      ],
+    }
+    const base = {
+      meta: { animationMode: 'poses' as const }, rigBoxes: [box], poses, clips: [clip],
+      activeClipId: 'c', stagedPoseId: 's' as string | null, poseRotations: scratch,
+      clipPlaying: false, clipStartedAt: 0, clipTime: null as number | null,
+    }
+    // Off the timeline: staged wins over scratch.
+    expect(previewFrame({ ...base }, 99).pose.get('arm')).toEqual([0.2, 0, 0])
+    // Scrubbed frame wins over staging — including a scrub to exactly 0 (key 0's bind
+    // pose, not the scratch's [0.1, 0, 0]).
+    expect(previewFrame({ ...base, clipTime: 2 }, 99).pose.get('arm')).toEqual([0.3, 0, 0])
+    expect(previewFrame({ ...base, stagedPoseId: null, clipTime: 0 }, 99).pose.get('arm')).toBeUndefined()
+    // Playing wins over staging (t = now - startedAt).
+    expect(previewFrame({ ...base, clipPlaying: true, clipStartedAt: 97 }, 99).pose.get('arm')).toEqual([0.3, 0, 0])
     // Unknown staged id falls back to scratch.
-    expect(resolvePreviewPose(poses, 'ghost', scratch).get('arm')).toEqual([0.1, 0, 0])
-    // A playing cycle wins over staging.
-    const cycle = { fromId: 'p', toId: 'f', mode: 'once' as const, speed: 1 as const }
-    const cycled = resolvePreviewPose(poses, 's', scratch, cycle, 2)
-    expect(cycled.get('arm')![0]).toBeCloseTo(0.3, 2)
-    // No cycle time (paused transport) falls through to staging.
-    expect(resolvePreviewPose(poses, 's', scratch, cycle, null).get('arm')).toEqual([0.2, 0, 0])
+    expect(previewFrame({ ...base, stagedPoseId: 'ghost' }, 99).pose.get('arm')).toEqual([0.1, 0, 0])
+    // Tweens mode never evaluates poses.
+    expect(previewFrame({ ...base, meta: { animationMode: 'tweens' as const }, clipPlaying: true, clipStartedAt: 97 }, 99).pose.size).toBe(0)
   })
 })

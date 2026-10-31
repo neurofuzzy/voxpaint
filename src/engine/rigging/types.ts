@@ -82,20 +82,6 @@ export type Pose = {
   offsets?: Record<string, Coord>
 }
 
-/**
- * A pose-to-pose playback loop (timeline-less): interpolates every joint from one pose
- * to another, then — per mode — holds (`once`), jumps back (`loop`), or eases back
- * (`pingpong`, seamless). `speed` reuses the 1x/2x/3x cycle-rate scale. Poses are looked
- * up by id at eval time; a dangling side reads as bind.
- */
-export type PoseCycleMode = 'once' | 'loop' | 'pingpong'
-export type PoseCycle = {
-  fromId: string
-  toId: string
-  mode: PoseCycleMode
-  speed: import('@/engine/animation/types').AnimationSpeed
-}
-
 export function newPoseId(): string {
   try {
     return `pose-${crypto.randomUUID().slice(0, 8)}`
@@ -207,8 +193,11 @@ const KEY_EASES: KeyEase[] = ['linear', 'inOut', 'in', 'out', 'hold']
  * Sanitizes a deserialized clip (hand-edited files): keys with unknown pose ids are
  * dropped (a missing pose would read as bind, so dangling keys are data loss worth
  * surfacing by removal), survivors sort by time with the first forced to 0, and the
- * duration clamps to ≥ the last key time (snapped up to the frame grid) and ≥ one frame.
- * Returns null when nothing usable survives (not an object, no key array, no valid keys).
+ * duration clamps to ≥ the last key time (plus one frame when looping, so the wrap
+ * segment back to the first key never collapses to zero) and ≥ one frame. A clip whose
+ * key array survives empty (e.g. a new unkeyed clip, or one whose poses were all
+ * deleted) is kept with a default 1 s duration — empties are valid work in progress.
+ * Returns null only when nothing usable survives (not an object, no key array at all).
  */
 export function sanitizeRigClip(raw: unknown, validPoseIds?: Set<string>): RigClip | null {
   if (!raw || typeof raw !== 'object') return null
@@ -228,19 +217,35 @@ export function sanitizeRigClip(raw: unknown, validPoseIds?: Set<string>): RigCl
       ease: KEY_EASES.includes(k.ease as KeyEase) ? (k.ease as KeyEase) : 'inOut',
     })
   }
-  if (keys.length === 0) return null
+  if (keys.length === 0) {
+    // A usable clip shell with no keyed poses yet (authored empty, or every key's pose
+    // deleted): keep it with a default 1 s duration so save/load never eats in-progress
+    // work. Malformed shells (no id/name shape at all) still read through — ids and
+    // names self-heal below.
+    const rawDuration = typeof c.duration === 'number' && Number.isFinite(c.duration) ? c.duration : 1
+    return {
+      id: typeof c.id === 'string' && c.id.length > 0 ? c.id.slice(0, 64) : newClipId(),
+      name: (typeof c.name === 'string' ? c.name.slice(0, 64) : '') || 'clip',
+      loop: c.loop !== false,
+      duration: Math.max(snapClipTime(rawDuration), CLIP_FRAME_SECONDS),
+      keys,
+    }
+  }
   keys.sort((a, b) => a.time - b.time)
   keys[0].time = 0
   const lastKeyTime = keys[keys.length - 1].time
   const rawDuration = typeof c.duration === 'number' && Number.isFinite(c.duration) ? c.duration : 0
+  const loop = c.loop !== false
   // Round snapping can land microscopically below an off-grid authored duration — bump one
-  // frame so the sanitizer never shortens a clip (on-grid values are unaffected).
+  // frame so the sanitizer never shortens a clip (on-grid values are unaffected). A looping
+  // clip additionally holds ≥ last key + one frame so the wrap segment never pops.
   let duration = Math.max(snapClipTime(rawDuration), lastKeyTime, CLIP_FRAME_SECONDS)
+  if (loop) duration = Math.max(duration, snapClipTime(lastKeyTime + CLIP_FRAME_SECONDS))
   if (duration < rawDuration) duration = snapClipTime(duration + CLIP_FRAME_SECONDS)
   return {
     id: typeof c.id === 'string' && c.id.length > 0 ? c.id.slice(0, 64) : newClipId(),
     name: (typeof c.name === 'string' ? c.name.slice(0, 64) : '') || 'clip',
-    loop: c.loop !== false,
+    loop,
     duration,
     keys,
   }

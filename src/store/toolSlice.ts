@@ -15,10 +15,14 @@ export const createToolSlice: Slice = (set, get) => ({
   setAnimateTab: (tab) => {
     if (get().animateTab === tab) return
     set((state) => {
-      state.animateTab = tab
+      // The panel only shows one motion tab per project (Rig + Tweens for machines,
+      // Rig + Poses for characters) — a hidden tab maps to the visible one.
+      const mode = state.meta.animationMode ?? 'tweens'
+      const resolved = tab === 'tweens' && mode === 'poses' ? 'poses' : tab === 'poses' && mode === 'tweens' ? 'tweens' : tab
+      state.animateTab = resolved
       // Each tab owns its tools — arm the primary one so taps always dispatch to a
       // handler that makes sense for what's on screen (the stale-tool toast trap).
-      state.activeTool = tab === 'rig' ? 'rigbox' : tab === 'tweens' ? 'select' : 'pose'
+      state.activeTool = resolved === 'rig' ? 'rigbox' : resolved === 'tweens' ? 'select' : 'pose'
     })
   },
 

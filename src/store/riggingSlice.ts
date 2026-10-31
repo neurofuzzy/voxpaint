@@ -137,8 +137,6 @@ export const createRiggingSlice: Slice = (set, get) => ({
       tweenId = tween.id
       if (!box.tweens) box.tweens = []
       box.tweens.push(tween)
-      // Mutual exclusion with posing: a tweened joint is driven by its stack, not the gizmo.
-      state.poseRotations.delete(boxId)
       state.dirty = true
     })
     get().animCommitStroke()
@@ -185,7 +183,6 @@ export const createRiggingSlice: Slice = (set, get) => ({
       const dupe = { ...list[i], id: newTweenId() }
       dupeId = dupe.id
       list.splice(i + 1, 0, dupe)
-      if (dupe.enabled) state.poseRotations.delete(boxId)
       state.dirty = true
     })
     get().animCommitStroke()
@@ -209,7 +206,6 @@ export const createRiggingSlice: Slice = (set, get) => ({
       if (src === dst && i < at) at -= 1
       at = Math.max(0, Math.min(at, dst.tweens.length))
       dst.tweens.splice(at, 0, tween)
-      if (tween.enabled) state.poseRotations.delete(dstBoxId)
       state.selectedRigBoxId = dstBoxId
       state.dirty = true
     })
@@ -222,7 +218,6 @@ export const createRiggingSlice: Slice = (set, get) => ({
       const tween = state.rigBoxes.find((b) => b.id === boxId)?.tweens?.find((t) => t.id === tweenId)
       if (!tween) return
       tween.enabled = enabled
-      if (enabled) state.poseRotations.delete(boxId)
       state.dirty = true
     })
     get().animCommitStroke()
@@ -247,7 +242,6 @@ export const createRiggingSlice: Slice = (set, get) => ({
       if (patch.minAngle !== undefined) tween.minAngle = patch.minAngle
       if (patch.maxAngle !== undefined) tween.maxAngle = patch.maxAngle
       if (patch.enabled !== undefined) tween.enabled = patch.enabled
-      if (tween.enabled) state.poseRotations.delete(boxId)
       state.dirty = true
     })
     get().animCommitStroke()

@@ -15,6 +15,7 @@ import {
 import { RESCALE_FACTOR, rescaleCoord, rescaleTargetExtent, rescaleVoxelModel } from '@/engine/grid/rescale'
 import { axisIndex } from '@/engine/plane/planeGeometry'
 import { savePlanePref } from '@/engine/persistence/uiPrefs'
+import { showToast } from '@/components/ui/toastBus'
 import { DEFAULT_PALETTE } from '@/engine/palette/defaultPalette'
 import { TEXEL_SCALE } from '@/engine/texture/types'
 import { emptyTextureModel, normalizeTexelScale, resampleTextureModel, rescaleTextureModel2x, resizeTextureModel } from '@/engine/texture/TextureStore'
@@ -40,6 +41,7 @@ export const createProjectSlice: Slice = (set, get) => ({
     noiseSeed: generateNoiseSeed(),
     voxelScaleY: 1,
     texelScale: TEXEL_SCALE,
+    animationMode: 'tweens',
   },
 
   setModel: (model) =>
@@ -82,6 +84,32 @@ export const createProjectSlice: Slice = (set, get) => ({
       state.meta.modifiedAt = new Date().toISOString()
       state.dirty = true
     }),
+
+  setAnimationMode: (mode) => {
+    if (get().meta.animationMode === mode) return
+    set((state) => {
+      state.meta.animationMode = mode
+      // The panel only shows one motion tab per project — remap a hidden tab (and its
+      // tool) to the visible one so the toolbar never points at a tab that isn't there.
+      if (mode === 'tweens' && state.animateTab === 'poses') {
+        state.animateTab = 'tweens'
+        state.activeTool = 'select'
+      } else if (mode === 'poses' && state.animateTab === 'tweens') {
+        state.animateTab = 'poses'
+        state.activeTool = 'pose'
+      }
+      // The switch keeps the other mode's data (tweens stay on their boxes, poses and clips
+      // stay in the file) but mutes it — transport stops and the gizmo scratch clears, so the
+      // first frame after the switch never shows the other mode's leftovers.
+      state.clipPlaying = false
+      state.poseRotations.clear()
+      state.stagedPoseId = null
+      state.clipTime = null
+      state.meta.modifiedAt = new Date().toISOString()
+      state.dirty = true
+    })
+    showToast(mode === 'poses' ? 'Tweens kept, muted — switch back anytime' : 'Poses and clips kept — switch back anytime')
+  },
 
   setTexelScale: (scale: TexelScale) => {
     const next = normalizeTexelScale(scale)
@@ -347,6 +375,7 @@ export const createProjectSlice: Slice = (set, get) => ({
         noiseSeed: generateNoiseSeed(),
         voxelScaleY: 1,
         texelScale: TEXEL_SCALE,
+        animationMode: 'tweens',
       }
       state.past = []
       state.future = []
@@ -376,12 +405,16 @@ export const createProjectSlice: Slice = (set, get) => ({
       state.selectedMarkerId = null
       state.rigBoxes = []
       state.selectedRigBoxId = null
-      // Pose state is per-project too — scratch, library, staging, and drag latch.
+      // Pose state is per-project too — scratch, library, clips, staging, and drag latch.
       state.poseRotations = new Map()
       state.poses = []
+      state.clips = []
+      state.activeClipId = null
+      state.selectedKeyId = null
+      state.clipPlaying = false
+      state.clipStartedAt = 0
+      state.clipTime = null
       state.stagedPoseId = null
-      state.poseCycle = null
-      state.cyclePlaying = false
       state.poseDragging = false
       state.dirty = true
       // A new project starts grounded (see resetPlaneToGround) instead of inheriting a stale

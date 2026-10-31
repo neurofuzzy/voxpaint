@@ -1,6 +1,5 @@
 import { describe, expect, it } from 'vitest'
 import type { Coord } from '@/engine/grid/types'
-import { evaluatePoseCycle, poseCycleDuration } from './pose'
 import {
   CLIP_FRAME_SECONDS,
   newClipId,
@@ -9,7 +8,7 @@ import {
   sanitizeRigClip,
   snapClipTime,
 } from './types'
-import type { Pose, PoseCycle, RigBox, RigClip } from './types'
+import type { Pose, RigBox, RigClip } from './types'
 import { clipFromPoseCycle, deriveAnimationMode, easePhase, evaluateClip } from './clip'
 
 function box(id: string, parentId: string | null = null): RigBox {
@@ -97,12 +96,21 @@ describe('sanitizeRigClip', () => {
     expect(clip.keys[1].time).toBeCloseTo(61 / 30, 10)
   })
 
-  it('drops keys with unknown poses and nulls when none survive', () => {
+  it('keeps a clip whose keys all dangle as an empty shell (duration defaults to 1 s)', () => {
     const clip = sanitizeRigClip(
       { id: 'c', name: 'c', loop: true, duration: 2, keys: [{ id: 'k', poseId: 'ghost', time: 0, ease: 'linear' }] },
       valid,
-    )
-    expect(clip).toBeNull()
+    )!
+    // A new unkeyed clip (or one whose poses were all deleted) survives save/load.
+    expect(clip).not.toBeNull()
+    expect(clip.keys).toEqual([])
+    expect(clip.duration).toBeCloseTo(2, 10)
+    const fresh = sanitizeRigClip(
+      { id: 'c', name: 'c', loop: true, keys: [] },
+      valid,
+    )!
+    expect(fresh.keys).toEqual([])
+    expect(fresh.duration).toBeCloseTo(1, 10)
     expect(sanitizeRigClip(null, valid)).toBeNull()
     expect(sanitizeRigClip({ id: 'c', name: 'c', loop: true, duration: 2 }, valid)).toBeNull()
   })
@@ -138,6 +146,20 @@ describe('sanitizeRigClip', () => {
     )!
     expect(single.duration).toBeGreaterThan(0)
     expect(single.duration).toBeCloseTo(CLIP_FRAME_SECONDS, 10)
+  })
+
+  it('holds a looping clip at least one frame past its last key (no wrap pop)', () => {
+    const looped = sanitizeRigClip(
+      { id: 'c', name: 'c', loop: true, duration: 1.5, keys: [{ id: 'k0', poseId: 'a', time: 0, ease: 'linear' }, { id: 'k1', poseId: 'b', time: 1.5, ease: 'linear' }] },
+      valid,
+    )!
+    expect(looped.duration).toBeCloseTo(1.5 + CLIP_FRAME_SECONDS, 10)
+    // A non-looping clip still clamps exactly to its last key.
+    const once = sanitizeRigClip(
+      { id: 'c', name: 'c', loop: false, duration: 1.5, keys: [{ id: 'k0', poseId: 'a', time: 0, ease: 'linear' }, { id: 'k1', poseId: 'b', time: 1.5, ease: 'linear' }] },
+      valid,
+    )!
+    expect(once.duration).toBeCloseTo(1.5, 10)
   })
 
   it('fills in missing ids, names, and loop flags', () => {
@@ -271,8 +293,7 @@ describe('evaluateClip', () => {
 
 describe('clipFromPoseCycle', () => {
   it('maps once to a non-looping two-key clip over one half cycle', () => {
-    const cycle: PoseCycle = { fromId: 'a', toId: 'b', mode: 'once', speed: 1 }
-    const clip = clipFromPoseCycle(cycle)
+    const clip = clipFromPoseCycle({ fromId: 'a', toId: 'b', mode: 'once', speed: 1 })
     expect(clip.name).toBe('cycle')
     expect(clip.loop).toBe(false)
     expect(clip.duration).toBeCloseTo(2, 10)
@@ -291,46 +312,36 @@ describe('clipFromPoseCycle', () => {
     expect(looped.keys.map((k) => k.time)).toEqual([0, 1])
     const pingpong = clipFromPoseCycle({ fromId: 'a', toId: 'b', mode: 'pingpong', speed: 1 })
     expect(pingpong.loop).toBe(true)
-    expect(pingpong.duration).toBeCloseTo(poseCycleDuration({ fromId: 'a', toId: 'b', mode: 'pingpong', speed: 1 }), 10)
+    expect(pingpong.duration).toBeCloseTo(4, 10)
   })
 
-  it('evaluates a converted pingpong exactly like the old pose cycle', () => {
-    const cycle: PoseCycle = { fromId: 'a', toId: 'b', mode: 'pingpong', speed: 1 }
-    const clip = clipFromPoseCycle(cycle)
-    for (const t of [0, 0.5, 1, 2, 3, 3.5, 3.999]) {
-      const expected = evaluatePoseCycle([A, B], cycle, t)!
-      const got = evaluateClip([A, B], [], clip, t)
-      // Absent entries are bind on both sides (the clip snapshot is sparser than the
-      // cycle's union map at exact key instants, but reads identically).
-      for (const id of new Set([...expected.keys(), ...got.rot.keys()])) {
-        const e = expected.get(id) ?? [0, 0, 0]
-        const g = got.rot.get(id) ?? [0, 0, 0]
-        for (let i = 0; i < 3; i++) expect(g[i]).toBeCloseTo(e[i], 5)
-      }
-    }
+  it('evaluates a converted pingpong as an out-and-back loop', () => {
+    const clip = clipFromPoseCycle({ fromId: 'a', toId: 'b', mode: 'pingpong', speed: 1 })
+    const armOf = (t: number) => evaluateClip([A, B], [], clip, t).rot.get('arm') ?? [0, 0, 0]
+    // From A at 0, to B at half the pass, back to A at the wrap.
+    expect(armOf(0)).toEqual([0, 0, 0])
+    expect(armOf(2)).toEqual([0, Math.PI / 2, 0])
+    for (let i = 0; i < 3; i++) expect(armOf(4)[i]).toBeCloseTo(0, 5)
+    // Midway out eases halfway (in-out phase 0.5 slerps half the angle).
+    expect(armOf(1)[1]).toBeCloseTo(Math.PI / 4, 5)
+    // ... and the way back mirrors the way out.
+    expect(armOf(3)[1]).toBeCloseTo(Math.PI / 4, 5)
   })
 })
 
 describe('deriveAnimationMode', () => {
   const tweens = [{ id: 'tw', kind: 'rotate', axis: 'y', direction: 1, speed: 1, amount: 4, minAngle: -30, maxAngle: 30, enabled: true } as const]
 
-  it('prefers poses for a pose cycle, even with tweens present', () => {
-    const tweened: RigBox[] = [{ ...box('a'), tweens: [...tweens] }]
-    expect(
-      deriveAnimationMode({ rigBoxes: tweened, poses: [], poseCycle: { fromId: 'a', toId: 'b', mode: 'once', speed: 1 } }),
-    ).toBe('poses')
-  })
-
   it('uses poses when poses exist and no tween is enabled', () => {
     const muted: RigBox[] = [{ ...box('a'), tweens: [{ ...tweens[0], enabled: false }] }]
-    expect(deriveAnimationMode({ rigBoxes: muted, poses: [A], poseCycle: null })).toBe('poses')
+    expect(deriveAnimationMode({ rigBoxes: muted, poses: [A] })).toBe('poses')
     expect(deriveAnimationMode({ rigBoxes: [box('a')], poses: [A] })).toBe('poses')
   })
 
   it('uses tweens when a tween is enabled or when neither system is in use', () => {
     const tweened: RigBox[] = [{ ...box('a'), tweens: [...tweens] }]
-    expect(deriveAnimationMode({ rigBoxes: tweened, poses: [A], poseCycle: null })).toBe('tweens')
-    expect(deriveAnimationMode({ rigBoxes: [box('a')], poses: [], poseCycle: null })).toBe('tweens')
+    expect(deriveAnimationMode({ rigBoxes: tweened, poses: [A] })).toBe('tweens')
+    expect(deriveAnimationMode({ rigBoxes: [box('a')], poses: [] })).toBe('tweens')
     expect(deriveAnimationMode({ rigBoxes: [], poses: [] })).toBe('tweens')
   })
 })

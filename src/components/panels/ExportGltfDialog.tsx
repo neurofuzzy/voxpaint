@@ -17,24 +17,23 @@ const ANCHOR_LABELS: Record<GltfExportAnchor, string> = {
   back: 'Back',
 }
 
-/** Heads-up when both systems are in play: rigged voxels export as poseable joints under the
- * Rig node and are excluded from slice-loop animation. Tweened joints add baked clips. */
+/** Heads-up for rigged projects: what the export will bake, by animation mode. */
 function RigWinsNote() {
   const rigBoxes = useAppStore((s) => s.rigBoxes)
   const animSettings = useAppStore((s) => s.animSettings)
-  const poseCycle = useAppStore((s) => s.poseCycle)
+  const animationMode = useAppStore((s) => s.meta.animationMode ?? 'tweens')
+  const clips = useAppStore((s) => s.clips)
   const exportIncludeAnimations = useAppStore((s) => s.exportIncludeAnimations)
   if (rigBoxes.length === 0) return null
   const tweened = rigBoxes.filter(boxHasActiveTweens).length
-  if (!hasActiveAnimations(animSettings) && tweened === 0 && !poseCycle) return null
+  if (!hasActiveAnimations(animSettings) && tweened === 0 && clips.length === 0) return null
   return (
     <p className="mt-2 rounded-md border border-violet-500/30 bg-violet-500/10 px-3 py-1 text-xs text-violet-200">
       Rigged voxels export as poseable joints and skip slice-loop animation.
       {exportIncludeAnimations ? (
-        <>
-          {tweened > 0 && ` ${tweened} tweened joint${tweened === 1 ? '' : 's'} export${tweened === 1 ? 's' : ''} as baked animation clips.`}
-          {poseCycle && ` The pose cycle bakes into the joint clips.`}
-        </>
+        animationMode === 'tweens'
+          ? (tweened > 0 ? ` 1 clip: loop.` : ` No clips: no enabled tweens.`)
+          : (clips.length > 0 ? ` ${clips.length} clip${clips.length === 1 ? '' : 's'}: ${clips.map((c) => c.name).join(', ')}.` : ` No clips yet — add one in the Poses tab.`)
       ) : (
         ` Animation is off — joints export posed at bind with no clips.`
       )}
@@ -82,7 +81,7 @@ export function ExportGltfDialog({ open, onOpenChange }: { open: boolean; onOpen
 
   async function run() {
     const state = useAppStore.getState()
-    const { model, palette, meta, texture, noiseLevel, specularNoiseLevel, aoStrength, glassRoughnessLevel, animSettings, sliceMasks, slicePivots, markers, rigBoxes, poses, poseCycle } = state
+    const { model, palette, meta, texture, noiseLevel, specularNoiseLevel, aoStrength, glassRoughnessLevel, animSettings, sliceMasks, slicePivots, markers, rigBoxes, poses, clips } = state
     const { gridExtent } = meta
     const sf = state.exportScaleFactor
     const anchor = state.exportAnchor
@@ -115,7 +114,9 @@ export function ExportGltfDialog({ open, onOpenChange }: { open: boolean; onOpen
         includeMarkers: state.exportIncludeMarkers,
         includeAnimations: state.exportIncludeAnimations,
         rigBoxes,
-      }, animSettings, sliceMasks, slicePivots, poses, poseCycle)
+        animationMode: meta.animationMode ?? 'tweens',
+        clips,
+      }, animSettings, sliceMasks, slicePivots, poses)
       downloadGlb(glb, normalizeProjectFilename(meta.name || 'voxpaint-model'))
       showToast('GLTF exported.')
       onOpenChange(false)

@@ -33,4 +33,4 @@ npm run lint      # oxlint
 - IF you need to use an explore agent to find code and it's difficult to locate, make sure you update the function's JSDoc so that it appears in CODEMAP.md
 - BEFORE updating docs, run `npm run map` to update the code map.
 - ONLY update the docs (`./docs` folder md files and CLAUDE.md) when the user requests it.
-- Rig animation work (branch `rig-animate`): the steps and acceptance lists live in `docs/animation-plan.md`. Do one step per run, finish with `npm run build`, `npm run lint` and `npm test` green, stage the changes and STOP. Never commit; the human approves every commit.
+- Rig animation work (branch `animate-v2`; never switch branches): the steps and acceptance lists live in `docs/animation-plan.md`. Do one step per run, finish with `npm run build`, `npm run lint` and `npm test` green, stage the changes and STOP. Never commit; the human approves every commit.

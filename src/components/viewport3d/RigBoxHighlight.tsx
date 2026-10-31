@@ -1,8 +1,8 @@
 import { useEffect, useMemo, useRef } from 'react'
 import * as THREE from 'three'
 import { useFrame } from '@react-three/fiber'
-import { buildRigBoxWireGeometry, resolvePreviewPose } from '@/engine/rigging/pose'
-import { composeAnimatedMatrices } from '@/engine/rigging/rigLoop'
+import { buildRigBoxWireGeometry } from '@/engine/rigging/pose'
+import { previewFrame } from '@/engine/rigging/preview'
 import { useAppStore } from '@/store/useAppStore'
 
 const RIG_AMBER = 0xf59e0b
@@ -50,10 +50,7 @@ export function RigBoxHighlight() {
   useFrame(() => {
     const st = useAppStore.getState()
     if (st.mode !== 'animate') return
-    const now = performance.now() / 1000
-    const cycleTime = st.cyclePlaying && st.poseCycle ? now - st.cycleStartedAt : null
-    const preview = resolvePreviewPose(st.poses, st.stagedPoseId, st.poseRotations, st.poseCycle, cycleTime)
-    const matrices = composeAnimatedMatrices(st.rigBoxes, preview, now)
+    const { worlds: matrices } = previewFrame(st, performance.now() / 1000)
     for (const [id, group] of groups.current) {
       const m = matrices.get(id)
       if (!m) continue

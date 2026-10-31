@@ -1,6 +1,6 @@
 import type { Axis, CellKey, ChamferCell, Coord, GridExtent, Orientation, Rotation, VoxelModel, VoxelScaleY } from '@/engine/grid/types'
 import type { Marker } from '@/engine/markers/types'
-import type { Pose, PoseCycle, RigBox, RigTween } from '@/engine/rigging/types'
+import type { AnimationMode, ClipKey, Pose, RigBox, RigClip, RigTween } from '@/engine/rigging/types'
 import type { JointEuler } from '@/engine/rigging/pose'
 import type { GltfExportAnchor } from '@/engine/export/gltfExport'
 import type { EmissiveAnimMode, PaletteSlotRef, PaletteState } from '@/engine/palette/types'
@@ -87,6 +87,11 @@ export type ProjectSlice = {
    * touches no grid/texture data and clears no history — the grid stays integer and only
    * presentation (3D scene, 2D X/Z-plane views, baked exports) stretches. */
   setVoxelScaleY: (k: VoxelScaleY) => void
+  /** Sets the project's animation system (tweens for machines, poses for characters). The
+   * other mode's data stays in the file, muted; export writes only the active mode. Like
+   * `setVoxelScaleY` this is not undoable — but it stops transport and clears the pose
+   * scratch and staging, so the gizmo never shows a stale frame after the switch. */
+  setAnimationMode: (mode: AnimationMode) => void
   /** Sets the project-level texels-per-voxel scale (1/2/4, Project Settings). Resamples the
    * box-map faces with nearest-neighbor (quantized, never blurred) as one texture-undo step, and
    * clears the texel selection and pending floats — the voxel model and its history are untouched.
@@ -695,15 +700,15 @@ export type UiSlice = {
   tourPrev: () => void
 }
 
-/** One Animate-mode undo/redo snapshot: animation settings, mask paint state, pivots, and
- * rigging boxes travel together. */
+/** One Animate-mode undo/redo snapshot: animation settings, mask paint state, pivots,
+ * rigging boxes, poses, and clips travel together. */
 export type AnimSnapshot = {
   animSettings: Map<SliceKey, SliceAnimSettings>
   sliceMasks: Map<SliceKey, Set<CellKey>>
   slicePivots: Map<SliceKey, CellKey>
   rigBoxes: RigBox[]
   poses: Pose[]
-  poseCycle: PoseCycle | null
+  clips: RigClip[]
 }
 
 export type MarkerSlice = {
@@ -754,9 +759,8 @@ export type RiggingSlice = {
   /** Sets a box's rotation-center grid point (null = box center). Integers are cell centers,
    * half-integers are cell boundaries. No-op on unknown ids. Self-brackets undo. */
   setRigPivot: (id: string, pivot: Coord | null) => void
-  /** Appends a tween (default spin) to the box's stack; clears that joint's pose preview
-   * (tweened joints can't be posed). Returns the tween id, or null on unknown box.
-   * Self-brackets undo. */
+  /** Appends a tween (default spin) to the box's stack. Returns the tween id, or null on
+   * unknown box. Self-brackets undo. */
   addTween: (boxId: string) => string | null
   /** Removes a tween from the stack. No-op on unknown ids. Self-brackets undo. */
   removeTween: (boxId: string, tweenId: string) => void
@@ -769,15 +773,13 @@ export type RiggingSlice = {
   /** Moves a tween across stacks (drag a row onto another box's group): removed from the
    * source, inserted into the destination at `index` (end when omitted; clamped). A
    * same-box move reorders — the index counts pre-removal rows, like a visual drop slot.
-   * Selects the destination box and clears its pose preview when the moved tween is
-   * enabled. No-op on unknown ids. Self-brackets undo. */
+   * Selects the destination box. No-op on unknown ids. Self-brackets undo. */
   moveTweenToBox: (srcBoxId: string, tweenId: string, dstBoxId: string, index?: number) => void
-  /** Mutes/unmutes a tween (params kept). Enabling clears that joint's pose preview.
-   * No-op on unknown ids. Self-brackets undo. */
+  /** Mutes/unmutes a tween (params kept). No-op on unknown ids. Self-brackets undo. */
   setTweenEnabled: (boxId: string, tweenId: string, enabled: boolean) => void
   /** Patches tween params through the nesting-aware stroke: lone calls record one undo
    * entry; drag callers bracket externally (begin on down, commit on up) to coalesce the
-   * whole gesture into one. Enabling clears that joint's pose preview. */
+   * whole gesture into one. */
   patchTween: (boxId: string, tweenId: string, patch: Partial<Omit<RigTween, 'id'>>) => void
   /**
    * Pivot setter for whichever box is selected (the Pivot tool's target in 2D and 3D):
@@ -809,9 +811,22 @@ export type PoseSlice = {
   poseRotations: Map<string, JointEuler>
   /** Named joint snapshots. Undoable + persisted (they ride the animate undo stack). */
   poses: Pose[]
+  /** Keyed-pose timelines (one exported action each). Undoable + persisted. */
+  clips: RigClip[]
+  /** Clip under edit in the Clips section, or null. Session-only (defaults to the first). */
+  activeClipId: string | null
+  /** Key under edit in the inspector, or null. Session-only. */
+  selectedKeyId: string | null
   /** Pose currently staged for preview (view-only; not undoable, not persisted). Null =
    * the live scratch drives the preview. */
   stagedPoseId: string | null
+  /** Clip transport: playing flag + start timestamp + playhead (seconds, clip-local).
+   * Ephemeral (not undoable, not persisted). `clipTime` is null when off the timeline
+   * (the preview shows the staged pose or scratch); pausing or scrubbing sets a number,
+   * so the paused/scrubbed frame keeps showing. */
+  clipPlaying: boolean
+  clipStartedAt: number
+  clipTime: number | null
   /** Sets a joint's local rotation (no-op on unknown ids; near-zero collapses to bind). */
   setJointRotation: (id: string, euler: JointEuler) => void
   /** Snapshots the live scratch into a new named pose, stages it, and clears the scratch.
@@ -819,7 +834,8 @@ export type PoseSlice = {
   capturePose: () => string | null
   /** Renames a pose (auto-uniquified; no-op on empty/unknown). Self-brackets undo. */
   renamePose: (id: string, name: string) => void
-  /** Deletes a pose (clears staging if it pointed at it). Self-brackets undo. */
+  /** Deletes a pose (clears staging if it pointed at it) and drops every clip key that
+   * referenced it. Self-brackets undo. */
   deletePose: (id: string) => void
   /** Stages a pose for preview, or null for the live scratch. Grabbing the gizmo while a
    * pose is staged adopts it into the scratch first, so you grab what you see. */
@@ -827,17 +843,39 @@ export type PoseSlice = {
   /** Copies the staged pose into the live scratch and unstages (gizmo-grab handoff).
    * No-op without a staged pose; never undoable (scratch never is). */
   adoptStagedPose: () => void
-  /** The pose-to-pose playback loop definition (undoable + persisted). Null = no cycle. */
-  poseCycle: PoseCycle | null
-  /** Cycle transport: playing flag + start timestamp. Ephemeral (not undoable, not persisted). */
-  cyclePlaying: boolean
-  cycleStartedAt: number
-  /** Sets the cycle definition. Self-brackets undo. Stops transport (a redefined cycle
-   * restarts from its top on next play). */
-  setPoseCycle: (cycle: PoseCycle | null) => void
-  /** Starts/stops cycle transport (records the start timestamp on play). */
-  setCyclePlaying: (playing: boolean) => void
-  /** Loads whatever the preview currently shows (cycle frame, staged pose, or scratch)
+  /** Adds a new empty clip (1 s, looping) and selects it. Self-brackets undo. */
+  addClip: () => string
+  /** Renames a clip (glTF-safe via `sanitizeRigName`, uniquified; no-op on empty/unknown).
+   * Self-brackets undo. */
+  renameClip: (id: string, name: string) => void
+  /** Deletes a clip (clears the active/selected key when they pointed into it).
+   * Self-brackets undo. */
+  deleteClip: (id: string) => void
+  /** Patches a clip's loop flag and/or duration (seconds, snapped to 1/30 s; a looping
+   * clip holds ≥ last key + one frame). Self-brackets undo. */
+  patchClip: (id: string, patch: { loop?: boolean; duration?: number }) => void
+  /** Selects the clip under edit (no-op on unknown ids). Session-only. */
+  setActiveClip: (id: string | null) => void
+  /** Selects the key under edit (no-op on unknown ids). Session-only. */
+  setSelectedKey: (id: string | null) => void
+  /** Starts/stops clip transport (play resumes from `clipTime ?? 0`; pause freezes the
+   * playhead there as a number). */
+  setClipPlaying: (playing: boolean) => void
+  /** Seeks the playhead onto the timeline (seconds, snapped to 1/30 s). Session-only. */
+  setClipTime: (time: number) => void
+  /** Appends a key for `poseId` at `time` (defaults: staged pose, playhead) to the clip,
+   * sorted by time with the first locked at 0, and selects it. No-op (with a toast) when
+   * the pose is unknown. Self-brackets undo. */
+  addKey: (clipId: string, poseId?: string, time?: number) => string | null
+  /** Patches a key's pose, time (snapped; the first key stays locked at 0), and/or ease.
+   * Self-brackets undo. */
+  patchKey: (clipId: string, keyId: string, patch: { poseId?: string; time?: number; ease?: ClipKey['ease'] }) => void
+  /** Removes a key (clears the selection when it pointed at it). Self-brackets undo. */
+  removeKey: (clipId: string, keyId: string) => void
+  /** Writes the live scratch back into the named pose (every key using it updates) and
+   * clears the scratch. No-op (with a toast) when the scratch is empty. Self-brackets undo. */
+  overwritePose: (id: string) => void
+  /** Loads whatever the preview currently shows (clip frame, staged pose, or scratch)
    * into the scratch, then clears staging and stops transport — so a gizmo grab
    * continues from what's on screen instead of jumping. Never undoable. */
   grabPoseForEdit: () => void

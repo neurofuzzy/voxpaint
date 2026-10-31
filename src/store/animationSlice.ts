@@ -1,7 +1,7 @@
 import type { StateCreator } from 'zustand'
 import type { CellKey, Coord } from '@/engine/grid/types'
 import { withinWorkingBounds } from '@/engine/grid/GridStore'
-import type { Pose, PoseCycle, RigBox } from '@/engine/rigging/types'
+import type { Pose, RigBox, RigClip } from '@/engine/rigging/types'
 import type { JointEuler } from '@/engine/rigging/pose'
 import type { SliceAnimSettings, SliceKey } from '@/engine/animation/types'
 import { gridCoordFromPixel } from '@/engine/plane/constructionPlane'
@@ -40,14 +40,21 @@ function clonePoses(poses: Pose[]): Pose[] {
   return poses.map((p) => ({ ...p, joints: Object.fromEntries(Object.entries(p.joints).map(([id, e]) => [id, [...e] as JointEuler])) }))
 }
 
-function cloneSnapshot(state: { animSettings: Map<SliceKey, SliceAnimSettings>; sliceMasks: Map<SliceKey, Set<CellKey>>; slicePivots: Map<SliceKey, CellKey>; rigBoxes: RigBox[]; poses: Pose[]; poseCycle: PoseCycle | null }): AnimSnapshot {
+function cloneClips(clips: RigClip[]): RigClip[] {
+  return clips.map((c) => ({
+    ...c,
+    keys: c.keys.map((k) => ({ ...k })),
+  }))
+}
+
+function cloneSnapshot(state: { animSettings: Map<SliceKey, SliceAnimSettings>; sliceMasks: Map<SliceKey, Set<CellKey>>; slicePivots: Map<SliceKey, CellKey>; rigBoxes: RigBox[]; poses: Pose[]; clips: RigClip[] }): AnimSnapshot {
   return {
     animSettings: cloneAnimSettings(state.animSettings),
     sliceMasks: cloneSliceMasks(state.sliceMasks),
     slicePivots: cloneSlicePivots(state.slicePivots),
     rigBoxes: state.rigBoxes.map((b) => ({ ...b, min: [...b.min] as Coord, max: [...b.max] as Coord, pivot: b.pivot ? ([...b.pivot] as Coord) : null, tweens: (b.tweens ?? []).map((t) => ({ ...t })) })),
     poses: clonePoses(state.poses),
-    poseCycle: state.poseCycle ? { ...state.poseCycle } : null,
+    clips: cloneClips(state.clips),
   }
 }
 
@@ -113,11 +120,17 @@ export const createAnimationSlice: Slice = (set, get) => ({
       state.slicePivots = prev.slicePivots
       state.rigBoxes = prev.rigBoxes
       state.poses = prev.poses
-      state.poseCycle = prev.poseCycle
-      // Undo can orphan the cycle's pose refs (eval falls back to bind) — stop transport
-      // rather than silently playing a degraded cycle.
-      if (state.cyclePlaying && state.poseCycle && !state.poses.some((p) => p.id === state.poseCycle!.fromId && state.poses.some((q) => q.id === state.poseCycle!.toId))) {
-        state.cyclePlaying = false
+      state.clips = prev.clips
+      // Undo can orphan the active clip or the selected key — stop transport and drop
+      // dead selections rather than playing a degraded timeline.
+      if (state.clipPlaying && !state.clips.some((c) => c.id === state.activeClipId)) {
+        state.clipPlaying = false
+      }
+      if (state.activeClipId && !state.clips.some((c) => c.id === state.activeClipId)) {
+        state.activeClipId = state.clips.length > 0 ? state.clips[0].id : null
+      }
+      if (state.selectedKeyId && !state.clips.some((c) => c.keys.some((k) => k.id === state.selectedKeyId))) {
+        state.selectedKeyId = null
       }
       if (state.selectedRigBoxId && !state.rigBoxes.some((b) => b.id === state.selectedRigBoxId)) {
         state.selectedRigBoxId = null
@@ -140,9 +153,15 @@ export const createAnimationSlice: Slice = (set, get) => ({
       state.slicePivots = next.slicePivots
       state.rigBoxes = next.rigBoxes
       state.poses = next.poses
-      state.poseCycle = next.poseCycle
-      if (state.cyclePlaying && state.poseCycle && !state.poses.some((p) => p.id === state.poseCycle!.fromId && state.poses.some((q) => q.id === state.poseCycle!.toId))) {
-        state.cyclePlaying = false
+      state.clips = next.clips
+      if (state.clipPlaying && !state.clips.some((c) => c.id === state.activeClipId)) {
+        state.clipPlaying = false
+      }
+      if (state.activeClipId && !state.clips.some((c) => c.id === state.activeClipId)) {
+        state.activeClipId = state.clips.length > 0 ? state.clips[0].id : null
+      }
+      if (state.selectedKeyId && !state.clips.some((c) => c.keys.some((k) => k.id === state.selectedKeyId))) {
+        state.selectedKeyId = null
       }
       if (state.selectedRigBoxId && !state.rigBoxes.some((b) => b.id === state.selectedRigBoxId)) {
         state.selectedRigBoxId = null
@@ -229,11 +248,22 @@ function posesEqual(a: Pose[], b: Pose[]): boolean {
   return true
 }
 
-function poseCycleEqual(a: PoseCycle | null, b: PoseCycle | null): boolean {
-  if (!a || !b) return a === b
-  return a.fromId === b.fromId && a.toId === b.toId && a.mode === b.mode && a.speed === b.speed
+function clipsEqual(a: RigClip[], b: RigClip[]): boolean {
+  if (a.length !== b.length) return false
+  for (let i = 0; i < a.length; i++) {
+    const x = a[i]
+    const y = b[i]
+    if (x.id !== y.id || x.name !== y.name || x.loop !== y.loop || x.duration !== y.duration) return false
+    if (x.keys.length !== y.keys.length) return false
+    for (let k = 0; k < x.keys.length; k++) {
+      const xk = x.keys[k]
+      const yk = y.keys[k]
+      if (xk.id !== yk.id || xk.poseId !== yk.poseId || xk.time !== yk.time || xk.ease !== yk.ease) return false
+    }
+  }
+  return true
 }
 
-function snapshotsEqual(a: AnimSnapshot, b: { animSettings: Map<SliceKey, SliceAnimSettings>; sliceMasks: Map<SliceKey, Set<CellKey>>; slicePivots: Map<SliceKey, CellKey>; rigBoxes: RigBox[]; poses: Pose[]; poseCycle: PoseCycle | null }): boolean {
-  return mapsEqual(a.animSettings, b.animSettings) && sliceMasksEqual(a.sliceMasks, b.sliceMasks) && slicePivotsEqual(a.slicePivots, b.slicePivots) && rigBoxesEqual(a.rigBoxes, b.rigBoxes) && posesEqual(a.poses, b.poses) && poseCycleEqual(a.poseCycle, b.poseCycle)
+function snapshotsEqual(a: AnimSnapshot, b: { animSettings: Map<SliceKey, SliceAnimSettings>; sliceMasks: Map<SliceKey, Set<CellKey>>; slicePivots: Map<SliceKey, CellKey>; rigBoxes: RigBox[]; poses: Pose[]; clips: RigClip[] }): boolean {
+  return mapsEqual(a.animSettings, b.animSettings) && sliceMasksEqual(a.sliceMasks, b.sliceMasks) && slicePivotsEqual(a.slicePivots, b.slicePivots) && rigBoxesEqual(a.rigBoxes, b.rigBoxes) && posesEqual(a.poses, b.poses) && clipsEqual(a.clips, b.clips)
 }

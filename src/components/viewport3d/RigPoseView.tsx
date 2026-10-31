@@ -2,8 +2,9 @@ import { useEffect, useMemo, useRef } from 'react'
 import * as THREE from 'three'
 import { useFrame } from '@react-three/fiber'
 import { buildRigPoseMeshes } from '@/engine/animation/rigPoseBuild'
-import { applyPoseMatrices, resolvePreviewPose } from '@/engine/rigging/pose'
-import { composeAnimatedMatrices, hasActiveTweens } from '@/engine/rigging/rigLoop'
+import { applyPoseMatrices } from '@/engine/rigging/pose'
+import { previewFrame } from '@/engine/rigging/preview'
+import { hasActiveTweens } from '@/engine/rigging/rigLoop'
 import { TEXEL_SCALE } from '@/engine/texture/types'
 import { tickEmissiveAnimation } from '@/engine/instancing/previewMaterial'
 import { enableGhostDither, setGhostDither } from '@/engine/instancing/ghostDither'
@@ -13,9 +14,9 @@ import { useAppStore } from '@/store/useAppStore'
 
 /**
  * Animate-mode pose + loop preview: the model partitioned into one static group (unrigged
- * voxels) plus one group per rig box, each driven per frame from `poseRotations` and the
- * tween stacks via `composeAnimatedMatrices` (world = tween × pose, so a tweened parent
- * still carries a posed child). Geometry rebuilds only when the model/rigs
+ * voxels) plus one group per rig box, each driven per frame from the store through
+ * `previewFrame` (tween stacks in tweens mode, the clip/scratch pose in poses mode).
+ * Geometry rebuilds only when the model/rigs
  * change — drags and cycles just re-matrix groups (matrixAutoUpdate off), so playback stays
  * at frame rate with zero rebuilds.
  *
@@ -54,9 +55,6 @@ export function RigPoseView({ active }: { active: boolean }) {
     while (rootGroup.children.length > 0) {
       rootGroup.remove(rootGroup.children[0])
     }
-    // TEMP-DEBUG: view-build trace for the frozen-pose report.
-    // eslint-disable-next-line no-console
-    console.log('[pose] view build', built ? { staticMeshes: built.staticMeshes.length, boxes: [...built.boxMeshes.keys()] } : null)
     if (!built) return
 
     const statics = new THREE.Group()
@@ -113,28 +111,13 @@ export function RigPoseView({ active }: { active: boolean }) {
     setIsolationClip(built.materials, isolatePlanes)
   }, [built, isolatePlanes])
 
-  // TEMP-DEBUG: frame counter for the throttled matrix trace below.
-  const frameRef = useRef(0)
   useFrame(() => {
     if (!active || !built) return
     const st = useAppStore.getState()
-    const tweening = hasActiveTweens(st.rigBoxes)
     const elapsed = performance.now() / 1000
-    const cycleTime = st.cyclePlaying && st.poseCycle ? elapsed - st.cycleStartedAt : null
-    const preview = resolvePreviewPose(st.poses, st.stagedPoseId, st.poseRotations, st.poseCycle, cycleTime)
-    if (preview.size === 0 && !tweening) return
-    // World = tween-chain × pose-chain per box (see `composeAnimatedMatrices`) — a box
-    // never carries both (mutually exclusive), but a tweened parent still carries a
-    // posed child and vice versa.
-    const combined = composeAnimatedMatrices(st.rigBoxes, preview, elapsed)
+    const { worlds: combined, pose } = previewFrame(st, elapsed)
+    if (pose.size === 0 && !hasActiveTweens(st.rigBoxes)) return
     applyPoseMatrices(boxGroups.current, combined)
-    // TEMP-DEBUG: throttled matrix trace for the frozen-pose report.
-    frameRef.current += 1
-    if (frameRef.current % 60 === 0) {
-      const first = [...combined.entries()][0]
-      // eslint-disable-next-line no-console
-      console.log('[pose] frame matrices', first ? { box: first[0], m: [...first[1].elements].map((n) => +n.toFixed(3)) } : null)
-    }
     for (const m of built.materials) tickEmissiveAnimation(m, performance.now() / 1000)
   })
 

@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it } from 'vitest'
+import { previewFrame } from '@/engine/rigging/preview'
 import { useAppStore } from './useAppStore'
 
 /** Named pose snapshots: captured from scratch, staged for preview, undoable + persisted. */
@@ -93,7 +94,7 @@ describe('pose library', () => {
   })
 })
 
-describe('pose cycles', () => {
+describe('pose clips', () => {
   beforeEach(() => {
     useAppStore.getState().newProject('Test', 16)
   })
@@ -112,45 +113,150 @@ describe('pose cycles', () => {
     return [a, b]
   }
 
-  it('sets a cycle definition on the undo stack and plays/stops transport', () => {
-    const [a, b] = twoPoses()
+  it('adds, renames, patches, and deletes clips on the animate undo stack', () => {
+    twoPoses()
     const s = useAppStore.getState()
-    s.setPoseCycle({ fromId: a, toId: b, mode: 'pingpong', speed: 1 })
-    expect(useAppStore.getState().poseCycle?.mode).toBe('pingpong')
-    s.setCyclePlaying(true)
-    expect(useAppStore.getState().cyclePlaying).toBe(true)
-    s.setCyclePlaying(false)
-    expect(useAppStore.getState().cyclePlaying).toBe(false)
-    // Definition undoes; transport never enters history.
-    s.setCyclePlaying(true)
+    const id = s.addClip()
+    expect(useAppStore.getState().clips).toHaveLength(1)
+    expect(useAppStore.getState().activeClipId).toBe(id)
+    s.renameClip(id, 'walk')
+    expect(useAppStore.getState().clips[0].name).toBe('walk')
+    // glTF-unsafe names sanitize on rename.
+    s.renameClip(id, 'my walk!')
+    expect(useAppStore.getState().clips[0].name).toBe('my_walk')
+    // Duration snaps and floors (looping clips hold a frame past the last key).
+    s.patchClip(id, { duration: 0 })
+    expect(useAppStore.getState().clips[0].duration).toBeGreaterThan(0)
+    s.deleteClip(id)
+    expect(useAppStore.getState().clips).toHaveLength(0)
+    expect(useAppStore.getState().activeClipId).toBeNull()
+    // Delete undoes.
     s.animUndo()
-    expect(useAppStore.getState().poseCycle).toBeNull()
-    expect(useAppStore.getState().cyclePlaying).toBe(true)
+    expect(useAppStore.getState().clips).toHaveLength(1)
   })
 
-  it('deleting a referenced pose clears the cycle', () => {
+  it('adds, retimes, and removes keys with the first locked at 0', () => {
     const [a, b] = twoPoses()
     const s = useAppStore.getState()
-    s.setPoseCycle({ fromId: a, toId: b, mode: 'loop', speed: 2 })
-    s.setCyclePlaying(true)
+    const id = s.addClip()
+    const k0 = s.addKey(id, a, 0)!
+    const k1 = s.addKey(id, b, 1)!
+    let clip = useAppStore.getState().clips[0]
+    expect(clip.keys.map((k) => [k.poseId, k.time])).toEqual([[a, 0], [b, 1]])
+    // A looping clip holds duration a frame past its last key.
+    expect(clip.duration).toBeCloseTo(1 + 1 / 30, 10)
+    // Retiming the first key clamps back to 0.
+    s.patchKey(id, k0, { time: 0.5 })
+    clip = useAppStore.getState().clips[0]
+    expect(clip.keys[0].time).toBe(0)
+    s.removeKey(id, k1)
+    expect(useAppStore.getState().clips[0].keys.map((k) => k.id)).toEqual([k0])
+    // Key add/remove undo together with the rest of the animate stack.
+    s.animUndo()
+    expect(useAppStore.getState().clips[0].keys).toHaveLength(2)
+  })
+
+  it('plays/stops transport and seeks the playhead', () => {
+    const [a] = twoPoses()
+    const s = useAppStore.getState()
+    const id = s.addClip()
+    s.addKey(id, a, 0)
+    s.setClipPlaying(true)
+    expect(useAppStore.getState().clipPlaying).toBe(true)
+    s.setClipPlaying(false)
+    expect(useAppStore.getState().clipPlaying).toBe(false)
+    s.setClipTime(1.5)
+    expect(useAppStore.getState().clipTime).toBeCloseTo(1.5, 10)
+    // Playing without an active clip is a no-op.
+    s.setActiveClip(null)
+    s.setClipPlaying(true)
+    expect(useAppStore.getState().clipPlaying).toBe(false)
+  })
+
+  it('deleting a referenced pose drops its keys', () => {
+    const [a, b] = twoPoses()
+    const s = useAppStore.getState()
+    const id = s.addClip()
+    s.addKey(id, a, 0)
+    s.addKey(id, b, 1)
     s.deletePose(a)
-    expect(useAppStore.getState().poseCycle).toBeNull()
-    expect(useAppStore.getState().cyclePlaying).toBe(false)
+    const clip = useAppStore.getState().clips[0]
+    expect(clip.keys.map((k) => k.poseId)).toEqual([b])
+    // The surviving key re-locks to 0.
+    expect(clip.keys[0].time).toBe(0)
   })
 
-  it('grabbing for edit freezes the preview into the scratch and stops transport', () => {
+  it('overwrites a pose from the scratch and clears it', () => {
+    const [a] = twoPoses()
+    const s = useAppStore.getState()
+    s.setAnimationMode('poses')
+    s.setJointRotation('arm', [0, 0, 0.75])
+    s.overwritePose(a)
+    expect(useAppStore.getState().poses[0].joints).toEqual({ arm: [0, 0, 0.75] })
+    expect(useAppStore.getState().poseRotations.size).toBe(0)
+    // The saved pose stages so the preview keeps showing it instead of dropping to bind.
+    expect(useAppStore.getState().stagedPoseId).toBe(a)
+    expect(useAppStore.getState().clipTime).toBeNull()
+    expect(previewFrame(useAppStore.getState(), 99).pose.get('arm')).toEqual([0, 0, 0.75])
+    // Empty scratch is a no-op with no pose created.
+    expect(useAppStore.getState().capturePose()).toBeNull()
+  })
+
+  it('grabbing for edit freezes the clip frame into the scratch and stops transport', () => {
     const [a, b] = twoPoses()
     const s = useAppStore.getState()
+    s.setAnimationMode('poses')
+    const id = s.addClip()
+    s.addKey(id, a, 0)
+    s.addKey(id, b, 1)
     // Stage + grab: scratch takes the staged joints, staging clears.
     s.stagePose(a)
     s.grabPoseForEdit()
     expect(useAppStore.getState().poseRotations.get('arm')).toEqual([0.5, 0, 0])
     expect(useAppStore.getState().stagedPoseId).toBeNull()
-    // Cycle + grab: scratch takes the in-flight frame, transport stops.
-    s.setPoseCycle({ fromId: a, toId: b, mode: 'pingpong', speed: 1 })
-    s.setCyclePlaying(true)
+    // Scrubbed frame + grab: scratch takes the exact key frame.
+    s.setClipTime(1)
     s.grabPoseForEdit()
-    expect(useAppStore.getState().cyclePlaying).toBe(false)
+    expect(useAppStore.getState().poseRotations.get('arm')).toEqual([0, 0.5, 0])
+    // Playing + grab: scratch takes the in-flight frame, transport stops.
+    s.setClipTime(0)
+    s.setClipPlaying(true)
+    s.grabPoseForEdit()
+    expect(useAppStore.getState().clipPlaying).toBe(false)
     expect(useAppStore.getState().poseRotations.has('arm')).toBe(true)
+  })
+
+  it('pausing then grabbing drops the playhead so gizmo edits show', () => {
+    const [a, b] = twoPoses()
+    const s = useAppStore.getState()
+    s.setAnimationMode('poses')
+    const id = s.addClip()
+    s.addKey(id, a, 0)
+    s.addKey(id, b, 1)
+    // Pause mid-clip: the playhead freezes as a number and the frozen frame shows.
+    s.setClipTime(1)
+    s.setClipPlaying(true)
+    s.setClipPlaying(false)
+    expect(useAppStore.getState().clipTime).not.toBeNull()
+    expect(previewFrame(useAppStore.getState(), 99).pose.get('arm')).toEqual([0, 0.5, 0])
+    // Grabbing lands the frame in the scratch and steps off the timeline, so the
+    // preview follows the scratch and the gizmo drag below changes what shows.
+    s.grabPoseForEdit()
+    expect(useAppStore.getState().clipTime).toBeNull()
+    s.setJointRotation('arm', [0, 0, 0.9])
+    expect(previewFrame(useAppStore.getState(), 99).pose.get('arm')).toEqual([0, 0, 0.9])
+  })
+
+  it('scrubbing to 0 shows the first key, not the scratch', () => {
+    const [a] = twoPoses()
+    const s = useAppStore.getState()
+    s.setAnimationMode('poses')
+    const id = s.addClip()
+    s.addKey(id, a, 0)
+    // The scratch disagrees with key 0 — on the timeline at 0, key 0 wins.
+    s.setJointRotation('arm', [0, 0, 0.9])
+    s.setClipTime(0)
+    expect(useAppStore.getState().clipTime).not.toBeNull()
+    expect(previewFrame(useAppStore.getState(), 99).pose.get('arm')).toEqual([0.5, 0, 0])
   })
 })

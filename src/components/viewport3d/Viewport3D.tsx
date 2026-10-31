@@ -5,8 +5,9 @@ import * as THREE from 'three'
 import type { OrbitControls as OrbitControlsImpl } from 'three-stdlib'
 import { decodeKey, encodeKey, effectiveExtent, viewOriginShift, withinWorkingBounds } from '@/engine/grid/GridStore'
 import { rigBoxContains, rigIdForCoord, rigPivotOf } from '@/engine/rigging/types'
-import { angleAroundAxis, composeAxisAngle, gizmoRadiusForBox, intersectAxisPlane, nearestRingHit, parentChainMatrix, projectToTrackball, resolvePreviewPose, trackballEuler } from '@/engine/rigging/pose'
-import { chainHasActiveTweens, hasActiveTweens } from '@/engine/rigging/rigLoop'
+import { angleAroundAxis, composeAxisAngle, gizmoRadiusForBox, intersectAxisPlane, nearestRingHit, parentChainMatrix, projectToTrackball, trackballEuler } from '@/engine/rigging/pose'
+import { previewFrame } from '@/engine/rigging/preview'
+import { hasActiveTweens } from '@/engine/rigging/rigLoop'
 import type { Axis, CellKey, Coord } from '@/engine/grid/types'
 import { hasActiveAnimations } from '@/engine/animation/animationLayers'
 import type { InstancingManager } from '@/engine/instancing/InstancingManager'
@@ -222,6 +223,9 @@ function VoxelInteractionHandler({ managerRef, controlsRef }: {
   const activeTool = useAppStore((s) => s.activeTool)
   const activeToolRef = useRef(activeTool)
   activeToolRef.current = activeTool
+  const animationMode = useAppStore((s) => s.meta.animationMode ?? 'tweens')
+  const animationModeRef = useRef(animationMode)
+  animationModeRef.current = animationMode
   const touchPaintHold = useAppStore((s) => s.touchPaintHold)
   const touchPaintHoldRef = useRef(touchPaintHold)
   touchPaintHoldRef.current = touchPaintHold
@@ -592,22 +596,17 @@ function VoxelInteractionHandler({ managerRef, controlsRef }: {
     const onPointerDown = (e: PointerEvent) => {
       down = { x: e.clientX, y: e.clientY }
       downOutside = pressOutsideCube(e.clientX, e.clientY)
-      // Pose tool (Animate mode only): a press near a ring of the selected box opens an
+      // Pose tool (Animate + poses mode only): a press near a ring of the selected box opens an
       // axis-rotation drag immediately (a ring is never a plane-nav target); a press on the
       // box body arms a trackball drag that converts past the tap threshold, so plain taps
       // keep their normal rig-select behavior. Rings are hit-tested in screen space (what
       // you see is what's grabbable), so this runs ahead of the working-cube check below —
       // rings routinely overhang empty space outside the cube. Anything else falls through.
-      if (e.button === 0 && e.isPrimary && modeRef.current === 'animate' && activeToolRef.current === 'pose') {
+      // In tweens mode the gizmo never renders, so this branch never arms there.
+      if (e.button === 0 && e.isPrimary && modeRef.current === 'animate' && animationModeRef.current === 'poses' && activeToolRef.current === 'pose') {
         const st = useAppStore.getState()
         const box = st.rigBoxes.find((b) => b.id === st.selectedRigBoxId) ?? null
-        // Posing needs a static frame — a tween anywhere up the chain would move the
-        // joint under the drag math, so the press falls through to normal tap handling
-        // with a hint instead.
-        if (box && chainHasActiveTweens(st.rigBoxes, box)) {
-          setStatusMessage('That joint rides an active tween — mute tweens in the panel to pose')
-        }
-        if (box && !chainHasActiveTweens(st.rigBoxes, box)) {
+        if (box) {
           const rect = dom.getBoundingClientRect()
           const sy = st.meta.voxelScaleY
           const pv = new THREE.Vector3()
@@ -617,9 +616,8 @@ function VoxelInteractionHandler({ managerRef, controlsRef }: {
             return [rect.left + ((pv.x + 1) / 2) * rect.width, rect.top + ((1 - pv.y) / 2) * rect.height]
           }
           const ray = gridSpaceRay(e.clientX, e.clientY)
-          // Hit-test in the resolved preview frame (cycle included) — matches the rings.
-          const cycleTime = st.cyclePlaying && st.poseCycle ? performance.now() / 1000 - st.cycleStartedAt : null
-          const preview = resolvePreviewPose(st.poses, st.stagedPoseId, st.poseRotations, st.poseCycle, cycleTime)
+          // Hit-test in the resolved preview frame (clip included) — matches the rings.
+          const { pose: preview } = previewFrame(st, performance.now() / 1000)
           const axis = ray
             ? nearestRingHit(st.rigBoxes, preview, box, ray.origin, ray.dir, project, e.clientX, e.clientY, e.pointerType === 'touch' ? 24 : 14)
             : null
@@ -628,7 +626,7 @@ function VoxelInteractionHandler({ managerRef, controlsRef }: {
             const pw: Coord = [pivot[0] + 0.5, pivot[1] + 0.5, pivot[2] + 0.5]
             const pt = ray ? intersectAxisPlane(ray.origin, ray.dir, pw, axis) : null
             if (pt) {
-              // Grabbing loads what's shown into the scratch first (freezing any cycle),
+              // Grabbing loads what's shown into the scratch first (freezing any clip),
               // so the drag continues from the visible pose instead of jumping.
               st.grabPoseForEdit()
               const euler = useAppStore.getState().poseRotations.get(box.id) ?? [0, 0, 0]
@@ -928,8 +926,7 @@ function VoxelInteractionHandler({ managerRef, controlsRef }: {
           const st = useAppStore.getState()
           const box = st.rigBoxes.find((b) => b.id === pendingPoseDrag!.boxId)
           pendingPoseDrag = null
-          // Re-check the frame at conversion: a tween may have started mid-gesture.
-          if (box && !chainHasActiveTweens(st.rigBoxes, box)) {
+          if (box) {
             // Grabbing loads what's shown into the scratch first (see ring path).
             st.grabPoseForEdit()
             const fresh = useAppStore.getState()
@@ -939,7 +936,7 @@ function VoxelInteractionHandler({ managerRef, controlsRef }: {
             const radius = gizmoRadiusForBox(box)
             const start = ray ? projectToTrackball(ray.origin, ray.dir, center, radius) : null
             if (start) {
-              const preview = resolvePreviewPose(fresh.poses, fresh.stagedPoseId, fresh.poseRotations)
+              const { pose: preview } = previewFrame(fresh, performance.now() / 1000)
               const parent = parentChainMatrix(fresh.rigBoxes, preview, box)
               const euler = fresh.poseRotations.get(box.id) ?? [0, 0, 0]
               poseDrag = {
@@ -1149,7 +1146,7 @@ function VoxelInteractionHandler({ managerRef, controlsRef }: {
       // Pose mode runs no voxel hover chrome at all (no face highlight, no hover blink) —
       // the only hover feedback is the ring affordance below. Clear anything stale once,
       // then skip: taps resolve their own hit on pointer-up.
-      const poseNoHover = modeRef.current === 'animate' && activeToolRef.current === 'pose'
+      const poseNoHover = modeRef.current === 'animate' && animationModeRef.current === 'poses' && activeToolRef.current === 'pose'
       if (poseNoHover) {
         if (lastCellKey !== null || lastFaceKey !== null) {
           lastCellKey = null
@@ -1189,20 +1186,19 @@ function VoxelInteractionHandler({ managerRef, controlsRef }: {
       // below; orbit otherwise. The 2D canvas owns all rig edits. The pose tool steers the
       // selected joint instead (see the drag wiring above) and its taps only ever switch the
       // rig selection — the plane stays put.
-      if (modeRef.current === 'animate' && activeToolRef.current === 'pose') {
+      if (modeRef.current === 'animate' && animationModeRef.current === 'poses' && activeToolRef.current === 'pose') {
         // Live ring affordance: hovering a ring names its axis and grabs the cursor, so it's
         // obvious what's draggable before pressing. Same screen-space test as the down path.
         const st = useAppStore.getState()
         const box = st.rigBoxes.find((b) => b.id === st.selectedRigBoxId) ?? null
         let ringAxis: Axis | null = null
-        if (box && !poseDrag && !pendingPoseDrag && !chainHasActiveTweens(st.rigBoxes, box)) {
+        if (box && !poseDrag && !pendingPoseDrag) {
           const rect = dom.getBoundingClientRect()
           const sy = st.meta.voxelScaleY
           const pv = new THREE.Vector3()
           const ray = gridSpaceRay(e.clientX, e.clientY)
           if (ray) {
-            const cycleTime = st.cyclePlaying && st.poseCycle ? performance.now() / 1000 - st.cycleStartedAt : null
-            const preview = resolvePreviewPose(st.poses, st.stagedPoseId, st.poseRotations, st.poseCycle, cycleTime)
+            const { pose: preview } = previewFrame(st, performance.now() / 1000)
             ringAxis = nearestRingHit(st.rigBoxes, preview, box, ray.origin, ray.dir,
               (p) => {
                 pv.set(p[0], p[1] * sy, p[2]).project(camera)
@@ -1537,7 +1533,8 @@ function VoxelInteractionHandler({ managerRef, controlsRef }: {
       const result = resolveFaceHit(e.clientX, e.clientY)
       // Pose tool taps never touch the construction plane (posing needs a stable frame):
       // click selects the tapped rig, empty space clears — plain click-to-select semantics.
-      if (modeRef.current === 'animate' && activeToolRef.current === 'pose') {
+      // Poses-mode only; in a tweens project the gizmo never renders and taps navigate.
+      if (modeRef.current === 'animate' && animationModeRef.current === 'poses' && activeToolRef.current === 'pose') {
         const st = useAppStore.getState()
         if (result) {
           const id = rigIdForCoord(st.rigBoxes, decodeKey(result.key))
@@ -1610,18 +1607,21 @@ export function Viewport3D() {
 
   const textureMode = mode === 'texture'
   const animateMode = mode === 'animate'
-  const poseToolActive = useAppStore((s) => s.mode === 'animate' && s.activeTool === 'pose')
+  const animationMode = useAppStore((s) => s.meta.animationMode ?? 'tweens')
+  const poseToolActive = useAppStore((s) => s.mode === 'animate' && s.meta.animationMode === 'poses' && s.activeTool === 'pose')
   const hasAnimations = animateMode && hasActiveAnimations(animSettings)
   const animateModelHidden = useAppStore((s) => s.mode === 'animate' && s.animateModelView === 'hidden')
   const rigBoxes = useAppStore((s) => s.rigBoxes)
   // Tweened joints drive the same pose-view scene graph as gizmo posing (per-box groups,
   // zero rebuilds per frame) — the view stays live while any tween exists, even with an
   // empty pose. Slice loops keep their own legacy view; rig tweens take over when present.
-  const hasTweenedJoints = animateMode && hasActiveTweens(rigBoxes)
-  // Pose preview takes over the model views while a non-empty pose exists (hidden blanks it
-  // like the others); the static views stay mounted with frozen builds underneath. The drag
-  // latch keeps it mounted through exact-zero crossings mid-gesture.
-  const poseActive = useAppStore((s) => s.mode === 'animate' && (s.poseRotations.size > 0 || s.poseDragging || s.stagedPoseId !== null || s.cyclePlaying) && s.animateModelView !== 'hidden') || (hasTweenedJoints && !animateModelHidden)
+  // Tweens evaluate only in tweens mode — in a poses project tween stacks sit muted.
+  const hasTweenedJoints = animateMode && animationMode === 'tweens' && hasActiveTweens(rigBoxes)
+  // Pose preview takes over the model views while a non-empty pose exists, a clip plays or
+  // sits scrubbed (hidden blanks it like the others); the static views stay mounted with
+  // frozen builds underneath. The drag latch keeps it mounted through exact-zero crossings
+  // mid-gesture. Tweens never evaluate in poses mode, so they can't activate it there.
+  const poseActive = useAppStore((s) => s.mode === 'animate' && (s.meta.animationMode ?? 'tweens') === 'poses' && (s.poseRotations.size > 0 || s.poseDragging || s.stagedPoseId !== null || s.clipPlaying || s.clipTime !== null) && s.animateModelView !== 'hidden') || (hasTweenedJoints && !animateModelHidden)
   // Exactly one model view is live at a time; the others stay mounted but hidden with frozen
   // builds (see useActiveMemo), so mode switches never tear down GPU resources.
   // (textureMode and hasAnimations are mutually exclusive — hasAnimations requires animateMode.)

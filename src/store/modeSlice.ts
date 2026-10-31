@@ -41,6 +41,16 @@ export const createModeSlice: Slice = (set, get) => ({
           state.animateTab = 'rig'
           state.activeTool = 'rigbox'
         }
+        // The panel only shows one motion tab per project — clamp a hidden tab (and its
+        // tool) to the visible one so the toolbar never points at a tab that isn't there.
+        const animationMode = state.meta.animationMode ?? 'tweens'
+        if (animationMode === 'tweens' && state.animateTab === 'poses') {
+          state.animateTab = 'tweens'
+          state.activeTool = 'select'
+        } else if (animationMode === 'poses' && state.animateTab === 'tweens') {
+          state.animateTab = 'poses'
+          state.activeTool = 'pose'
+        }
       }
     })
     // Animate and Texture modes have no 3D-only editing surface — leaving Model mode drops the

@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it } from 'vitest'
 import { useAppStore } from './useAppStore'
 
-/** Tween stacks: per-box ordered looping motions, undoable, mutually exclusive with posing. */
+/** Tween stacks: per-box ordered looping motions, undoable, gated by project animation mode. */
 describe('rig tweens', () => {
   beforeEach(() => {
     useAppStore.getState().newProject('Test', 16)
@@ -55,19 +55,28 @@ describe('rig tweens', () => {
     expect(tweensOf('arm')[0].amount).toBe(4)
   })
 
-  it('enabling a tween clears that joint pose; posing a tweened joint is refused', () => {
+  it('gates by project animation mode: tweens evaluate in tweens mode, poses in poses mode', () => {
     addBox('arm')
     const s = useAppStore.getState()
     s.setJointRotation('arm', [0.5, 0, 0])
     expect(useAppStore.getState().poseRotations.size).toBe(1)
+    // Enabling a tween no longer clears the pose — the mode switch mutes it instead.
     const id = s.addTween('arm')!
-    expect(useAppStore.getState().poseRotations.size).toBe(0)
-    s.setJointRotation('arm', [0.5, 0, 0])
-    expect(useAppStore.getState().poseRotations.size).toBe(0)
-    // Muting all tweens re-enables posing.
-    s.setTweenEnabled('arm', id, false)
-    s.setJointRotation('arm', [0.5, 0, 0])
     expect(useAppStore.getState().poseRotations.size).toBe(1)
+    expect(useAppStore.getState().meta.animationMode).toBe('tweens')
+    // Switching to poses keeps the tween (muted) and clears the scratch.
+    s.setAnimationMode('poses')
+    expect(useAppStore.getState().poseRotations.size).toBe(0)
+    expect(tweensOf('arm')).toHaveLength(1)
+    // Switching back loses nothing.
+    s.setAnimationMode('tweens')
+    expect(tweensOf('arm').map((t) => t.id)).toEqual([id])
+    expect(useAppStore.getState().meta.animationMode).toBe('tweens')
+    // The mode switch itself never enters undo history (like setVoxelScaleY).
+    const depth = useAppStore.getState().animPast.length
+    s.setAnimationMode('poses')
+    expect(useAppStore.getState().animPast.length).toBe(depth)
+    expect(useAppStore.getState().meta.animationMode).toBe('poses')
   })
 
   it('patches pendulum endpoints on the animate undo stack', () => {

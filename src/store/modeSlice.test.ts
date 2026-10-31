@@ -123,21 +123,35 @@ describe('animate tab/tool sync', () => {
 
   it('entering animate keeps a wired tool and matches its tab', () => {
     const s = useAppStore.getState()
+    s.setAnimationMode('poses')
     s.setActiveTool('pose')
     s.setMode('animate')
     expect(useAppStore.getState().animateTab).toBe('poses')
     expect(useAppStore.getState().activeTool).toBe('pose')
   })
 
+  it('entering animate with a pose tool in a tweens project lands on tweens + select', () => {
+    const s = useAppStore.getState()
+    s.setAnimationMode('tweens')
+    s.setActiveTool('pose')
+    s.setMode('animate')
+    expect(useAppStore.getState().animateTab).toBe('tweens')
+    expect(useAppStore.getState().activeTool).toBe('select')
+  })
+
   it('switching tabs arms the tab tool', () => {
     const s = useAppStore.getState()
+    s.setAnimationMode('poses')
     s.setMode('animate')
     s.setAnimateTab('tweens')
-    expect(useAppStore.getState().activeTool).toBe('select')
-    s.setAnimateTab('poses')
+    // Tweens is hidden in a poses project — maps to the visible poses tab.
+    expect(useAppStore.getState().animateTab).toBe('poses')
     expect(useAppStore.getState().activeTool).toBe('pose')
     s.setAnimateTab('rig')
     expect(useAppStore.getState().activeTool).toBe('rigbox')
+    s.setAnimationMode('tweens')
+    s.setAnimateTab('tweens')
+    expect(useAppStore.getState().activeTool).toBe('select')
   })
 
   it('re-clicking the active tab keeps an explicitly chosen tool', () => {

@@ -5,7 +5,7 @@ import { emptyTextureModel, getTexel } from '@/engine/texture/TextureStore'
 import { faceSizeFor } from '@/engine/texture/types'
 import { migrateToCurrent } from './migrations'
 import { deserializeProject, serializeProject } from './serialize'
-import type { Pose, RigBox } from '@/engine/rigging/types'
+import type { Pose, RigBox, RigClip } from '@/engine/rigging/types'
 import type { ProjectMeta, VoxPaintProjectFileV1 } from './schema'
 import { CURRENT_SCHEMA_VERSION } from './schema'
 
@@ -124,7 +124,7 @@ describe('markers persistence (v9)', () => {
       { id: 'a', color: 2, position: [1, 2, 3] as [number, number, number], planeAxis: 'x' as const, planeOrientation: -1 as const },
       { id: 'b', color: 0, position: [-4, 0, 7] as [number, number, number], planeAxis: 'y' as const, planeOrientation: 1 as const },
     ]
-    const file = serializeProject(model, DEFAULT_PALETTE, meta, texture, undefined, undefined, undefined, undefined, markers)
+    const file = serializeProject(model, DEFAULT_PALETTE, meta, texture, { markers })
     expect(file.markers).toHaveLength(2)
     const restored = deserializeProject(file)
     expect(restored.markers).toEqual(markers)
@@ -133,9 +133,9 @@ describe('markers persistence (v9)', () => {
   it('drops out-of-bounds and duplicate markers on load, clamps bad colors and facings', () => {
     const model = emptyModel()
     const texture = emptyTextureModel(meta.gridExtent)
-    const file = serializeProject(model, DEFAULT_PALETTE, meta, texture, undefined, undefined, undefined, undefined, [
+    const file = serializeProject(model, DEFAULT_PALETTE, meta, texture, { markers: [
       { id: 'a', color: 2, position: [0, 0, 0], planeAxis: 'z' as const, planeOrientation: 1 as const },
-    ])
+    ] })
     file.markers!.push(
       { id: 'far', color: 0, x: 99, y: 0, z: 0, planeAxis: 'y', planeOrientation: 1 },
       { id: 'a', color: 0, x: 1, y: 1, z: 1, planeAxis: 'y', planeOrientation: 1 },
@@ -283,7 +283,7 @@ describe('serialize rig boxes', () => {
       // Half-integer pivots (cell-boundary joint faces) must survive the trip, not just ints.
       { id: 'b', name: 'arm', min: [1, 0, 1] as [number, number, number], max: [2, 3, 2] as [number, number, number], parentId: 'a', pivot: [0.5, 1, 1] as [number, number, number], tweens: [{ id: 'tw-1', kind: 'slide', axis: 'x', direction: -1, speed: 2, amount: 5, minAngle: -30, maxAngle: 30, enabled: true }] },
     ]
-    const file = serializeProject(emptyModel(), DEFAULT_PALETTE, meta, texture, undefined, undefined, undefined, undefined, undefined, rigBoxes)
+    const file = serializeProject(emptyModel(), DEFAULT_PALETTE, meta, texture, { rigBoxes })
     expect(file.rigBoxes).toHaveLength(2)
     expect(file.rigBoxes?.[0]).not.toHaveProperty('pivot')
     expect(file.rigBoxes?.[0]).not.toHaveProperty('tweens')
@@ -342,11 +342,11 @@ describe('serialize rig boxes', () => {
     const texture = emptyTextureModel(meta.gridExtent)
     // 'b' is an exact twin of 'a' (stale: creatable before footprint hit-testing selected
     // first); 'c' nests under the twin. Load keeps the first and folds the rest into it.
-    const file = serializeProject(emptyModel(), DEFAULT_PALETTE, meta, texture, undefined, undefined, undefined, undefined, undefined, [
+    const file = serializeProject(emptyModel(), DEFAULT_PALETTE, meta, texture, { rigBoxes: [
       { id: 'a', name: 'torso', min: [0, 0, 0] as [number, number, number], max: [1, 1, 1] as [number, number, number], parentId: null, pivot: null },
       { id: 'b', name: 'torso-copy', min: [0, 0, 0] as [number, number, number], max: [1, 1, 1] as [number, number, number], parentId: null, pivot: null },
       { id: 'c', name: 'arm', min: [0, 0, 0] as [number, number, number], max: [0, 0, 0] as [number, number, number], parentId: 'b', pivot: null },
-    ])
+    ] })
     const restored = deserializeProject(file).rigBoxes
     expect(restored.map((b) => b.id).sort()).toEqual(['a', 'c'])
     expect(restored.find((b) => b.id === 'c')?.parentId).toBe('a')
@@ -374,7 +374,7 @@ describe('serialize rig boxes', () => {
 })
 
 describe('serialize pose library', () => {
-  it('round-trips poses and the cycle definition', () => {
+  it('round-trips poses and clips', () => {
     const boxes = [
       { id: 'arm', name: 'arm', min: [0, 0, 0] as [number, number, number], max: [2, 2, 2] as [number, number, number], parentId: null, pivot: null, tweens: [] },
       { id: 'leg', name: 'leg', min: [4, 0, 0] as [number, number, number], max: [6, 2, 2] as [number, number, number], parentId: null, pivot: null, tweens: [] },
@@ -383,52 +383,71 @@ describe('serialize pose library', () => {
       { id: 'p1', name: 'Wave', joints: { arm: [0.5, 0, 0] } },
       { id: 'p2', name: 'Kick', joints: { leg: [0, 0, 0.25], ghost: [1, 0, 0] } },
     ]
-    const cycle = { fromId: 'p1', toId: 'p2', mode: 'pingpong' as const, speed: 2 as const }
-    const file = serializeProject(emptyModel(), DEFAULT_PALETTE, meta, emptyTextureModel(meta.gridExtent), undefined, undefined, undefined, undefined, undefined, boxes, poses, cycle)
+    const clips: RigClip[] = [
+      { id: 'c1', name: 'walk', loop: true, duration: 2, keys: [{ id: 'k0', poseId: 'p1', time: 0, ease: 'inOut' }, { id: 'k1', poseId: 'p2', time: 1, ease: 'linear' }] },
+    ]
+    const file = serializeProject(emptyModel(), DEFAULT_PALETTE, { ...meta, animationMode: 'poses' }, emptyTextureModel(meta.gridExtent), { rigBoxes: boxes, poses, clips })
     expect(file.schemaVersion).toBe(CURRENT_SCHEMA_VERSION)
+    expect(file.meta.animationMode).toBe('poses')
     // Unknown joints are pruned on load (ghost box is not in the file).
     const restored = deserializeProject(file)
     expect(restored.poses).toEqual([
       { id: 'p1', name: 'Wave', joints: { arm: [0.5, 0, 0] } },
       { id: 'p2', name: 'Kick', joints: { leg: [0, 0, 0.25] } },
     ])
-    expect(restored.poseCycle).toEqual(cycle)
+    expect(restored.clips).toEqual(clips)
+    expect(restored.meta.animationMode).toBe('poses')
   })
 
-  it('omits empty poses and a null cycle', () => {
-    const file = serializeProject(emptyModel(), DEFAULT_PALETTE, meta, emptyTextureModel(meta.gridExtent), undefined, undefined, undefined, undefined, undefined, [], [], null)
+  it('omits empty poses and clips', () => {
+    const file = serializeProject(emptyModel(), DEFAULT_PALETTE, meta, emptyTextureModel(meta.gridExtent), { rigBoxes: [], poses: [], clips: [] })
     expect(file).not.toHaveProperty('poses')
-    expect(file).not.toHaveProperty('poseCycle')
+    expect(file).not.toHaveProperty('clips')
     const restored = deserializeProject(file)
     expect(restored.poses).toEqual([])
-    expect(restored.poseCycle).toBeNull()
+    expect(restored.clips).toEqual([])
   })
 
-  it('drops malformed poses and cycles on load', () => {
+  it('defaults a missing animation mode to tweens', () => {
+    const file = serializeProject(emptyModel(), DEFAULT_PALETTE, meta, emptyTextureModel(meta.gridExtent))
+    expect(deserializeProject(file).meta.animationMode).toBe('tweens')
+    const corrupt = { ...file, meta: { ...file.meta, animationMode: 'turbo' } }
+    expect(deserializeProject(corrupt as any).meta.animationMode).toBe('tweens')
+  })
+
+  it('drops malformed poses and clips on load, keeping emptied clips', () => {
     const boxes = [
       { id: 'arm', name: 'arm', min: [0, 0, 0] as [number, number, number], max: [2, 2, 2] as [number, number, number], parentId: null, pivot: null, tweens: [] },
     ]
     const file = {
-      ...serializeProject(emptyModel(), DEFAULT_PALETTE, meta, emptyTextureModel(meta.gridExtent), undefined, undefined, undefined, undefined, undefined, boxes),
+      ...serializeProject(emptyModel(), DEFAULT_PALETTE, meta, emptyTextureModel(meta.gridExtent), { rigBoxes: boxes }),
       poses: [
         { id: 'good', name: 'Good', joints: { arm: [0.5, 0, 0] } },
         { id: 'bad', name: 'Bad', joints: { arm: [0.5, 'x', 0] } },
         { id: 'good', name: 'Dupe', joints: {} },
         { id: '', name: 'Empty', joints: {} },
       ],
-      poseCycle: { fromId: 'good', toId: 'missing', mode: 'loop', speed: 1 },
+      clips: [
+        { id: 'keep', name: 'keep', loop: true, duration: 2, keys: [{ id: 'k0', poseId: 'good', time: 0, ease: 'linear' }, { id: 'k1', poseId: 'missing', time: 1, ease: 'linear' }] },
+        { id: 'empty', name: 'empty', loop: false, duration: 3, keys: [{ id: 'k0', poseId: 'missing', time: 0, ease: 'linear' }] },
+        { id: 'keep', name: 'dupe', loop: false, duration: 1, keys: [] },
+        'not-a-clip',
+      ],
     }
     const restored = deserializeProject(file as any)
-    // Bad joints pruned (pose survives, possibly jointless); dupe + empty ids dropped;
-    // dangling cycle dropped.
+    // Bad joints pruned (pose survives, possibly jointless); dupe + empty ids dropped.
     expect(restored.poses).toEqual([
       { id: 'good', name: 'Good', joints: { arm: [0.5, 0, 0] } },
       { id: 'bad', name: 'Bad', joints: {} },
     ])
-    expect(restored.poseCycle).toBeNull()
+    // Dangling keys dropped; a clip left keyless survives as an empty shell; dupe ids
+    // and non-objects dropped.
+    expect(restored.clips.map((c) => c.id).sort()).toEqual(['empty', 'keep'])
+    expect(restored.clips.find((c) => c.id === 'keep')?.keys).toHaveLength(1)
+    expect(restored.clips.find((c) => c.id === 'empty')?.keys).toEqual([])
   })
 
-  it('migrates v15 files with an empty library and no cycle', () => {
+  it('migrates v15 files with an empty library and no clips', () => {
     const texture = emptyTextureModel(meta.gridExtent)
     const v15 = {
       ...serializeProject(emptyModel(), DEFAULT_PALETTE, meta, texture),
@@ -436,6 +455,46 @@ describe('serialize pose library', () => {
     }
     const restored = deserializeProject(migrateToCurrent(v15))
     expect(restored.poses).toEqual([])
-    expect(restored.poseCycle).toBeNull()
+    expect(restored.clips).toEqual([])
+    expect(restored.meta.animationMode).toBe('tweens')
+  })
+
+  it('migrates a v16 pose cycle to poses mode with one cycle clip', () => {
+    const boxes = [
+      { id: 'arm', name: 'arm', min: [0, 0, 0] as [number, number, number], max: [2, 2, 2] as [number, number, number], parentId: null, pivot: null, tweens: [] },
+    ]
+    const v16 = {
+      ...serializeProject(emptyModel(), DEFAULT_PALETTE, meta, emptyTextureModel(meta.gridExtent), {
+        rigBoxes: boxes,
+        poses: [
+          { id: 'p1', name: 'A', joints: { arm: [0.5, 0, 0] } },
+          { id: 'p2', name: 'B', joints: { arm: [0, 0.5, 0] } },
+        ],
+      }),
+      schemaVersion: 16,
+      poseCycle: { fromId: 'p1', toId: 'p2', mode: 'pingpong', speed: 1 },
+    }
+    const migrated = migrateToCurrent(v16)
+    expect(migrated.schemaVersion).toBe(CURRENT_SCHEMA_VERSION)
+    expect(migrated).not.toHaveProperty('poseCycle')
+    const restored = deserializeProject(migrated)
+    expect(restored.meta.animationMode).toBe('poses')
+    expect(restored.clips).toHaveLength(1)
+    expect(restored.clips[0].name).toBe('cycle')
+    expect(restored.clips[0].loop).toBe(true)
+    expect(restored.clips[0].keys.map((k) => [k.poseId, k.time])).toEqual([['p1', 0], ['p2', 2]])
+  })
+
+  it('migrates a v16 tweened file to tweens mode with no clips', () => {
+    const boxes: RigBox[] = [
+      { id: 'arm', name: 'arm', min: [0, 0, 0] as [number, number, number], max: [2, 2, 2] as [number, number, number], parentId: null, pivot: null, tweens: [{ id: 'tw-1', kind: 'rotate', axis: 'y', direction: 1, speed: 1, amount: 4, minAngle: -30, maxAngle: 30, enabled: true }] },
+    ]
+    const v16 = {
+      ...serializeProject(emptyModel(), DEFAULT_PALETTE, meta, emptyTextureModel(meta.gridExtent), { rigBoxes: boxes }),
+      schemaVersion: 16,
+    }
+    const restored = deserializeProject(migrateToCurrent(v16))
+    expect(restored.meta.animationMode).toBe('tweens')
+    expect(restored.clips).toEqual([])
   })
 })

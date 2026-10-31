@@ -14,7 +14,7 @@ const AXIS_UNIT: Record<Axis, [number, number, number]> = {
 /**
  * Every tween period divides the 2s base cycle (speeds 1/2/3 → periods 2/1/⅔s), so any
  * stack — any box, any combination — repeats exactly every 2 seconds. The exporter bakes
- * over this window (see `bakeRigClips`); nothing ever drifts.
+ * over this window (see `bakeRigAction`); nothing ever drifts.
  */
 export const TWEEN_CYCLE_SECONDS = BASE_CYCLE_SECONDS
 
@@ -41,28 +41,9 @@ export function hasActiveTweens(boxes: RigBox[]): boolean {
 }
 
 /**
- * Self or any ancestor has an enabled tween. Pose interaction (rings, ring/trackball
- * drags) needs a static frame — the drag math samples the bind/pose-only parent chain —
- * so a tweened chain can't be posed until its tweens mute. The pose *value* itself stays
- * well-defined under motion (world = loop × pose); only targeting it is disabled.
- */
-export function chainHasActiveTweens(boxes: RigBox[], box: RigBox): boolean {
-  const byId = new Map(boxes.map((b) => [b.id, b]))
-  let cur: RigBox | undefined = box
-  const seen = new Set<string>()
-  while (cur && !seen.has(cur.id)) {
-    if (boxHasActiveTweens(cur)) return true
-    seen.add(cur.id)
-    cur = cur.parentId ? byId.get(cur.parentId) : undefined
-  }
-  return false
-}
-
-/**
- * Full animated world matrix per box: tween-chain × pose-chain. The single choke point
- * for everything that must track motion — voxel meshes (RigPoseView), wire outlines,
- * pivot markers, and parent→child links all read these, so chrome can never disagree
- * with the model about where a joint is.
+ * Full animated world matrix per box: tween-chain × pose-chain. Kept for composed
+ * (tween plus pose) sampling — see the export bake. Viewport chrome reads the
+ * mode-gated `previewFrame` instead, so tweens and poses never mix on screen.
  */
 export function composeAnimatedMatrices(
   boxes: RigBox[],
@@ -182,8 +163,7 @@ export function tweenDuration(speed: AnimationSpeed): number {
  * One joint's parent-relative local track pair over [0, duration], sampled at `fps`:
  * `local(t) = T(−parentPivot) · parentMotion⁻¹(t) · selfMotion(t) · T(pivot)` (grid units,
  * identity at rest so clips start pop-free), with Y scaled to export space on write.
- * Shared by `bakeRigClips` (one clip per joint) and `bakeRigAction` (one clip per action)
- * so both bakes carry byte-identical motion. LINEAR TRS: sub-voxel error, plays in every
+ * Sampled by `bakeRigAction` — LINEAR TRS: sub-voxel error, plays in every
  * downstream player.
  */
 function bakeJointTracks(
@@ -234,50 +214,11 @@ function bakeJointTracks(
 }
 
 /**
- * Bakes one looping `AnimationClip` per animated joint by sampling the composed
- * (tween × pose) motion over the universal cycle (`TWEEN_CYCLE_SECONDS`, extended to
- * cover a pose cycle's full pass when one is provided). Each joint's track is
- * authored in its parent's *animated* frame —
- * `local(t) = T(−parentPivot) · parentMotion⁻¹(t) · selfMotion(t) · T(pivot)` (grid
- * units, identity at rest so clips start pop-free) — with Y scaled to export space on
- * write, matching the joint tree's rest translations. LINEAR TRS at 30fps: sub-voxel
- * error, plays in every downstream player (unlike N simultaneous analytic clips, which
- * no standard player composes).
- */
-export function bakeRigClips(
-  boxes: RigBox[],
-  groups: Map<string, THREE.Group>,
-  voxelScaleY = 1,
-  fps = 30,
-  pose?: { at: (t: number) => Map<string, JointEuler>; duration: number },
-): THREE.AnimationClip[] {
-  const posedIds = new Set(pose ? [...pose.at(0).keys()] : [])
-  const animated = boxes.filter((b) => boxHasActiveTweens(b) || posedIds.has(b.id))
-  if (animated.length === 0) return []
-  // Static children ride animated parents through the hierarchy — no clip needed.
-  const byId = new Map(boxes.map((b) => [b.id, b]))
-  const duration = Math.max(TWEEN_CYCLE_SECONDS, pose?.duration ?? 0)
-  const clips: THREE.AnimationClip[] = []
-
-  for (const box of animated) {
-    const group = groups.get(box.id)
-    if (!group) continue
-    const parent = box.parentId ? byId.get(box.parentId) : undefined
-    const sampleWorlds = (t: number) => composeAnimatedMatrices(boxes, pose ? pose.at(t) : EMPTY_POSE, t)
-    const [posTrack, quatTrack] = bakeJointTracks(group.name, box, parent, voxelScaleY, fps, duration, sampleWorlds)
-    clips.push(new THREE.AnimationClip(`anim_${group.name}`, duration, [posTrack, quatTrack]))
-  }
-  return clips
-}
-
-/**
  * Bakes ONE action `AnimationClip` (a tweens project's `loop`, or one clip per `RigClip`
  * in a poses project) with a position + quaternion track per animated joint, sampled at
  * `fps` over `duration` seconds. `sampleWorlds` supplies the composed world matrices at
- * time t (tween motion, an evaluated clip frame, or both); `animatedIds` selects which
- * boxes get channels (unlisted boxes ride their parents through the hierarchy). Per-joint
- * math is shared with `bakeRigClips` (see `bakeJointTracks`), so an action bake carries
- * exactly the motion the per-joint bake would.
+ * time t (tween motion or an evaluated clip frame); `animatedIds` selects which
+ * boxes get channels (unlisted boxes ride their parents through the hierarchy).
  */
 export function bakeRigAction(
   name: string,
@@ -301,5 +242,3 @@ export function bakeRigAction(
   }
   return new THREE.AnimationClip(name, duration, tracks)
 }
-
-const EMPTY_POSE = new Map<string, JointEuler>()

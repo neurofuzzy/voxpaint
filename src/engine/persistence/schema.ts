@@ -1,12 +1,12 @@
 import type { AnimationType, AnimationSpeed } from '@/engine/animation/types'
-import type { PoseCycleMode, RigTween } from '@/engine/rigging/types'
+import type { AnimationMode, ClipKey, RigTween } from '@/engine/rigging/types'
 import type { Axis, BBox, ChamferClassification, GridExtent, Orientation, VoxelScaleY } from '@/engine/grid/types'
 import type { SerializedMarkerPosition } from '@/engine/markers/types'
 import type { PaletteSlotRef, PaletteState } from '@/engine/palette/types'
 import type { BoxFace } from '@/engine/texture/types'
 import type { GltfExportAnchor } from '@/engine/export/gltfExport'
 
-export const CURRENT_SCHEMA_VERSION = 16 as const
+export const CURRENT_SCHEMA_VERSION = 17 as const
 
 /** A named joint snapshot: per-box local euler rotations (radians, intrinsic XYZ). */
 export type SerializedPose = {
@@ -15,12 +15,21 @@ export type SerializedPose = {
   joints: Record<string, [number, number, number]>
 }
 
-/** A pose-to-pose playback loop definition (transport state is never persisted). */
-export type SerializedPoseCycle = {
-  fromId: string
-  toId: string
-  mode: PoseCycleMode
-  speed: AnimationSpeed
+/** One keyed pose on a clip timeline (see `RigClip` / `ClipKey` in engine/rigging/types.ts). */
+export type SerializedClipKey = {
+  id: string
+  poseId: string
+  time: number
+  ease: ClipKey['ease']
+}
+
+/** A named keyed-pose timeline: one exported action (`walk`, `idle`, `dodge`). */
+export type SerializedClip = {
+  id: string
+  name: string
+  loop: boolean
+  duration: number
+  keys: SerializedClipKey[]
 }
 
 export type ViewSettings = {
@@ -69,6 +78,9 @@ export type ProjectMeta = {
    * faces (see `resampleTextureModel`) — unlike `voxelScaleY` it touches texture data, but the
    * voxel model is unaffected. Absent on older files, defaulting to 4. */
   texelScale?: number
+  /** Which animation system this project uses: per-joint looping tweens (machines) or keyed
+   * pose clips (characters), never both. Absent on older files, defaulting to `'tweens'`. */
+  animationMode?: AnimationMode
 }
 
 export type SerializedColorCell = { x: number; y: number; z: number; paletteSlot: PaletteSlotRef }
@@ -202,7 +214,12 @@ export type VoxPaintProjectFileV2 = {
  * enabled). Older files load with equivalent motion under the new composition.
  *
  * v15 → v16: named joint snapshots (`poses`) plus the pose-cycle definition (`poseCycle`)
- * are added. Older files load with an empty library and no cycle. */
+ * are added. Older files load with an empty library and no cycle.
+ *
+ * v16 → v17: the pose cycle becomes the first keyed-pose `clips` entry (name `cycle`) and
+ * `poseCycle` is dropped; `meta.animationMode` records the project's animation system
+ * (`'tweens'` for tweened/empty projects, `'poses'` for pose-cycle ones). Older files load
+ * through `MIGRATIONS[16]`, which converts and stamps both. */
 export type VoxPaintProjectFile = {
   schemaVersion: typeof CURRENT_SCHEMA_VERSION
   meta: ProjectMeta
@@ -220,5 +237,5 @@ export type VoxPaintProjectFile = {
   markers?: SerializedMarkerPosition[]
   rigBoxes?: SerializedRigBox[]
   poses?: SerializedPose[]
-  poseCycle?: SerializedPoseCycle
+  clips?: SerializedClip[]
 }

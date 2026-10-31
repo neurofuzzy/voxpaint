@@ -9,7 +9,6 @@ import {
   newKeyId,
   snapClipTime,
   type Pose,
-  type PoseCycle,
   type RigBox,
   type RigClip,
   type AnimationMode,
@@ -141,9 +140,8 @@ export function evaluateClip(poses: Pose[], boxes: RigBox[], clip: RigClip, t: n
  * migration shape): `once` becomes a non-looping in-out segment over one half cycle;
  * `loop` and `pingpong` both become seamless out-and-back loops (from@0, to@half,
  * duration 2×half) with in-out keys — the old `loop` mode's B→A pop goes away on purpose.
- * `pingpong` durations match `poseCycleDuration` exactly (2 s speeds divide evenly).
  */
-export function clipFromPoseCycle(cycle: PoseCycle): RigClip {
+export function clipFromPoseCycle(cycle: { fromId: string; toId: string; mode: 'once' | 'loop' | 'pingpong'; speed: 1 | 2 | 3 }): RigClip {
   const half = snapClipTime(BASE_CYCLE_SECONDS / cycle.speed)
   const loop = cycle.mode !== 'once'
   return {
@@ -159,16 +157,14 @@ export function clipFromPoseCycle(cycle: PoseCycle): RigClip {
 }
 
 /**
- * Derives a project's animation mode from its data (persistence migration default): a
- * pose cycle always means poses; otherwise poses with no enabled tween mean poses;
- * anything else (tweens present, or neither system in use) means tweens.
+ * Derives a project's animation mode from its data (persistence migration default):
+ * poses with no enabled tween mean poses; anything else (tweens present, or neither
+ * system in use) means tweens.
  */
 export function deriveAnimationMode(args: {
   rigBoxes: RigBox[]
   poses: Pose[]
-  poseCycle?: PoseCycle | null
 }): AnimationMode {
-  if (args.poseCycle) return 'poses'
   if (args.poses.length > 0 && !hasActiveTweens(args.rigBoxes)) return 'poses'
   return 'tweens'
 }

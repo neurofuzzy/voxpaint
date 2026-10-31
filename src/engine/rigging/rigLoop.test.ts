@@ -1,15 +1,13 @@
 import { describe, expect, it } from 'vitest'
 import * as THREE from 'three'
 import type { Coord } from '@/engine/grid/types'
-import type { Pose, RigBox, RigTween } from './types'
+import type { Pose, RigBox, RigClip, RigTween } from './types'
 import { sanitizeRigTween } from './types'
 import {
   activeTweens,
   bakeRigAction,
-  bakeRigClips,
   boxHasActiveTweens,
   boxTweenMatrix,
-  chainHasActiveTweens,
   composeAnimatedMatrices,
   composeTweenMatrices,
   hasActiveTweens,
@@ -19,7 +17,8 @@ import {
   pivotWorldFromMatrix,
   TWEEN_CYCLE_SECONDS,
 } from './rigLoop'
-import { evaluatePoseCycle, poseCycleDuration } from './pose'
+import { composePoseMatrices } from './pose'
+import { evaluateClip } from './clip'
 
 function tween(over: Partial<RigTween> = {}): RigTween {
   return { id: 'tw-1', kind: 'rotate', axis: 'y', direction: 1, speed: 1, amount: 4, minAngle: -30, maxAngle: 30, enabled: true, ...over }
@@ -181,19 +180,6 @@ describe('rig tweens', () => {
     expect(x).toBeCloseTo(3.5, 10)
   })
 
-  it('flags a tween anywhere up the chain', () => {
-    const parent = box('p', null, [tween()])
-    const child = box('c', 'p')
-    const grandchild = box('g', 'c')
-    const boxes = [parent, child, grandchild]
-    expect(chainHasActiveTweens(boxes, parent)).toBe(true)
-    expect(chainHasActiveTweens(boxes, child)).toBe(true)
-    expect(chainHasActiveTweens(boxes, grandchild)).toBe(true)
-    expect(chainHasActiveTweens([box('a'), box('b', 'a')], box('b', 'a'))).toBe(false)
-    // Dangling parents stop the walk instead of hanging.
-    expect(chainHasActiveTweens([box('orphan', 'missing')], box('orphan', 'missing'))).toBe(false)
-  })
-
   it('composes tween × pose per box in one call', () => {
     const parent = box('p', null, [tween({ kind: 'slide', axis: 'x', amount: 2 })])
     const child = box('c', 'p')
@@ -235,7 +221,7 @@ describe('rig tweens', () => {
   })
 })
 
-describe('bakeRigClips', () => {
+describe('bakeRigAction (tweens)', () => {
   function groupsFor(boxes: RigBox[]): Map<string, THREE.Group> {
     const map = new Map<string, THREE.Group>()
     for (const b of boxes) {
@@ -252,21 +238,17 @@ describe('bakeRigClips', () => {
       box('c', 'p', [tween({ id: 'x', kind: 'slide', axis: 'x', amount: 3 })]),
       box('still'),
     ]
-    const clips = bakeRigClips(boxes, groupsFor(boxes))
-    expect(clips).toHaveLength(2)
-    expect(clips.map((c) => c.name).sort()).toEqual(['anim_c', 'anim_p'])
-    for (const clip of clips) {
-      expect(clip.duration).toBeCloseTo(TWEEN_CYCLE_SECONDS, 10)
-      expect(clip.tracks).toHaveLength(2)
-    }
-    const spin = clips.find((c) => c.name === 'anim_p')!
-    const rotTrack = spin.tracks.find((t) => t.name === 'p.quaternion')!
+    const clip = bakeRigAction('loop', boxes, groupsFor(boxes), 1, 30, TWEEN_CYCLE_SECONDS, (t) => composeTweenMatrices(boxes, t), new Set(['p', 'c']))
+    expect(clip.name).toBe('loop')
+    expect(clip.duration).toBeCloseTo(TWEEN_CYCLE_SECONDS, 10)
+    expect(clip.tracks.map((t) => t.name).sort()).toEqual(['c.position', 'c.quaternion', 'p.position', 'p.quaternion'])
+    const rotTrack = clip.tracks.find((t) => t.name === 'p.quaternion')!
     expect(rotTrack).toBeDefined()
   })
 
   it('bakes rest-pose endpoints: no pop at the loop seam', () => {
     const boxes = [box('p', null, [tween({ kind: 'slide', axis: 'x', amount: 3 })])]
-    const [clip] = bakeRigClips(boxes, groupsFor(boxes))
+    const clip = bakeRigAction('loop', boxes, groupsFor(boxes), 1, 30, TWEEN_CYCLE_SECONDS, (t) => composeTweenMatrices(boxes, t), new Set(['p']))
     const posTrack = clip.tracks.find((t) => t.name.endsWith('.position'))!
     const values = (posTrack as unknown as { values: ArrayLike<number> }).values
     // First and last keys both equal the rest local position (parentless → pivot world point).
@@ -284,11 +266,11 @@ describe('bakeRigClips', () => {
     const child = box('c', 'p', [tween({ id: 'x', kind: 'slide', axis: 'x', amount: 2, speed: 3 })])
     const boxes = [parent, child]
     // Bake with the full outline (the child clip is parent-frame-relative).
-    const [clip] = bakeRigClips(boxes, groupsFor(boxes), 1, 30).filter((c) => c.name === 'anim_c')
-    // Evaluate the baked local track at t and compare against the analytic composition:
-    // local(t) = T(−pp) · parentMotion⁻¹(t) · selfMotion(t) · T(p).
-    const posTrack = clip.tracks.find((t) => t.name.endsWith('.position'))! as unknown as { times: ArrayLike<number>; values: ArrayLike<number> }
-    const quatTrack = clip.tracks.find((t) => t.name.endsWith('.quaternion'))! as unknown as { times: ArrayLike<number>; values: ArrayLike<number> }
+    const clip = bakeRigAction('loop', boxes, groupsFor(boxes), 1, 30, TWEEN_CYCLE_SECONDS, (t) => composeTweenMatrices(boxes, t), new Set(['p', 'c']))
+    // Evaluate the baked child's local track at t and compare against the analytic
+    // composition: local(t) = T(−pp) · parentMotion⁻¹(t) · selfMotion(t) · T(p).
+    const posTrack = clip.tracks.find((t) => t.name === 'c.position')! as unknown as { times: ArrayLike<number>; values: ArrayLike<number> }
+    const quatTrack = clip.tracks.find((t) => t.name === 'c.quaternion')! as unknown as { times: ArrayLike<number>; values: ArrayLike<number> }
     const sample = (track: { times: ArrayLike<number>; values: ArrayLike<number> }, size: number, t: number) => {
       // Piecewise-linear lookup on the baked keys.
       const times = track.times
@@ -324,7 +306,7 @@ describe('bakeRigClips', () => {
   })
 })
 
-describe('bakeRigClips with a pose cycle', () => {
+describe('bakeRigAction (poses)', () => {
   function groupsFor(boxes: RigBox[]): Map<string, THREE.Group> {
     const map = new Map<string, THREE.Group>()
     for (const b of boxes) {
@@ -339,43 +321,36 @@ describe('bakeRigClips with a pose cycle', () => {
     { id: 'a', name: 'A', joints: {} },
     { id: 'b', name: 'B', joints: { c: [0, Math.PI / 2, 0] } },
   ]
-  const cycle = { fromId: 'a', toId: 'b', mode: 'once' as const, speed: 1 as const }
-  const pose = {
-    at: (t: number) => evaluatePoseCycle(poses, cycle, t) ?? new Map(),
-    duration: poseCycleDuration(cycle),
+  const walk: RigClip = {
+    id: 'walk',
+    name: 'walk',
+    loop: false,
+    duration: 2,
+    keys: [
+      { id: 'k0', poseId: 'a', time: 0, ease: 'inOut' },
+      { id: 'k1', poseId: 'b', time: 2, ease: 'inOut' },
+    ],
   }
+  const sampleWorldsFor = (boxes: RigBox[]) => (t: number) => composePoseMatrices(boxes, evaluateClip(poses, boxes, walk, t).rot)
 
-  it('emits clips for posed joints even with no tweens, sized to the cycle pass', () => {
-    // No tweens anywhere — the posed child still bakes; the static parent emits nothing.
+  it('emits tracks for posed joints even with no tweens, sized to the clip', () => {
+    // No tweens anywhere — the posed child still bakes at the clip's own duration; the
+    // static parent gets no channels (it rides the hierarchy).
     const boxes = [box('p'), box('c', 'p')]
-    const clips = bakeRigClips(boxes, groupsFor(boxes), 1, 30, pose)
-    expect(clips.map((c) => c.name)).toEqual(['anim_c'])
-    // Once at 1x covers a single 2s half cycle.
-    expect(clips[0].duration).toBeCloseTo(2, 10)
+    const action = bakeRigAction('walk', boxes, groupsFor(boxes), 1, 30, walk.duration, sampleWorldsFor(boxes), new Set(['c']))
+    expect(action.name).toBe('walk')
+    expect(action.duration).toBeCloseTo(2, 10)
+    expect(action.tracks.map((t) => t.name).sort()).toEqual(['c.position', 'c.quaternion'])
   })
 
-  it('extends the window to a full ping-pong pass', () => {
-    const boxes = [box('c')]
-    const pingpong = { ...cycle, mode: 'pingpong' as const }
-    const clips = bakeRigClips(boxes, groupsFor(boxes), 1, 30, {
-      at: (t: number) => evaluatePoseCycle(poses, pingpong, t) ?? new Map(),
-      duration: poseCycleDuration(pingpong),
-    })
-    expect(clips[0].duration).toBeCloseTo(4, 10)
-  })
-
-  it('matches the live preview with pose + tween composed', () => {
-    // Parent spins (tween), child holds a posed rotation: the baked child clip must carry
-    // the parent's motion in its parent-relative frame plus its own pose offset.
-    const parent = box('p', null, [tween({ id: 's', kind: 'rotate', axis: 'y', speed: 1 })])
+  it('matches the live posed preview (bake ≡ preview parity)', () => {
+    // A posed child under a static parent: the baked child clip must carry its own pose
+    // offset in the parent-relative frame.
+    const parent = box('p')
     const child = box('c', 'p')
     const boxes = [parent, child]
-    const posed = {
-      at: (t: number) => evaluatePoseCycle(poses, cycle, t) ?? new Map(),
-      duration: poseCycleDuration(cycle),
-    }
-    const [clip] = bakeRigClips(boxes, groupsFor(boxes), 1, 30, posed).filter((c) => c.name === 'anim_c')
-    expect(clip).toBeDefined()
+    const clip = bakeRigAction('walk', boxes, groupsFor(boxes), 1, 30, walk.duration, sampleWorldsFor(boxes), new Set(['c']))
+    expect(clip.tracks.map((t) => t.name).sort()).toEqual(['c.position', 'c.quaternion'])
     const posTrack = clip.tracks.find((t) => t.name.endsWith('.position'))! as unknown as { times: ArrayLike<number>; values: ArrayLike<number> }
     const quatTrack = clip.tracks.find((t) => t.name.endsWith('.quaternion'))! as unknown as { times: ArrayLike<number>; values: ArrayLike<number> }
     const sample = (track: { times: ArrayLike<number>; values: ArrayLike<number> }, size: number, t: number) => {
@@ -390,9 +365,7 @@ describe('bakeRigClips with a pose cycle', () => {
       return out
     }
     for (const t of [0.25, 0.75, 1.5]) {
-      const worlds = composeTweenMatrices(boxes, t)
-      void worlds
-      const animated = composeAnimatedMatrices(boxes, posed.at(t), t)
+      const animated = composePoseMatrices(boxes, evaluateClip(poses, boxes, walk, t).rot)
       const expected = new THREE.Matrix4()
         .makeTranslation(-1.5, -1.5, -1.5)
         .multiply(new THREE.Matrix4().copy(animated.get('p')!).invert())
@@ -489,30 +462,6 @@ describe('bakeRigAction', () => {
       expect(s.values[i]).toBeCloseTo(f.values[i], 6)
       expect(s.values[i + 1]).toBeCloseTo(f.values[i + 1] * 2, 6)
       expect(s.values[i + 2]).toBeCloseTo(f.values[i + 2], 6)
-    }
-  })
-
-  it('carries exactly the per-joint bake motion (bakeRigClips parity)', () => {
-    // Same outline, same motion: the action bake must agree with the per-joint bake
-    // track-for-track (the refactor shares bakeJointTracks, this pins it).
-    const boxes = [
-      box('p', null, [tween({ id: 's', kind: 'rotate', axis: 'y', speed: 2 })]),
-      box('c', 'p', [tween({ id: 'x', kind: 'slide', axis: 'x', amount: 2, speed: 3 })]),
-    ]
-    const groups = groupsFor(boxes)
-    const perJoint = bakeRigClips(boxes, groups)
-    const action = bakeRigAction('loop', boxes, groups, 1, 30, TWEEN_CYCLE_SECONDS, (t) => composeTweenMatrices(boxes, t), new Set(['p', 'c']))
-    expect(action.tracks).toHaveLength(4)
-    for (const jointClip of perJoint) {
-      const joint = jointClip.name.replace(/^anim_/, '')
-      for (const kind of ['position', 'quaternion']) {
-        const expected = trackValues(jointClip, `${joint}.${kind}`)
-        const got = trackValues(action, `${joint}.${kind}`)
-        expect(got.times).toHaveLength(expected.times.length)
-        for (let i = 0; i < expected.times.length; i++) expect(got.times[i]).toBeCloseTo(expected.times[i], 6)
-        expect(got.values).toHaveLength(expected.values.length)
-        for (let i = 0; i < expected.values.length; i++) expect(got.values[i]).toBeCloseTo(expected.values[i], 5)
-      }
     }
   })
 })

@@ -2,7 +2,7 @@ import { useMemo, useRef, useState } from 'react'
 import { Bone, ChevronDown, ChevronRight, ChevronUp, Copy, Crosshair, Eye, EyeOff, Pause, Play, Plus, RotateCcw, RotateCw, Trash2 } from 'lucide-react'
 import type { Axis } from '@/engine/grid/types'
 import { SLIDE_AMOUNT_MAX, SLIDE_AMOUNT_MIN } from '@/engine/animation/animationLayers'
-import type { PoseCycleMode, RigBox, RigTween } from '@/engine/rigging/types'
+import type { ClipKey, RigBox, RigTween } from '@/engine/rigging/types'
 import { PENDULUM_TWEEN_ANGLE_MAX, PENDULUM_TWEEN_ANGLE_MIN } from '@/engine/rigging/types'
 import { activeTweens } from '@/engine/rigging/rigLoop'
 import { rigPivotOf, rigSubtreeIds } from '@/engine/rigging/types'
@@ -35,9 +35,10 @@ function visibleRows(boxes: RigBox[], collapsed: Set<string>): Array<{ box: RigB
 /**
  * Animate-mode docked panel (left of the tool rail), tabbed into three concerns:
  * Rig (outline + selected-box properties), Tweens (every box's motion stack — new
- * tweens land on the selection), and Poses (named snapshots + the playback cycle).
- * The focused tab drives the contextual toolbar next to it, so taps always dispatch
- * somewhere sensible. Tweens
+ * tweens land on the selection), and Poses (clip timelines of keyed poses + the named
+ * pose library). The focused tab drives the contextual toolbar next to it, so taps
+ * always dispatch somewhere sensible. Only one motion tab shows per project: Rig +
+ * Tweens for machines, Rig + Poses for characters (see the mode toggle). Tweens
  * are looping procedural motions that evaluate simultaneously, composing top-first —
  * stack order is motion order (rotations don't commute), so rows reorder.
  */
@@ -52,13 +53,17 @@ export function AnimatePanel() {
   const selectedRigBoxId = useAppStore((s) => s.selectedRigBoxId)
   const tab = useAppStore((s) => s.animateTab)
   const setTab = useAppStore((s) => s.setAnimateTab)
+  const animationMode = useAppStore((s) => s.meta.animationMode ?? 'tweens')
 
   const box = rigBoxes.find((b) => b.id === selectedRigBoxId) ?? null
+  // One motion tab per project: machines get Rig + Tweens, characters get Rig + Poses.
+  const tabs = TABS.filter((t) => t.id === 'rig' || (animationMode === 'tweens' ? t.id === 'tweens' : t.id === 'poses'))
 
   return (
     <div className="flex w-64 min-h-0 shrink-0 flex-col border-r border-neutral-800 bg-neutral-900">
+      <ModeToggle />
       <div className="flex gap-1 border-b border-neutral-800 p-2" role="tablist" aria-label="Animate panel tabs">
-        {TABS.map(({ id, label }) => (
+        {tabs.map(({ id, label }) => (
           <button
             key={id}
             role="tab"
@@ -78,9 +83,40 @@ export function AnimatePanel() {
             <InspectorSection box={box} rigBoxes={rigBoxes} />
           </>
         )}
-        {tab === 'tweens' && <TweensSection boxes={rigBoxes} />}
-        {tab === 'poses' && <PosesSection />}
+        {tab === 'tweens' && animationMode === 'tweens' && <TweensSection boxes={rigBoxes} />}
+        {tab === 'poses' && animationMode === 'poses' && <PosesSection />}
       </div>
+    </div>
+  )
+}
+
+/**
+ * Project animation-system switch: machines loop per-joint tweens, characters play
+ * keyed pose clips — never both. Switching keeps the other mode's data (tweens stay on
+ * their boxes, poses and clips stay in the file) but mutes it; export writes only the
+ * active mode.
+ */
+function ModeToggle() {
+  const animationMode = useAppStore((s) => s.meta.animationMode ?? 'tweens')
+  const setAnimationMode = useAppStore((s) => s.setAnimationMode)
+  return (
+    <div className="flex gap-1 p-2 pb-0" role="group" aria-label="Animation mode">
+      <button
+        aria-pressed={animationMode === 'tweens'}
+        onClick={() => setAnimationMode('tweens')}
+        title="Machine: per-joint looping tweens (rotate, pendulum, slide)"
+        className={seg(animationMode === 'tweens') + ' flex-1'}
+      >
+        Machine
+      </button>
+      <button
+        aria-pressed={animationMode === 'poses'}
+        onClick={() => setAnimationMode('poses')}
+        title="Character: keyed pose clips on a timeline (walk, idle, dodge)"
+        className={seg(animationMode === 'poses') + ' flex-1'}
+      >
+        Character
+      </button>
     </div>
   )
 }
@@ -798,7 +834,8 @@ function TweenRow({ boxId, tween, index, count, dropSlot, dimmed, onDragStart, o
  * The pose library: named joint snapshots captured from the gizmo scratch. Click a row
  * to stage it for preview (click again to unstage back to the scratch); grabbing the
  * gizmo while staged adopts it into the scratch first, so you grab what you see.
- * Capture freezes the current scratch into a new pose and stages it.
+ * Capture freezes the current scratch into a new pose and stages it. Clips (above)
+ * sequence these snapshots on a timeline — one exported action each.
  */
 function PosesSection() {
   const poses = useAppStore((s) => s.poses)
@@ -820,6 +857,8 @@ function PosesSection() {
 
   return (
     <section className="flex flex-col gap-1.5">
+      <ClipsSection />
+      <div className="-mx-3 border-t border-neutral-800" />
       <div className="flex items-center gap-1">
         <span className="min-w-0 flex-1 truncate text-xs font-semibold uppercase tracking-wider text-neutral-400 select-none">
           Poses ({poses.length})
@@ -844,7 +883,6 @@ function PosesSection() {
           capture
         </button>
       </div>
-      <CycleBar />
       {poses.length === 0 ? (
         <p className="rounded-md border border-dashed border-neutral-800 px-2 py-2 text-[10px] leading-snug text-neutral-500">
           No poses yet — pose with the gizmo, then capture it here to keep it.
@@ -907,116 +945,221 @@ function PosesSection() {
 }
 
 /**
- * Pose-to-pose playback bar: From → To pickers, Once/Loop/Ping-pong mode, speed, and
- * transport. The cycle interpolates every joint and loops without a timeline; grabbing
- * the gizmo freezes the current frame into the scratch and stops transport.
+ * Clip timelines (one exported action each): picker with add/rename/delete, loop toggle,
+ * duration, transport, and one row per key — pose, time (seconds, snapped to 1/30 s),
+ * and ease. "+ key" appends the staged pose at the playhead.
  */
-function CycleBar() {
+function ClipsSection() {
+  const clips = useAppStore((s) => s.clips)
+  const activeClipId = useAppStore((s) => s.activeClipId)
+  const selectedKeyId = useAppStore((s) => s.selectedKeyId)
+  const clipPlaying = useAppStore((s) => s.clipPlaying)
   const poses = useAppStore((s) => s.poses)
-  const poseCycle = useAppStore((s) => s.poseCycle)
-  const cyclePlaying = useAppStore((s) => s.cyclePlaying)
-  const setPoseCycle = useAppStore((s) => s.setPoseCycle)
-  const setCyclePlaying = useAppStore((s) => s.setCyclePlaying)
+  const stagedPoseId = useAppStore((s) => s.stagedPoseId)
+  const addClip = useAppStore((s) => s.addClip)
+  const renameClip = useAppStore((s) => s.renameClip)
+  const deleteClip = useAppStore((s) => s.deleteClip)
+  const patchClip = useAppStore((s) => s.patchClip)
+  const setActiveClip = useAppStore((s) => s.setActiveClip)
+  const setSelectedKey = useAppStore((s) => s.setSelectedKey)
+  const setClipPlaying = useAppStore((s) => s.setClipPlaying)
+  const addKey = useAppStore((s) => s.addKey)
+  const patchKey = useAppStore((s) => s.patchKey)
+  const removeKey = useAppStore((s) => s.removeKey)
+  const [editing, setEditing] = useState(false)
+  const [draft, setDraft] = useState('')
 
-  const canDefine = poses.length >= 2
-  function patch(next: Partial<NonNullable<typeof poseCycle>> & { fromId: string; toId: string }) {
-    if (!canDefine) return
-    const base = poseCycle ?? { fromId: next.fromId, toId: next.toId, mode: 'pingpong' as const, speed: 1 as const }
-    setPoseCycle({ ...base, ...next })
+  const clip = clips.find((c) => c.id === activeClipId) ?? null
+
+  function commitRename() {
+    if (clip && draft.trim()) renameClip(clip.id, draft)
+    setEditing(false)
+    setDraft('')
   }
-
-  const canPlay = canDefine && poseCycle !== null
 
   return (
     <div className="flex flex-col gap-1.5 rounded-md border border-neutral-800 px-2 py-2">
       <div className="flex items-center gap-1.5">
-        <span className="text-[10px] text-neutral-500">Cycle</span>
+        <span className="text-[10px] text-neutral-500">Clip</span>
         <span className="min-w-0 flex-1" />
         <button
-          onClick={() => setCyclePlaying(!cyclePlaying)}
-          disabled={!canPlay}
-          title={!canPlay ? 'Define a from/to pair first' : cyclePlaying ? 'Stop the cycle' : 'Play the cycle'}
-          className="flex h-5 w-5 items-center justify-center rounded text-violet-300 hover:bg-neutral-800 hover:text-violet-100 disabled:opacity-30 disabled:hover:bg-transparent"
+          onClick={() => addClip()}
+          title="Add a new empty clip (1 s, looping)"
+          className="flex items-center gap-1 rounded px-1.5 py-0.5 text-[10px] font-medium text-violet-300 hover:bg-neutral-800 hover:text-violet-100"
         >
-          {cyclePlaying ? <Pause size={12} /> : <Play size={12} />}
+          <Plus size={12} />
+          add
         </button>
       </div>
-      {!canDefine && (
+      {clip ? (
+        <>
+          <div className="flex items-center gap-1.5">
+            <select
+              value={clip.id}
+              onChange={(e) => setActiveClip(e.target.value)}
+              title="Clip under edit"
+              className="min-w-0 flex-1 rounded bg-neutral-800 px-1 py-0.5 text-[11px] text-neutral-200 focus:outline-none focus:ring-1 focus:ring-violet-500"
+            >
+              {clips.map((c) => (
+                <option key={c.id} value={c.id}>{c.name}</option>
+              ))}
+            </select>
+            <button
+              onClick={() => deleteClip(clip.id)}
+              title={`Delete ${clip.name}`}
+              className="flex h-5 w-5 shrink-0 items-center justify-center rounded text-neutral-500 hover:bg-neutral-800 hover:text-red-400"
+            >
+              <Trash2 size={12} />
+            </button>
+          </div>
+          <div className="flex items-center gap-1.5">
+            {editing ? (
+              <input
+                autoFocus
+                value={draft}
+                onChange={(e) => setDraft(e.target.value)}
+                onBlur={commitRename}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') commitRename()
+                  if (e.key === 'Escape') { setEditing(false); setDraft('') }
+                }}
+                className="min-w-0 flex-1 rounded bg-neutral-800 px-1 py-0.5 text-[11px] text-neutral-100 focus:outline-none focus:ring-1 focus:ring-violet-500"
+              />
+            ) : (
+              <button
+                onDoubleClick={() => { setEditing(true); setDraft(clip.name) }}
+                title="Double-click to rename (glTF-safe, uniquified)"
+                className="min-w-0 flex-1 truncate text-left text-[11px] font-medium text-neutral-200"
+              >
+                {clip.name}
+              </button>
+            )}
+          </div>
+          <div className="flex items-center gap-1.5">
+            <button
+              onClick={() => patchClip(clip.id, { loop: !clip.loop })}
+              title={clip.loop ? 'Looping: the last key eases back to the first' : 'One-shot: holds the last key past the end'}
+              className={
+                'flex h-5 items-center justify-center rounded px-1.5 text-[10px] font-medium transition ' +
+                (clip.loop ? 'bg-violet-500/60 text-white' : 'text-neutral-400 hover:bg-neutral-800 hover:text-neutral-200')
+              }
+            >
+              {clip.loop ? 'Loop' : 'Once'}
+            </button>
+            <label className="flex items-center gap-1 text-[10px] text-neutral-500" title="Clip length in seconds (snapped to 1/30 s)">
+              <input
+                type="number"
+                aria-label="Clip duration in seconds"
+                min={0}
+                step={1 / 30}
+                value={clip.duration}
+                onChange={(e) => {
+                  const v = Number(e.target.value)
+                  if (Number.isFinite(v)) patchClip(clip.id, { duration: v })
+                }}
+                className="w-16 rounded bg-neutral-800 px-1 py-0.5 font-mono text-[11px] text-neutral-200 focus:outline-none focus:ring-1 focus:ring-violet-500"
+              />
+              s
+            </label>
+            <span className="min-w-0 flex-1" />
+            <button
+              onClick={() => setClipPlaying(!clipPlaying)}
+              title={clipPlaying ? 'Pause (freezes the playhead where it stops)' : 'Play the clip'}
+              className="flex h-5 w-5 items-center justify-center rounded text-violet-300 hover:bg-neutral-800 hover:text-violet-100"
+            >
+              {clipPlaying ? <Pause size={12} /> : <Play size={12} />}
+            </button>
+          </div>
+          {clip.keys.length === 0 ? (
+            <p className="text-[10px] leading-snug text-neutral-500">
+              No keys yet — stage a pose below, then + key it in.
+            </p>
+          ) : (
+            <ul className="flex flex-col gap-1">
+              {clip.keys.map((key) => {
+                const selected = key.id === selectedKeyId
+                return (
+                  <li key={key.id}>
+                    <div
+                      onClick={() => setSelectedKey(selected ? null : key.id)}
+                      title={selected ? 'Deselect this key' : 'Select this key for the inspector'}
+                      className={
+                        'flex cursor-pointer items-center gap-1 rounded-md border px-1 py-0.5 ' +
+                        (selected ? 'border-violet-500/60 bg-violet-500/10' : 'border-neutral-800 hover:bg-neutral-800/60')
+                      }
+                    >
+                      <select
+                        value={key.poseId}
+                        onChange={(e) => patchKey(clip.id, key.id, { poseId: e.target.value })}
+                        onClick={(e) => e.stopPropagation()}
+                        title="Key pose"
+                        className="min-w-0 flex-1 rounded bg-neutral-800 px-1 py-0.5 text-[11px] text-neutral-200 focus:outline-none focus:ring-1 focus:ring-violet-500"
+                      >
+                        {poses.map((p) => (
+                          <option key={p.id} value={p.id}>{p.name}</option>
+                        ))}
+                      </select>
+                      <input
+                        type="number"
+                        aria-label="Key time in seconds"
+                        min={0}
+                        step={1 / 30}
+                        value={key.time}
+                        onChange={(e) => {
+                          const v = Number(e.target.value)
+                          if (Number.isFinite(v)) patchKey(clip.id, key.id, { time: v })
+                        }}
+                        onClick={(e) => e.stopPropagation()}
+                        title="Key time in seconds (first key locked at 0)"
+                        className="w-14 shrink-0 rounded bg-neutral-800 px-1 py-0.5 font-mono text-[11px] text-neutral-200 focus:outline-none focus:ring-1 focus:ring-violet-500"
+                      />
+                      <select
+                        value={key.ease}
+                        onChange={(e) => patchKey(clip.id, key.id, { ease: e.target.value as ClipKey['ease'] })}
+                        onClick={(e) => e.stopPropagation()}
+                        title="Easing out of this key toward the next"
+                        className="w-18 shrink-0 rounded bg-neutral-800 px-1 py-0.5 text-[11px] text-neutral-200 focus:outline-none focus:ring-1 focus:ring-violet-500"
+                      >
+                        {(Object.entries(KEY_EASE_LABELS) as Array<[ClipKey['ease'], string]>).map(([ease, label]) => (
+                          <option key={ease} value={ease}>{label}</option>
+                        ))}
+                      </select>
+                      <button
+                        onClick={(e) => { e.stopPropagation(); removeKey(clip.id, key.id) }}
+                        title="Remove this key"
+                        className="flex h-5 w-5 shrink-0 items-center justify-center rounded text-neutral-500 hover:bg-neutral-800 hover:text-red-400"
+                      >
+                        <Trash2 size={12} />
+                      </button>
+                    </div>
+                  </li>
+                )
+              })}
+            </ul>
+          )}
+          <button
+            onClick={() => addKey(clip.id)}
+            title={stagedPoseId ? 'Key the staged pose at the playhead' : 'Key the first library pose at the playhead — stage one first to pick it'}
+            className="flex items-center gap-1 rounded px-1.5 py-0.5 text-[10px] font-medium text-violet-300 hover:bg-neutral-800 hover:text-violet-100"
+          >
+            <Plus size={12} />
+            key from staged
+          </button>
+        </>
+      ) : (
         <p className="text-[10px] leading-snug text-neutral-500">
-          Capture at least two poses to loop between them.
+          No clips yet — add one to key poses on a timeline.
         </p>
       )}
-      <div className="flex items-center gap-1.5">
-        <span className="w-10 shrink-0 text-[10px] text-neutral-500">From</span>
-        <select
-          value={poseCycle?.fromId ?? ''}
-          onChange={(e) => {
-            const fromId = e.target.value
-            if (!fromId) return
-            patch({ fromId, toId: poseCycle?.toId && poses.some((p) => p.id === poseCycle.toId) ? poseCycle.toId : fromId })
-          }}
-          disabled={!canDefine}
-          className="min-w-0 flex-1 rounded bg-neutral-800 px-1 py-0.5 text-[11px] text-neutral-200 focus:outline-none focus:ring-1 focus:ring-violet-500 disabled:opacity-40"
-        >
-          {poses.length === 0 && <option value="">—</option>}
-          {poses.map((p) => (
-            <option key={p.id} value={p.id}>{p.name}</option>
-          ))}
-        </select>
-      </div>
-      <div className="flex items-center gap-1.5">
-        <span className="w-10 shrink-0 text-[10px] text-neutral-500">To</span>
-        <select
-          value={poseCycle?.toId ?? ''}
-          onChange={(e) => {
-            const toId = e.target.value
-            if (!toId || !poseCycle) return
-            patch({ fromId: poseCycle.fromId, toId })
-          }}
-          disabled={!canDefine}
-          className="min-w-0 flex-1 rounded bg-neutral-800 px-1 py-0.5 text-[11px] text-neutral-200 focus:outline-none focus:ring-1 focus:ring-violet-500 disabled:opacity-40"
-        >
-          {poses.length === 0 && <option value="">—</option>}
-          {poses.map((p) => (
-            <option key={p.id} value={p.id}>{p.name}</option>
-          ))}
-        </select>
-      </div>
-      <div className="flex items-center gap-1.5">
-        <div className="flex items-center gap-0.5" role="group" aria-label="Cycle mode">
-          {(['once', 'loop', 'pingpong'] as PoseCycleMode[]).map((mode) => (
-            <button
-              key={mode}
-              onClick={() => poseCycle && setPoseCycle({ ...poseCycle, mode })}
-              disabled={!poseCycle}
-              title={mode === 'once' ? 'Play A→B once, then hold B' : mode === 'loop' ? 'Loop A→B with a jump back' : 'Ease A→B→A seamlessly'}
-              className={
-                'flex h-5 items-center justify-center rounded px-1.5 text-[10px] font-medium transition disabled:opacity-30 ' +
-                (poseCycle?.mode === mode ? 'bg-violet-500/60 text-white' : 'text-neutral-400 hover:bg-neutral-800 hover:text-neutral-200')
-              }
-            >
-              {mode === 'once' ? 'Once' : mode === 'loop' ? 'Loop' : 'Ping-pong'}
-            </button>
-          ))}
-        </div>
-        <span className="min-w-0 flex-1" />
-        <div className="flex items-center gap-0.5" role="group" aria-label="Cycle speed">
-          {([1, 2, 3] as AnimationSpeed[]).map((speed) => (
-            <button
-              key={speed}
-              onClick={() => poseCycle && setPoseCycle({ ...poseCycle, speed })}
-              disabled={!poseCycle}
-              title={`Cycle speed ${speed}x`}
-              className={
-                'flex h-5 items-center justify-center rounded px-1 font-mono text-[10px] transition disabled:opacity-30 ' +
-                (poseCycle?.speed === speed ? 'bg-violet-500/60 text-white' : 'text-neutral-400 hover:bg-neutral-800 hover:text-neutral-200')
-              }
-            >
-              {speed}×
-            </button>
-          ))}
-        </div>
-      </div>
     </div>
   )
+}
+
+/** Per-key easing presets: the curve out of a key toward the next (hold freezes until then). */
+const KEY_EASE_LABELS: Record<ClipKey['ease'], string> = {
+  linear: 'Linear',
+  inOut: 'In-out',
+  in: 'In',
+  out: 'Out',
+  hold: 'Hold',
 }

@@ -2,8 +2,8 @@ import { useEffect, useMemo, useRef } from 'react'
 import * as THREE from 'three'
 import { useFrame } from '@react-three/fiber'
 import { rigPivotLinks } from '@/engine/rigging/types'
-import { resolvePreviewPose } from '@/engine/rigging/pose'
-import { composeAnimatedMatrices, pivotWorldFromMatrix } from '@/engine/rigging/rigLoop'
+import { previewFrame } from '@/engine/rigging/preview'
+import { pivotWorldFromMatrix } from '@/engine/rigging/rigLoop'
 import { useAppStore } from '@/store/useAppStore'
 
 const LINK_AMBER = '#f59e0b' // amber-500, matching unselected rig box outlines
@@ -50,10 +50,7 @@ export function RigLinkLines() {
     if (st.mode !== 'animate') return
     const amber = amberGeo.getAttribute('position') as THREE.BufferAttribute
     const white = whiteGeo.getAttribute('position') as THREE.BufferAttribute
-    const now = performance.now() / 1000
-    const cycleTime = st.cyclePlaying && st.poseCycle ? now - st.cycleStartedAt : null
-    const preview = resolvePreviewPose(st.poses, st.stagedPoseId, st.poseRotations, st.poseCycle, cycleTime)
-    const matrices = composeAnimatedMatrices(st.rigBoxes, preview, now)
+    const { worlds: matrices } = previewFrame(st, performance.now() / 1000)
     const byId = new Map(st.rigBoxes.map((b) => [b.id, b]))
     let amberCount = 0
     let whiteCount = 0

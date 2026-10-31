@@ -1,4 +1,6 @@
 import { DEFAULT_PALETTE } from '@/engine/palette/defaultPalette'
+import { clipFromPoseCycle, deriveAnimationMode } from '@/engine/rigging/clip'
+import type { AnimationMode } from '@/engine/rigging/types'
 import { CURRENT_SCHEMA_VERSION, type VoxPaintProjectFile } from './schema'
 
 type Migration = (json: any) => any
@@ -119,6 +121,44 @@ MIGRATIONS[14] = (doc) => ({
 /** v15 → v16: named joint snapshots (`poses`) plus the pose-cycle definition (`poseCycle`).
  * Nothing to reshape — pre-v16 files simply have no pose library (empty, no cycle). */
 MIGRATIONS[15] = (doc) => ({ ...doc, schemaVersion: 16 })
+
+/** v16 → v17: the pose cycle becomes the first keyed-pose clip (name `cycle`) and `poseCycle`
+ * is dropped; `meta.animationMode` is stamped from the data (a cycle or un-tweened poses
+ * mean poses, otherwise tweens). A dangling/invalid cycle converts to no clip (the file
+ * keeps its poses; the mode still derives through the same rule). */
+MIGRATIONS[16] = (doc) => {
+  const poses = Array.isArray(doc?.poses) ? doc.poses : []
+  const poseIds = new Set<string>()
+  for (const p of poses) {
+    if (p && typeof p.id === 'string') poseIds.add(p.id)
+  }
+  const raw = doc?.poseCycle
+  const cycle =
+    raw && typeof raw === 'object'
+    && typeof raw.fromId === 'string' && typeof raw.toId === 'string'
+    && poseIds.has(raw.fromId) && poseIds.has(raw.toId)
+    && (raw.mode === 'once' || raw.mode === 'loop' || raw.mode === 'pingpong')
+    && (raw.speed === 1 || raw.speed === 2 || raw.speed === 3)
+      ? { fromId: raw.fromId, toId: raw.toId, mode: raw.mode, speed: raw.speed }
+      : null
+  const rigBoxes = Array.isArray(doc?.rigBoxes) ? doc.rigBoxes : []
+  // A cycle always means poses; otherwise poses with no enabled tween mean poses.
+  let animationMode: AnimationMode = cycle ? 'poses' : 'tweens'
+  if (!cycle) {
+    try {
+      animationMode = deriveAnimationMode({ rigBoxes, poses })
+    } catch {
+      // Malformed rig data (hand-edited files) — fall back to tweens.
+    }
+  }
+  const { poseCycle: _dropped, ...rest } = doc ?? {}
+  return {
+    ...rest,
+    schemaVersion: 17,
+    meta: { ...doc?.meta, animationMode: doc?.meta?.animationMode ?? animationMode },
+    ...(cycle ? { clips: [clipFromPoseCycle(cycle)] } : {}),
+  }
+}
 
 export class UnsupportedSchemaVersionError extends Error {
   constructor(foundVersion: unknown) {

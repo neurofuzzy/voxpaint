@@ -1,7 +1,7 @@
 # Plan: tweens for machines, poses for characters
 
 Status: **APPROVED 2026-10-31, implementing (opencode, supervised).** Worker: do ONE step per run, prepare the commit, do NOT commit. The supervisor (not the worker) edits this file.
-Source: `docs/animation-brief.md` (branch `rig-animate`).
+Source: `docs/animation-brief.md` (work branch `animate-v2`; never switch branches).
 
 ## Context
 
@@ -237,3 +237,13 @@ The supervisor stops at each step end. Steps 3–6 are visual, so the human brow
 - Carry to Step 2: `sanitizeRigClip` returns null for a clip with no keys, so a new empty clip (e.g. "dodge" before keying) would vanish on save/load. Keep empty clips (duration default 1 s).
 - Carry to Step 2: a looping clip whose duration equals its last key time pops on the wrap; when `loop` is on, the store and sanitizer should hold duration ≥ last key + 1 frame.
 - Known-red tests: none.
+
+### 2026-10-31 · Step 2 · staged on rig-animate (tip aa15c1f + staged, 34 files) · verdict: FIX THEN ACCEPT
+- Checked: diff of preview.ts, gltfExport.ts, migrations.ts, types.ts, poseSlice.ts and mode gating in PoseGizmo/Viewport3D/AnimatePanel; run log `Tests 875 passed (875)`; build and lint green.
+- Both Step 1 carry-overs fixed (empty clips kept, loop floor at last key + 1 frame): ACCEPTED.
+- Per-action export (`loop` / one per clip, deduped names, GLTFLoader round-trip test): ACCEPTED.
+- Bug: `clipTime !== 0` used as an "on the timeline" flag. After a pause, gizmo grabs edit an invisible scratch, and scrubbing to 0 shows the scratch. Fix: `clipTime: number | null`. SENT.
+- Bug: `overwritePose` drops the view to bind. Fix: stage the saved pose. SENT.
+- Deferred to Step 5 by design: offsets are not yet composed in the preview or export.
+- Process: the Step 1 run did `git checkout rig-animate` (the prompt named that branch) while the human was on `animate-v2`. Nothing lost; `animate-v2` fast-forwarded to the Step 2 commit and checked out; `rig-animate` left in place.
+- Fix run checked: `clipTime: number | null` applied at every reader and reset site; `overwritePose` stages the saved pose; 3 new store tests; run log `Tests 877 passed (877)`; build and lint green. Verdict: ACCEPT, pending human browser check of the panel.
