@@ -1,6 +1,8 @@
 import { beforeEach, describe, expect, it } from 'vitest'
 import { previewFrame } from '@/engine/rigging/preview'
+import { CLIP_FRAME_SECONDS } from '@/engine/rigging/types'
 import { useAppStore } from './useAppStore'
+import { clampKeyTime } from './poseSlice'
 
 /** Named pose snapshots: captured from scratch, staged for preview, undoable + persisted. */
 describe('pose library', () => {
@@ -258,5 +260,164 @@ describe('pose clips', () => {
     s.setClipTime(0)
     expect(useAppStore.getState().clipTime).not.toBeNull()
     expect(previewFrame(useAppStore.getState(), 99).pose.get('arm')).toEqual([0.5, 0, 0])
+  })
+})
+
+/** Step 3 clip-editor UX: strip retime semantics (sort, snap, first-key lock, one undo
+ * entry per drag), the editing-target lifecycle, and + key defaults. */
+describe('clip editor', () => {
+  beforeEach(() => {
+    useAppStore.getState().newProject('Test', 16)
+  })
+
+  function addBox(id: string) {
+    useAppStore.getState().addRigBox({ id, name: id, min: [0, 0, 0], max: [2, 2, 2], parentId: null, pivot: null, tweens: [] })
+  }
+
+  function twoPoses(): [string, string] {
+    addBox('arm')
+    const s = useAppStore.getState()
+    s.setJointRotation('arm', [0.5, 0, 0])
+    const a = s.capturePose()!
+    s.setJointRotation('arm', [0, 0.5, 0])
+    const b = s.capturePose()!
+    return [a, b]
+  }
+
+  it('retiming sorts keys by time and locks the first at 0', () => {
+    const [a, b] = twoPoses()
+    const s = useAppStore.getState()
+    const id = s.addClip()
+    const k0 = s.addKey(id, a, 0)!
+    const k1 = s.addKey(id, b, 1)!
+    const k2 = s.addKey(id, a, 2)!
+    // Drag the last key into the middle — the strip order follows time, not insertion.
+    s.patchKey(id, k2, { time: 0.5 })
+    let clip = useAppStore.getState().clips[0]
+    expect(clip.keys.map((k) => k.id)).toEqual([k0, k2, k1])
+    expect(clip.keys.map((k) => k.time)).toEqual([0, 0.5, 1])
+    // The first key never leaves 0, however far it is dragged (it stays first here).
+    s.patchKey(id, k0, { time: 0.4 })
+    clip = useAppStore.getState().clips[0]
+    expect(clip.keys[0].id).toBe(k0)
+    expect(clip.keys[0].time).toBe(0)
+  })
+
+  it('snaps retimed keys to 1/30 s', () => {
+    const [a, b] = twoPoses()
+    const s = useAppStore.getState()
+    const id = s.addClip()
+    s.addKey(id, a, 0)
+    const k1 = s.addKey(id, b, 1)!
+    s.patchKey(id, k1, { time: 0.05 })
+    // 0.05 s sits halfway between frames 1 and 2 — rounds to 2/30 s.
+    expect(useAppStore.getState().clips[0].keys[1].time).toBeCloseTo(2 / 30, 10)
+  })
+
+  it('clamps retimed keys to the clip end, one frame shy when looping', () => {
+    const [a, b] = twoPoses()
+    const s = useAppStore.getState()
+    const id = s.addClip()
+    s.addKey(id, a, 0)
+    const k1 = s.addKey(id, b, 1)!
+    const duration = useAppStore.getState().clips[0].duration
+    // Looping (the default): the wrap span keeps its frame, so the key stops one short
+    // and the duration never moves — the strip scale stays fixed mid-drag.
+    s.patchKey(id, k1, { time: 99 })
+    let clip = useAppStore.getState().clips[0]
+    expect(clip.keys[1].time).toBeCloseTo(duration - CLIP_FRAME_SECONDS, 10)
+    expect(clip.duration).toBe(duration)
+    // One-shot: the key may sit exactly on the end, but never past it.
+    s.patchClip(id, { loop: false })
+    s.patchKey(id, k1, { time: 99 })
+    clip = useAppStore.getState().clips[0]
+    expect(clip.keys[1].time).toBeCloseTo(clip.duration, 10)
+    expect(clip.duration).toBe(duration)
+    // The inspector path clamps the same way (it commits through patchKey).
+    s.patchKey(id, k1, { time: -5 })
+    clip = useAppStore.getState().clips[0]
+    expect(clip.keys[1].time).toBeCloseTo(CLIP_FRAME_SECONDS, 10)
+  })
+
+  it('clampKeyTime pins times to the strip scale', () => {
+    expect(clampKeyTime(-1, 1, false)).toBe(CLIP_FRAME_SECONDS)
+    expect(clampKeyTime(0, 1, false)).toBe(CLIP_FRAME_SECONDS)
+    expect(clampKeyTime(0.05, 1, false)).toBeCloseTo(2 / 30, 10)
+    expect(clampKeyTime(99, 1, false)).toBe(1)
+    expect(clampKeyTime(99, 1, true)).toBeCloseTo(1 - CLIP_FRAME_SECONDS, 10)
+  })
+
+  it('brackets a marker drag as a single undo entry', () => {
+    const [a, b] = twoPoses()
+    const s = useAppStore.getState()
+    const id = s.addClip()
+    s.addKey(id, a, 0)
+    const k1 = s.addKey(id, b, 1)!
+    const before = useAppStore.getState().animPast.length
+    // The strip opens one stroke on pointer-down and commits on pointer-up.
+    s.animBeginStroke()
+    s.patchKey(id, k1, { time: 0.4 })
+    s.patchKey(id, k1, { time: 0.6 })
+    s.animCommitStroke()
+    expect(useAppStore.getState().animPast.length).toBe(before + 1)
+    expect(useAppStore.getState().clips[0].keys[1].time).toBeCloseTo(0.6, 10)
+    s.animUndo()
+    expect(useAppStore.getState().clips[0].keys[1].time).toBe(1)
+  })
+
+  it('tracks the editing target until reset, mode switch, delete, or new project', () => {
+    addBox('arm')
+    const s = useAppStore.getState()
+    expect(s.editingPoseId).toBeNull()
+    // Capture names the new pose as the editing target.
+    s.setJointRotation('arm', [0.5, 0, 0])
+    const a = s.capturePose()!
+    expect(useAppStore.getState().editingPoseId).toBe(a)
+    // Staging another pose and adopting it retargets the scratch to that pose.
+    s.setJointRotation('arm', [0, 0.5, 0])
+    const b = s.capturePose()!
+    s.stagePose(a)
+    s.adoptStagedPose()
+    expect(useAppStore.getState().editingPoseId).toBe(a)
+    // Grabbing with a pose staged retargets the same way.
+    s.stagePose(b)
+    s.grabPoseForEdit()
+    expect(useAppStore.getState().stagedPoseId).toBeNull()
+    expect(useAppStore.getState().editingPoseId).toBe(b)
+    // Reset clears it; the mode switch and project load/new clear it too.
+    s.resetPose()
+    expect(useAppStore.getState().editingPoseId).toBeNull()
+    s.setJointRotation('arm', [0.5, 0, 0])
+    s.capturePose()
+    expect(useAppStore.getState().editingPoseId).not.toBeNull()
+    s.setAnimationMode('poses')
+    s.setAnimationMode('tweens')
+    expect(useAppStore.getState().editingPoseId).toBeNull()
+    s.setJointRotation('arm', [0.5, 0, 0])
+    const c = s.capturePose()!
+    s.deletePose(c)
+    expect(useAppStore.getState().editingPoseId).toBeNull()
+    s.setJointRotation('arm', [0.5, 0, 0])
+    s.capturePose()
+    s.newProject('Fresh', 16)
+    expect(useAppStore.getState().editingPoseId).toBeNull()
+  })
+
+  it('adds keys at the playhead, else half a second past the last key', () => {
+    const [a, b] = twoPoses()
+    const s = useAppStore.getState()
+    const id = s.addClip()
+    // Off the timeline into an empty clip: the first key lands at 0.
+    s.addKey(id, a)!
+    expect(useAppStore.getState().clips[0].keys[0].time).toBe(0)
+    // On the timeline: the playhead time wins.
+    s.setClipTime(0.5)
+    const k1 = s.addKey(id, b)!
+    expect(useAppStore.getState().clips[0].keys.find((k) => k.id === k1)?.time).toBeCloseTo(0.5, 10)
+    // Off the timeline again with unstaged scratch: the editing target keys past the end.
+    s.stagePose(null)
+    const k2 = s.addKey(id)!
+    expect(useAppStore.getState().clips[0].keys.find((k) => k.id === k2)?.poseId).toBe(b)
+    expect(useAppStore.getState().clips[0].keys.find((k) => k.id === k2)?.time).toBeCloseTo(1, 10)
   })
 })

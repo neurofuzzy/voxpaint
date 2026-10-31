@@ -139,6 +139,9 @@ export const createAnimationSlice: Slice = (set, get) => ({
       if (state.stagedPoseId && !state.poses.some((p) => p.id === state.stagedPoseId)) {
         state.stagedPoseId = null
       }
+      if (state.editingPoseId && !state.poses.some((p) => p.id === state.editingPoseId)) {
+        state.editingPoseId = null
+      }
       state.dirty = true
     })
   },
@@ -168,6 +171,9 @@ export const createAnimationSlice: Slice = (set, get) => ({
       }
       if (state.stagedPoseId && !state.poses.some((p) => p.id === state.stagedPoseId)) {
         state.stagedPoseId = null
+      }
+      if (state.editingPoseId && !state.poses.some((p) => p.id === state.editingPoseId)) {
+        state.editingPoseId = null
       }
       state.dirty = true
     })

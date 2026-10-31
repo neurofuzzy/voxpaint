@@ -104,6 +104,7 @@ export const createProjectSlice: Slice = (set, get) => ({
       state.clipPlaying = false
       state.poseRotations.clear()
       state.stagedPoseId = null
+      state.editingPoseId = null
       state.clipTime = null
       state.meta.modifiedAt = new Date().toISOString()
       state.dirty = true
@@ -415,6 +416,7 @@ export const createProjectSlice: Slice = (set, get) => ({
       state.clipStartedAt = 0
       state.clipTime = null
       state.stagedPoseId = null
+      state.editingPoseId = null
       state.poseDragging = false
       state.dirty = true
       // A new project starts grounded (see resetPlaneToGround) instead of inheriting a stale

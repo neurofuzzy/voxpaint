@@ -56,6 +56,19 @@ function normalizeKeys(clip: RigClip): void {
 }
 
 /**
+ * Clamps a key time into the strip's fixed scale: no earlier than one frame past the
+ * locked first key at 0, no later than the clip end — one frame shy of it when looping,
+ * so the wrap segment back to the first key never collapses (the pop the sanitizer
+ * guards against on load). Snapped to the export frame grid. Retiming never grows the
+ * clip; the duration field owns that. Strip drags pass the duration captured at
+ * pointer-down so the scale stays fixed for the whole gesture.
+ */
+export function clampKeyTime(time: number, duration: number, loop: boolean): number {
+  const end = snapClipTime(loop ? duration - CLIP_FRAME_SECONDS : duration)
+  return Math.min(Math.max(snapClipTime(time), CLIP_FRAME_SECONDS), Math.max(end, CLIP_FRAME_SECONDS))
+}
+
+/**
  * Ephemeral pose preview for Animate mode (Phase 1): per-joint local rotations, radians,
  * intrinsic XYZ. Deliberately outside undo history (preview is not an edit) and outside
  * persistence (cleared on project load by construction — `newProject` rebuilds state — and on
@@ -70,6 +83,7 @@ export const createPoseSlice: Slice = (set, get) => ({
   activeClipId: null,
   selectedKeyId: null,
   stagedPoseId: null,
+  editingPoseId: null,
   clipPlaying: false,
   clipStartedAt: 0,
   clipTime: null,
@@ -108,6 +122,7 @@ export const createPoseSlice: Slice = (set, get) => ({
       pose.name = nextDefaultName(state.poses)
       state.poses.push({ id: pose.id, name: pose.name, joints: { ...pose.joints } })
       state.stagedPoseId = pose.id
+      state.editingPoseId = pose.id
       state.poseRotations.clear()
       state.dirty = true
     })
@@ -133,6 +148,7 @@ export const createPoseSlice: Slice = (set, get) => ({
     set((state) => {
       state.poses = state.poses.filter((p) => p.id !== id)
       if (state.stagedPoseId === id) state.stagedPoseId = null
+      if (state.editingPoseId === id) state.editingPoseId = null
       // A key pointing at a deleted pose would read as bind — drop the keys instead so
       // the timelines only ever reference surviving poses.
       for (const clip of state.clips) {
@@ -251,7 +267,7 @@ export const createPoseSlice: Slice = (set, get) => ({
     const st = get()
     const clip = st.clips.find((c) => c.id === clipId)
     if (!clip) return null
-    const resolvedPoseId = poseId ?? st.stagedPoseId ?? st.poses[0]?.id
+    const resolvedPoseId = poseId ?? st.stagedPoseId ?? st.editingPoseId ?? st.poses[0]?.id
     if (!resolvedPoseId || !st.poses.some((p) => p.id === resolvedPoseId)) {
       showToast('Stage or capture a pose first — keys point at library poses')
       return null
@@ -262,10 +278,13 @@ export const createPoseSlice: Slice = (set, get) => ({
       const target = state.clips.find((c) => c.id === clipId)
       if (!target) return
       keyId = newKeyId()
+      // Off the timeline with no explicit time: append half a second past the last key
+      // (0 into an empty clip). Keys stay sorted via normalizeKeys below.
+      const lastKey = target.keys.length > 0 ? target.keys[target.keys.length - 1].time : -0.5
       target.keys.push({
         id: keyId,
         poseId: resolvedPoseId,
-        time: Math.max(0, snapClipTime(time ?? state.clipTime ?? 0)),
+        time: Math.max(0, snapClipTime(time ?? state.clipTime ?? lastKey + 0.5)),
         ease: 'inOut' as ClipKey['ease'],
       })
       normalizeKeys(target)
@@ -286,7 +305,7 @@ export const createPoseSlice: Slice = (set, get) => ({
         if (!state.poses.some((p) => p.id === patch.poseId)) return
         key.poseId = patch.poseId
       }
-      if (patch.time !== undefined) key.time = Math.max(0, snapClipTime(patch.time))
+      if (patch.time !== undefined) key.time = clampKeyTime(patch.time, clip.duration, clip.loop)
       if (patch.ease !== undefined) key.ease = patch.ease
       normalizeKeys(clip)
       state.dirty = true
@@ -334,6 +353,9 @@ export const createPoseSlice: Slice = (set, get) => ({
 
   grabPoseForEdit: () => {
     const st = get()
+    // Remember the editing target before the staging below clears it: the scratch is an
+    // edit of whatever pose was staged, so Update writes back to it.
+    const editedId = st.stagedPoseId && st.poses.some((p) => p.id === st.stagedPoseId) ? st.stagedPoseId : null
     // Snapshot first: the preview may BE the live scratch map, which we clear below.
     const entries = [...previewFrame(st, performance.now() / 1000).pose.entries()]
     if (entries.length === 0 && !st.clipPlaying) {
@@ -341,6 +363,7 @@ export const createPoseSlice: Slice = (set, get) => ({
       if (st.stagedPoseId) {
         set((state) => {
           state.stagedPoseId = null
+          if (editedId) state.editingPoseId = editedId
         })
       }
       return
@@ -353,6 +376,7 @@ export const createPoseSlice: Slice = (set, get) => ({
         }
       }
       state.stagedPoseId = null
+      if (editedId) state.editingPoseId = editedId
       state.clipPlaying = false
       // Off the timeline: the preview now follows the scratch the grab just filled, so
       // gizmo drags keep showing on screen instead of fighting a frozen clip frame.
@@ -379,6 +403,8 @@ export const createPoseSlice: Slice = (set, get) => ({
         }
       }
       state.stagedPoseId = null
+      // The scratch is now an edit of the adopted pose — Update writes back to it.
+      state.editingPoseId = staged.id
       state.clipTime = null
     })
   },
@@ -387,6 +413,7 @@ export const createPoseSlice: Slice = (set, get) => ({
     set((state) => {
       state.poseRotations.clear()
       state.stagedPoseId = null
+      state.editingPoseId = null
       state.clipPlaying = false
       state.clipTime = null
     })

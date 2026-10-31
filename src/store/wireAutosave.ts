@@ -45,6 +45,7 @@ export function restoreAutosave(): void {
       state.clipStartedAt = 0
       state.clipTime = null
       state.stagedPoseId = null
+      state.editingPoseId = null
     })
     // A refresh restores the same project, so the persisted plane pose comes back with it
     // (clamped — a hand-edited autosave could carry an out-of-range offset). Explicit project

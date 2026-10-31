@@ -87,6 +87,7 @@ export function FileMenu() {
         s.clipStartedAt = 0
         s.clipTime = null
         s.stagedPoseId = null
+        s.editingPoseId = null
       })
       // An imported project opens grounded — one project's slice never leaks into the next.
       useAppStore.getState().resetPlaneToGround()

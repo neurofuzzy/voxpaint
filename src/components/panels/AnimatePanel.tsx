@@ -2,12 +2,13 @@ import { useMemo, useRef, useState } from 'react'
 import { Bone, ChevronDown, ChevronRight, ChevronUp, Copy, Crosshair, Eye, EyeOff, Pause, Play, Plus, RotateCcw, RotateCw, Trash2 } from 'lucide-react'
 import type { Axis } from '@/engine/grid/types'
 import { SLIDE_AMOUNT_MAX, SLIDE_AMOUNT_MIN } from '@/engine/animation/animationLayers'
-import type { ClipKey, RigBox, RigTween } from '@/engine/rigging/types'
+import type { ClipKey, RigBox, RigClip, RigTween } from '@/engine/rigging/types'
 import { PENDULUM_TWEEN_ANGLE_MAX, PENDULUM_TWEEN_ANGLE_MIN } from '@/engine/rigging/types'
 import { activeTweens } from '@/engine/rigging/rigLoop'
 import { rigPivotOf, rigSubtreeIds } from '@/engine/rigging/types'
 import type { AnimationSpeed } from '@/engine/animation/types'
 import type { AnimateTab } from '@/store/types'
+import { clampKeyTime } from '@/store/poseSlice'
 import { useAppStore } from '@/store/useAppStore'
 
 type DropPosition = 'before' | 'after' | 'child'
@@ -128,6 +129,8 @@ function OutlineSection({ rigBoxes, selectedRigBoxId }: { rigBoxes: RigBox[]; se
   const moveRigBox = useAppStore((s) => s.moveRigBox)
   const setRigPivot = useAppStore((s) => s.setRigPivot)
   const setActiveTool = useAppStore((s) => s.setActiveTool)
+  const animationMode = useAppStore((s) => s.meta.animationMode ?? 'tweens')
+  const setAnimationMode = useAppStore((s) => s.setAnimationMode)
   const [editingId, setEditingId] = useState<string | null>(null)
   const [draft, setDraft] = useState('')
   const [collapsed, setCollapsed] = useState<Set<string>>(new Set())
@@ -196,9 +199,40 @@ function OutlineSection({ rigBoxes, selectedRigBoxId }: { rigBoxes: RigBox[]; se
         Tap the model with the Rig tool to box a region. Drag rows to reorder or nest.
       </p>
       {rigBoxes.length === 0 ? (
-        <p className="rounded-md border border-dashed border-neutral-800 px-2 py-3 text-center text-[11px] text-neutral-500">
-          No rig boxes yet
-        </p>
+        <div className="flex flex-col gap-1.5">
+          <button
+            onClick={() => setAnimationMode('tweens')}
+            aria-pressed={animationMode === 'tweens'}
+            title="Machine: per-joint looping tweens — pick it to box a region for wheels, fans, doors"
+            className={
+              'rounded-md border px-2 py-2 text-left ' +
+              (animationMode === 'tweens'
+                ? 'border-violet-500/60 bg-violet-500/10'
+                : 'border-neutral-800 hover:bg-neutral-800/60')
+            }
+          >
+            <span className="block text-[11px] font-semibold text-neutral-100">Machine</span>
+            <span className="block text-[10px] leading-snug text-neutral-500">
+              Looping tweens per joint — wheels, fans, doors
+            </span>
+          </button>
+          <button
+            onClick={() => setAnimationMode('poses')}
+            aria-pressed={animationMode === 'poses'}
+            title="Character: keyed poses on clips — pick it to box a region for walk, idle, dodge"
+            className={
+              'rounded-md border px-2 py-2 text-left ' +
+              (animationMode === 'poses'
+                ? 'border-violet-500/60 bg-violet-500/10'
+                : 'border-neutral-800 hover:bg-neutral-800/60')
+            }
+          >
+            <span className="block text-[11px] font-semibold text-neutral-100">Character</span>
+            <span className="block text-[10px] leading-snug text-neutral-500">
+              Poses keyed on clips — walk, idle, dodge
+            </span>
+          </button>
+        </div>
       ) : (
         <ul
           onDragOver={(e) => {
@@ -840,8 +874,10 @@ function TweenRow({ boxId, tween, index, count, dropSlot, dimmed, onDragStart, o
 function PosesSection() {
   const poses = useAppStore((s) => s.poses)
   const stagedPoseId = useAppStore((s) => s.stagedPoseId)
+  const editingPoseId = useAppStore((s) => s.editingPoseId)
   const scratchSize = useAppStore((s) => s.poseRotations.size)
   const capturePose = useAppStore((s) => s.capturePose)
+  const overwritePose = useAppStore((s) => s.overwritePose)
   const renamePose = useAppStore((s) => s.renamePose)
   const deletePose = useAppStore((s) => s.deletePose)
   const stagePose = useAppStore((s) => s.stagePose)
@@ -855,6 +891,8 @@ function PosesSection() {
     setDraft('')
   }
 
+  const editingPose = poses.find((p) => p.id === editingPoseId) ?? null
+
   return (
     <section className="flex flex-col gap-1.5">
       <ClipsSection />
@@ -863,6 +901,15 @@ function PosesSection() {
         <span className="min-w-0 flex-1 truncate text-xs font-semibold uppercase tracking-wider text-neutral-400 select-none">
           Poses ({poses.length})
         </span>
+        {editingPose && scratchSize > 0 && (
+          <button
+            onClick={() => overwritePose(editingPose.id)}
+            title={`Write the scratch back into ${editingPose.name} — every key using it updates`}
+            className="flex max-w-28 items-center gap-1 truncate rounded px-1.5 py-0.5 text-[10px] font-medium text-violet-300 hover:bg-neutral-800 hover:text-violet-100"
+          >
+            Update {editingPose.name}
+          </button>
+        )}
         {scratchSize > 0 && (
           <button
             onClick={resetPose}
@@ -895,10 +942,15 @@ function PosesSection() {
             return (
               <li key={pose.id}>
                 <div
+                  draggable
+                  onDragStart={(e) => {
+                    e.dataTransfer.effectAllowed = 'copy'
+                    e.dataTransfer.setData('application/x-voxpaint-pose', pose.id)
+                  }}
                   onClick={() => stagePose(staged ? null : pose.id)}
-                  title={staged ? 'Unstage — back to the live scratch' : 'Stage for preview (gizmo grabs adopt it)'}
+                  title={staged ? 'Unstage — back to the live scratch' : 'Stage for preview (gizmo grabs adopt it) — drag onto the clip strip to key it'}
                   className={
-                    'flex cursor-pointer items-center gap-1 rounded-md border px-1.5 py-1 ' +
+                    'flex cursor-grab items-center gap-1 rounded-md border px-1.5 py-1 active:cursor-grabbing ' +
                     (staged ? 'border-violet-500/60 bg-violet-500/10' : 'border-neutral-800 hover:bg-neutral-800/60')
                   }
                 >
@@ -946,26 +998,27 @@ function PosesSection() {
 
 /**
  * Clip timelines (one exported action each): picker with add/rename/delete, loop toggle,
- * duration, transport, and one row per key — pose, time (seconds, snapped to 1/30 s),
- * and ease. "+ key" appends the staged pose at the playhead.
+ * duration, transport, a key strip (markers by time, draggable playhead to scrub,
+ * draggable markers to retime snapped to 1/30 s, first key locked at 0), and the
+ * selected key's inspector. "+ key" keys the staged pose (else the editing target) at
+ * the playhead, else half a second past the last key.
  */
 function ClipsSection() {
   const clips = useAppStore((s) => s.clips)
   const activeClipId = useAppStore((s) => s.activeClipId)
   const selectedKeyId = useAppStore((s) => s.selectedKeyId)
   const clipPlaying = useAppStore((s) => s.clipPlaying)
+  const clipTime = useAppStore((s) => s.clipTime)
   const poses = useAppStore((s) => s.poses)
   const stagedPoseId = useAppStore((s) => s.stagedPoseId)
+  const editingPoseId = useAppStore((s) => s.editingPoseId)
   const addClip = useAppStore((s) => s.addClip)
   const renameClip = useAppStore((s) => s.renameClip)
   const deleteClip = useAppStore((s) => s.deleteClip)
   const patchClip = useAppStore((s) => s.patchClip)
   const setActiveClip = useAppStore((s) => s.setActiveClip)
-  const setSelectedKey = useAppStore((s) => s.setSelectedKey)
   const setClipPlaying = useAppStore((s) => s.setClipPlaying)
   const addKey = useAppStore((s) => s.addKey)
-  const patchKey = useAppStore((s) => s.patchKey)
-  const removeKey = useAppStore((s) => s.removeKey)
   const [editing, setEditing] = useState(false)
   const [draft, setDraft] = useState('')
 
@@ -976,6 +1029,12 @@ function ClipsSection() {
     setEditing(false)
     setDraft('')
   }
+
+  // "+ key" keys the staged pose, else the pose under edit — never a surprise pick.
+  const keyPoseId = stagedPoseId ?? editingPoseId
+  const keyPose = poses.find((p) => p.id === keyPoseId) ?? null
+  const lastKeyTime = clip && clip.keys.length > 0 ? clip.keys[clip.keys.length - 1].time : 0
+  const keyAt = clipTime ?? (clip && clip.keys.length > 0 ? lastKeyTime + 0.5 : 0)
 
   return (
     <div className="flex flex-col gap-1.5 rounded-md border border-neutral-800 px-2 py-2">
@@ -1063,6 +1122,15 @@ function ClipsSection() {
             </label>
             <span className="min-w-0 flex-1" />
             <button
+              onClick={() => keyPose && addKey(clip.id, keyPose.id)}
+              disabled={!keyPose}
+              title={keyPose ? `Key ${keyPose.name} at ${keyAt.toFixed(2)}s` : 'Stage or capture a pose first — keys point at library poses'}
+              className="flex items-center gap-1 rounded px-1.5 py-0.5 text-[10px] font-medium text-violet-300 hover:bg-neutral-800 hover:text-violet-100 disabled:cursor-not-allowed disabled:opacity-30 disabled:hover:bg-transparent"
+            >
+              <Plus size={12} />
+              key
+            </button>
+            <button
               onClick={() => setClipPlaying(!clipPlaying)}
               title={clipPlaying ? 'Pause (freezes the playhead where it stops)' : 'Play the clip'}
               className="flex h-5 w-5 items-center justify-center rounded text-violet-300 hover:bg-neutral-800 hover:text-violet-100"
@@ -1072,85 +1140,249 @@ function ClipsSection() {
           </div>
           {clip.keys.length === 0 ? (
             <p className="text-[10px] leading-snug text-neutral-500">
-              No keys yet — stage a pose below, then + key it in.
+              No keys yet — stage a pose below, then + key it in (or drag a pose onto the strip once keys exist).
             </p>
           ) : (
-            <ul className="flex flex-col gap-1">
-              {clip.keys.map((key) => {
-                const selected = key.id === selectedKeyId
-                return (
-                  <li key={key.id}>
-                    <div
-                      onClick={() => setSelectedKey(selected ? null : key.id)}
-                      title={selected ? 'Deselect this key' : 'Select this key for the inspector'}
-                      className={
-                        'flex cursor-pointer items-center gap-1 rounded-md border px-1 py-0.5 ' +
-                        (selected ? 'border-violet-500/60 bg-violet-500/10' : 'border-neutral-800 hover:bg-neutral-800/60')
-                      }
-                    >
-                      <select
-                        value={key.poseId}
-                        onChange={(e) => patchKey(clip.id, key.id, { poseId: e.target.value })}
-                        onClick={(e) => e.stopPropagation()}
-                        title="Key pose"
-                        className="min-w-0 flex-1 rounded bg-neutral-800 px-1 py-0.5 text-[11px] text-neutral-200 focus:outline-none focus:ring-1 focus:ring-violet-500"
-                      >
-                        {poses.map((p) => (
-                          <option key={p.id} value={p.id}>{p.name}</option>
-                        ))}
-                      </select>
-                      <input
-                        type="number"
-                        aria-label="Key time in seconds"
-                        min={0}
-                        step={1 / 30}
-                        value={key.time}
-                        onChange={(e) => {
-                          const v = Number(e.target.value)
-                          if (Number.isFinite(v)) patchKey(clip.id, key.id, { time: v })
-                        }}
-                        onClick={(e) => e.stopPropagation()}
-                        title="Key time in seconds (first key locked at 0)"
-                        className="w-14 shrink-0 rounded bg-neutral-800 px-1 py-0.5 font-mono text-[11px] text-neutral-200 focus:outline-none focus:ring-1 focus:ring-violet-500"
-                      />
-                      <select
-                        value={key.ease}
-                        onChange={(e) => patchKey(clip.id, key.id, { ease: e.target.value as ClipKey['ease'] })}
-                        onClick={(e) => e.stopPropagation()}
-                        title="Easing out of this key toward the next"
-                        className="w-18 shrink-0 rounded bg-neutral-800 px-1 py-0.5 text-[11px] text-neutral-200 focus:outline-none focus:ring-1 focus:ring-violet-500"
-                      >
-                        {(Object.entries(KEY_EASE_LABELS) as Array<[ClipKey['ease'], string]>).map(([ease, label]) => (
-                          <option key={ease} value={ease}>{label}</option>
-                        ))}
-                      </select>
-                      <button
-                        onClick={(e) => { e.stopPropagation(); removeKey(clip.id, key.id) }}
-                        title="Remove this key"
-                        className="flex h-5 w-5 shrink-0 items-center justify-center rounded text-neutral-500 hover:bg-neutral-800 hover:text-red-400"
-                      >
-                        <Trash2 size={12} />
-                      </button>
-                    </div>
-                  </li>
-                )
-              })}
-            </ul>
+            <KeyStrip clip={clip} />
           )}
-          <button
-            onClick={() => addKey(clip.id)}
-            title={stagedPoseId ? 'Key the staged pose at the playhead' : 'Key the first library pose at the playhead — stage one first to pick it'}
-            className="flex items-center gap-1 rounded px-1.5 py-0.5 text-[10px] font-medium text-violet-300 hover:bg-neutral-800 hover:text-violet-100"
-          >
-            <Plus size={12} />
-            key from staged
-          </button>
+          {selectedKeyId && clip.keys.some((k) => k.id === selectedKeyId) && (
+            <KeyInspector clip={clip} keyId={selectedKeyId} />
+          )}
         </>
       ) : (
         <p className="text-[10px] leading-snug text-neutral-500">
           No clips yet — add one to key poses on a timeline.
         </p>
       )}
+    </div>
+  )
+}
+
+/**
+ * The clip's timeline: a horizontal track mapping 0..duration to its width, with a
+ * marker per key and a playhead (paused/scrubbed time, else the selected key's time).
+ * Dragging empty track scrubs (pausing first, snapped to 1/30 s); dragging a marker
+ * retimes it as one undo stroke (pointer-captured, first key locked at 0); clicking a
+ * marker seeks there and stages its pose for gizmo editing. Library rows drop onto it
+ * to key that pose at the drop time.
+ */
+function KeyStrip({ clip }: { clip: RigClip }) {
+  const clipTime = useAppStore((s) => s.clipTime)
+  const clipPlaying = useAppStore((s) => s.clipPlaying)
+  const selectedKeyId = useAppStore((s) => s.selectedKeyId)
+  const poses = useAppStore((s) => s.poses)
+  const setClipPlaying = useAppStore((s) => s.setClipPlaying)
+  const setClipTime = useAppStore((s) => s.setClipTime)
+  const setSelectedKey = useAppStore((s) => s.setSelectedKey)
+  const stagePose = useAppStore((s) => s.stagePose)
+  const addKey = useAppStore((s) => s.addKey)
+  const patchKey = useAppStore((s) => s.patchKey)
+  const animBeginStroke = useAppStore((s) => s.animBeginStroke)
+  const animCommitStroke = useAppStore((s) => s.animCommitStroke)
+  const trackRef = useRef<HTMLDivElement>(null)
+  // Scrub gesture vs marker-retime gesture (markers stop-propagation, so only one runs).
+  const scrubbing = useRef(false)
+  // The retime drag clamps against the duration captured at pointer-down, so pushing a
+  // key past the end can never grow the clip mid-drag and rescale the track under it.
+  const retime = useRef<{ keyId: string; startX: number; startTime: number; moved: boolean; duration: number; loop: boolean } | null>(null)
+
+  const duration = Math.max(clip.duration, 1 / 30)
+  const selectedKey = clip.keys.find((k) => k.id === selectedKeyId) ?? null
+  const playhead = clipTime ?? selectedKey?.time ?? null
+  const lastKey = clip.keys[clip.keys.length - 1]
+
+  function timeAt(clientX: number): number {
+    const rect = trackRef.current?.getBoundingClientRect()
+    if (!rect || rect.width === 0) return 0
+    const t = (clientX - rect.left) / rect.width
+    return Math.min(Math.max(t, 0), 1) * clip.duration
+  }
+
+  return (
+    <div className="flex flex-col gap-0.5">
+      <div
+        ref={trackRef}
+        onPointerDown={(e) => {
+          if (clipPlaying) setClipPlaying(false)
+          scrubbing.current = true
+          e.currentTarget.setPointerCapture(e.pointerId)
+          setClipTime(timeAt(e.clientX))
+        }}
+        onPointerMove={(e) => {
+          if (scrubbing.current) setClipTime(timeAt(e.clientX))
+        }}
+        onPointerUp={() => { scrubbing.current = false }}
+        onPointerCancel={() => { scrubbing.current = false }}
+        onDragOver={(e) => {
+          if (e.dataTransfer.types.includes('application/x-voxpaint-pose')) {
+            e.preventDefault()
+            e.dataTransfer.dropEffect = 'copy'
+          }
+        }}
+        onDrop={(e) => {
+          const poseId = e.dataTransfer.getData('application/x-voxpaint-pose')
+          if (!poseId || !poses.some((p) => p.id === poseId)) return
+          e.preventDefault()
+          addKey(clip.id, poseId, timeAt(e.clientX))
+        }}
+        title="Drag to scrub the playhead — drop a library pose to key it at that time"
+        className="relative h-8 touch-none rounded bg-neutral-800/60"
+      >
+        {clip.loop && lastKey && lastKey.time < clip.duration && (
+          <div
+            title="Loop wrap: the last key eases back to the first across this span"
+            className="absolute top-0 bottom-0 rounded-r bg-violet-500/10"
+            style={{ left: `${(lastKey.time / duration) * 100}%`, right: 0 }}
+          />
+        )}
+        {clip.keys.map((key, i) => {
+          const locked = i === 0
+          const selected = key.id === selectedKeyId
+          return (
+            <div
+              key={key.id}
+              onPointerDown={(e) => {
+                e.stopPropagation()
+                if (clipPlaying) setClipPlaying(false)
+                e.currentTarget.setPointerCapture(e.pointerId)
+                // Bracketed once per press so the whole retime drag lands in one undo entry;
+                // a click without drag still opens and commits an empty stroke (a no-op).
+                if (!locked) animBeginStroke()
+                retime.current = { keyId: key.id, startX: e.clientX, startTime: key.time, moved: false, duration: clip.duration, loop: clip.loop }
+              }}
+              onPointerMove={(e) => {
+                const drag = retime.current
+                if (!drag || drag.keyId !== key.id || locked) return
+                const rect = trackRef.current?.getBoundingClientRect()
+                if (!rect || rect.width === 0) return
+                if (Math.abs(e.clientX - drag.startX) > 3) drag.moved = true
+                if (drag.moved) {
+                  const raw = drag.startTime + ((e.clientX - drag.startX) / rect.width) * drag.duration
+                  patchKey(clip.id, key.id, { time: clampKeyTime(raw, drag.duration, drag.loop) })
+                }
+              }}
+              onPointerUp={(e) => {
+                const drag = retime.current
+                retime.current = null
+                if (!locked) animCommitStroke()
+                // A click (no drag) seeks the playhead there and stages the key's pose.
+                if (drag && drag.keyId === key.id && !drag.moved) {
+                  e.stopPropagation()
+                  setSelectedKey(key.id)
+                  stagePose(key.poseId)
+                  setClipTime(key.time)
+                }
+              }}
+              onPointerCancel={() => {
+                retime.current = null
+                if (!locked) animCommitStroke()
+              }}
+              title={locked ? 'First key — locked at 0 (click to select)' : `Key at ${key.time.toFixed(2)}s — drag to retime, click to select`}
+              className={
+                'absolute top-1/2 h-2.5 w-2.5 ' +
+                (locked ? 'cursor-pointer' : 'cursor-ew-resize') +
+                (selected ? ' bg-violet-300' : ' bg-neutral-400 hover:bg-neutral-200')
+              }
+              style={{ left: `${(key.time / duration) * 100}%`, transform: 'translate(-50%, -50%) rotate(45deg)' }}
+            />
+          )
+        })}
+        {playhead !== null && (
+          <div
+            className="pointer-events-none absolute top-0 bottom-0 w-px bg-white/80"
+            style={{ left: `${(Math.min(Math.max(playhead, 0), clip.duration) / duration) * 100}%` }}
+          />
+        )}
+      </div>
+      <div className="flex justify-between font-mono text-[10px] text-neutral-500">
+        <span>0.00</span>
+        <span>{clip.duration.toFixed(2)}s</span>
+      </div>
+    </div>
+  )
+}
+
+/** Inspector for the selected key: pose, time (seconds, 2 decimals, snapped on commit;
+ * disabled for the first key locked at 0), ease, remove. */
+function KeyInspector({ clip, keyId }: { clip: RigClip; keyId: string }) {
+  const poses = useAppStore((s) => s.poses)
+  const patchKey = useAppStore((s) => s.patchKey)
+  const removeKey = useAppStore((s) => s.removeKey)
+  const setSelectedKey = useAppStore((s) => s.setSelectedKey)
+
+  const index = clip.keys.findIndex((k) => k.id === keyId)
+  const key = index >= 0 ? clip.keys[index] : null
+  if (!key) return null
+  const locked = index === 0
+
+  return (
+    <div className="flex flex-col gap-1.5 rounded-md border border-violet-500/30 bg-violet-500/5 px-1.5 py-1.5">
+      <div className="flex items-center gap-1">
+        <span className="min-w-0 flex-1 text-[10px] font-medium text-neutral-300 select-none">
+          Key {index + 1} of {clip.keys.length}
+        </span>
+        <button
+          onClick={() => { removeKey(clip.id, key.id); setSelectedKey(null) }}
+          title="Remove this key"
+          className="flex h-5 w-5 shrink-0 items-center justify-center rounded text-neutral-500 hover:bg-neutral-800 hover:text-red-400"
+        >
+          <Trash2 size={12} />
+        </button>
+      </div>
+      <label className="flex items-center gap-1.5" title="Key pose">
+        <span className="w-8 shrink-0 text-[10px] text-neutral-500">Pose</span>
+        <select
+          value={key.poseId}
+          onChange={(e) => patchKey(clip.id, key.id, { poseId: e.target.value })}
+          className="min-w-0 flex-1 rounded bg-neutral-800 px-1 py-0.5 text-[11px] text-neutral-200 focus:outline-none focus:ring-1 focus:ring-violet-500"
+        >
+          {poses.map((p) => (
+            <option key={p.id} value={p.id}>{p.name}</option>
+          ))}
+        </select>
+      </label>
+      <label className="flex items-center gap-1.5" title={locked ? 'First key is locked at 0' : 'Key time in seconds (snapped to 1/30 s on commit)'}>
+        <span className="w-8 shrink-0 text-[10px] text-neutral-500">Time</span>
+        <input
+          key={`${key.id}:${key.time}`}
+          type="number"
+          aria-label="Key time in seconds"
+          min={0}
+          step={1 / 30}
+          defaultValue={key.time.toFixed(2)}
+          disabled={locked}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter') (e.target as HTMLInputElement).blur()
+            if (e.key === 'Escape') {
+              (e.target as HTMLInputElement).value = key.time.toFixed(2)
+              ;(e.target as HTMLInputElement).blur()
+            }
+          }}
+          onBlur={(e) => {
+            const v = Number(e.target.value)
+            if (Number.isFinite(v)) patchKey(clip.id, key.id, { time: v })
+            else e.target.value = key.time.toFixed(2)
+          }}
+          className="w-20 rounded bg-neutral-800 px-1 py-0.5 font-mono text-[11px] text-neutral-200 focus:outline-none focus:ring-1 focus:ring-violet-500 disabled:opacity-40"
+        />
+        <span className="text-[10px] text-neutral-500">s</span>
+      </label>
+      <div className="flex items-center gap-1.5" title="Easing out of this key toward the next (Hold freezes until then)">
+        <span className="w-8 shrink-0 text-[10px] text-neutral-500">Ease</span>
+        <div className="flex min-w-0 flex-1 gap-0.5" role="group" aria-label="Key easing">
+          {(Object.entries(KEY_EASE_LABELS) as Array<[ClipKey['ease'], string]>).map(([ease, label]) => (
+            <button
+              key={ease}
+              aria-pressed={key.ease === ease}
+              onClick={() => patchKey(clip.id, key.id, { ease })}
+              title={`${label} easing out of this key`}
+              className={seg(key.ease === ease) + ' min-w-0 flex-1 px-0.5'}
+            >
+              {label}
+            </button>
+          ))}
+        </div>
+      </div>
     </div>
   )
 }

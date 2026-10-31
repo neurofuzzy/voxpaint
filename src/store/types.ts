@@ -820,6 +820,11 @@ export type PoseSlice = {
   /** Pose currently staged for preview (view-only; not undoable, not persisted). Null =
    * the live scratch drives the preview. */
   stagedPoseId: string | null
+  /** The library pose the scratch is an edit of: set when a pose is staged for editing
+   * (adopt/grab copy the staged pose into the scratch and remember it; capture names the
+   * new pose as the editing target). Drives the Library's Update button. Session-only —
+   * never undoable, never persisted; cleared by reset, mode switch, and project load/new. */
+  editingPoseId: string | null
   /** Clip transport: playing flag + start timestamp + playhead (seconds, clip-local).
    * Ephemeral (not undoable, not persisted). `clipTime` is null when off the timeline
    * (the preview shows the staged pose or scratch); pausing or scrubbing sets a number,
@@ -863,7 +868,8 @@ export type PoseSlice = {
   setClipPlaying: (playing: boolean) => void
   /** Seeks the playhead onto the timeline (seconds, snapped to 1/30 s). Session-only. */
   setClipTime: (time: number) => void
-  /** Appends a key for `poseId` at `time` (defaults: staged pose, playhead) to the clip,
+  /** Appends a key for `poseId` at `time` (defaults: staged pose, else the editing
+   * target, else the first library pose; playhead, else last key + 0.5 s) to the clip,
    * sorted by time with the first locked at 0, and selects it. No-op (with a toast) when
    * the pose is unknown. Self-brackets undo. */
   addKey: (clipId: string, poseId?: string, time?: number) => string | null

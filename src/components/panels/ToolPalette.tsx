@@ -30,7 +30,7 @@ const ANIMATE_TOOLS: Record<AnimateTab, Array<{ id: ToolId; label: string; icon:
     { id: 'select', label: 'Select', icon: MousePointerClick, hint: 'click a box to select it — edit its motion in the Tweens tab' },
   ],
   poses: [
-    { id: 'pose', label: 'Pose', icon: Rotate3d, hint: 'click a box to select it · drag the selected box in 3D to pose it · drag a ring for one axis' },
+    { id: 'pose', label: 'Pose', icon: Rotate3d, hint: 'drag a box in 3D to edit the staged or keyed pose · Update saves it back to the library · drag a ring for one axis' },
   ],
 }
 

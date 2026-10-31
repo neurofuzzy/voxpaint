@@ -247,3 +247,9 @@ The supervisor stops at each step end. Steps 3–6 are visual, so the human brow
 - Deferred to Step 5 by design: offsets are not yet composed in the preview or export.
 - Process: the Step 1 run did `git checkout rig-animate` (the prompt named that branch) while the human was on `animate-v2`. Nothing lost; `animate-v2` fast-forwarded to the Step 2 commit and checked out; `rig-animate` left in place.
 - Fix run checked: `clipTime: number | null` applied at every reader and reset site; `overwritePose` stages the saved pose; 3 new store tests; run log `Tests 877 passed (877)`; build and lint green. Verdict: ACCEPT, pending human browser check of the panel.
+
+### 2026-10-31 · Step 3 · staged on animate-v2 (tip d509326 + staged, 9 files) · verdict: FIX THEN ACCEPT
+- Checked: KeyStrip/KeyInspector code, editingPoseId lifecycle, run log `Tests 882 passed (882)`, build and lint green, no branch switch.
+- Judgement calls (marker drag pauses transport; marker click = select + stage + seek; empty strokes dropped as no-ops; overwritePose stages rather than setting editingPoseId): ACCEPTED.
+- Bug: retiming past the clip end grows the duration mid-drag, so the track rescales and the marker runs from the pointer. Fix: clamp to the duration captured at pointerdown. SENT.
+- Fix run checked: `clampKeyTime` (pure, in poseSlice) used by patchKey and the strip drag with the duration captured at pointerdown; 2 new tests; run log `Tests 884 passed (884)`; build and lint green. Verdict: ACCEPT, pending human browser check.
