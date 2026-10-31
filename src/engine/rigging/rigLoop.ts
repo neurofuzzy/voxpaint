@@ -2,7 +2,7 @@ import * as THREE from 'three'
 import type { Axis, Coord } from '@/engine/grid/types'
 import type { AnimationSpeed } from '@/engine/animation/types'
 import { BASE_CYCLE_SECONDS } from '@/engine/animation/animationLayers'
-import { newTweenId, rigPivotOf, type RigBox, type RigTween } from './types'
+import { DEFAULT_PENDULUM_MAX, DEFAULT_PENDULUM_MIN, newTweenId, rigPivotOf, type RigBox, type RigTween } from './types'
 import { composePoseMatrices, type JointEuler } from './pose'
 
 const AXIS_UNIT: Record<Axis, [number, number, number]> = {
@@ -20,11 +20,11 @@ export const TWEEN_CYCLE_SECONDS = BASE_CYCLE_SECONDS
 
 /** A fresh enabled turntable spin about world Y — what "add tween" starts from. */
 export function newRigTween(): RigTween {
-  return { id: newTweenId(), kind: 'rotate', axis: 'y', direction: 1, speed: 1, amount: 4, enabled: true }
+  return { id: newTweenId(), kind: 'rotate', axis: 'y', direction: 1, speed: 1, amount: 4, minAngle: DEFAULT_PENDULUM_MIN, maxAngle: DEFAULT_PENDULUM_MAX, enabled: true }
 }
 
 export function isTweenActive(tween: RigTween | null | undefined): tween is RigTween {
-  return !!tween && tween.enabled && (tween.kind === 'rotate' || tween.kind === 'slide')
+  return !!tween && tween.enabled && (tween.kind === 'rotate' || tween.kind === 'pendulum' || tween.kind === 'slide')
 }
 
 /** Enabled tweens of a box, in stack order. Absent array = no tweens. */
@@ -98,11 +98,22 @@ export function localTweenMatrix(box: RigBox, tween: RigTween, elapsedSeconds: n
   if (!isTweenActive(tween)) return out
   const duration = BASE_CYCLE_SECONDS / tween.speed
   const t = (elapsedSeconds % duration) / duration
-  if (tween.kind === 'rotate') {
+  if (tween.kind === 'rotate' || tween.kind === 'pendulum') {
     const pivot = rigPivotOf(box)
     const pw = new THREE.Vector3(pivot[0] + 0.5, pivot[1] + 0.5, pivot[2] + 0.5)
     const axis = new THREE.Vector3(...AXIS_UNIT[tween.axis])
-    const r = new THREE.Matrix4().makeRotationAxis(axis, tween.direction * t * Math.PI * 2)
+  // Spin: constant angular velocity, full turn per cycle. Pendulum: sinusoidal swing
+  // between the min/max endpoints — normal starts at min, reverse starts at max
+  // (mid − direction·amp·cos, so the loop seam meets at the start endpoint with
+  // matching velocity, hence no pop).
+  const angle =
+      tween.kind === 'rotate'
+        ? tween.direction * t * Math.PI * 2
+        : THREE.MathUtils.degToRad(
+            (tween.minAngle + tween.maxAngle) / 2 -
+              (tween.direction * ((tween.maxAngle - tween.minAngle) / 2) * Math.cos(t * Math.PI * 2)),
+          )
+    const r = new THREE.Matrix4().makeRotationAxis(axis, angle)
     const tr = new THREE.Matrix4().makeTranslation(pw.x, pw.y, pw.z)
     const tn = new THREE.Matrix4().makeTranslation(-pw.x, -pw.y, -pw.z)
     return out.multiplyMatrices(tr, r).multiply(tn)

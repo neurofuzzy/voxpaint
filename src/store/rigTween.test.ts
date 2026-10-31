@@ -70,6 +70,64 @@ describe('rig tweens', () => {
     expect(useAppStore.getState().poseRotations.size).toBe(1)
   })
 
+  it('patches pendulum endpoints on the animate undo stack', () => {
+    addBox('arm')
+    const s = useAppStore.getState()
+    const id = s.addTween('arm')!
+    s.patchTween('arm', id, { kind: 'pendulum', minAngle: -45, maxAngle: 60 })
+    expect(tweensOf('arm')[0]).toMatchObject({ kind: 'pendulum', minAngle: -45, maxAngle: 60 })
+    useAppStore.getState().animUndo()
+    expect(tweensOf('arm')[0]).toMatchObject({ kind: 'rotate', minAngle: -30, maxAngle: 30 })
+  })
+
+  it('duplicates a tween with a fresh id right after the original', () => {
+    addBox('arm')
+    const s = useAppStore.getState()
+    const id = s.addTween('arm')!
+    s.patchTween('arm', id, { kind: 'pendulum', minAngle: -45, maxAngle: 60 })
+    const dupe = s.duplicateTween('arm', id)!
+    expect(dupe).not.toBe(id)
+    const tweens = tweensOf('arm')
+    expect(tweens.map((t) => t.id)).toEqual([id, dupe])
+    expect(tweens[1]).toMatchObject({ kind: 'pendulum', minAngle: -45, maxAngle: 60, enabled: true })
+    // One undo removes the copy, leaving the original.
+    useAppStore.getState().animUndo()
+    expect(tweensOf('arm').map((t) => t.id)).toEqual([id])
+    expect(s.duplicateTween('arm', 'ghost')).toBeNull()
+    expect(s.duplicateTween('ghost', id)).toBeNull()
+  })
+
+  it('moves tweens across boxes at a drop index and selects the destination', () => {
+    addBox('arm')
+    addBox('leg')
+    const s = useAppStore.getState()
+    const a1 = s.addTween('arm')!
+    const a2 = s.addTween('arm')!
+    const l1 = s.addTween('leg')!
+    // Drop between arm's rows = index 1.
+    s.moveTweenToBox('arm', a2, 'leg', 1)
+    expect(tweensOf('arm').map((t) => t.id)).toEqual([a1])
+    expect(tweensOf('leg').map((t) => t.id)).toEqual([l1, a2])
+    // The destination box is selected (new tweens land there next).
+    expect(useAppStore.getState().selectedRigBoxId).toBe('leg')
+    // Same-box move reorders with pre-removal indexing: moving l1 to slot 2 of
+    // [l1, a2] lands it last.
+    s.moveTweenToBox('leg', l1, 'leg', 2)
+    expect(tweensOf('leg').map((t) => t.id)).toEqual([a2, l1])
+    // Omitted index appends; unknown ids no-op.
+    s.moveTweenToBox('arm', a1, 'leg')
+    expect(tweensOf('arm')).toHaveLength(0)
+    expect(tweensOf('leg').map((t) => t.id)).toEqual([a2, l1, a1])
+    s.moveTweenToBox('ghost', a1, 'leg')
+    s.moveTweenToBox('leg', 'ghost', 'arm')
+    s.moveTweenToBox('leg', a1, 'ghost')
+    expect(tweensOf('leg')).toHaveLength(3)
+    // Whole sequence undoes back to empty stacks.
+    for (let i = 0; i < 6; i++) useAppStore.getState().animUndo()
+    expect(tweensOf('arm')).toHaveLength(0)
+    expect(tweensOf('leg')).toHaveLength(0)
+  })
+
   it('ignores unknown ids', () => {
     const s = useAppStore.getState()
     expect(s.addTween('ghost')).toBeNull()

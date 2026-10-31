@@ -35,25 +35,37 @@ export type RigBox = {
 }
 
 /**
- * One looping procedural motion ("tween") on a rig box (Animate mode): a turntable spin
- * or an axial shuttle, cycling forever. `axis` is the world axis the motion runs on,
- * `direction` flips its sense (CW vs CCW, ± slide), `speed` is the 1x/2x/3x cycle-rate
- * multiplier shared with slice loops, and `amount` is the slide amplitude in voxels
- * (unused by rotate). A box holds an ordered stack — all enabled tweens evaluate at time
+ * One looping procedural motion ("tween") on a rig box (Animate mode): a turntable spin,
+ * a pendulum swing, or an axial shuttle, cycling forever. `axis` is the world axis the
+ * motion runs on, `direction` flips its sense (CW vs CCW, ± slide; normal pendulum
+ * starts at minAngle, reverse starts at maxAngle), `speed` is the 1x/2x/3x cycle-rate multiplier shared with
+ * slice loops, and `amount` is the slide amplitude in voxels (unused by rotate/pendulum).
+ * A pendulum swings between `minAngle` and `maxAngle` (degrees, like the slice-loop
+ * pendulum's ±swing). A box holds an ordered stack — all enabled tweens evaluate at time
  * t and compose top-first (stack order is load-bearing: rotations don't commute).
  * `enabled: false` keeps the tween's params while muting it.
  */
-export type RigTweenKind = 'rotate' | 'slide'
+export type RigTweenKind = 'rotate' | 'pendulum' | 'slide'
 export type RigTween = {
   id: string
   kind: RigTweenKind
   axis: Axis
   direction: 1 | -1
   speed: import('@/engine/animation/types').AnimationSpeed
-  /** Slide amplitude in voxels (unused by rotate). */
+  /** Slide amplitude in voxels (unused by rotate/pendulum). */
   amount: number
+  /** Pendulum swing endpoints in degrees (unused by rotate/slide). */
+  minAngle: number
+  maxAngle: number
   enabled: boolean
 }
+
+/** Pendulum endpoint clamp, matching the slice-loop pendulum's ±90° range. */
+export const PENDULUM_TWEEN_ANGLE_MIN = -90
+export const PENDULUM_TWEEN_ANGLE_MAX = 90
+/** Default swing, mirroring the slice-loop pendulum's 30° default amplitude. */
+export const DEFAULT_PENDULUM_MIN = -30
+export const DEFAULT_PENDULUM_MAX = 30
 
 /**
  * A named joint snapshot: per-box local rotations (radians, intrinsic XYZ, same
@@ -116,14 +128,22 @@ export function newTweenId(): string {
 export function sanitizeRigTween(raw: unknown): RigTween | null {
   if (!raw || typeof raw !== 'object') return null
   const l = raw as Partial<RigTween>
-  if (l.kind !== 'rotate' && l.kind !== 'slide') return null
+  if (l.kind !== 'rotate' && l.kind !== 'pendulum' && l.kind !== 'slide') return null
   if (l.axis !== 'x' && l.axis !== 'y' && l.axis !== 'z') return null
   if (l.direction !== 1 && l.direction !== -1) return null
   if (l.speed !== 1 && l.speed !== 2 && l.speed !== 3) return null
   if (typeof l.amount !== 'number' || !Number.isFinite(l.amount)) return null
   const amount = Math.max(1, Math.min(8, l.amount))
+  // Pendulum endpoints: non-finite values fall back to the default swing (v15 files
+  // predate the kind, so every missing/invalid pair degrades to the same swing).
+  const clampAngle = (n: unknown, fallback: number) =>
+    typeof n === 'number' && Number.isFinite(n)
+      ? Math.max(PENDULUM_TWEEN_ANGLE_MIN, Math.min(PENDULUM_TWEEN_ANGLE_MAX, n))
+      : fallback
+  const minAngle = clampAngle(l.minAngle, DEFAULT_PENDULUM_MIN)
+  const maxAngle = clampAngle(l.maxAngle, DEFAULT_PENDULUM_MAX)
   const id = typeof l.id === 'string' && l.id.length > 0 ? l.id.slice(0, 64) : newTweenId()
-  return { id, kind: l.kind, axis: l.axis, direction: l.direction, speed: l.speed, amount, enabled: l.enabled !== false }
+  return { id, kind: l.kind, axis: l.axis, direction: l.direction, speed: l.speed, amount, minAngle, maxAngle, enabled: l.enabled !== false }
 }
 
 /** GLTF-safe mesh name: letters, digits, `_`, `-` ( Blender/Unity-friendly). */

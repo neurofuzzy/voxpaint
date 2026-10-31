@@ -480,9 +480,9 @@ describe('exportModelToGlb rig boxes', () => {
 
   it('bakes one 2s clip per tweened joint (stacks compose, static joints emit none)', async () => {
     const boxes: RigBox[] = [
-      { id: 'torso-id', name: 'torso', min: [-1, -1, -1] as [number, number, number], max: [3, 1, 1] as [number, number, number], parentId: null, pivot: null, tweens: [{ id: 'tw-1', kind: 'rotate', axis: 'y', direction: 1, speed: 1, amount: 4, enabled: true }] },
+      { id: 'torso-id', name: 'torso', min: [-1, -1, -1] as [number, number, number], max: [3, 1, 1] as [number, number, number], parentId: null, pivot: null, tweens: [{ id: 'tw-1', kind: 'rotate', axis: 'y', direction: 1, speed: 1, amount: 4, minAngle: -30, maxAngle: 30, enabled: true }] },
       // Stacked spin + shuttle on the child: a single clip carrying both.
-      { id: 'arm-id', name: 'arm', min: [2, 0, 0] as [number, number, number], max: [2, 0, 0] as [number, number, number], parentId: 'torso-id', pivot: null, tweens: [{ id: 'tw-2', kind: 'rotate', axis: 'y', direction: 1, speed: 1, amount: 4, enabled: true }, { id: 'tw-3', kind: 'slide', axis: 'x', direction: -1, speed: 2, amount: 3, enabled: true }] },
+      { id: 'arm-id', name: 'arm', min: [2, 0, 0] as [number, number, number], max: [2, 0, 0] as [number, number, number], parentId: 'torso-id', pivot: null, tweens: [{ id: 'tw-2', kind: 'rotate', axis: 'y', direction: 1, speed: 1, amount: 4, minAngle: -30, maxAngle: 30, enabled: true }, { id: 'tw-3', kind: 'slide', axis: 'x', direction: -1, speed: 2, amount: 3, minAngle: -30, maxAngle: 30, enabled: true }] },
     ]
     const json = glbJson(
       await exportModelToGlb(limbModel(), DEFAULT_PALETTE, 16, undefined, { includeTextureMaps: false, rigBoxes: [...boxes] }),
@@ -544,7 +544,7 @@ describe('exportModelToGlb rig boxes', () => {
 
   it('emits no animation clips with includeAnimations:false, joints still export', async () => {
     const boxes: RigBox[] = [
-      { id: 'arm-id', name: 'arm', min: [2, 0, 0] as [number, number, number], max: [2, 0, 0] as [number, number, number], parentId: null, pivot: null, tweens: [{ id: 'tw-1', kind: 'rotate', axis: 'y', direction: 1, speed: 1, amount: 4, enabled: true }] },
+      { id: 'arm-id', name: 'arm', min: [2, 0, 0] as [number, number, number], max: [2, 0, 0] as [number, number, number], parentId: null, pivot: null, tweens: [{ id: 'tw-1', kind: 'rotate', axis: 'y', direction: 1, speed: 1, amount: 4, minAngle: -30, maxAngle: 30, enabled: true }] },
     ]
     const poses: Pose[] = [
       { id: 'pa', name: 'Bind', joints: {} },

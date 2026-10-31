@@ -205,7 +205,7 @@ function rigBoxesEqual(a: RigBox[], b: RigBox[]): boolean {
     for (let k = 0; k < xt.length; k++) {
       const a = xt[k]
       const c = yt[k]
-      if (a.id !== c.id || a.kind !== c.kind || a.axis !== c.axis || a.direction !== c.direction || a.speed !== c.speed || a.amount !== c.amount || a.enabled !== c.enabled) return false
+      if (a.id !== c.id || a.kind !== c.kind || a.axis !== c.axis || a.direction !== c.direction || a.speed !== c.speed || a.amount !== c.amount || a.minAngle !== c.minAngle || a.maxAngle !== c.maxAngle || a.enabled !== c.enabled) return false
     }
   }
   return true

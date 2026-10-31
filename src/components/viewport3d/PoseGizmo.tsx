@@ -64,7 +64,7 @@ export function PoseGizmo() {
   if (mode !== 'animate' || activeTool !== 'pose' || !box || chainHasActiveTweens(rigBoxes, box)) return null
 
   return (
-    <group ref={group} matrixAutoUpdate={false}>
+    <group ref={group}>
       {RING_AXES.map((axis) => (
         <mesh
           key={axis}

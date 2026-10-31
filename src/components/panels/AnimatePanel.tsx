@@ -1,8 +1,9 @@
 import { useMemo, useRef, useState } from 'react'
-import { Bone, ChevronDown, ChevronRight, ChevronUp, Crosshair, Eye, EyeOff, Pause, Play, Plus, RotateCcw, RotateCw, Trash2 } from 'lucide-react'
+import { Bone, ChevronDown, ChevronRight, ChevronUp, Copy, Crosshair, Eye, EyeOff, Pause, Play, Plus, RotateCcw, RotateCw, Trash2 } from 'lucide-react'
 import type { Axis } from '@/engine/grid/types'
 import { SLIDE_AMOUNT_MAX, SLIDE_AMOUNT_MIN } from '@/engine/animation/animationLayers'
 import type { PoseCycleMode, RigBox, RigTween } from '@/engine/rigging/types'
+import { PENDULUM_TWEEN_ANGLE_MAX, PENDULUM_TWEEN_ANGLE_MIN } from '@/engine/rigging/types'
 import { activeTweens } from '@/engine/rigging/rigLoop'
 import { rigPivotOf, rigSubtreeIds } from '@/engine/rigging/types'
 import type { AnimationSpeed } from '@/engine/animation/types'
@@ -33,9 +34,10 @@ function visibleRows(boxes: RigBox[], collapsed: Set<string>): Array<{ box: RigB
 
 /**
  * Animate-mode docked panel (left of the tool rail), tabbed into three concerns:
- * Rig (outline + selected-box properties), Tweens (the selected box's motion stack),
- * and Poses (named snapshots + the playback cycle). The focused tab drives the
- * contextual toolbar next to it, so taps always dispatch somewhere sensible. Tweens
+ * Rig (outline + selected-box properties), Tweens (every box's motion stack — new
+ * tweens land on the selection), and Poses (named snapshots + the playback cycle).
+ * The focused tab drives the contextual toolbar next to it, so taps always dispatch
+ * somewhere sensible. Tweens
  * are looping procedural motions that evaluate simultaneously, composing top-first —
  * stack order is motion order (rotations don't commute), so rows reorder.
  */
@@ -76,7 +78,7 @@ export function AnimatePanel() {
             <InspectorSection box={box} rigBoxes={rigBoxes} />
           </>
         )}
-        {tab === 'tweens' && <TweensSection box={box} />}
+        {tab === 'tweens' && <TweensSection boxes={rigBoxes} />}
         {tab === 'poses' && <PosesSection />}
       </div>
     </div>
@@ -383,60 +385,162 @@ function InspectorSection({ box, rigBoxes }: { box: RigBox | null; rigBoxes: Rig
   )
 }
 
-/** The selected box's tween stack. Needs a box — the tab shows a hint otherwise. */
-function TweensSection({ box }: { box: RigBox | null }) {
-  if (!box) {
+/**
+ * Every box's tween stack, in outline order: ordered looping motions, all enabled
+ * entries evaluating simultaneously and composing top-first. Remove/reorder/mute
+ * per row; params edit in place. New tweens land on the selected box, so the add
+ * button stays disabled until one is picked (click a group header to select it).
+ */
+function TweensSection({ boxes }: { boxes: RigBox[] }) {
+  const selectedRigBoxId = useAppStore((s) => s.selectedRigBoxId)
+  const selectRigBox = useAppStore((s) => s.selectRigBox)
+  const addTween = useAppStore((s) => s.addTween)
+  const moveTweenToBox = useAppStore((s) => s.moveTweenToBox)
+  const [collapsed, setCollapsed] = useState<Set<string>>(new Set())
+  // Cross-box tween drag: the dragged row plus the current drop slot (box + insertion
+  // index, counting pre-removal rows like the visual list — see moveTweenToBox).
+  const [tweenDrag, setTweenDrag] = useState<{ boxId: string; tweenId: string } | null>(null)
+  const [tweenDrop, setTweenDrop] = useState<{ boxId: string; index: number } | null>(null)
+
+  function toggleCollapsed(id: string) {
+    setCollapsed((prev) => {
+      const next = new Set(prev)
+      if (next.has(id)) next.delete(id)
+      else next.add(id)
+      return next
+    })
+  }
+
+  function clearTweenDrag() {
+    setTweenDrag(null)
+    setTweenDrop(null)
+  }
+
+  /** Visual drop slot for a row hover: upper half inserts before, lower half after. */
+  function rowDropIndex(e: React.DragEvent, index: number): number {
+    const rect = (e.currentTarget as HTMLElement).getBoundingClientRect()
+    return (e.clientY - rect.top) / rect.height < 0.5 ? index : index + 1
+  }
+
+  if (boxes.length === 0) {
     return (
       <section>
         <p className="rounded-md border border-dashed border-neutral-800 px-2 py-3 text-center text-[11px] text-neutral-500">
-          No box selected — pick one in the Rig tab to edit its tweens.
+          No rig boxes yet — box a region in the Rig tab first.
         </p>
       </section>
     )
   }
+  const selected = boxes.find((b) => b.id === selectedRigBoxId) ?? null
+  const onCount = boxes.reduce((n, b) => n + (b.tweens ?? []).filter((t) => t.enabled).length, 0)
+  const totalCount = boxes.reduce((n, b) => n + (b.tweens ?? []).length, 0)
+
   return (
     <section className="flex flex-col gap-2">
-      <TweenStack box={box} />
-    </section>
-  )
-}
-
-/**
- * The box's tween stack: ordered looping motions, all enabled entries evaluating
- * simultaneously and composing top-first. Add/remove/reorder/mute per row; params edit
- * in place. Slider drags bracket one undo stroke (down → up); lone edits self-bracket.
- */
-function TweenStack({ box }: { box: RigBox }) {
-  const addTween = useAppStore((s) => s.addTween)
-  const tweens = box.tweens ?? []
-
-  return (
-    <div className="flex flex-col gap-1.5">
       <div className="flex items-center justify-between">
         <span className="text-[11px] font-semibold text-neutral-300 select-none">
-          Tweens ({tweens.filter((t) => t.enabled).length}/{tweens.length} on)
+          Tweens ({onCount}/{totalCount} on)
         </span>
         <button
-          onClick={() => addTween(box.id)}
-          title="Add a looping motion (spin about Y — edit it below)"
-          className="flex items-center gap-1 rounded px-1.5 py-0.5 text-[10px] font-medium text-violet-300 hover:bg-neutral-800 hover:text-violet-100"
+          onClick={() => selected && addTween(selected.id)}
+          disabled={!selected}
+          title={selected ? `Add a looping motion to ${selected.name} (spin about Y — edit it below)` : 'Select a box first — new tweens land on the selection'}
+          className="flex items-center gap-1 rounded px-1.5 py-0.5 text-[10px] font-medium text-violet-300 hover:bg-neutral-800 hover:text-violet-100 disabled:cursor-not-allowed disabled:opacity-30 disabled:hover:bg-transparent"
         >
           <Plus size={12} />
           add tween
         </button>
       </div>
-      {tweens.length === 0 ? (
-        <p className="rounded-md border border-dashed border-neutral-800 px-2 py-2 text-[10px] leading-snug text-neutral-500">
-          No motion — this joint is static (poseable). Stacked tweens play together, top first.
-        </p>
-      ) : (
-        <ul className="flex flex-col gap-1.5">
-          {tweens.map((tween, i) => (
-            <TweenRow key={tween.id} boxId={box.id} tween={tween} index={i} count={tweens.length} />
-          ))}
-        </ul>
-      )}
-    </div>
+      {boxes.map((box) => {
+        const tweens = box.tweens ?? []
+        const active = box.id === selectedRigBoxId
+        const isCollapsed = collapsed.has(box.id)
+        // A drop onto the header (or an empty/collapsed group) appends to the stack.
+        const groupTargeted = tweenDrag !== null && tweenDrop?.boxId === box.id && (isCollapsed || tweens.length === 0)
+        return (
+          <div
+            key={box.id}
+            className="flex flex-col gap-1.5"
+            onDragOver={(e) => {
+              if (!tweenDrag || (e.target as HTMLElement).closest('li')) return
+              e.preventDefault()
+              setTweenDrop((prev) => (prev?.boxId === box.id && prev.index === tweens.length ? prev : { boxId: box.id, index: tweens.length }))
+            }}
+            onDrop={(e) => {
+              if (!tweenDrag) return
+              e.preventDefault()
+              moveTweenToBox(tweenDrag.boxId, tweenDrag.tweenId, box.id)
+              clearTweenDrag()
+            }}
+          >
+            <div
+              onClick={() => selectRigBox(active ? null : box.id)}
+              title={active ? 'Deselect — the add button disables with no selection' : `Select ${box.name} — new tweens land here`}
+              className={
+                'flex cursor-pointer items-center gap-1 rounded-md border px-1.5 py-1 text-left ' +
+                (groupTargeted
+                  ? 'border-violet-400 bg-violet-500/20'
+                  : active ? 'border-violet-500/60 bg-violet-500/10' : 'border-neutral-800 hover:bg-neutral-800/60')
+              }
+            >
+              {tweens.length > 0 ? (
+                <button
+                  onClick={(e) => { e.stopPropagation(); toggleCollapsed(box.id) }}
+                  title={isCollapsed ? 'Expand' : 'Collapse'}
+                  className="flex h-4 w-4 shrink-0 items-center justify-center rounded text-neutral-500 hover:text-neutral-200"
+                >
+                  {isCollapsed ? <ChevronRight size={12} /> : <ChevronDown size={12} />}
+                </button>
+              ) : (
+                <span className="w-4 shrink-0" />
+              )}
+              <span className="min-w-0 flex-1 truncate text-[11px] font-medium text-neutral-200">
+                {box.name}
+              </span>
+              <span className="shrink-0 font-mono text-[10px] text-neutral-500">
+                {tweens.filter((t) => t.enabled).length}/{tweens.length} on
+              </span>
+            </div>
+            {!isCollapsed && tweens.length > 0 && (
+              <ul className="flex flex-col gap-1.5">
+                {tweens.map((tween, i) => (
+                  <TweenRow
+                    key={tween.id}
+                    boxId={box.id}
+                    tween={tween}
+                    index={i}
+                    count={tweens.length}
+                    dropSlot={tweenDrop?.boxId === box.id ? (tweenDrop.index === i ? 'before' : tweenDrop.index === i + 1 ? 'after' : null) : null}
+                    dimmed={tweenDrag !== null && !(tweenDrag.boxId === box.id && tweenDrag.tweenId === tween.id)}
+                    onDragStart={(e) => {
+                      e.dataTransfer.effectAllowed = 'move'
+                      e.dataTransfer.setData('text/plain', `${box.id}:${tween.id}`)
+                      setTweenDrag({ boxId: box.id, tweenId: tween.id })
+                      setTweenDrop(null)
+                    }}
+                    onDragEnd={clearTweenDrag}
+                    onDragOver={(e) => {
+                      if (!tweenDrag) return
+                      e.preventDefault()
+                      e.stopPropagation()
+                      const at = rowDropIndex(e, i)
+                      setTweenDrop((prev) => (prev?.boxId === box.id && prev.index === at ? prev : { boxId: box.id, index: at }))
+                    }}
+                    onDrop={(e) => {
+                      if (!tweenDrag) return
+                      e.preventDefault()
+                      e.stopPropagation()
+                      moveTweenToBox(tweenDrag.boxId, tweenDrag.tweenId, box.id, rowDropIndex(e, i))
+                      clearTweenDrag()
+                    }}
+                  />
+                ))}
+              </ul>
+            )}
+          </div>
+        )
+      })}
+    </section>
   )
 }
 
@@ -447,9 +551,32 @@ function seg(on: boolean) {
   )
 }
 
-function TweenRow({ boxId, tween, index, count }: { boxId: string; tween: RigTween; index: number; count: number }) {
+/** Kind cycle order for the type button: spin → pendulum → shuttle. */
+const TWEEN_KIND_ORDER: Array<RigTween['kind']> = ['rotate', 'pendulum', 'slide']
+const TWEEN_KIND_LABEL: Record<RigTween['kind'], string> = { rotate: 'Spin', pendulum: 'Pendulum', slide: 'Shuttle' }
+const TWEEN_KIND_HINT: Record<RigTween['kind'], string> = {
+  rotate: 'Turntable spin, full turn per cycle — click for pendulum',
+  pendulum: 'Swing between min/max angles, sine back and forth — click for shuttle',
+  slide: 'Axial shuttle, sine back and forth — click for spin',
+}
+
+function TweenRow({ boxId, tween, index, count, dropSlot, dimmed, onDragStart, onDragEnd, onDragOver, onDrop }: {
+  boxId: string
+  tween: RigTween
+  index: number
+  count: number
+  /** Drop indicator for a cross-box drag: line above/below this row, else null. */
+  dropSlot: 'before' | 'after' | null
+  /** Dimmed while another row is being dragged. */
+  dimmed: boolean
+  onDragStart: (e: React.DragEvent) => void
+  onDragEnd: () => void
+  onDragOver: (e: React.DragEvent) => void
+  onDrop: (e: React.DragEvent) => void
+}) {
   const removeTween = useAppStore((s) => s.removeTween)
   const moveTween = useAppStore((s) => s.moveTween)
+  const duplicateTween = useAppStore((s) => s.duplicateTween)
   const setTweenEnabled = useAppStore((s) => s.setTweenEnabled)
   const patchTween = useAppStore((s) => s.patchTween)
   const animBeginStroke = useAppStore((s) => s.animBeginStroke)
@@ -472,7 +599,19 @@ function TweenRow({ boxId, tween, index, count }: { boxId: string; tween: RigTwe
 
   const stacked = count > 1
   return (
-    <li className={'flex flex-col gap-1.5 rounded-md border px-2 py-2 ' + (tween.enabled ? 'border-neutral-800' : 'border-neutral-800/60 opacity-60')}>
+    <li
+      draggable
+      onDragStart={onDragStart}
+      onDragEnd={onDragEnd}
+      onDragOver={onDragOver}
+      onDrop={onDrop}
+      className={dimmed ? 'opacity-40' : ''}
+    >
+      {dropSlot === 'before' && <div className="h-0.5 rounded bg-violet-400" />}
+      <div
+        className={'flex cursor-grab flex-col gap-1.5 rounded-md border px-2 py-2 active:cursor-grabbing ' + (tween.enabled ? 'border-neutral-800' : 'border-neutral-800/60 opacity-60')}
+        title="Drag onto another box's group to move it there"
+      >
       <div className="flex items-center gap-1">
         <span className="min-w-0 flex-1 truncate text-[11px] font-medium text-neutral-200">
           {stacked ? `Motion ${index + 1} of ${count}` : 'Motion'}
@@ -506,6 +645,13 @@ function TweenRow({ boxId, tween, index, count }: { boxId: string; tween: RigTwe
           </>
         )}
         <button
+          onClick={() => duplicateTween(boxId, tween.id)}
+          title="Duplicate this tween (inserts a copy right below)"
+          className="flex h-5 w-5 shrink-0 items-center justify-center rounded text-neutral-400 hover:bg-neutral-800 hover:text-neutral-100"
+        >
+          <Copy size={12} />
+        </button>
+        <button
           onClick={() => removeTween(boxId, tween.id)}
           title="Delete this tween"
           className="flex h-5 w-5 shrink-0 items-center justify-center rounded text-neutral-500 hover:bg-neutral-800 hover:text-red-400"
@@ -517,12 +663,12 @@ function TweenRow({ boxId, tween, index, count }: { boxId: string; tween: RigTwe
         <div className="flex min-w-0 flex-1 flex-col gap-0.5">
           <span className="text-[10px] text-neutral-500">Type</span>
           <button
-            aria-label={tween.kind === 'rotate' ? 'Spin — click for shuttle' : 'Shuttle — click for spin'}
-            onClick={() => patchTween(boxId, tween.id, { kind: tween.kind === 'rotate' ? 'slide' : 'rotate' })}
-            title={tween.kind === 'rotate' ? 'Turntable spin, full turn per cycle — click for shuttle' : 'Axial shuttle, sine back and forth — click for spin'}
+            aria-label={`${TWEEN_KIND_LABEL[tween.kind]} — click for ${TWEEN_KIND_LABEL[TWEEN_KIND_ORDER[(TWEEN_KIND_ORDER.indexOf(tween.kind) + 1) % TWEEN_KIND_ORDER.length]]}`}
+            onClick={() => patchTween(boxId, tween.id, { kind: TWEEN_KIND_ORDER[(TWEEN_KIND_ORDER.indexOf(tween.kind) + 1) % TWEEN_KIND_ORDER.length] })}
+            title={TWEEN_KIND_HINT[tween.kind]}
             className={seg(true) + ' w-full'}
           >
-            {tween.kind === 'rotate' ? 'Spin' : 'Shuttle'}
+            {TWEEN_KIND_LABEL[tween.kind]}
           </button>
         </div>
         <div className="flex flex-col gap-0.5">
@@ -533,7 +679,7 @@ function TweenRow({ boxId, tween, index, count }: { boxId: string; tween: RigTwe
               const order: Axis[] = ['x', 'y', 'z']
               patchTween(boxId, tween.id, { axis: order[(order.indexOf(tween.axis) + 1) % order.length] })
             }}
-            title={tween.kind === 'rotate' ? `Spin about ${tween.axis.toUpperCase()} — click for next axis` : `Shuttle along ${tween.axis.toUpperCase()} — click for next axis`}
+            title={`${TWEEN_KIND_LABEL[tween.kind]} ${tween.kind === 'slide' ? 'along' : 'about'} ${tween.axis.toUpperCase()} — click for next axis`}
             className={seg(true) + ' w-full font-mono uppercase'}
           >
             {tween.axis}
@@ -541,7 +687,16 @@ function TweenRow({ boxId, tween, index, count }: { boxId: string; tween: RigTwe
         </div>
         <div className="flex flex-col gap-0.5">
           <span className="text-[10px] text-neutral-500">Direction</span>
-          {tween.kind === 'rotate' ? (
+          {tween.kind === 'pendulum' ? (
+            <button
+              aria-label={tween.direction === 1 ? 'Pendulum starts at min — click to start at max' : 'Pendulum starts at max — click to start at min'}
+              onClick={() => patchTween(boxId, tween.id, { direction: (tween.direction === 1 ? -1 : 1) as 1 | -1 })}
+              title={tween.direction === 1 ? 'Starts at min, swings to max first — click to start at max' : 'Starts at max, swings to min first — click to start at min'}
+              className={seg(true) + ' w-full font-mono text-[10px]'}
+            >
+              {tween.direction === 1 ? 'min→max' : 'max→min'}
+            </button>
+          ) : tween.kind === 'rotate' ? (
             <button
               aria-label={tween.direction === 1 ? 'Counter-clockwise spin — click for clockwise' : 'Clockwise spin — click for counter-clockwise'}
               onClick={() => patchTween(boxId, tween.id, { direction: (tween.direction === 1 ? -1 : 1) as 1 | -1 })}
@@ -595,6 +750,46 @@ function TweenRow({ boxId, tween, index, count }: { boxId: string; tween: RigTwe
           <span className="w-12 shrink-0 font-mono text-[10px] tabular-nums text-neutral-400">{tween.amount} vx</span>
         </div>
       )}
+      {tween.kind === 'pendulum' && (
+        <>
+          <div className="flex items-center gap-2">
+            <span className="w-14 shrink-0 text-[10px] text-neutral-500">Min angle</span>
+            <input
+              type="range"
+              aria-label="Pendulum minimum angle in degrees"
+              title="Pendulum minimum angle in degrees"
+              min={PENDULUM_TWEEN_ANGLE_MIN}
+              max={PENDULUM_TWEEN_ANGLE_MAX}
+              value={tween.minAngle}
+              onPointerDown={slideStart}
+              onPointerUp={slideEnd}
+              onPointerCancel={slideEnd}
+              onChange={(e) => patchTween(boxId, tween.id, { minAngle: Number(e.target.value) })}
+              className="h-4 min-w-0 flex-1 accent-violet-500"
+            />
+            <span className="w-12 shrink-0 font-mono text-[10px] tabular-nums text-neutral-400">{tween.minAngle}°</span>
+          </div>
+          <div className="flex items-center gap-2">
+            <span className="w-14 shrink-0 text-[10px] text-neutral-500">Max angle</span>
+            <input
+              type="range"
+              aria-label="Pendulum maximum angle in degrees"
+              title="Pendulum maximum angle in degrees"
+              min={PENDULUM_TWEEN_ANGLE_MIN}
+              max={PENDULUM_TWEEN_ANGLE_MAX}
+              value={tween.maxAngle}
+              onPointerDown={slideStart}
+              onPointerUp={slideEnd}
+              onPointerCancel={slideEnd}
+              onChange={(e) => patchTween(boxId, tween.id, { maxAngle: Number(e.target.value) })}
+              className="h-4 min-w-0 flex-1 accent-violet-500"
+            />
+            <span className="w-12 shrink-0 font-mono text-[10px] tabular-nums text-neutral-400">{tween.maxAngle}°</span>
+          </div>
+        </>
+      )}
+      </div>
+      {dropSlot === 'after' && <div className="h-0.5 rounded bg-violet-400" />}
     </li>
   )
 }

@@ -281,14 +281,14 @@ describe('serialize rig boxes', () => {
     const rigBoxes: RigBox[] = [
       { id: 'a', name: 'torso', min: [0, 0, 0] as [number, number, number], max: [3, 3, 3] as [number, number, number], parentId: null, pivot: null, tweens: [] },
       // Half-integer pivots (cell-boundary joint faces) must survive the trip, not just ints.
-      { id: 'b', name: 'arm', min: [1, 0, 1] as [number, number, number], max: [2, 3, 2] as [number, number, number], parentId: 'a', pivot: [0.5, 1, 1] as [number, number, number], tweens: [{ id: 'tw-1', kind: 'slide', axis: 'x', direction: -1, speed: 2, amount: 5, enabled: true }] },
+      { id: 'b', name: 'arm', min: [1, 0, 1] as [number, number, number], max: [2, 3, 2] as [number, number, number], parentId: 'a', pivot: [0.5, 1, 1] as [number, number, number], tweens: [{ id: 'tw-1', kind: 'slide', axis: 'x', direction: -1, speed: 2, amount: 5, minAngle: -30, maxAngle: 30, enabled: true }] },
     ]
     const file = serializeProject(emptyModel(), DEFAULT_PALETTE, meta, texture, undefined, undefined, undefined, undefined, undefined, rigBoxes)
     expect(file.rigBoxes).toHaveLength(2)
     expect(file.rigBoxes?.[0]).not.toHaveProperty('pivot')
     expect(file.rigBoxes?.[0]).not.toHaveProperty('tweens')
     expect(file.rigBoxes?.[1].pivot).toEqual([0.5, 1, 1])
-    expect(file.rigBoxes?.[1].tweens).toEqual([{ id: 'tw-1', kind: 'slide', axis: 'x', direction: -1, speed: 2, amount: 5, enabled: true }])
+    expect(file.rigBoxes?.[1].tweens).toEqual([{ id: 'tw-1', kind: 'slide', axis: 'x', direction: -1, speed: 2, amount: 5, minAngle: -30, maxAngle: 30, enabled: true }])
     const restored = deserializeProject(file)
     expect(restored.rigBoxes).toEqual(rigBoxes)
   })
@@ -322,7 +322,7 @@ describe('serialize rig boxes', () => {
     const restored = deserializeProject(migrateToCurrent(v14)).rigBoxes
     expect(restored.find((b) => b.id === 'a')?.tweens ?? []).toEqual([])
     expect(restored.find((b) => b.id === 'b')?.tweens).toEqual([
-      { id: 'tw-b-1', kind: 'rotate', axis: 'y', direction: 1, speed: 3, amount: 4, enabled: true },
+      { id: 'tw-b-1', kind: 'rotate', axis: 'y', direction: 1, speed: 3, amount: 4, minAngle: -30, maxAngle: 30, enabled: true },
     ])
   })
 

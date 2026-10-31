@@ -21,7 +21,7 @@ import {
 import { evaluatePoseCycle, poseCycleDuration } from './pose'
 
 function tween(over: Partial<RigTween> = {}): RigTween {
-  return { id: 'tw-1', kind: 'rotate', axis: 'y', direction: 1, speed: 1, amount: 4, enabled: true, ...over }
+  return { id: 'tw-1', kind: 'rotate', axis: 'y', direction: 1, speed: 1, amount: 4, minAngle: -30, maxAngle: 30, enabled: true, ...over }
 }
 
 function box(id: string, parentId: string | null = null, tweens: RigTween[] = []): RigBox {
@@ -39,6 +39,8 @@ describe('rig tweens', () => {
     expect(t.kind).toBe('rotate')
     expect(t.axis).toBe('y')
     expect(t.enabled).toBe(true)
+    expect(t.minAngle).toBe(-30)
+    expect(t.maxAngle).toBe(30)
     expect(t.id.length).toBeGreaterThan(0)
   })
 
@@ -54,11 +56,26 @@ describe('rig tweens', () => {
 
   it('sanitizes hand-edited tweens, clamping the slide amount', () => {
     expect(sanitizeRigTween({ id: 't', kind: 'rotate', axis: 'x', direction: -1, speed: 2, amount: 3 })).toEqual(
-      { id: 't', kind: 'rotate', axis: 'x', direction: -1, speed: 2, amount: 3, enabled: true },
+      { id: 't', kind: 'rotate', axis: 'x', direction: -1, speed: 2, amount: 3, minAngle: -30, maxAngle: 30, enabled: true },
     )
     expect(sanitizeRigTween(null)).toBeNull()
     expect(sanitizeRigTween({ kind: 'spin', axis: 'y', direction: 1, speed: 1, amount: 4 })).toBeNull()
     expect(sanitizeRigTween({ kind: 'slide', axis: 'y', direction: 1, speed: 1, amount: 99 })?.amount).toBe(8)
+  })
+
+  it('sanitizes pendulum endpoints, defaulting and clamping them', () => {
+    // Missing endpoints (pre-pendulum files) degrade to the default swing.
+    expect(sanitizeRigTween({ kind: 'pendulum', axis: 'y', direction: 1, speed: 1, amount: 4 })).toEqual(
+      expect.objectContaining({ kind: 'pendulum', minAngle: -30, maxAngle: 30 }),
+    )
+    // Out-of-range endpoints clamp to ±90°, like the slice-loop pendulum.
+    const clamped = sanitizeRigTween({ kind: 'pendulum', axis: 'y', direction: 1, speed: 1, amount: 4, minAngle: -200, maxAngle: 200 })!
+    expect(clamped.minAngle).toBe(-90)
+    expect(clamped.maxAngle).toBe(90)
+    // Non-finite endpoints fall back to the default swing.
+    const fallback = sanitizeRigTween({ kind: 'pendulum', axis: 'y', direction: 1, speed: 1, amount: 4, minAngle: NaN, maxAngle: Infinity })!
+    expect(fallback.minAngle).toBe(-30)
+    expect(fallback.maxAngle).toBe(30)
   })
 
   it('is identity at rest and for disabled tweens', () => {
@@ -75,6 +92,55 @@ describe('rig tweens', () => {
     expect(x).toBeCloseTo(0.5, 10)
     expect(y).toBeCloseTo(1.5, 10)
     expect(z).toBeCloseTo(1.5, 10)
+  })
+
+  it('swings a pendulum between its min/max angles, starting at min', () => {
+    // Symmetric ±30° about Y through the box center (1.5,1.5,1.5): starts at min,
+    // passes mid at the quarter cycle, peaks at max halfway — pivot-relative like spin.
+    const pend = tween({ kind: 'pendulum', axis: 'y', minAngle: -30, maxAngle: 30 })
+    // t=0: −30° about Y maps +x toward +z: (1.5+cos30, 1.5+sin30).
+    const atMin = apply(localTweenMatrix(box('a'), pend, 0), [2.5, 1.5, 1.5])
+    expect(atMin[0]).toBeCloseTo(1.5 + Math.cos(Math.PI / 6), 10)
+    expect(atMin[1]).toBeCloseTo(1.5, 10)
+    expect(atMin[2]).toBeCloseTo(1.5 + Math.sin(Math.PI / 6), 10)
+    // Quarter cycle: mid-swing (bind) — the joint passes through rest.
+    const atMid = apply(localTweenMatrix(box('a'), pend, 0.5), [2.5, 1.5, 1.5])
+    expect(atMid[0]).toBeCloseTo(2.5, 10)
+    expect(atMid[2]).toBeCloseTo(1.5, 10)
+    // Half cycle: +30° mirrors the start.
+    const atMax = apply(localTweenMatrix(box('a'), pend, 1), [2.5, 1.5, 1.5])
+    expect(atMax[0]).toBeCloseTo(1.5 + Math.cos(Math.PI / 6), 10)
+    expect(atMax[2]).toBeCloseTo(1.5 - Math.sin(Math.PI / 6), 10)
+    // Seam continuity: the loop ends where it starts (at min), so no pop.
+    const atSeam = apply(localTweenMatrix(box('a'), pend, 2), [2.5, 1.5, 1.5])
+    expect(atSeam[0]).toBeCloseTo(atMin[0], 10)
+    expect(atSeam[2]).toBeCloseTo(atMin[2], 10)
+  })
+
+  it('starts a reversed pendulum at max', () => {
+    const pend = tween({ kind: 'pendulum', axis: 'y', direction: -1, minAngle: -30, maxAngle: 30 })
+    // t=0 sits at max (+30°), half cycle swings down to min (−30°).
+    const atMax = apply(localTweenMatrix(box('a'), pend, 0), [2.5, 1.5, 1.5])
+    expect(atMax[0]).toBeCloseTo(1.5 + Math.cos(Math.PI / 6), 10)
+    expect(atMax[2]).toBeCloseTo(1.5 - Math.sin(Math.PI / 6), 10)
+    const atMin = apply(localTweenMatrix(box('a'), pend, 1), [2.5, 1.5, 1.5])
+    expect(atMin[0]).toBeCloseTo(1.5 + Math.cos(Math.PI / 6), 10)
+    expect(atMin[2]).toBeCloseTo(1.5 + Math.sin(Math.PI / 6), 10)
+  })
+
+  it('offsets an asymmetric pendulum swing around its midpoint', () => {
+    // 10°..50° never rests at bind: t=0 sits at the 10° min endpoint.
+    const pend = tween({ kind: 'pendulum', axis: 'y', minAngle: 10, maxAngle: 50 })
+    const [x, y, z] = apply(localTweenMatrix(box('a'), pend, 0), [2.5, 1.5, 1.5])
+    expect(x).toBeCloseTo(1.5 + Math.cos(THREE.MathUtils.degToRad(10)), 8)
+    expect(y).toBeCloseTo(1.5, 10)
+    expect(z).toBeCloseTo(1.5 - Math.sin(THREE.MathUtils.degToRad(10)), 8)
+    // The joint's own swing never moves its own pivot.
+    const m = localTweenMatrix(box('a'), pend, 0.5)
+    const [px, py, pz] = pivotWorldFromMatrix(m, box('a'))
+    expect(px).toBeCloseTo(1.5, 10)
+    expect(py).toBeCloseTo(1.5, 10)
+    expect(pz).toBeCloseTo(1.5, 10)
   })
 
   it('slides sinusoidally along its axis', () => {

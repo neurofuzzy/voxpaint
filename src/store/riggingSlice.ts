@@ -4,6 +4,7 @@ import type { Coord } from '@/engine/grid/types'
 import { bboxOfCoords } from '@/engine/tools/cellSetOps'
 import { floodFillRegion3D } from '@/engine/tools/floodFill'
 import type { RigBox, RigTween } from '@/engine/rigging/types'
+import { newTweenId } from '@/engine/rigging/types'
 import { newRigTween } from '@/engine/rigging/rigLoop'
 import { moveRigBoxInList, translateRigSubtree, type RigMovePosition } from '@/engine/rigging/types'
 import { showToast } from '@/components/ui/toastBus'
@@ -172,6 +173,49 @@ export const createRiggingSlice: Slice = (set, get) => ({
     get().animCommitStroke()
   },
 
+  duplicateTween: (boxId, tweenId) => {
+    let dupeId: string | null = null
+    get().animBeginStroke()
+    set((state) => {
+      const box = state.rigBoxes.find((b) => b.id === boxId)
+      const list = box?.tweens
+      if (!box || !list) return
+      const i = list.findIndex((t) => t.id === tweenId)
+      if (i < 0) return
+      const dupe = { ...list[i], id: newTweenId() }
+      dupeId = dupe.id
+      list.splice(i + 1, 0, dupe)
+      if (dupe.enabled) state.poseRotations.delete(boxId)
+      state.dirty = true
+    })
+    get().animCommitStroke()
+    return dupeId
+  },
+
+  moveTweenToBox: (srcBoxId, tweenId, dstBoxId, index) => {
+    get().animBeginStroke()
+    set((state) => {
+      const src = state.rigBoxes.find((b) => b.id === srcBoxId)
+      const dst = state.rigBoxes.find((b) => b.id === dstBoxId)
+      const list = src?.tweens
+      if (!src || !dst || !list) return
+      const i = list.findIndex((t) => t.id === tweenId)
+      if (i < 0) return
+      const [tween] = list.splice(i, 1)
+      if (!dst.tweens) dst.tweens = []
+      // Drop slots count pre-removal rows (like the visual list); a downward move
+      // inside one stack shifts by one after the removal.
+      let at = index ?? dst.tweens.length
+      if (src === dst && i < at) at -= 1
+      at = Math.max(0, Math.min(at, dst.tweens.length))
+      dst.tweens.splice(at, 0, tween)
+      if (tween.enabled) state.poseRotations.delete(dstBoxId)
+      state.selectedRigBoxId = dstBoxId
+      state.dirty = true
+    })
+    get().animCommitStroke()
+  },
+
   setTweenEnabled: (boxId, tweenId, enabled) => {
     get().animBeginStroke()
     set((state) => {
@@ -200,6 +244,8 @@ export const createRiggingSlice: Slice = (set, get) => ({
       if (patch.direction !== undefined) tween.direction = patch.direction
       if (patch.speed !== undefined) tween.speed = patch.speed
       if (patch.amount !== undefined) tween.amount = patch.amount
+      if (patch.minAngle !== undefined) tween.minAngle = patch.minAngle
+      if (patch.maxAngle !== undefined) tween.maxAngle = patch.maxAngle
       if (patch.enabled !== undefined) tween.enabled = patch.enabled
       if (tween.enabled) state.poseRotations.delete(boxId)
       state.dirty = true

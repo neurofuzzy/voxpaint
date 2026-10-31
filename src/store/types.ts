@@ -763,6 +763,15 @@ export type RiggingSlice = {
   /** Reorders within the stack (±1): stack order is composition order (first = outermost).
    * No-op at the ends or on unknown ids. Self-brackets undo. */
   moveTween: (boxId: string, tweenId: string, dir: -1 | 1) => void
+  /** Duplicates a tween onto the same stack, inserted right after the original with a
+   * fresh id. Returns the new id, or null on unknown ids. Self-brackets undo. */
+  duplicateTween: (boxId: string, tweenId: string) => string | null
+  /** Moves a tween across stacks (drag a row onto another box's group): removed from the
+   * source, inserted into the destination at `index` (end when omitted; clamped). A
+   * same-box move reorders — the index counts pre-removal rows, like a visual drop slot.
+   * Selects the destination box and clears its pose preview when the moved tween is
+   * enabled. No-op on unknown ids. Self-brackets undo. */
+  moveTweenToBox: (srcBoxId: string, tweenId: string, dstBoxId: string, index?: number) => void
   /** Mutes/unmutes a tween (params kept). Enabling clears that joint's pose preview.
    * No-op on unknown ids. Self-brackets undo. */
   setTweenEnabled: (boxId: string, tweenId: string, enabled: boolean) => void
