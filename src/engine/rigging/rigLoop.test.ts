@@ -5,6 +5,7 @@ import type { Pose, RigBox, RigTween } from './types'
 import { sanitizeRigTween } from './types'
 import {
   activeTweens,
+  bakeRigAction,
   bakeRigClips,
   boxHasActiveTweens,
   boxTweenMatrix,
@@ -407,6 +408,111 @@ describe('bakeRigClips with a pose cycle', () => {
       const [qx, qy, qz, qw] = sample(quatTrack, 4, t)
       const dot = qx * eq.x + qy * eq.y + qz * eq.z + qw * eq.w
       expect(Math.abs(dot)).toBeCloseTo(1, 2)
+    }
+  })
+})
+
+describe('bakeRigAction', () => {
+  function groupsFor(boxes: RigBox[]): Map<string, THREE.Group> {
+    const map = new Map<string, THREE.Group>()
+    for (const b of boxes) {
+      const g = new THREE.Group()
+      g.name = b.name
+      map.set(b.id, g)
+    }
+    return map
+  }
+
+  function trackValues(clip: THREE.AnimationClip, name: string): { times: number[]; values: number[] } {
+    const track = clip.tracks.find((t) => t.name === name)! as unknown as { times: ArrayLike<number>; values: ArrayLike<number> }
+    expect(track).toBeDefined()
+    return { times: Array.from(track.times), values: Array.from(track.values) }
+  }
+
+  it('bakes ONE named clip with a position + quaternion track per animated joint', () => {
+    const boxes = [
+      box('p', null, [tween({ id: 's', kind: 'rotate', axis: 'y' })]),
+      box('c', 'p', [tween({ id: 'x', kind: 'slide', axis: 'x', amount: 3 })]),
+      box('still'),
+    ]
+    const clip = bakeRigAction(
+      'walk',
+      boxes,
+      groupsFor(boxes),
+      1,
+      30,
+      TWEEN_CYCLE_SECONDS,
+      (t) => composeTweenMatrices(boxes, t),
+      new Set(['p', 'c']),
+    )
+    expect(clip).toBeInstanceOf(THREE.AnimationClip)
+    expect(clip.name).toBe('walk')
+    expect(clip.duration).toBeCloseTo(TWEEN_CYCLE_SECONDS, 10)
+    // Two tracks (position + quaternion) per animated joint; the static joint is absent.
+    expect(clip.tracks.map((t) => t.name).sort()).toEqual(
+      ['c.position', 'c.quaternion', 'p.position', 'p.quaternion'],
+    )
+    // 30 fps over 2 s samples 61 keys per track.
+    for (const track of clip.tracks) {
+      const times = (track as unknown as { times: ArrayLike<number> }).times
+      expect(times.length).toBe(61)
+      expect(times[0]).toBeCloseTo(0, 10)
+      expect(times[times.length - 1]).toBeCloseTo(2, 10)
+    }
+  })
+
+  it('bakes only the listed joints and skips joints without groups', () => {
+    const boxes = [
+      box('p', null, [tween()]),
+      box('c', 'p', [tween({ id: 'x', kind: 'slide', axis: 'x', amount: 2 })]),
+    ]
+    const groups = groupsFor(boxes)
+    groups.delete('c')
+    const clip = bakeRigAction('loop', boxes, groups, 1, 30, 2, (t) => composeTweenMatrices(boxes, t), new Set(['p', 'c']))
+    // 'c' is animated but has no group (nothing to bind the track to); only 'p' survives.
+    expect(clip.tracks.map((t) => t.name).sort()).toEqual(['p.position', 'p.quaternion'])
+    // An empty selection still returns one (trackless) clip rather than throwing.
+    const empty = bakeRigAction('loop', boxes, groups, 1, 30, 2, (t) => composeTweenMatrices(boxes, t), new Set())
+    expect(empty.tracks).toHaveLength(0)
+    expect(empty.duration).toBeCloseTo(2, 10)
+  })
+
+  it('scales baked Y positions to export space, leaving X/Z alone', () => {
+    const boxes = [box('p', null, [tween({ kind: 'slide', axis: 'y', amount: 2 })])]
+    const sample = (t: number) => composeTweenMatrices(boxes, t)
+    const flat = bakeRigAction('loop', boxes, groupsFor(boxes), 1, 30, 2, sample, new Set(['p']))
+    const tall = bakeRigAction('loop', boxes, groupsFor(boxes), 2, 30, 2, sample, new Set(['p']))
+    const f = trackValues(flat, 'p.position')
+    const s = trackValues(tall, 'p.position')
+    expect(f.values.length).toBe(s.values.length)
+    for (let i = 0; i < f.values.length; i += 3) {
+      expect(s.values[i]).toBeCloseTo(f.values[i], 6)
+      expect(s.values[i + 1]).toBeCloseTo(f.values[i + 1] * 2, 6)
+      expect(s.values[i + 2]).toBeCloseTo(f.values[i + 2], 6)
+    }
+  })
+
+  it('carries exactly the per-joint bake motion (bakeRigClips parity)', () => {
+    // Same outline, same motion: the action bake must agree with the per-joint bake
+    // track-for-track (the refactor shares bakeJointTracks, this pins it).
+    const boxes = [
+      box('p', null, [tween({ id: 's', kind: 'rotate', axis: 'y', speed: 2 })]),
+      box('c', 'p', [tween({ id: 'x', kind: 'slide', axis: 'x', amount: 2, speed: 3 })]),
+    ]
+    const groups = groupsFor(boxes)
+    const perJoint = bakeRigClips(boxes, groups)
+    const action = bakeRigAction('loop', boxes, groups, 1, 30, TWEEN_CYCLE_SECONDS, (t) => composeTweenMatrices(boxes, t), new Set(['p', 'c']))
+    expect(action.tracks).toHaveLength(4)
+    for (const jointClip of perJoint) {
+      const joint = jointClip.name.replace(/^anim_/, '')
+      for (const kind of ['position', 'quaternion']) {
+        const expected = trackValues(jointClip, `${joint}.${kind}`)
+        const got = trackValues(action, `${joint}.${kind}`)
+        expect(got.times).toHaveLength(expected.times.length)
+        for (let i = 0; i < expected.times.length; i++) expect(got.times[i]).toBeCloseTo(expected.times[i], 6)
+        expect(got.values).toHaveLength(expected.values.length)
+        for (let i = 0; i < expected.values.length; i++) expect(got.values[i]).toBeCloseTo(expected.values[i], 5)
+      }
     }
   })
 })

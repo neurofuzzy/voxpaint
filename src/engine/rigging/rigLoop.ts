@@ -179,6 +179,61 @@ export function tweenDuration(speed: AnimationSpeed): number {
 }
 
 /**
+ * One joint's parent-relative local track pair over [0, duration], sampled at `fps`:
+ * `local(t) = T(−parentPivot) · parentMotion⁻¹(t) · selfMotion(t) · T(pivot)` (grid units,
+ * identity at rest so clips start pop-free), with Y scaled to export space on write.
+ * Shared by `bakeRigClips` (one clip per joint) and `bakeRigAction` (one clip per action)
+ * so both bakes carry byte-identical motion. LINEAR TRS: sub-voxel error, plays in every
+ * downstream player.
+ */
+function bakeJointTracks(
+  groupName: string,
+  box: RigBox,
+  parent: RigBox | undefined,
+  voxelScaleY: number,
+  fps: number,
+  duration: number,
+  sampleWorlds: (t: number) => Map<string, THREE.Matrix4>,
+): [THREE.VectorKeyframeTrack, THREE.QuaternionKeyframeTrack] {
+  const pivot = rigPivotOf(box)
+  const parentPivot = parent ? rigPivotOf(parent) : null
+  const steps = Math.round(duration * fps)
+  const times: number[] = []
+  const positions: number[] = []
+  const quaternions: number[] = []
+  const pos = new THREE.Vector3()
+  const quat = new THREE.Quaternion()
+  const scl = new THREE.Vector3()
+  const parentInv = new THREE.Matrix4()
+  const unparent = new THREE.Matrix4()
+  const repivot = new THREE.Matrix4()
+  const local = new THREE.Matrix4()
+  for (let i = 0; i <= steps; i++) {
+    const t = (i / steps) * duration
+    const worlds = sampleWorlds(t)
+    const self = worlds.get(box.id) ?? new THREE.Matrix4()
+    const parentWorld = parent ? (worlds.get(parent.id) ?? new THREE.Matrix4()) : new THREE.Matrix4()
+    // local(t) in grid units; translation Y scaled to export space on write.
+    unparent.makeTranslation(
+      parentPivot ? -(parentPivot[0] + 0.5) : 0,
+      parentPivot ? -(parentPivot[1] + 0.5) : 0,
+      parentPivot ? -(parentPivot[2] + 0.5) : 0,
+    )
+    repivot.makeTranslation(pivot[0] + 0.5, pivot[1] + 0.5, pivot[2] + 0.5)
+    parentInv.copy(parentWorld).invert()
+    local.copy(unparent).multiply(parentInv).multiply(self).multiply(repivot)
+    local.decompose(pos, quat, scl)
+    times.push(t)
+    positions.push(pos.x, pos.y * voxelScaleY, pos.z)
+    quaternions.push(quat.x, quat.y, quat.z, quat.w)
+  }
+  return [
+    new THREE.VectorKeyframeTrack(`${groupName}.position`, times, positions),
+    new THREE.QuaternionKeyframeTrack(`${groupName}.quaternion`, times, quaternions),
+  ]
+}
+
+/**
  * Bakes one looping `AnimationClip` per animated joint by sampling the composed
  * (tween × pose) motion over the universal cycle (`TWEEN_CYCLE_SECONDS`, extended to
  * cover a pose cycle's full pass when one is provided). Each joint's track is
@@ -202,49 +257,49 @@ export function bakeRigClips(
   // Static children ride animated parents through the hierarchy — no clip needed.
   const byId = new Map(boxes.map((b) => [b.id, b]))
   const duration = Math.max(TWEEN_CYCLE_SECONDS, pose?.duration ?? 0)
-  const steps = Math.round(duration * fps)
   const clips: THREE.AnimationClip[] = []
-  const pos = new THREE.Vector3()
-  const quat = new THREE.Quaternion()
-  const scl = new THREE.Vector3()
-  const parentInv = new THREE.Matrix4()
-  const unparent = new THREE.Matrix4()
-  const repivot = new THREE.Matrix4()
-  const local = new THREE.Matrix4()
 
   for (const box of animated) {
     const group = groups.get(box.id)
     if (!group) continue
-    const pivot = rigPivotOf(box)
     const parent = box.parentId ? byId.get(box.parentId) : undefined
-    const parentPivot = parent ? rigPivotOf(parent) : null
-    const times: number[] = []
-    const positions: number[] = []
-    const quaternions: number[] = []
-    for (let i = 0; i <= steps; i++) {
-      const t = (i / steps) * duration
-      const worlds = composeAnimatedMatrices(boxes, pose ? pose.at(t) : EMPTY_POSE, t)
-      const self = worlds.get(box.id) ?? new THREE.Matrix4()
-      const parentWorld = parent ? (worlds.get(parent.id) ?? new THREE.Matrix4()) : new THREE.Matrix4()
-      // local(t) in grid units; translation Y scaled to export space on write.
-      unparent.makeTranslation(
-        parentPivot ? -(parentPivot[0] + 0.5) : 0,
-        parentPivot ? -(parentPivot[1] + 0.5) : 0,
-        parentPivot ? -(parentPivot[2] + 0.5) : 0,
-      )
-      repivot.makeTranslation(pivot[0] + 0.5, pivot[1] + 0.5, pivot[2] + 0.5)
-      parentInv.copy(parentWorld).invert()
-      local.copy(unparent).multiply(parentInv).multiply(self).multiply(repivot)
-      local.decompose(pos, quat, scl)
-      times.push(t)
-      positions.push(pos.x, pos.y * voxelScaleY, pos.z)
-      quaternions.push(quat.x, quat.y, quat.z, quat.w)
-    }
-    const posTrack = new THREE.VectorKeyframeTrack(`${group.name}.position`, times, positions)
-    const quatTrack = new THREE.QuaternionKeyframeTrack(`${group.name}.quaternion`, times, quaternions)
+    const sampleWorlds = (t: number) => composeAnimatedMatrices(boxes, pose ? pose.at(t) : EMPTY_POSE, t)
+    const [posTrack, quatTrack] = bakeJointTracks(group.name, box, parent, voxelScaleY, fps, duration, sampleWorlds)
     clips.push(new THREE.AnimationClip(`anim_${group.name}`, duration, [posTrack, quatTrack]))
   }
   return clips
+}
+
+/**
+ * Bakes ONE action `AnimationClip` (a tweens project's `loop`, or one clip per `RigClip`
+ * in a poses project) with a position + quaternion track per animated joint, sampled at
+ * `fps` over `duration` seconds. `sampleWorlds` supplies the composed world matrices at
+ * time t (tween motion, an evaluated clip frame, or both); `animatedIds` selects which
+ * boxes get channels (unlisted boxes ride their parents through the hierarchy). Per-joint
+ * math is shared with `bakeRigClips` (see `bakeJointTracks`), so an action bake carries
+ * exactly the motion the per-joint bake would.
+ */
+export function bakeRigAction(
+  name: string,
+  boxes: RigBox[],
+  groups: Map<string, THREE.Group>,
+  voxelScaleY: number,
+  fps: number,
+  duration: number,
+  sampleWorlds: (t: number) => Map<string, THREE.Matrix4>,
+  animatedIds: Set<string>,
+): THREE.AnimationClip {
+  const byId = new Map(boxes.map((b) => [b.id, b]))
+  const tracks: THREE.KeyframeTrack[] = []
+  for (const box of boxes) {
+    if (!animatedIds.has(box.id)) continue
+    const group = groups.get(box.id)
+    if (!group) continue
+    const parent = box.parentId ? byId.get(box.parentId) : undefined
+    const [posTrack, quatTrack] = bakeJointTracks(group.name, box, parent, voxelScaleY, fps, duration, sampleWorlds)
+    tracks.push(posTrack, quatTrack)
+  }
+  return new THREE.AnimationClip(name, duration, tracks)
 }
 
 const EMPTY_POSE = new Map<string, JointEuler>()
