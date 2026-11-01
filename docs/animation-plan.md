@@ -253,3 +253,14 @@ The supervisor stops at each step end. Steps 3–6 are visual, so the human brow
 - Judgement calls (marker drag pauses transport; marker click = select + stage + seek; empty strokes dropped as no-ops; overwritePose stages rather than setting editingPoseId): ACCEPTED.
 - Bug: retiming past the clip end grows the duration mid-drag, so the track rescales and the marker runs from the pointer. Fix: clamp to the duration captured at pointerdown. SENT.
 - Fix run checked: `clampKeyTime` (pure, in poseSlice) used by patchKey and the strip drag with the duration captured at pointerdown; 2 new tests; run log `Tests 884 passed (884)`; build and lint green. Verdict: ACCEPT, pending human browser check.
+
+### 2026-10-31 · Step 4 · staged on animate-v2 (tip 149d346 + staged, 6 files) · verdict: FIX THEN ACCEPT
+- Checked: mirror.ts, mirror.test.ts, the mirrorPose store action and the Library button diff; run log `Test Files 68 passed (68)`, `Tests 925 passed (925)`; build and lint green (3 pre-existing warnings); no branch switch or commit.
+- Pairing must be mutual, and duplicate names unpair both ends, so mirroring twice always gives back the original: ACCEPTED.
+- A sparse pose (absent = bind) mirrors a lone keyed side across, and the source side stays absent. Explicit bind entries are kept for a round trip: ACCEPTED.
+- Joints keyed by unknown box ids mirror in place instead of being dropped: ACCEPTED.
+- "x mirror" mirrors to "x mirror mirror" (uniquified, no name stripping): ACCEPTED, KISS.
+- The mirror is staged for preview, and the scratch and editingPoseId are untouched: ACCEPTED.
+- Bug: mirroring while paused or scrubbed on the timeline staged a pose the viewport never showed, because previewFrame shows the clip while clipTime !== null. Fix: clear clipTime as stagePose does. SENT.
+- Fix run checked: `clipTime = null` in mirrorPose; the store test asserts it; run log `Tests 925 passed (925)`; build and lint green. Verdict: ACCEPT, pending human approval of the commit.
+- Known-red tests: none.

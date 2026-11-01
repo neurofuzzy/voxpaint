@@ -2,6 +2,7 @@ import type { StateCreator } from 'zustand'
 import { CLIP_FRAME_SECONDS, newClipId, newKeyId, newPoseId, sanitizeRigName, snapClipTime } from '@/engine/rigging/types'
 import type { ClipKey, RigClip } from '@/engine/rigging/types'
 import { previewFrame } from '@/engine/rigging/preview'
+import { mirrorPose as mirrorPoseEngine } from '@/engine/rigging/mirror'
 import type { JointEuler } from '@/engine/rigging/pose'
 import { showToast } from '@/components/ui/toastBus'
 import type { AppState, PoseSlice } from './types'
@@ -349,6 +350,33 @@ export const createPoseSlice: Slice = (set, get) => ({
       state.dirty = true
     })
     get().animCommitStroke()
+  },
+
+  mirrorPose: (id) => {
+    const source = get().poses.find((p) => p.id === id)
+    if (!source) return null
+    // Names pair the joints, so mirror against the live outline (the UI always flips X).
+    const mirrored = mirrorPoseEngine(source, get().rigBoxes, 'x')
+    let newId = ''
+    get().animBeginStroke()
+    set((state) => {
+      newId = newPoseId()
+      const name = uniquePoseName(`${source.name} mirror`, new Set(state.poses.map((p) => p.name)))
+      state.poses.push({
+        id: newId,
+        name,
+        joints: { ...mirrored.joints },
+        ...(mirrored.offsets ? { offsets: { ...mirrored.offsets } } : {}),
+      })
+      // Stage the mirror so the preview shows it (like capture) and step off the
+      // timeline, or a paused/scrubbed clip frame would keep showing instead. The
+      // scratch is untouched, so the editing target stays where it was.
+      state.stagedPoseId = newId
+      state.clipTime = null
+      state.dirty = true
+    })
+    get().animCommitStroke()
+    return newId
   },
 
   grabPoseForEdit: () => {

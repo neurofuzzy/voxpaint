@@ -403,6 +403,17 @@ describe('clip editor', () => {
     expect(useAppStore.getState().editingPoseId).toBeNull()
   })
 
+  it('mirrorPose dedupes against the live “… mirror” name', () => {
+    const [a] = twoPoses()
+    const s = useAppStore.getState()
+    const first = s.mirrorPose(a)!
+    const second = s.mirrorPose(a)!
+    const names = useAppStore.getState().poses.map((p) => p.name)
+    // The second mirror uniquifies instead of colliding with the first.
+    expect(names.slice(-2)).toEqual(['Pose mirror', 'Pose mirror 2'])
+    expect(first).not.toBe(second)
+  })
+
   it('adds keys at the playhead, else half a second past the last key', () => {
     const [a, b] = twoPoses()
     const s = useAppStore.getState()
@@ -419,5 +430,47 @@ describe('clip editor', () => {
     const k2 = s.addKey(id)!
     expect(useAppStore.getState().clips[0].keys.find((k) => k.id === k2)?.poseId).toBe(b)
     expect(useAppStore.getState().clips[0].keys.find((k) => k.id === k2)?.time).toBeCloseTo(1, 10)
+  })
+})
+
+/** Step 4 mirror pose: the Library row button clones a pose left/right-swapped. */
+describe('mirror pose', () => {
+  beforeEach(() => {
+    useAppStore.getState().newProject('Test', 16)
+  })
+
+  function addBox(id: string, name: string) {
+    useAppStore.getState().addRigBox({ id, name, min: [0, 0, 0], max: [2, 2, 2], parentId: null, pivot: null, tweens: [] })
+  }
+
+  it('mirrorPose adds "<name> mirror" and undo removes it', () => {
+    addBox('l', 'arm_L')
+    addBox('r', 'arm_R')
+    const s = useAppStore.getState()
+    s.setJointRotation('l', [0.5, 0.2, 0])
+    const id = s.capturePose()!
+    s.renamePose(id, 'wave')
+    // On the timeline (paused/scrubbed): the staged mirror must actually show.
+    s.setClipTime(0.5)
+    const mid = s.mirrorPose(id)
+    expect(mid).toBeTruthy()
+    const poses = useAppStore.getState().poses
+    expect(poses.map((p) => p.name)).toEqual(['wave', 'wave mirror'])
+    // Paired swap: the keyed left joint lands mirrored on the right, left stays bind.
+    expect(poses[1].joints).toEqual({ r: [0.5, -0.2, 0] })
+    expect(mid).toBe(poses[1].id)
+    // The mirror stages for preview and steps off the timeline; scratch untouched.
+    expect(useAppStore.getState().stagedPoseId).toBe(mid)
+    expect(useAppStore.getState().clipTime).toBeNull()
+    expect(useAppStore.getState().poseRotations.size).toBe(0)
+    // Undo removes the mirrored pose but keeps the source.
+    s.animUndo()
+    expect(useAppStore.getState().poses.map((p) => p.name)).toEqual(['wave'])
+  })
+
+  it('mirrorPose returns null for unknown ids', () => {
+    addBox('l', 'arm_L')
+    expect(useAppStore.getState().mirrorPose('ghost')).toBeNull()
+    expect(useAppStore.getState().poses).toHaveLength(0)
   })
 })

@@ -1,5 +1,5 @@
 import { useMemo, useRef, useState } from 'react'
-import { Bone, ChevronDown, ChevronRight, ChevronUp, Copy, Crosshair, Eye, EyeOff, Pause, Play, Plus, RotateCcw, RotateCw, Trash2 } from 'lucide-react'
+import { Bone, ChevronDown, ChevronRight, ChevronUp, Copy, Crosshair, Eye, EyeOff, FlipHorizontal2, Pause, Play, Plus, RotateCcw, RotateCw, Trash2 } from 'lucide-react'
 import type { Axis } from '@/engine/grid/types'
 import { SLIDE_AMOUNT_MAX, SLIDE_AMOUNT_MIN } from '@/engine/animation/animationLayers'
 import type { ClipKey, RigBox, RigClip, RigTween } from '@/engine/rigging/types'
@@ -878,6 +878,7 @@ function PosesSection() {
   const scratchSize = useAppStore((s) => s.poseRotations.size)
   const capturePose = useAppStore((s) => s.capturePose)
   const overwritePose = useAppStore((s) => s.overwritePose)
+  const mirrorPose = useAppStore((s) => s.mirrorPose)
   const renamePose = useAppStore((s) => s.renamePose)
   const deletePose = useAppStore((s) => s.deletePose)
   const stagePose = useAppStore((s) => s.stagePose)
@@ -979,6 +980,13 @@ function PosesSection() {
                   <span className="shrink-0 font-mono text-[10px] text-neutral-500">
                     {joints} joint{joints === 1 ? '' : 's'}
                   </span>
+                  <button
+                    onClick={(e) => { e.stopPropagation(); mirrorPose(pose.id) }}
+                    title={`Mirror ${pose.name} across X into a new pose (left/right swap)`}
+                    className="flex h-5 w-5 shrink-0 items-center justify-center rounded text-neutral-500 hover:bg-neutral-800 hover:text-violet-300"
+                  >
+                    <FlipHorizontal2 size={12} />
+                  </button>
                   <button
                     onClick={(e) => { e.stopPropagation(); deletePose(pose.id) }}
                     title={`Delete ${pose.name}`}

@@ -881,6 +881,10 @@ export type PoseSlice = {
   /** Writes the live scratch back into the named pose (every key using it updates) and
    * clears the scratch. No-op (with a toast) when the scratch is empty. Self-brackets undo. */
   overwritePose: (id: string) => void
+  /** Mirrors a library pose across X (paired joints swap negated, the rest negate in
+   * place) into a new pose named "<name> mirror" (uniquified), staged for preview.
+   * Self-brackets undo. Returns the new id, or null on unknown ids. */
+  mirrorPose: (id: string) => string | null
   /** Loads whatever the preview currently shows (clip frame, staged pose, or scratch)
    * into the scratch, then clears staging and stops transport — so a gizmo grab
    * continues from what's on screen instead of jumping. Never undoable. */
