@@ -129,37 +129,72 @@ describe('animate second-tap selects the rig', () => {
   })
 })
 
-/** An explicit plane change dismisses any selection; mouse-click plane moves are suppressed
- * while one is active (see Viewport3D), so reaching a setter means a deliberate change. */
-describe('plane changes clear the selection', () => {
+/** Sliding the plane along its own normal keeps both selections; only a genuine reorient
+ * (different axis or facing) dismisses them. See Viewport3D for the click half of this. */
+describe('plane shifts keep the selection, reorients clear it', () => {
   beforeEach(() => {
     useAppStore.getState().newProject('Test', 16)
     useAppStore.getState().setPlaneAxisOrientation('z', 1)
     useAppStore.getState().setPlaneOffset(0)
   })
 
-  it('setPlaneOffset clears the 2D selection and the 3D set', () => {
+  function seedSelections() {
+    const s = useAppStore.getState()
+    s.setSelection({ originU: 4, originV: 4, width: 1, height: 1, mask: new Uint8Array([1]) })
+    s.setSelectedCells(new Set(['0,0,0']))
+  }
+
+  it('setPlaneOffset keeps the 2D selection and the 3D set', () => {
     const s = useAppStore.getState()
     s.beginStroke()
     expect(s.paintCell(4, 4)).toBe(true)
     s.commitStroke()
-    s.setSelection({ originU: 4, originV: 4, width: 1, height: 1, mask: new Uint8Array([1]) })
-    s.setSelectedCells(new Set(['0,0,0']))
+    seedSelections()
 
     useAppStore.getState().setPlaneOffset(1)
 
     const after = useAppStore.getState()
     expect(after.plane.offset).toBe(1)
+    expect(after.selection).not.toBeNull()
+    expect(after.selectedCells).toEqual(new Set(['0,0,0']))
+  })
+
+  it('setPlaneAxisOrientation with a real change clears both selections', () => {
+    seedSelections()
+
+    useAppStore.getState().setPlaneAxisOrientation('x', 1)
+
+    const after = useAppStore.getState()
+    expect(after.plane.axis).toBe('x')
     expect(after.selection).toBeNull()
     expect(after.selectedCells.size).toBe(0)
   })
 
-  it('setPlaneAxisOrientation clears the 2D selection and the 3D set', () => {
-    const s = useAppStore.getState()
-    s.setSelection({ originU: 0, originV: 0, width: 1, height: 1, mask: new Uint8Array([1]) })
-    s.setSelectedCells(new Set(['0,0,0']))
+  it('setPlaneAxisOrientation with the same facing keeps both selections', () => {
+    seedSelections()
 
-    useAppStore.getState().setPlaneAxisOrientation('x', 1)
+    useAppStore.getState().setPlaneAxisOrientation('z', 1)
+
+    const after = useAppStore.getState()
+    expect(after.selection).not.toBeNull()
+    expect(after.selectedCells).toEqual(new Set(['0,0,0']))
+  })
+
+  it('click-advancing (same face twice) keeps the selection', () => {
+    seedSelections()
+    const s = useAppStore.getState()
+    s.handleVoxelFaceClick('0,0,0', 'z', 1, 0)
+    s.handleVoxelFaceClick('0,0,0', 'z', 1, 0)
+
+    const after = useAppStore.getState()
+    expect(after.plane.offset).toBe(1)
+    expect(after.selection).not.toBeNull()
+    expect(after.selectedCells).toEqual(new Set(['0,0,0']))
+  })
+
+  it('clicking a differently-faced voxel clears both selections', () => {
+    seedSelections()
+    useAppStore.getState().handleVoxelFaceClick('5,0,0', 'x', 1, 5)
 
     const after = useAppStore.getState()
     expect(after.plane.axis).toBe('x')

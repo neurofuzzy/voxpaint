@@ -148,7 +148,8 @@ describe('copy/paste depth anchoring', () => {
     s.setSelection({ originU: 0, originV: 0, width: 1, height: 1, mask: new Uint8Array([1]) })
     s.copySelection()
     expect(useAppStore.getState().clipboard?.copyPlaneOffset).toBe(5)
-    // Moving the plane bakes nothing (no float pending) and clears the selection.
+    // Moving the plane bakes nothing (no float pending); the offset shift keeps the
+    // selection, and the paste overwrites it with its own footprint anyway.
     useAppStore.getState().setPlaneOffset(6)
     useAppStore.getState().pasteClipboardInPlace()
     useAppStore.getState().bakeFloatIfAny()

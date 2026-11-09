@@ -13,19 +13,25 @@ export const createPlaneSlice: Slice = (set, get) => ({
 
   // A pending float's cells are offsets interpreted against the plane active at lift/bake time —
   // switching planes out from under it would bake it onto the wrong 3D cells, so bake first.
-  // An explicit plane change also dismisses any selection (2D or 3D): the selection was made
-  // against the old slice, and mouse-click plane moves are suppressed while one is active (see
-  // Viewport3D) — so reaching here means a deliberate wheel/UI/keyboard change.
+  // Selection policy: sliding the plane along its own normal (offset shifts, same axis and
+  // orientation) keeps both selections — the frame is unchanged, so the 2D window still
+  // addresses the same UV rect (now on the new slice) and the 3D set is grid-space anyway.
+  // Only a genuine reorient (different axis or facing) dismisses them, since the old frame
+  // no longer applies. Clicks on already-selected voxels keep everything instead of moving
+  // the plane (see Viewport3D).
   setPlaneAxisOrientation: (axis, orientation) => {
     get().bakeFloatIfAny()
+    const reoriented = get().plane.axis !== axis || get().plane.orientation !== orientation
     set((state) => {
       state.plane.axis = axis
       state.plane.orientation = orientation
       // Any plane change not driven by handleVoxelFaceClick's own logic invalidates the
       // same-voxel-click-again target (the highlighted face no longer corresponds to it).
       state.objectModeTarget = null
-      state.selection = null
-      state.selectedCells = new Set<CellKey>()
+      if (reoriented) {
+        state.selection = null
+        state.selectedCells = new Set<CellKey>()
+      }
     })
     // The pose persists across refreshes (project switches reset it instead — see
     // resetPlaneToGround), so the current slice survives a page reload.
@@ -35,13 +41,12 @@ export const createPlaneSlice: Slice = (set, get) => ({
   setPlaneOffset: (offset) => {
     get().bakeFloatIfAny()
     // The plane lives inside the project bounds — scrolling, stepping, or click-advancing past
-    // the top/bottom layer pins to it instead of drifting into empty space.
+    // the top/bottom layer pins to it instead of drifting into empty space. Offset shifts never
+    // clear the selection (see above) — only the click-again target resets.
     const clamped = clampPlaneOffset(offset, get().meta.gridExtent)
     set((state) => {
       state.plane.offset = clamped
       state.objectModeTarget = null
-      state.selection = null
-      state.selectedCells = new Set<CellKey>()
     })
     savePlanePref(get().plane)
   },

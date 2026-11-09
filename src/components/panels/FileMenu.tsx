@@ -85,6 +85,10 @@ export function FileMenu() {
         s.clipPlaying = false
         s.clipStartedAt = 0
         s.clipTime = null
+        // The imported project must win the next autosave — without this the debounced
+        // writer never fires (nothing else here flags dirty) and a reload restores the
+        // previous project from localStorage instead.
+        s.dirty = true
       })
       // An imported project opens grounded — one project's slice never leaks into the next.
       useAppStore.getState().resetPlaneToGround()

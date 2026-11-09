@@ -320,7 +320,8 @@ describe('3D selection store + exact-set actions', () => {
     useAppStore.getState().copyCells3D()
     // 2D-path clipboard: no bbox depth anchor, so the bake follows the destination slice.
     expect(useAppStore.getState().clipboard!.depthAnchor).not.toBe('bbox')
-    // Move the plane two layers up — the set clears (plane setters), the clipboard survives.
+    // Move the plane two layers up — the offset shift keeps the set (and the occupied
+    // source cells mean the paste floats rather than stamping); the clipboard survives.
     useAppStore.getState().setPlaneOffset(2)
     useAppStore.getState().pasteCells3D()
     const after = useAppStore.getState()
@@ -436,15 +437,15 @@ describe('applySliceWandAt', () => {
     paintAt([5, 0, 0])
     useAppStore.getState().setSelectedCells(new Set([encodeKey(5, 0, 0)]))
 
-    // What a 3D select tap does: reorient first (wiping the stale selection via the plane
-    // setters — reversing this order would lose the fresh set)...
-    useAppStore.getState().handleVoxelFaceClick(encodeKey(0, 0, 0), 'z', 1, 0)
+    // What a 3D select tap does: reorient first (a genuine facing change wipes the stale
+    // selection via the plane setters — reversing this order would lose the fresh set)...
+    useAppStore.getState().handleVoxelFaceClick(encodeKey(0, 0, 0), 'x', 1, 0)
     expect(useAppStore.getState().selectedCells.size).toBe(0)
     // ...then the fresh single-voxel set lands.
     useAppStore.getState().setSelectedCells(new Set([encodeKey(0, 0, 0)]))
 
     const after = useAppStore.getState()
-    expect(after.plane).toEqual({ axis: 'z', orientation: 1, offset: 0 })
+    expect(after.plane).toEqual({ axis: 'x', orientation: 1, offset: 0 })
     expect(after.selectedCells).toEqual(new Set([encodeKey(0, 0, 0)]))
   })
 })

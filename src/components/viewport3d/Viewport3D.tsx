@@ -60,6 +60,7 @@ import { axisIndex } from '@/engine/plane/planeGeometry'
 import { resolveDirectPaintTarget } from '@/store/ghostPlacement'
 import { voxelKindForCell } from '@/engine/tools/eyedropperTool'
 import { windowSliceCells } from '@/engine/tools/cellSetOps'
+import { isCellSelected } from '@/engine/tools/selectionMask'
 import { useAppStore } from '@/store/useAppStore'
 import { usePlaneLayerScroll } from '@/components/usePlaneLayerScroll'
 import { AnimatedModelView } from './AnimatedModelView'
@@ -178,8 +179,9 @@ function ToneMappingController({ exposure }: { exposure: number }) {
  * taps work like the 2D tool: a tap replaces the selection with the tapped voxel (reorienting
  * first, like a plain model click), a rapid second tap flood-selects the plane slice instead,
  * and shift variants union rather than replace (shift-taps never move the plane); taps on
- * already-selected voxels keep everything; drags marquee or move. Explicit wheel/UI plane
- * changes clear the selection instead of fighting it. Paint/erase/eyedropper are
+  * already-selected voxels keep everything; drags marquee or move. Sliding the plane along
+  * its own normal (wheel/slider/keys offset shifts) keeps the selection; only a genuine
+  * reorient clears it. Paint/erase/eyedropper are
  * tap-only (drags orbit, so sweeps can't spray voxels); material recolors in place and is safe to
  * drag, bracketed as one undo stroke with orbit suppressed until pointer-up; select and wand
  * capture left-drag on a selected voxel to lift and move it in the plane's UV axes (Alt: full
@@ -189,8 +191,10 @@ function ToneMappingController({ exposure }: { exposure: number }) {
  * stay there), live as one undo step; a tap orients the plane like a plain model click.
  * Presses whose ray misses the working cube open no gesture at all — drags orbit, taps no-op
  * (select-mode taps clear the selection instead). Press location decides, not the drag path.
- * Empty-space paint taps start a blob on the active slice. In split layout the viewport is
- * orbit/navigate only and every tap sets the construction plane.
+  * Empty-space paint taps start a blob on the active slice. In split layout the viewport is
+  * orbit/navigate only: a tap on a selected voxel keeps everything, any other tap moves
+  * the construction plane there — keeping the selection on a same-facing shift, clearing
+  * it on a reorient.
  */
 const ORBIT_HINT = 'Orbit: left-drag to rotate · right-drag: pan · scroll: zoom'
 const EDIT_HINT = 'Edit 3D: click a face to apply the tool · drag empty space to orbit · right-drag: orbit'
@@ -1332,6 +1336,28 @@ function VoxelInteractionHandler({ managerRef, controlsRef }: {
         setStatusMessage(rigIdForCoord(st.rigBoxes, decodeKey(result.key)) ? 'Click again to select this rig box' : AGAIN_HINT)
         return
       }
+      if (result) {
+        const st = useAppStore.getState()
+        if (st.selectedCells.size > 0 || st.selection) {
+          let hitInside = st.selectedCells.has(result.key)
+          if (!hitInside && st.selection) {
+            const { u, v } = pixelFromGridCoord(st.plane, decodeKey(result.key))
+            hitInside = isCellSelected(st.selection, u, v)
+          }
+          if (hitInside) {
+            setStatusMessage('Selection active — click outside it to move the plane · Esc clears')
+            return
+          }
+          // Outside the selection the click moves the plane: a same-facing shift keeps the
+          // selection, a reorient clears it — say which, so neither outcome surprises.
+          const keeps =
+            result.plane.axis === st.plane.axis && result.plane.orientation === st.plane.orientation
+          setStatusMessage(
+            `${voxelHint(result.plane.axis, result.plane.orientation)} · ${keeps ? 'keeps' : 'clears'} the selection`,
+          )
+          return
+        }
+      }
       setStatusMessage(result ? (again ? AGAIN_HINT : voxelHint(result.plane.axis, result.plane.orientation)) : ORBIT_HINT)
     }
 
@@ -1641,13 +1667,24 @@ function VoxelInteractionHandler({ managerRef, controlsRef }: {
         return
       }
       if (!result) return
-      // A committed selection owns the plane: mouse clicks never move it (explicit wheel/UI
-      // plane changes clear the selection instead — see the plane setters).
+      // A click on a selected voxel keeps the selection (and the plane) — the press likely
+      // started a selection interaction, so a tap there must not blow it away. A click
+      // anywhere else moves the plane there: a same-facing shift keeps the selection (see
+      // the plane setters), while a reorient clears it — so navigation never dead-ends
+      // behind a stale selection.
       {
         const st = useAppStore.getState()
-        if (st.selectedCells.size > 0 || st.selection) {
-          useAppStore.setState((s) => { s.objectModeTarget = null })
-          return
+        const hasSelection = st.selectedCells.size > 0 || st.selection
+        if (hasSelection) {
+          let hitInside = st.selectedCells.has(result.key)
+          if (!hitInside && st.selection) {
+            const { u, v } = pixelFromGridCoord(st.plane, decodeKey(result.key))
+            hitInside = isCellSelected(st.selection, u, v)
+          }
+          if (hitInside) {
+            useAppStore.setState((s) => { s.objectModeTarget = null })
+            return
+          }
         }
       }
       handleVoxelFaceClick(result.key, result.plane.axis, result.plane.orientation, result.plane.offset)
