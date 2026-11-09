@@ -19,7 +19,7 @@ const TOOLS: Array<{ id: ToolId; label: string; icon: typeof Brush; hint: string
 /** Animate mode edits the rig, not the voxel model (which is a non-interactive underlay
  * there). Tools follow the panel tab so a tap always dispatches somewhere sensible:
  * Rig tab boxes/selects/moves and pins pivots, Tweens tab only selects (params live in
- * the panel), Poses tab selects in 2D and poses in 3D. Mask paint/erase are gone: slice
+ * the panel), Motion tab selects in 2D and poses in 3D. Mask paint/erase are gone: slice
  * loops still play back for old files, but only whole-slice. */
 const ANIMATE_TOOLS: Record<AnimateTab, Array<{ id: ToolId; label: string; icon: typeof Brush; hint: string }>> = {
   rig: [
@@ -30,7 +30,7 @@ const ANIMATE_TOOLS: Record<AnimateTab, Array<{ id: ToolId; label: string; icon:
     { id: 'select', label: 'Select', icon: MousePointerClick, hint: 'click a box to select it — edit its motion in the Tweens tab' },
   ],
   poses: [
-    { id: 'pose', label: 'Pose', icon: Rotate3d, hint: 'drag a box in 3D to edit the staged or keyed pose · Update saves it back to the library · drag a ring for one axis' },
+    { id: 'pose', label: 'Pose', icon: Rotate3d, hint: 'drag a ring to rotate the selected joint about one axis · edits land in the selected keyframe' },
   ],
 }
 

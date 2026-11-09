@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import * as THREE from 'three'
 import type { Coord } from '@/engine/grid/types'
-import type { Pose, RigBox, RigClip, RigTween } from './types'
+import type { RigBox, RigClip, RigTween } from './types'
 import { sanitizeRigTween } from './types'
 import {
   activeTweens,
@@ -317,21 +317,20 @@ describe('bakeRigAction (poses)', () => {
     return map
   }
 
-  const poses: Pose[] = [
-    { id: 'a', name: 'A', joints: {} },
-    { id: 'b', name: 'B', joints: { c: [0, Math.PI / 2, 0] } },
-  ]
   const walk: RigClip = {
     id: 'walk',
     name: 'walk',
     loop: false,
     duration: 2,
     keys: [
-      { id: 'k0', poseId: 'a', time: 0, ease: 'inOut' },
-      { id: 'k1', poseId: 'b', time: 2, ease: 'inOut' },
+      { id: 'k0', name: 'A', time: 0, ease: 'inOut', joints: {} },
+      { id: 'k1', name: 'B', time: 2, ease: 'inOut', joints: { c: [0, Math.PI / 2, 0] } },
     ],
   }
-  const sampleWorldsFor = (boxes: RigBox[]) => (t: number) => composePoseMatrices(boxes, evaluateClip(poses, boxes, walk, t).rot)
+  const sampleWorldsFor = (boxes: RigBox[]) => (t: number) => {
+    const frame = evaluateClip(boxes, walk, t)
+    return composePoseMatrices(boxes, frame.rot, frame.off)
+  }
 
   it('emits tracks for posed joints even with no tweens, sized to the clip', () => {
     // No tweens anywhere — the posed child still bakes at the clip's own duration; the
@@ -365,7 +364,8 @@ describe('bakeRigAction (poses)', () => {
       return out
     }
     for (const t of [0.25, 0.75, 1.5]) {
-      const animated = composePoseMatrices(boxes, evaluateClip(poses, boxes, walk, t).rot)
+      const frame = evaluateClip(boxes, walk, t)
+      const animated = composePoseMatrices(boxes, frame.rot, frame.off)
       const expected = new THREE.Matrix4()
         .makeTranslation(-1.5, -1.5, -1.5)
         .multiply(new THREE.Matrix4().copy(animated.get('p')!).invert())

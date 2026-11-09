@@ -49,16 +49,23 @@ export function composeAxisAngle(current: JointEuler, axis: Axis, angle: number)
 
 /**
  * One joint's local matrix: rotate about the pivot's world point (grid + 0.5 per axis, matching
- * the pivot markers). Identity euler returns identity — unposed boxes cost nothing.
+ * the pivot markers), then translate by the root offset (voxels, parent frame — hip bob, crouch).
+ * Identity euler with no offset returns identity — unposed boxes cost nothing.
  */
-export function localJointMatrix(pivot: Coord, e: JointEuler): THREE.Matrix4 {
+export function localJointMatrix(pivot: Coord, e: JointEuler, offset?: Coord): THREE.Matrix4 {
   const out = new THREE.Matrix4()
-  if (e[0] === 0 && e[1] === 0 && e[2] === 0) return out
+  const hasOffset = offset !== undefined && (offset[0] !== 0 || offset[1] !== 0 || offset[2] !== 0)
+  if (e[0] === 0 && e[1] === 0 && e[2] === 0) {
+    if (!hasOffset) return out
+    return out.makeTranslation(offset![0], offset![1], offset![2])
+  }
   const pw = new THREE.Vector3(pivot[0] + 0.5, pivot[1] + 0.5, pivot[2] + 0.5)
   const r = new THREE.Matrix4().makeRotationFromQuaternion(eulerToQuaternion(e))
   const t = new THREE.Matrix4().makeTranslation(pw.x, pw.y, pw.z)
   const tn = new THREE.Matrix4().makeTranslation(-pw.x, -pw.y, -pw.z)
-  return out.multiplyMatrices(t, r).multiply(tn)
+  out.multiplyMatrices(t, r).multiply(tn)
+  if (hasOffset) out.premultiply(new THREE.Matrix4().makeTranslation(offset![0], offset![1], offset![2]))
+  return out
 }
 
 /** Ordered root-first ancestor chain (box first, root last), with the same guards as the
@@ -82,25 +89,37 @@ function ancestorChain(boxes: RigBox[], box: RigBox): RigBox[] {
 /**
  * A box's parent-chain matrix (ancestors' locals composed root-first, own local excluded):
  * the frame the pose gizmo draws in (gizmo position = this × pivot, orientation = its
- * rotation part) and the prefix of the box's own posed matrix.
+ * rotation part) and the prefix of the box's own posed matrix. Ancestor root offsets
+ * ride along, so a root bob carries its whole subtree.
  */
-export function parentChainMatrix(boxes: RigBox[], pose: Map<string, JointEuler>, box: RigBox): THREE.Matrix4 {
+export function parentChainMatrix(
+  boxes: RigBox[],
+  pose: Map<string, JointEuler>,
+  box: RigBox,
+  offsets?: Map<string, Coord>,
+): THREE.Matrix4 {
   const chain = ancestorChain(boxes, box)
   const out = new THREE.Matrix4()
   for (let i = 0; i < chain.length - 1; i++) {
     const b = chain[i]
-    out.multiply(localJointMatrix(rigPivotOf(b), eulerOf(pose, b.id)))
+    out.multiply(localJointMatrix(rigPivotOf(b), eulerOf(pose, b.id), offsets?.get(b.id)))
   }
   return out
 }
 
 /** Posed world matrix per box: parent chain × own local. Roots reduce to their local. */
-export function composePoseMatrices(boxes: RigBox[], pose: Map<string, JointEuler>): Map<string, THREE.Matrix4> {
+export function composePoseMatrices(
+  boxes: RigBox[],
+  pose: Map<string, JointEuler>,
+  offsets?: Map<string, Coord>,
+): Map<string, THREE.Matrix4> {
   const out = new Map<string, THREE.Matrix4>()
   for (const box of boxes) {
     out.set(
       box.id,
-      parentChainMatrix(boxes, pose, box).multiply(localJointMatrix(rigPivotOf(box), eulerOf(pose, box.id))),
+      parentChainMatrix(boxes, pose, box, offsets).multiply(
+        localJointMatrix(rigPivotOf(box), eulerOf(pose, box.id), offsets?.get(box.id)),
+      ),
     )
   }
   return out
@@ -109,11 +128,22 @@ export function composePoseMatrices(boxes: RigBox[], pose: Map<string, JointEule
 /**
  * A box's pivot in world space after posing: the parent chain carries it (a joint's own
  * local rotation is about its own pivot, so it never moves itself — but ancestors carry
- * the whole subtree). This is where pivot markers, joint links, and the pose gizmo live.
+ * the whole subtree, and its own root offset translates it). This is where pivot markers,
+ * joint links, and the pose gizmo live.
  */
-export function posedPivotWorld(boxes: RigBox[], pose: Map<string, JointEuler>, box: RigBox): Coord {
+export function posedPivotWorld(
+  boxes: RigBox[],
+  pose: Map<string, JointEuler>,
+  box: RigBox,
+  offsets?: Map<string, Coord>,
+): Coord {
   const pivot = rigPivotOf(box)
-  const v = new THREE.Vector3(pivot[0] + 0.5, pivot[1] + 0.5, pivot[2] + 0.5).applyMatrix4(parentChainMatrix(boxes, pose, box))
+  const own = offsets?.get(box.id)
+  const v = new THREE.Vector3(
+    pivot[0] + 0.5 + (own?.[0] ?? 0),
+    pivot[1] + 0.5 + (own?.[1] ?? 0),
+    pivot[2] + 0.5 + (own?.[2] ?? 0),
+  ).applyMatrix4(parentChainMatrix(boxes, pose, box, offsets))
   return [v.x, v.y, v.z]
 }
 
@@ -184,10 +214,11 @@ export function nearestRingHit(
   sx: number,
   sy: number,
   thresholdPx = 14,
+  offsets?: Map<string, Coord>,
 ): Axis | null {
   const pivot = rigPivotOf(box)
   const center: Coord = [pivot[0] + 0.5, pivot[1] + 0.5, pivot[2] + 0.5]
-  const parent = parentChainMatrix(boxes, pose, box)
+  const parent = parentChainMatrix(boxes, pose, box, offsets)
   const radius = gizmoRadiusForBox(box)
   const v = new THREE.Vector3()
   let best: Axis | null = null
@@ -303,4 +334,90 @@ export function intersectAxisPlane(
   const t = (point[i] - origin[i]) / dir[i]
   if (!Number.isFinite(t)) return null
   return [origin[0] + dir[0] * t, origin[1] + dir[1] * t, origin[2] + dir[2] * t]
+}
+
+/** Translate-gizmo arrow length: matches the ring radius so arrows end on the rings. */
+export function gizmoArrowLength(box: RigBox): number {
+  return gizmoRadiusForBox(box)
+}
+
+/**
+ * Screen-space arrow hit test for the translate gizmo: projects the posed pivot and the
+ * pivot + axis × length through `project` (grid point → screen pixels, null when
+ * unprojectable — same contract as `nearestRingHit`), and returns the nearest axis whose
+ * segment passes within `thresholdPx` of (`sx`, `sy`). Roots only in practice (offsets
+ * are roots-only), but the math is valid for any box.
+ */
+export function nearestAxisHit(
+  boxes: RigBox[],
+  pose: Map<string, JointEuler>,
+  box: RigBox,
+  project: (p: Coord) => [number, number] | null,
+  sx: number,
+  sy: number,
+  thresholdPx = 14,
+  offsets?: Map<string, Coord>,
+): Axis | null {
+  const center = posedPivotWorld(boxes, pose, box, offsets)
+  const parent = parentChainMatrix(boxes, pose, box, offsets)
+  const q = new THREE.Quaternion().setFromRotationMatrix(parent)
+  const length = gizmoArrowLength(box)
+  const p0 = project(center)
+  if (!p0) return null
+  let best: Axis | null = null
+  let bestDistSq = thresholdPx * thresholdPx
+  const tip = new THREE.Vector3()
+  for (const axis of ['x', 'y', 'z'] as Axis[]) {
+    tip.set(axis === 'x' ? 1 : 0, axis === 'y' ? 1 : 0, axis === 'z' ? 1 : 0).applyQuaternion(q)
+    const p1 = project([center[0] + tip.x * length, center[1] + tip.y * length, center[2] + tip.z * length])
+    if (!p1) continue
+    const dx = p1[0] - p0[0]
+    const dy = p1[1] - p0[1]
+    const lenSq = dx * dx + dy * dy
+    if (lenSq < 1e-6) continue
+    const t = Math.min(1, Math.max(0, ((sx - p0[0]) * dx + (sy - p0[1]) * dy) / lenSq))
+    const ex = p0[0] + dx * t - sx
+    const ey = p0[1] + dy * t - sy
+    const d = ex * ex + ey * ey
+    if (d < bestDistSq) {
+      bestDistSq = d
+      best = axis
+    }
+  }
+  return best
+}
+
+/**
+ * Drag parameter of a grid-space ray against the line through `point` along `axis`
+ * (the translate gizmo's drag reading — the closest point on the axis line to the ray).
+ * Null when the lines are parallel, in which case the drag holds its last offset.
+ */
+export function closestAxisParam(
+  origin: [number, number, number],
+  dir: [number, number, number],
+  point: Coord,
+  axis: Axis,
+): number | null {
+  const i = axisIndex(axis)
+  // Solve in the 2D plane perpendicular to the axis: closest approach of the ray to
+  // the axis line, then read the axis coordinate.
+  const a = (i + 1) % 3
+  const b = (i + 2) % 3
+  const dA = dir[a]
+  const dB = dir[b]
+  const wA = origin[a] - point[a]
+  const wB = origin[b] - point[b]
+  const denom = dA * dA + dB * dB
+  // Ray runs parallel to the axis: the closest approach is ill-defined, so hold.
+  if (denom < 1e-12) return null
+  const s = -(wA * dA + wB * dB) / denom
+  // Axis coordinate of the ray at closest approach, relative to the line origin.
+  return origin[i] + dir[i] * s - point[i]
+}
+
+/** Snaps one offset component onto the 0.25-voxel stepper lattice, normalizing -0. */
+export function snapOffsetStep(v: number, step = 0.25): number {
+  if (!Number.isFinite(v)) return 0
+  const s = Math.round(v / step) * step
+  return s === 0 ? 0 : s
 }

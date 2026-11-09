@@ -156,8 +156,53 @@ MIGRATIONS[16] = (doc) => {
     ...rest,
     schemaVersion: 17,
     meta: { ...doc?.meta, animationMode: doc?.meta?.animationMode ?? animationMode },
-    ...(cycle ? { clips: [clipFromPoseCycle(cycle)] } : {}),
+    ...(cycle ? { clips: [clipFromPoseCycle(cycle, poses)] } : {}),
   }
+}
+
+/** v17 → v18: keyframes own their joint angles directly (the pose is the keyframe).
+ * Keys that already embed joints (the v16→v17 chain output above) pass through with
+ * their names kept; `poseId` keys resolve through the `poses` library, inheriting the
+ * pose's name and joints (dangling ids embed empty/bind joints named `Key N`).
+ * The library is then dropped. The load-time sanitizer re-sorts keys, locks the first
+ * to 0, and floors durations, so the migration only reshapes. */
+MIGRATIONS[17] = (doc) => {
+  const poses = Array.isArray(doc?.poses) ? doc.poses : []
+  const byId = new Map<string, any>()
+  for (const p of poses) {
+    if (p && typeof p?.id === 'string' && !byId.has(p.id)) byId.set(p.id, p)
+  }
+  const clips = Array.isArray(doc?.clips)
+    ? doc.clips.map((clip: any) => {
+      if (!clip || typeof clip !== 'object' || !Array.isArray(clip.keys)) return clip
+      const used = new Set<string>()
+      const uniquify = (base: string): string => {
+        if (!used.has(base)) { used.add(base); return base }
+        let i = 2
+        while (used.has(`${base} ${i}`)) i++
+        const name = `${base} ${i}`
+        used.add(name)
+        return name
+      }
+      const keys = clip.keys.map((key: any, i: number) => {
+        if (!key || typeof key !== 'object') return key
+        if (key.joints && typeof key.joints === 'object') {
+          return { ...key, name: typeof key.name === 'string' && key.name ? key.name : uniquify(`Key ${i + 1}`) }
+        }
+        const pose = typeof key.poseId === 'string' ? byId.get(key.poseId) : undefined
+        const { poseId: _droppedPose, ...rest } = key
+        return {
+          ...rest,
+          name: uniquify(typeof pose?.name === 'string' && pose.name ? pose.name : `Key ${i + 1}`),
+          joints: pose?.joints && typeof pose.joints === 'object' ? { ...pose.joints } : {},
+          ...(pose?.offsets && typeof pose.offsets === 'object' ? { offsets: { ...pose.offsets } } : {}),
+        }
+      })
+      return { ...clip, keys }
+    })
+    : doc?.clips
+  const { poses: _droppedPoses, ...rest } = doc ?? {}
+  return { ...rest, schemaVersion: 18, clips }
 }
 
 export class UnsupportedSchemaVersionError extends Error {

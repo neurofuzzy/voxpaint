@@ -8,6 +8,7 @@ import { TEXEL_SCALE } from '@/engine/texture/types'
 import { normalizeProjectFilename } from '@/engine/persistence/projectFile'
 import { hasActiveAnimations } from '@/engine/animation/animationLayers'
 import { boxHasActiveTweens } from '@/engine/rigging/rigLoop'
+import { normalizeFps } from '@/engine/rigging/types'
 import { useAppStore } from '@/store/useAppStore'
 import { showToast } from '@/components/ui/toastBus'
 
@@ -33,7 +34,7 @@ function RigWinsNote() {
       {exportIncludeAnimations ? (
         animationMode === 'tweens'
           ? (tweened > 0 ? ` 1 clip: loop.` : ` No clips: no enabled tweens.`)
-          : (clips.length > 0 ? ` ${clips.length} clip${clips.length === 1 ? '' : 's'}: ${clips.map((c) => c.name).join(', ')}.` : ` No clips yet — add one in the Poses tab.`)
+          : (clips.length > 0 ? ` ${clips.length} clip${clips.length === 1 ? '' : 's'}: ${clips.map((c) => c.name).join(', ')}.` : ` No clips yet — add one in the Motion tab.`)
       ) : (
         ` Animation is off — joints export posed at bind with no clips.`
       )}
@@ -81,7 +82,7 @@ export function ExportGltfDialog({ open, onOpenChange }: { open: boolean; onOpen
 
   async function run() {
     const state = useAppStore.getState()
-    const { model, palette, meta, texture, noiseLevel, specularNoiseLevel, aoStrength, glassRoughnessLevel, animSettings, sliceMasks, slicePivots, markers, rigBoxes, poses, clips } = state
+    const { model, palette, meta, texture, noiseLevel, specularNoiseLevel, aoStrength, glassRoughnessLevel, animSettings, sliceMasks, slicePivots, markers, rigBoxes, clips } = state
     const { gridExtent } = meta
     const sf = state.exportScaleFactor
     const anchor = state.exportAnchor
@@ -116,7 +117,8 @@ export function ExportGltfDialog({ open, onOpenChange }: { open: boolean; onOpen
         rigBoxes,
         animationMode: meta.animationMode ?? 'tweens',
         clips,
-      }, animSettings, sliceMasks, slicePivots, poses)
+        fps: normalizeFps(meta.fps),
+      }, animSettings, sliceMasks, slicePivots)
       downloadGlb(glb, normalizeProjectFilename(meta.name || 'voxpaint-model'))
       showToast('GLTF exported.')
       onOpenChange(false)

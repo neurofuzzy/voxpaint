@@ -19,10 +19,10 @@ export const createModeSlice: Slice = (set, get) => ({
     if (mode === 'animate') {
       get().bakeFloatIfAny()
     }
-    // Pose preview is Animate-only working state — leaving the mode drops it back to bind
-    // (it survives tool/selection changes inside Animate, and Reset clears it explicitly).
-    if (mode !== 'animate' && get().poseRotations.size > 0) {
-      get().resetPose()
+    // Pose preview is Animate-only working state — leaving the mode stops transport
+    // (the clips themselves stay in the file, and re-entering re-selects).
+    if (mode !== 'animate' && get().clipPlaying) {
+      get().setClipPlaying(false)
     }
     set((state) => {
       state.mode = mode

@@ -20,7 +20,7 @@ import { buildEmissiveAnimIndex } from '@/engine/palette/emissiveAnimation'
 import type { SliceAnimSettings, SliceKey } from '@/engine/animation/types'
 import { assignVoxelsToNodes, hasActiveAnimations, resolveAnimCenter } from '@/engine/animation/animationLayers'
 import { buildAllAnimationClips, type AnimNodeInfo } from '@/engine/animation/animationGLTF'
-import { rigIdForCoord, rigPivotOf, sanitizeRigName, type AnimationMode, type Pose, type RigBox, type RigClip } from '@/engine/rigging/types'
+import { normalizeFps, rigIdForCoord, rigPivotOf, sanitizeRigName, type AnimationMode, type RigBox, type RigClip } from '@/engine/rigging/types'
 import { bakeRigAction, boxHasActiveTweens, composeTweenMatrices, TWEEN_CYCLE_SECONDS } from '@/engine/rigging/rigLoop'
 import { composePoseMatrices } from '@/engine/rigging/pose'
 import { evaluateClip } from '@/engine/rigging/clip'
@@ -116,7 +116,7 @@ export type GltfExportOptions = {
   markers?: Marker[]
   /** Emit the `markers` as empty nodes (default true). Off skips them — the .glb carries voxels only. */
   includeMarkers?: boolean
-  /** Emit animation clips for slice loops, tween stacks, and the pose cycle (default true).
+  /** Emit animation clips for slice loops, tween stacks, and keyframe clips (default true).
    * Off exports the same joint/node structure posed at bind with no `animations` — useful
    * for downstream tools that can't consume clips or when only the static model matters. */
   includeAnimations?: boolean
@@ -132,6 +132,9 @@ export type GltfExportOptions = {
   animationMode?: AnimationMode
   /** Keyed-pose timelines, baked one action each in poses mode (ignored in tweens mode). */
   clips?: RigClip[]
+  /** Bake sample rate in frames per second (defaults to the project's timeline rate,
+   * 30 when unstamped). Keys and durations are seconds; tracks sample at this rate. */
+  fps?: number
 }
 
 const hex6 = (colorKey: number) => colorKey.toString(16).padStart(6, '0')
@@ -320,7 +323,6 @@ export async function exportModelToGlb(
   animSettings?: Map<SliceKey, SliceAnimSettings>,
   sliceMasks?: Map<SliceKey, Set<CellKey>>,
   slicePivots?: Map<SliceKey, CellKey>,
-  poses?: Pose[],
 ): Promise<ArrayBuffer> {
   const textured = !!texture && hasTextureContent(texture)
   const root = new THREE.Group()
@@ -626,9 +628,8 @@ export async function exportModelToGlb(
   // joint/node structure still exports, posed at bind.
   if (rigTree && includeAnimations) {
     const boxes = options.rigBoxes ?? []
+    const fps = normalizeFps(options.fps)
     if ((options.animationMode ?? 'tweens') === 'poses') {
-      const lib = poses ?? []
-      const byId = new Map(lib.map((p) => [p.id, p]))
       const used = new Set<string>()
       for (const clip of options.clips ?? []) {
         const base = sanitizeRigName(clip.name, 'clip')
@@ -638,19 +639,20 @@ export async function exportModelToGlb(
         used.add(candidate)
         const animatedIds = new Set<string>()
         for (const key of clip.keys) {
-          const pose = byId.get(key.poseId)
-          if (!pose) continue
-          for (const id of Object.keys(pose.joints)) animatedIds.add(id)
-          for (const id of Object.keys(pose.offsets ?? {})) animatedIds.add(id)
+          for (const id of Object.keys(key.joints)) animatedIds.add(id)
+          for (const id of Object.keys(key.offsets ?? {})) animatedIds.add(id)
         }
         if (animatedIds.size === 0) continue
-        const sampleWorlds = (t: number) => composePoseMatrices(boxes, evaluateClip(lib, boxes, clip, t).rot)
-        clips.push(bakeRigAction(candidate, boxes, rigTree.groups, voxelScaleY, 30, clip.duration, sampleWorlds, animatedIds))
+        const sampleWorlds = (t: number) => {
+          const frame = evaluateClip(boxes, clip, t)
+          return composePoseMatrices(boxes, frame.rot, frame.off)
+        }
+        clips.push(bakeRigAction(candidate, boxes, rigTree.groups, voxelScaleY, fps, clip.duration, sampleWorlds, animatedIds))
       }
     } else {
       const tweened = new Set(boxes.filter(boxHasActiveTweens).map((b) => b.id))
       if (tweened.size > 0) {
-        clips.push(bakeRigAction('loop', boxes, rigTree.groups, voxelScaleY, 30, TWEEN_CYCLE_SECONDS, (t) => composeTweenMatrices(boxes, t), tweened))
+        clips.push(bakeRigAction('loop', boxes, rigTree.groups, voxelScaleY, fps, TWEEN_CYCLE_SECONDS, (t) => composeTweenMatrices(boxes, t), tweened))
       }
     }
   }

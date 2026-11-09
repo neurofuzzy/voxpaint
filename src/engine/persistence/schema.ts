@@ -6,21 +6,19 @@ import type { PaletteSlotRef, PaletteState } from '@/engine/palette/types'
 import type { BoxFace } from '@/engine/texture/types'
 import type { GltfExportAnchor } from '@/engine/export/gltfExport'
 
-export const CURRENT_SCHEMA_VERSION = 17 as const
+export const CURRENT_SCHEMA_VERSION = 18 as const
 
-/** A named joint snapshot: per-box local euler rotations (radians, intrinsic XYZ). */
-export type SerializedPose = {
-  id: string
-  name: string
-  joints: Record<string, [number, number, number]>
-}
-
-/** One keyed pose on a clip timeline (see `RigClip` / `ClipKey` in engine/rigging/types.ts). */
+/** One keyframe on a clip timeline (see `RigClip` / `ClipKey` in engine/rigging/types.ts):
+ * the pose IS the key — it owns its joint angles (radians, intrinsic XYZ) directly. */
 export type SerializedClipKey = {
   id: string
-  poseId: string
+  /** UI-only (never exported); absent on hand-edited files, defaulting to 'Key'. */
+  name?: string
   time: number
   ease: ClipKey['ease']
+  joints: Record<string, [number, number, number]>
+  /** Optional root-joint translation offsets in voxels. */
+  offsets?: Record<string, [number, number, number]>
 }
 
 /** A named keyed-pose timeline: one exported action (`walk`, `idle`, `dodge`). */
@@ -76,8 +74,12 @@ export type ProjectMeta = {
   voxelScaleY: VoxelScaleY
   /** Texels per voxel along each axis (1/2/4, default 4). Changing it resamples the box-map
    * faces (see `resampleTextureModel`) — unlike `voxelScaleY` it touches texture data, but the
-   * voxel model is unaffected. Absent on older files, defaulting to 4. */
+   * voxel model is untouched. Absent on older files, defaulting to 4. */
   texelScale?: number
+  /** Timeline/export frame rate (frames per second, 1–120). Drives the timeline grid,
+   * key-time snapping, and the baked GLB sample rate. Absent on older files, defaulting
+   * to 30 (the rate every previous version baked at, so old files evaluate identically). */
+  fps?: number
   /** Which animation system this project uses: per-joint looping tweens (machines) or keyed
    * pose clips (characters), never both. Absent on older files, defaulting to `'tweens'`. */
   animationMode?: AnimationMode
@@ -219,7 +221,12 @@ export type VoxPaintProjectFileV2 = {
  * v16 → v17: the pose cycle becomes the first keyed-pose `clips` entry (name `cycle`) and
  * `poseCycle` is dropped; `meta.animationMode` records the project's animation system
  * (`'tweens'` for tweened/empty projects, `'poses'` for pose-cycle ones). Older files load
- * through `MIGRATIONS[16]`, which converts and stamps both. */
+ * through `MIGRATIONS[16]`, which converts and stamps both.
+ *
+ * v17 → v18: keyframes own their joint angles directly (the pose is the keyframe) — each
+ * key embeds the referenced pose's `joints`/`offsets` and inherits its name, and the
+ * `poses` library is dropped. Older files load through `MIGRATIONS[17]`, which embeds
+ * and drops. */
 export type VoxPaintProjectFile = {
   schemaVersion: typeof CURRENT_SCHEMA_VERSION
   meta: ProjectMeta
@@ -236,6 +243,5 @@ export type VoxPaintProjectFile = {
   pivots?: SerializedSlicePivot[]
   markers?: SerializedMarkerPosition[]
   rigBoxes?: SerializedRigBox[]
-  poses?: SerializedPose[]
   clips?: SerializedClip[]
 }

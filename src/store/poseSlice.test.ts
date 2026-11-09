@@ -1,8 +1,9 @@
 import { beforeEach, describe, expect, it } from 'vitest'
 import { useAppStore } from './useAppStore'
 
-/** The pose slice is ephemeral working state: set/collapse/reset, never undoable, never saved. */
-describe('pose preview', () => {
+/** The pose slice is pure keyframe state: every edit lands in the selected key — no
+ * staging, no scratch, nothing ephemeral but transport. */
+describe('pose selection', () => {
   beforeEach(() => {
     useAppStore.getState().newProject('Test', 16)
   })
@@ -11,37 +12,40 @@ describe('pose preview', () => {
     useAppStore.getState().addRigBox({ id, name: id, min: [0, 0, 0], max: [2, 2, 2], parentId, pivot: null })
   }
 
-  it('stores rotations per joint and drops them on reset', () => {
-    addBox('arm')
-    useAppStore.getState().setJointRotation('arm', [0.5, 0, 0])
-    expect(useAppStore.getState().poseRotations.get('arm')).toEqual([0.5, 0, 0])
-    useAppStore.getState().resetPose()
-    expect(useAppStore.getState().poseRotations.size).toBe(0)
-  })
-
-  it('ignores unknown ids', () => {
-    useAppStore.getState().setJointRotation('ghost', [0.5, 0, 0])
-    expect(useAppStore.getState().poseRotations.size).toBe(0)
-  })
-
-  it('collapses near-zero rotations back to bind', () => {
+  it('selects the anchor key on clip select and repairs selection on remove', () => {
     addBox('arm')
     const s = useAppStore.getState()
-    s.setJointRotation('arm', [0.5, 0, 0])
-    expect(useAppStore.getState().poseRotations.size).toBe(1)
-    s.setJointRotation('arm', [1e-12, 0, 0])
-    expect(useAppStore.getState().poseRotations.size).toBe(0)
+    s.setAnimationMode('poses')
+    const clipId = s.addClip()
+    const anchor = useAppStore.getState().selectedKeyId!
+    // Deselect, then re-select the clip: the first key is under edit again.
+    s.setSelectedKey(null)
+    s.setActiveClip(clipId)
+    expect(useAppStore.getState().selectedKeyId).toBe(anchor)
+    // Removing the selected non-anchor key re-points at the nearest survivor.
+    const k1 = s.addKeyframe(clipId, 1)!
+    s.setSelectedKey(k1)
+    s.removeKey(clipId, k1)
+    expect(useAppStore.getState().selectedKeyId).toBe(anchor)
+    // The anchor itself refuses deletion.
+    s.removeKey(clipId, anchor)
+    expect(useAppStore.getState().clips[0].keys).toHaveLength(1)
   })
 
-  it('clears when leaving Animate mode but survives selection changes inside it', () => {
+  it('joint edits address keys explicitly and ignore unknown joints', () => {
     addBox('arm')
     const s = useAppStore.getState()
-    s.setMode('animate')
-    s.setJointRotation('arm', [0.5, 0, 0])
-    s.selectRigBox('arm')
-    expect(useAppStore.getState().poseRotations.size).toBe(1)
-    s.setMode('model')
-    expect(useAppStore.getState().poseRotations.size).toBe(0)
+    s.setAnimationMode('poses')
+    const clipId = s.addClip()
+    const anchor = useAppStore.getState().selectedKeyId!
+    s.setKeyJoint(clipId, anchor, 'arm', [0.5, 0, 0])
+    expect(useAppStore.getState().clips[0].keys[0].joints).toEqual({ arm: [0.5, 0, 0] })
+    // Unknown joints are a no-op.
+    s.setKeyJoint(clipId, anchor, 'ghost', [0.5, 0, 0])
+    expect(useAppStore.getState().clips[0].keys[0].joints).toEqual({ arm: [0.5, 0, 0] })
+    // Near-zero collapses back to bind.
+    s.setKeyJoint(clipId, anchor, 'arm', [1e-12, 0, 0])
+    expect(useAppStore.getState().clips[0].keys[0].joints).toEqual({})
   })
 
   it('tracks the gizmo drag latch', () => {
@@ -67,15 +71,5 @@ describe('pose preview', () => {
     s.setAnimateModelView('full')
     s.setActiveTool('pose')
     expect(useAppStore.getState().animateModelView).toBe('full')
-  })
-
-  it('does not enter undo history', () => {
-    addBox('arm')
-    const s = useAppStore.getState()
-    s.setMode('animate')
-    s.setJointRotation('arm', [0.5, 0, 0])
-    s.animUndo()
-    // The pose survives — undo only covers rig structural edits.
-    expect(useAppStore.getState().poseRotations.get('arm')).toEqual([0.5, 0, 0])
   })
 })

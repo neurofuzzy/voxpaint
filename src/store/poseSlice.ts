@@ -1,8 +1,8 @@
 import type { StateCreator } from 'zustand'
-import { CLIP_FRAME_SECONDS, newClipId, newKeyId, newPoseId, sanitizeRigName, snapClipTime } from '@/engine/rigging/types'
-import type { ClipKey, RigClip } from '@/engine/rigging/types'
-import { previewFrame } from '@/engine/rigging/preview'
-import { mirrorPose as mirrorPoseEngine } from '@/engine/rigging/mirror'
+import type { Coord } from '@/engine/grid/types'
+import { DEFAULT_FPS, newClipId, newKeyId, normalizeFps, sanitizeRigName, snapClipTime } from '@/engine/rigging/types'
+import type { ClipKey } from '@/engine/rigging/types'
+import { mirrorJoints } from '@/engine/rigging/mirror'
 import type { JointEuler } from '@/engine/rigging/pose'
 import { showToast } from '@/components/ui/toastBus'
 import type { AppState, PoseSlice } from './types'
@@ -16,15 +16,11 @@ function isBind(euler: JointEuler): boolean {
   return Math.abs(euler[0]) < EPSILON && Math.abs(euler[1]) < EPSILON && Math.abs(euler[2]) < EPSILON
 }
 
-function uniquePoseName(base: string, taken: Set<string>): string {
+function uniqueKeyName(base: string, taken: Set<string>): string {
   if (!taken.has(base)) return base
   let i = 2
   while (taken.has(`${base} ${i}`)) i++
   return `${base} ${i}`
-}
-
-function nextDefaultName(poses: { name: string }[]): string {
-  return uniquePoseName('Pose', new Set(poses.map((p) => p.name)))
 }
 
 function uniqueClipName(base: string, taken: Set<string>): string {
@@ -34,26 +30,32 @@ function uniqueClipName(base: string, taken: Set<string>): string {
   return `${base} ${i}`
 }
 
-/** Keeps a clip's duration on the export frame grid and — when looping — at least one
+/** Project frame rate for grid math (integer 1–120, default 30). */
+function fpsOf(state: { meta: { fps?: number } }): number {
+  return normalizeFps(state.meta.fps)
+}
+
+/** Keeps a clip's duration on the export frame grid — and when looping, at least one
  * frame past the last key, so the wrap segment back to the first key never collapses
  * to zero (the pop the sanitizer guards against on load). Call after any change to a
  * clip's keys, loop flag, or duration. */
-function enforceDurationFloor(clip: RigClip): void {
-  let duration = snapClipTime(clip.duration)
-  if (!Number.isFinite(duration)) duration = CLIP_FRAME_SECONDS
+function enforceDurationFloor(clip: { keys: { time: number }[]; loop: boolean; duration: number }, fps: number = DEFAULT_FPS): void {
+  const frame = 1 / normalizeFps(fps)
+  let duration = snapClipTime(clip.duration, fps)
+  if (!Number.isFinite(duration)) duration = frame
   if (clip.keys.length > 0) {
     const last = clip.keys[clip.keys.length - 1].time
     duration = Math.max(duration, last)
-    if (clip.loop) duration = Math.max(duration, snapClipTime(last + CLIP_FRAME_SECONDS))
+    if (clip.loop) duration = Math.max(duration, snapClipTime(last + frame, fps))
   }
-  clip.duration = Math.max(duration, CLIP_FRAME_SECONDS)
+  clip.duration = Math.max(duration, frame)
 }
 
 /** Sorts a clip's keys by time with the first locked at 0, then re-floors the duration. */
-function normalizeKeys(clip: RigClip): void {
+function normalizeKeys(clip: { keys: { time: number }[]; loop: boolean; duration: number }, fps: number = DEFAULT_FPS): void {
   clip.keys.sort((a, b) => a.time - b.time)
   if (clip.keys.length > 0) clip.keys[0].time = 0
-  enforceDurationFloor(clip)
+  enforceDurationFloor(clip, fps)
 }
 
 /**
@@ -64,102 +66,62 @@ function normalizeKeys(clip: RigClip): void {
  * clip; the duration field owns that. Strip drags pass the duration captured at
  * pointer-down so the scale stays fixed for the whole gesture.
  */
-export function clampKeyTime(time: number, duration: number, loop: boolean): number {
-  const end = snapClipTime(loop ? duration - CLIP_FRAME_SECONDS : duration)
-  return Math.min(Math.max(snapClipTime(time), CLIP_FRAME_SECONDS), Math.max(end, CLIP_FRAME_SECONDS))
+export function clampKeyTime(time: number, duration: number, loop: boolean, fps: number = DEFAULT_FPS): number {
+  const frame = 1 / normalizeFps(fps)
+  const end = snapClipTime(loop ? duration - frame : duration, fps)
+  return Math.min(Math.max(snapClipTime(time, fps), frame), Math.max(end, frame))
 }
 
 /**
- * Ephemeral pose preview for Animate mode (Phase 1): per-joint local rotations, radians,
- * intrinsic XYZ. Deliberately outside undo history (preview is not an edit) and outside
- * persistence (cleared on project load by construction — `newProject` rebuilds state — and on
- * leaving Animate mode). Named pose snapshots are the undoable/persisted counterpart: the
- * gizmo writes scratch, Capture freezes it into a pose object. Keyed clips sequence those
- * snapshots on a timeline (one exported action each).
+ * Timeline-first pose state: each keyframe IS its pose (it owns its joint angles
+ * directly — no library, no staging). Every edit — gizmo drags, joint card, mirror —
+ * lands in the selected keyframe, one undo entry per gesture via the nesting-aware
+ * stroke. With no key selected there is nothing to edit, so edit entry points
+ * re-seek onto the selection (or toast when there is none) instead of staging.
  */
 export const createPoseSlice: Slice = (set, get) => ({
-  poseRotations: new Map<string, JointEuler>(),
-  poses: [],
   clips: [],
   activeClipId: null,
   selectedKeyId: null,
-  stagedPoseId: null,
-  editingPoseId: null,
   clipPlaying: false,
   clipStartedAt: 0,
   clipTime: null,
   poseDragging: false,
 
-  setJointRotation: (id, euler) => {
-    const box = get().rigBoxes.find((b) => b.id === id)
-    if (!box) return
-    // Gating is by project animation mode, not per joint: in a tweens project the gizmo
-    // never renders and drags never start (see PoseGizmo / Viewport3D), so by the time a
-    // rotation lands here the frame is pose-owned.
+  setKeyJoint: (clipId, keyId, jointId, euler) => {
+    if (!get().rigBoxes.some((b) => b.id === jointId)) return
+    get().animBeginStroke()
     set((state) => {
-      if (!state.rigBoxes.some((b) => b.id === id)) return
+      const key = state.clips.find((c) => c.id === clipId)?.keys.find((k) => k.id === keyId)
+      if (!key) return
       if (isBind(euler)) {
-        state.poseRotations.delete(id)
+        delete key.joints[jointId]
         return
       }
-      state.poseRotations.set(id, [...euler] as JointEuler)
-    })
-  },
-
-  capturePose: () => {
-    const scratch = get().poseRotations
-    if (scratch.size === 0) {
-      showToast('Pose something first — the scratch is at bind')
-      return null
-    }
-    const joints: Record<string, JointEuler> = {}
-    for (const [id, euler] of scratch) {
-      if (!isBind(euler)) joints[id] = [...euler] as JointEuler
-    }
-    if (Object.keys(joints).length === 0) return null
-    const pose = { id: newPoseId(), name: '', joints }
-    get().animBeginStroke()
-    set((state) => {
-      pose.name = nextDefaultName(state.poses)
-      state.poses.push({ id: pose.id, name: pose.name, joints: { ...pose.joints } })
-      state.stagedPoseId = pose.id
-      state.editingPoseId = pose.id
-      state.poseRotations.clear()
-      state.dirty = true
-    })
-    get().animCommitStroke()
-    return pose.id
-  },
-
-  renamePose: (id, name) => {
-    const clean = name.trim().slice(0, 64)
-    if (!clean) return
-    get().animBeginStroke()
-    set((state) => {
-      const pose = state.poses.find((p) => p.id === id)
-      if (!pose) return
-      pose.name = clean
+      key.joints[jointId] = [...euler] as JointEuler
       state.dirty = true
     })
     get().animCommitStroke()
   },
 
-  deletePose: (id) => {
+  setKeyOffset: (clipId, keyId, jointId, offset) => {
+    const box = get().rigBoxes.find((b) => b.id === jointId)
+    // Offsets are roots-only (a bob on a child would fight its parent's chain) — the
+    // gizmo and the card only offer them on roots; anything else is a no-op.
+    if (!box || box.parentId !== null) return
     get().animBeginStroke()
     set((state) => {
-      state.poses = state.poses.filter((p) => p.id !== id)
-      if (state.stagedPoseId === id) state.stagedPoseId = null
-      if (state.editingPoseId === id) state.editingPoseId = null
-      // A key pointing at a deleted pose would read as bind — drop the keys instead so
-      // the timelines only ever reference surviving poses.
-      for (const clip of state.clips) {
-        const before = clip.keys.length
-        clip.keys = clip.keys.filter((k) => k.poseId !== id)
-        if (clip.keys.length !== before) normalizeKeys(clip)
-        if (state.selectedKeyId && !clip.keys.some((k) => k.id === state.selectedKeyId)) {
-          state.selectedKeyId = null
+      const key = state.clips.find((c) => c.id === clipId)?.keys.find((k) => k.id === keyId)
+      if (!key) return
+      if (Math.abs(offset[0]) < EPSILON && Math.abs(offset[1]) < EPSILON && Math.abs(offset[2]) < EPSILON) {
+        if (key.offsets) {
+          delete key.offsets[jointId]
+          if (Object.keys(key.offsets).length === 0) delete key.offsets
         }
+        return
       }
+      if (!key.offsets) key.offsets = {}
+      key.offsets[jointId] = [...offset] as Coord
       state.dirty = true
     })
     get().animCommitStroke()
@@ -171,9 +133,13 @@ export const createPoseSlice: Slice = (set, get) => ({
     set((state) => {
       id = newClipId()
       const name = uniqueClipName('Clip', new Set(state.clips.map((c) => c.name)))
-      state.clips.push({ id, name, loop: true, duration: 1, keys: [] })
+      // Every clip opens with its frame-1 anchor already in place (bind pose, locked at
+      // 0, undeletable) so the timeline is never an empty strip and the first pose has
+      // somewhere to land.
+      const keyId = newKeyId()
+      state.clips.push({ id, name, loop: true, duration: 1, keys: [{ id: keyId, name: 'Key 1', joints: {}, time: 0, ease: 'inOut' as ClipKey['ease'] }] })
       state.activeClipId = id
-      state.selectedKeyId = null
+      state.selectedKeyId = keyId
       state.clipPlaying = false
       state.dirty = true
     })
@@ -217,7 +183,7 @@ export const createPoseSlice: Slice = (set, get) => ({
       if (!clip) return
       if (patch.loop !== undefined) clip.loop = patch.loop
       if (patch.duration !== undefined) clip.duration = patch.duration
-      enforceDurationFloor(clip)
+      enforceDurationFloor(clip, fpsOf(state))
       state.dirty = true
     })
     get().animCommitStroke()
@@ -227,7 +193,10 @@ export const createPoseSlice: Slice = (set, get) => ({
     set((state) => {
       if (id !== null && !state.clips.some((c) => c.id === id)) return
       state.activeClipId = id
-      state.selectedKeyId = null
+      // The clip always opens with a key under edit (its first), so the joint card and
+      // the gizmo never point at nothing; null only when deselected.
+      const clip = id !== null ? state.clips.find((c) => c.id === id) : null
+      state.selectedKeyId = clip && clip.keys.length > 0 ? clip.keys[0].id : null
       state.clipPlaying = false
       state.clipTime = null
     })
@@ -252,7 +221,7 @@ export const createPoseSlice: Slice = (set, get) => ({
         state.clipPlaying = true
       } else if (state.clipPlaying) {
         // Freeze the playhead where it stopped so the paused frame keeps showing.
-        state.clipTime = snapClipTime(now - state.clipStartedAt)
+        state.clipTime = snapClipTime(now - state.clipStartedAt, fpsOf(state))
         state.clipPlaying = false
       }
     })
@@ -260,19 +229,11 @@ export const createPoseSlice: Slice = (set, get) => ({
 
   setClipTime: (time) => {
     set((state) => {
-      state.clipTime = Math.max(0, snapClipTime(time))
+      state.clipTime = Math.max(0, snapClipTime(time, fpsOf(state)))
     })
   },
 
-  addKey: (clipId, poseId, time) => {
-    const st = get()
-    const clip = st.clips.find((c) => c.id === clipId)
-    if (!clip) return null
-    const resolvedPoseId = poseId ?? st.stagedPoseId ?? st.editingPoseId ?? st.poses[0]?.id
-    if (!resolvedPoseId || !st.poses.some((p) => p.id === resolvedPoseId)) {
-      showToast('Stage or capture a pose first — keys point at library poses')
-      return null
-    }
+  addKeyframe: (clipId, time, init) => {
     let keyId: string | null = null
     get().animBeginStroke()
     set((state) => {
@@ -282,13 +243,21 @@ export const createPoseSlice: Slice = (set, get) => ({
       // Off the timeline with no explicit time: append half a second past the last key
       // (0 into an empty clip). Keys stay sorted via normalizeKeys below.
       const lastKey = target.keys.length > 0 ? target.keys[target.keys.length - 1].time : -0.5
+      const taken = new Set(target.keys.map((k) => k.name))
+      const fps = fpsOf(state)
+      // Retiming rules apply at birth too: a new key never lands exactly on the
+      // anchor (frame 1 double-clicks clamp one frame later) nor past the end —
+      // the duration floor below grows the clip instead.
+      const raw = Math.max(0, snapClipTime(time ?? state.clipTime ?? lastKey + 0.5, fps))
       target.keys.push({
         id: keyId,
-        poseId: resolvedPoseId,
-        time: Math.max(0, snapClipTime(time ?? state.clipTime ?? lastKey + 0.5)),
-        ease: 'inOut' as ClipKey['ease'],
+        name: uniqueKeyName(`Key ${target.keys.length + 1}`, taken),
+        joints: init?.joints ? { ...init.joints } : {},
+        time: target.keys.length > 0 ? clampKeyTime(raw, target.duration, target.loop, fps) : raw,
+        ease: init?.ease ?? ('inOut' as ClipKey['ease']),
+        ...(init?.offsets ? { offsets: { ...init.offsets } } : {}),
       })
-      normalizeKeys(target)
+      normalizeKeys(target, fps)
       state.selectedKeyId = keyId
       state.dirty = true
     })
@@ -302,149 +271,107 @@ export const createPoseSlice: Slice = (set, get) => ({
       const clip = state.clips.find((c) => c.id === clipId)
       const key = clip?.keys.find((k) => k.id === keyId)
       if (!clip || !key) return
-      if (patch.poseId !== undefined) {
-        if (!state.poses.some((p) => p.id === patch.poseId)) return
-        key.poseId = patch.poseId
+      if (patch.name !== undefined) {
+        const clean = patch.name.trim().slice(0, 64)
+        if (clean) {
+          const others = new Set(clip.keys.filter((k) => k.id !== keyId).map((k) => k.name))
+          key.name = uniqueKeyName(clean, others)
+        }
       }
-      if (patch.time !== undefined) key.time = clampKeyTime(patch.time, clip.duration, clip.loop)
+      if (patch.time !== undefined) key.time = clampKeyTime(patch.time, clip.duration, clip.loop, fpsOf(state))
       if (patch.ease !== undefined) key.ease = patch.ease
-      normalizeKeys(clip)
+      normalizeKeys(clip, fpsOf(state))
       state.dirty = true
     })
     get().animCommitStroke()
   },
 
   removeKey: (clipId, keyId) => {
-    get().animBeginStroke()
-    set((state) => {
-      const clip = state.clips.find((c) => c.id === clipId)
-      if (!clip) return
-      clip.keys = clip.keys.filter((k) => k.id !== keyId)
-      if (state.selectedKeyId === keyId) state.selectedKeyId = null
-      normalizeKeys(clip)
-      state.dirty = true
-    })
-    get().animCommitStroke()
-  },
-
-  overwritePose: (id) => {
-    const scratch = get().poseRotations
-    if (scratch.size === 0) {
-      showToast('Pose something first — the scratch is at bind')
+    const st = get()
+    const clip = st.clips.find((c) => c.id === clipId)
+    if (!clip) return
+    if (clip.keys.length > 0 && clip.keys[0].id === keyId) {
+      showToast('The frame-1 key is locked — reset it to bind instead of deleting it')
       return
     }
     get().animBeginStroke()
     set((state) => {
-      const pose = state.poses.find((p) => p.id === id)
-      if (!pose) return
-      const joints: Record<string, JointEuler> = {}
-      for (const [jointId, euler] of state.poseRotations) {
-        if (!isBind(euler)) joints[jointId] = [...euler] as JointEuler
+      const target = state.clips.find((c) => c.id === clipId)
+      if (!target) return
+      const removedIndex = target.keys.findIndex((k) => k.id === keyId)
+      target.keys = target.keys.filter((k) => k.id !== keyId)
+      // The selection follows the removal: nearest survivor at the same slot, else the
+      // last key, else null when the clip emptied.
+      if (state.selectedKeyId === keyId) {
+        state.selectedKeyId = target.keys.length > 0
+          ? target.keys[Math.min(Math.max(removedIndex, 0), target.keys.length - 1)].id
+          : null
       }
-      pose.joints = joints
-      state.poseRotations.clear()
-      // Stage what was just saved so the preview keeps showing it instead of dropping
-      // to bind — and step off the timeline so the staged pose actually shows.
-      state.stagedPoseId = id
-      state.clipTime = null
+      normalizeKeys(target, fpsOf(state))
       state.dirty = true
     })
     get().animCommitStroke()
   },
 
-  mirrorPose: (id) => {
-    const source = get().poses.find((p) => p.id === id)
-    if (!source) return null
-    // Names pair the joints, so mirror against the live outline (the UI always flips X).
-    const mirrored = mirrorPoseEngine(source, get().rigBoxes, 'x')
-    let newId = ''
+  duplicateKey: (clipId, keyId) => {
+    let newId: string | null = null
     get().animBeginStroke()
     set((state) => {
-      newId = newPoseId()
-      const name = uniquePoseName(`${source.name} mirror`, new Set(state.poses.map((p) => p.name)))
-      state.poses.push({
+      const clip = state.clips.find((c) => c.id === clipId)
+      const key = clip?.keys.find((k) => k.id === keyId)
+      if (!clip || !key) return
+      newId = newKeyId()
+      const taken = new Set(clip.keys.map((k) => k.name))
+      const joints: Record<string, JointEuler> = {}
+      for (const [jointId, euler] of Object.entries(key.joints)) joints[jointId] = [...euler] as JointEuler
+      const fps = fpsOf(state)
+      const copy: ClipKey = {
         id: newId,
-        name,
-        joints: { ...mirrored.joints },
-        ...(mirrored.offsets ? { offsets: { ...mirrored.offsets } } : {}),
-      })
-      // Stage the mirror so the preview shows it (like capture) and step off the
-      // timeline, or a paused/scrubbed clip frame would keep showing instead. The
-      // scratch is untouched, so the editing target stays where it was.
-      state.stagedPoseId = newId
-      state.clipTime = null
+        name: uniqueKeyName(key.name, taken),
+        time: clampKeyTime(key.time + 1 / fps, clip.duration, clip.loop, fps),
+        ease: key.ease,
+        joints,
+        ...(key.offsets ? { offsets: { ...key.offsets } } : {}),
+      }
+      clip.keys.push(copy)
+      normalizeKeys(clip, fps)
+      state.selectedKeyId = newId
       state.dirty = true
     })
     get().animCommitStroke()
     return newId
   },
 
-  grabPoseForEdit: () => {
+  mirrorKey: (clipId, keyId) => {
     const st = get()
-    // Remember the editing target before the staging below clears it: the scratch is an
-    // edit of whatever pose was staged, so Update writes back to it.
-    const editedId = st.stagedPoseId && st.poses.some((p) => p.id === st.stagedPoseId) ? st.stagedPoseId : null
-    // Snapshot first: the preview may BE the live scratch map, which we clear below.
-    const entries = [...previewFrame(st, performance.now() / 1000).pose.entries()]
-    if (entries.length === 0 && !st.clipPlaying) {
-      // Nothing to grab beyond the scratch itself — just unstage.
-      if (st.stagedPoseId) {
-        set((state) => {
-          state.stagedPoseId = null
-          if (editedId) state.editingPoseId = editedId
-        })
-      }
-      return
-    }
+    const clip = st.clips.find((c) => c.id === clipId)
+    const key = clip?.keys.find((k) => k.id === keyId)
+    if (!clip || !key) return null
+    // Names pair the joints, so mirror against the live outline (the UI always flips X).
+    const mirrored = mirrorJoints({ joints: key.joints, offsets: key.offsets }, st.rigBoxes, 'x')
+    get().animBeginStroke()
     set((state) => {
-      state.poseRotations.clear()
-      for (const [id, euler] of entries) {
-        if (state.rigBoxes.some((b) => b.id === id)) {
-          state.poseRotations.set(id, [...euler] as JointEuler)
-        }
-      }
-      state.stagedPoseId = null
-      if (editedId) state.editingPoseId = editedId
-      state.clipPlaying = false
-      // Off the timeline: the preview now follows the scratch the grab just filled, so
-      // gizmo drags keep showing on screen instead of fighting a frozen clip frame.
-      state.clipTime = null
+      const target = state.clips.find((c) => c.id === clipId)?.keys.find((k) => k.id === keyId)
+      if (!target) return
+      target.joints = { ...mirrored.joints }
+      if (mirrored.offsets) target.offsets = { ...mirrored.offsets }
+      else delete target.offsets
+      state.dirty = true
     })
+    get().animCommitStroke()
+    return keyId
   },
 
-  stagePose: (id) => {
+  resetKey: (clipId, keyId) => {
+    get().animBeginStroke()
     set((state) => {
-      state.stagedPoseId = id && state.poses.some((p) => p.id === id) ? id : null
-      // Staging steps off the timeline so the staged pose (or scratch) actually shows.
-      state.clipTime = null
+      const key = state.clips.find((c) => c.id === clipId)?.keys.find((k) => k.id === keyId)
+      if (!key) return
+      key.joints = {}
+      delete key.offsets
+      state.dirty = true
     })
-  },
-
-  adoptStagedPose: () => {
-    const staged = get().poses.find((p) => p.id === get().stagedPoseId)
-    if (!staged) return
-    set((state) => {
-      state.poseRotations.clear()
-      for (const [id, euler] of Object.entries(staged.joints)) {
-        if (state.rigBoxes.some((b) => b.id === id)) {
-          state.poseRotations.set(id, [...euler] as JointEuler)
-        }
-      }
-      state.stagedPoseId = null
-      // The scratch is now an edit of the adopted pose — Update writes back to it.
-      state.editingPoseId = staged.id
-      state.clipTime = null
-    })
-  },
-
-  resetPose: () => {
-    set((state) => {
-      state.poseRotations.clear()
-      state.stagedPoseId = null
-      state.editingPoseId = null
-      state.clipPlaying = false
-      state.clipTime = null
-    })
+    get().animCommitStroke()
   },
 
   setPoseDragging: (dragging) => {

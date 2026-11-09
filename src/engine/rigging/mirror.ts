@@ -1,6 +1,12 @@
 import type { Axis, Coord } from '@/engine/grid/types'
 import type { JointEuler } from './pose'
-import type { Pose, RigBox } from './types'
+import type { KeyJoints, KeyOffsets, RigBox } from './types'
+
+/** The joint data a keyframe owns (rotations plus optional root offsets). */
+export type MirrorableJoints = {
+  joints: KeyJoints
+  offsets?: KeyOffsets
+}
 
 /**
  * Left/right token pairs for joint-name mirroring, matched case-sensitively as whole
@@ -77,17 +83,17 @@ function mirrorOffset(o: Coord, axis: Axis): Coord {
 }
 
 /**
- * Mirrors a pose across the plane perpendicular to `axis` (default `x`: the
- * character faces +Z, so left/right runs along X). Returns a NEW pose — the caller
- * sets its id/name.
+ * Mirrors a keyframe's joint data across the plane perpendicular to `axis` (default
+ * `x`: the character faces +Z, so left/right runs along X). Returns NEW joint data —
+ * the caller sets the key's id/name.
  *
  * Pairing runs on box NAMES via `mirrorJointName`: a box is paired only when its
  * mirrored name resolves to exactly one DIFFERENT box whose own mirrored name
  * resolves back (mutual — ambiguous duplicates on either side unpair both ends, so
- * mirroring stays an involution). Paired joints SWAP values with the mirror applied;
- * unpaired joints mirror in place. Joints are SPARSE (absent = bind), so each pair
- * iterates the union of both sides: a side absent in the source stays absent in the
- * output unless the mirrored opposite is non-bind (only the keyed left joint →
+ * mirroring twice stays an involution). Paired joints SWAP values with the mirror
+ * applied; unpaired joints mirror in place. Joints are SPARSE (absent = bind), so each
+ * pair iterates the union of both sides: a side absent in the source stays absent in
+ * the output unless the mirrored opposite is non-bind (only the keyed left joint →
  * only the mirrored right joint out). Sides present in the source (even explicit
  * bind) are always written, so mirroring twice restores the original exactly.
  *
@@ -95,7 +101,7 @@ function mirrorOffset(o: Coord, axis: Axis): Coord {
  * negated; `offsets` stays absent when the source had none. Every component passes
  * through `norm`, so no -0 noise breaks a deep-equal double-mirror. Pure.
  */
-export function mirrorPose(pose: Pose, boxes: RigBox[], axis: Axis = 'x'): Pose {
+export function mirrorJoints(source: MirrorableJoints, boxes: RigBox[], axis: Axis = 'x'): MirrorableJoints {
   const byName = new Map<string, RigBox[]>()
   for (const b of boxes) {
     const list = byName.get(b.name)
@@ -117,7 +123,7 @@ export function mirrorPose(pose: Pose, boxes: RigBox[], axis: Axis = 'x'): Pose 
   }
 
   const boxIds = new Set(boxes.map((b) => b.id))
-  const joints: Record<string, JointEuler> = {}
+  const joints: KeyJoints = {}
   const visited = new Set<string>()
   for (const b of boxes) {
     if (visited.has(b.id)) continue
@@ -125,8 +131,8 @@ export function mirrorPose(pose: Pose, boxes: RigBox[], axis: Axis = 'x'): Pose 
     if (otherId !== undefined && !visited.has(otherId)) {
       visited.add(b.id)
       visited.add(otherId)
-      const a = pose.joints[b.id]
-      const c = pose.joints[otherId]
+      const a = source.joints[b.id]
+      const c = source.joints[otherId]
       // Each side writes only from its own source value (the partner's, swapped):
       // a side absent in the source stays absent (mirror of bind is bind), so a lone
       // keyed left joint yields only the mirrored right joint. Present sides always
@@ -135,18 +141,18 @@ export function mirrorPose(pose: Pose, boxes: RigBox[], axis: Axis = 'x'): Pose 
       if (c !== undefined) joints[b.id] = mirrorEuler(c, axis)
     } else {
       visited.add(b.id)
-      const v = pose.joints[b.id]
+      const v = source.joints[b.id]
       if (v !== undefined) joints[b.id] = mirrorEuler(v, axis)
     }
   }
   // Joints keyed by unknown box ids (stale references) have no pair: mirror in place
   // rather than dropping data.
-  for (const [id, v] of Object.entries(pose.joints)) {
+  for (const [id, v] of Object.entries(source.joints)) {
     if (!boxIds.has(id) && joints[id] === undefined) joints[id] = mirrorEuler(v, axis)
   }
 
-  let offsets: Record<string, Coord> | undefined
-  if (pose.offsets) {
+  let offsets: KeyOffsets | undefined
+  if (source.offsets) {
     offsets = {}
     const visitedOff = new Set<string>()
     for (const b of boxes) {
@@ -155,22 +161,22 @@ export function mirrorPose(pose: Pose, boxes: RigBox[], axis: Axis = 'x'): Pose 
       if (otherId !== undefined && !visitedOff.has(otherId)) {
         visitedOff.add(b.id)
         visitedOff.add(otherId)
-        const a = pose.offsets[b.id]
-        const c = pose.offsets[otherId]
+        const a = source.offsets[b.id]
+        const c = source.offsets[otherId]
         if (a !== undefined) offsets[otherId] = mirrorOffset(a, axis)
         if (c !== undefined) offsets[b.id] = mirrorOffset(c, axis)
       } else {
         visitedOff.add(b.id)
-        const v = pose.offsets[b.id]
+        const v = source.offsets[b.id]
         if (v !== undefined) offsets[b.id] = mirrorOffset(v, axis)
       }
     }
-    for (const [id, v] of Object.entries(pose.offsets)) {
+    for (const [id, v] of Object.entries(source.offsets)) {
       if (!boxIds.has(id) && offsets[id] === undefined) offsets[id] = mirrorOffset(v, axis)
     }
   }
 
-  const out: Pose = { ...pose, joints }
+  const out: MirrorableJoints = { joints }
   if (offsets) out.offsets = offsets
   return out
 }

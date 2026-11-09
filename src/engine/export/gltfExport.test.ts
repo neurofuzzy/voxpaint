@@ -8,7 +8,7 @@ import type { TextureModel } from '@/engine/texture/types'
 import { emptyTextureModel } from '@/engine/texture/TextureStore'
 import { MARKER_COLORS } from '@/engine/markers/types'
 import { defaultAnimationSettings, encodeSliceKey } from '@/engine/animation/animationLayers'
-import type { Pose, RigBox, RigClip } from '@/engine/rigging/types'
+import type { RigBox, RigClip } from '@/engine/rigging/types'
 import { exportModelToGlb } from './gltfExport'
 
 // three's GLTFExporter rasterizes every texture image through a 2D canvas — also absent in
@@ -534,16 +534,12 @@ describe('exportModelToGlb rig boxes', () => {
     const boxes: RigBox[] = [
       { id: 'arm-id', name: 'arm', min: [2, 0, 0] as [number, number, number], max: [2, 0, 0] as [number, number, number], parentId: null, pivot: null, tweens: [] },
     ]
-    const poses: Pose[] = [
-      { id: 'pa', name: 'Bind', joints: {} },
-      { id: 'pb', name: 'Wave', joints: { 'arm-id': [0, Math.PI / 2, 0] } },
-    ]
     const clips: RigClip[] = [
-      { id: 'c1', name: 'walk', loop: true, duration: 2, keys: [{ id: 'k0', poseId: 'pa', time: 0, ease: 'inOut' }, { id: 'k1', poseId: 'pb', time: 1, ease: 'inOut' }] },
-      { id: 'c2', name: 'idle', loop: false, duration: 3, keys: [{ id: 'k2', poseId: 'pb', time: 0, ease: 'linear' }] },
+      { id: 'c1', name: 'walk', loop: true, duration: 2, keys: [{ id: 'k0', name: 'Bind', time: 0, ease: 'inOut', joints: {} }, { id: 'k1', name: 'Wave', time: 1, ease: 'inOut', joints: { 'arm-id': [0, Math.PI / 2, 0] } }] },
+      { id: 'c2', name: 'idle', loop: false, duration: 3, keys: [{ id: 'k2', name: 'Wave', time: 0, ease: 'linear', joints: { 'arm-id': [0, Math.PI / 2, 0] } }] },
     ]
     const json = glbJson(
-      await exportModelToGlb(limbModel(), DEFAULT_PALETTE, 16, undefined, { includeTextureMaps: false, rigBoxes: boxes, animationMode: 'poses', clips }, undefined, undefined, undefined, poses),
+      await exportModelToGlb(limbModel(), DEFAULT_PALETTE, 16, undefined, { includeTextureMaps: false, rigBoxes: boxes, animationMode: 'poses', clips }, undefined, undefined, undefined),
     )
     const nodes = namedNodes(json)
     const arm = indexOf(nodes, 'arm')
@@ -558,9 +554,9 @@ describe('exportModelToGlb rig boxes', () => {
       expect(paths).toEqual(['rotation', 'translation'])
       expect(clip!.samplers?.every((s) => s.interpolation === 'LINEAR')).toBe(true)
     }
-    // No clips defined → no animations, even with poses present.
+    // No clips defined → no animations.
     const noClips = glbJson(
-      await exportModelToGlb(limbModel(), DEFAULT_PALETTE, 16, undefined, { includeTextureMaps: false, rigBoxes: boxes, animationMode: 'poses', clips: [] }, undefined, undefined, undefined, poses),
+      await exportModelToGlb(limbModel(), DEFAULT_PALETTE, 16, undefined, { includeTextureMaps: false, rigBoxes: boxes, animationMode: 'poses', clips: [] }, undefined, undefined, undefined),
     )
     expect(noClips.animations ?? []).toEqual([])
   })
@@ -569,13 +565,12 @@ describe('exportModelToGlb rig boxes', () => {
     const boxes: RigBox[] = [
       { id: 'arm-id', name: 'arm', min: [2, 0, 0] as [number, number, number], max: [2, 0, 0] as [number, number, number], parentId: null, pivot: null, tweens: [] },
     ]
-    const poses: Pose[] = [{ id: 'pa', name: 'A', joints: { 'arm-id': [0.5, 0, 0] } }]
     const clips: RigClip[] = [
-      { id: 'c1', name: 'my walk', loop: true, duration: 1, keys: [{ id: 'k0', poseId: 'pa', time: 0, ease: 'linear' }] },
-      { id: 'c2', name: 'my_walk', loop: true, duration: 1, keys: [{ id: 'k1', poseId: 'pa', time: 0, ease: 'linear' }] },
+      { id: 'c1', name: 'my walk', loop: true, duration: 1, keys: [{ id: 'k0', name: 'A', time: 0, ease: 'linear', joints: { 'arm-id': [0.5, 0, 0] } }] },
+      { id: 'c2', name: 'my_walk', loop: true, duration: 1, keys: [{ id: 'k1', name: 'A', time: 0, ease: 'linear', joints: { 'arm-id': [0.5, 0, 0] } }] },
     ]
     const json = glbJson(
-      await exportModelToGlb(limbModel(), DEFAULT_PALETTE, 16, undefined, { includeTextureMaps: false, rigBoxes: boxes, animationMode: 'poses', clips }, undefined, undefined, undefined, poses),
+      await exportModelToGlb(limbModel(), DEFAULT_PALETTE, 16, undefined, { includeTextureMaps: false, rigBoxes: boxes, animationMode: 'poses', clips }, undefined, undefined, undefined),
     )
     expect((json.animations ?? []).map((c) => c.name)).toEqual(['my_walk', 'my_walk-2'])
   })
@@ -584,18 +579,14 @@ describe('exportModelToGlb rig boxes', () => {
     const boxes: RigBox[] = [
       { id: 'arm-id', name: 'arm', min: [2, 0, 0] as [number, number, number], max: [2, 0, 0] as [number, number, number], parentId: null, pivot: null, tweens: [{ id: 'tw-1', kind: 'rotate', axis: 'y', direction: 1, speed: 1, amount: 4, minAngle: -30, maxAngle: 30, enabled: true }] },
     ]
-    const poses: Pose[] = [
-      { id: 'pa', name: 'Bind', joints: {} },
-      { id: 'pb', name: 'Wave', joints: { 'arm-id': [0, Math.PI / 2, 0] } },
-    ]
     const clips: RigClip[] = [
-      { id: 'c1', name: 'walk', loop: true, duration: 2, keys: [{ id: 'k0', poseId: 'pa', time: 0, ease: 'inOut' }, { id: 'k1', poseId: 'pb', time: 1, ease: 'inOut' }] },
+      { id: 'c1', name: 'walk', loop: true, duration: 2, keys: [{ id: 'k0', name: 'Bind', time: 0, ease: 'inOut', joints: {} }, { id: 'k1', name: 'Wave', time: 1, ease: 'inOut', joints: { 'arm-id': [0, Math.PI / 2, 0] } }] },
     ]
     const sliceAnims = new Map([
       [encodeSliceKey('z', 0), { ...defaultAnimationSettings(), animationType: 'rotate-cw' as const }],
     ])
     const json = glbJson(
-      await exportModelToGlb(limbModel(), DEFAULT_PALETTE, 16, undefined, { includeTextureMaps: false, includeAnimations: false, rigBoxes: boxes, animationMode: 'poses', clips }, sliceAnims, undefined, undefined, poses),
+      await exportModelToGlb(limbModel(), DEFAULT_PALETTE, 16, undefined, { includeTextureMaps: false, includeAnimations: false, rigBoxes: boxes, animationMode: 'poses', clips }, sliceAnims, undefined, undefined),
     )
     expect(json.animations ?? []).toEqual([])
     // The joint structure still exports — posed at bind.
@@ -692,15 +683,11 @@ describe('exportModelToGlb animation round-trip (GLTFLoader.parse)', () => {
     const boxes: RigBox[] = [
       { id: 'arm-id', name: 'arm', min: [2, 0, 0] as [number, number, number], max: [2, 0, 0] as [number, number, number], parentId: null, pivot: null, tweens: [] },
     ]
-    const poses: Pose[] = [
-      { id: 'pa', name: 'Bind', joints: {} },
-      { id: 'pb', name: 'Wave', joints: { 'arm-id': [0, Math.PI / 2, 0] } },
-    ]
     const clips: RigClip[] = [
-      { id: 'c1', name: 'walk', loop: true, duration: 2, keys: [{ id: 'k0', poseId: 'pa', time: 0, ease: 'inOut' }, { id: 'k1', poseId: 'pb', time: 1, ease: 'inOut' }] },
-      { id: 'c2', name: 'idle', loop: false, duration: 3, keys: [{ id: 'k2', poseId: 'pb', time: 0, ease: 'linear' }] },
+      { id: 'c1', name: 'walk', loop: true, duration: 2, keys: [{ id: 'k0', name: 'Bind', time: 0, ease: 'inOut', joints: {} }, { id: 'k1', name: 'Wave', time: 1, ease: 'inOut', joints: { 'arm-id': [0, Math.PI / 2, 0] } }] },
+      { id: 'c2', name: 'idle', loop: false, duration: 3, keys: [{ id: 'k2', name: 'Wave', time: 0, ease: 'linear', joints: { 'arm-id': [0, Math.PI / 2, 0] } }] },
     ]
-    const glb = await exportModelToGlb(roundTripModel(), DEFAULT_PALETTE, 16, undefined, { includeTextureMaps: false, rigBoxes: boxes, animationMode: 'poses', clips }, undefined, undefined, undefined, poses)
+    const glb = await exportModelToGlb(roundTripModel(), DEFAULT_PALETTE, 16, undefined, { includeTextureMaps: false, rigBoxes: boxes, animationMode: 'poses', clips }, undefined, undefined, undefined)
     const anims = await loadAnimations(glb)
     expect(anims.map((a) => a.name)).toEqual(['walk', 'idle'])
     expect(anims.find((a) => a.name === 'walk')!.duration).toBeCloseTo(2, 2)

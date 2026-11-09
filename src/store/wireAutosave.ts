@@ -11,7 +11,7 @@ export function restoreAutosave(): void {
   try {
     const file = loadAutosave()
     if (!file) return
-    const { model, palette, meta, texture, view, animSettings, sliceMasks, slicePivots, markers, rigBoxes, poses, clips } = deserializeProject(file)
+    const { model, palette, meta, texture, view, animSettings, sliceMasks, slicePivots, markers, rigBoxes, clips } = deserializeProject(file)
     useAppStore.getState().setModel(model)
     useAppStore.getState().setPalette(palette)
     useAppStore.getState().setTexture(texture)
@@ -36,16 +36,13 @@ export function restoreAutosave(): void {
       state.rigBoxes = rigBoxes
       state.selectedRigBoxId = null
       state.selectedMarkerId = null
-      // Poses persist; staging and transport are session-only and start cleared.
-      state.poses = poses
+      // Keyframe clips persist; selection and transport are session-only and start cleared.
       state.clips = clips
       state.activeClipId = clips.length > 0 ? clips[0].id : null
       state.selectedKeyId = null
       state.clipPlaying = false
       state.clipStartedAt = 0
       state.clipTime = null
-      state.stagedPoseId = null
-      state.editingPoseId = null
     })
     // A refresh restores the same project, so the persisted plane pose comes back with it
     // (clamped — a hand-edited autosave could carry an out-of-range offset). Explicit project
@@ -79,7 +76,6 @@ const flush = debounce(() => {
         slicePivots: state.slicePivots,
         markers: state.markers,
         rigBoxes: state.rigBoxes,
-        poses: state.poses,
         clips: state.clips,
       },
     )

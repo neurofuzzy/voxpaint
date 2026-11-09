@@ -1,9 +1,9 @@
 import { decodeKey, effectiveExtent, emptyModel, encodeKey, recomputeBounds, withinWorkingBounds } from '@/engine/grid/GridStore'
 import type { CellKey, GridExtent, VoxelModel } from '@/engine/grid/types'
 import type { Marker, SerializedMarkerPosition } from '@/engine/markers/types'
-import type { Pose, RigBox, RigClip, RigTween } from '@/engine/rigging/types'
+import type { RigBox, RigClip, RigTween } from '@/engine/rigging/types'
 import { newTweenId } from '@/engine/rigging/types'
-import { sanitizePose, sanitizeRigClip, sanitizeRigTween } from '@/engine/rigging/types'
+import { normalizeFps, sanitizeRigClip, sanitizeRigTween } from '@/engine/rigging/types'
 import { MARKER_COLORS } from '@/engine/markers/types'
 import { DEFAULT_PALETTE } from '@/engine/palette/defaultPalette'
 import type { PaletteState } from '@/engine/palette/types'
@@ -12,7 +12,7 @@ import { BOX_FACES, faceSizeFor, TEXEL_SCALE } from '@/engine/texture/types'
 import { emptyTextureModel, normalizeTexelScale } from '@/engine/texture/TextureStore'
 import type { SliceAnimSettings, SliceKey } from '@/engine/animation/types'
 import { encodeSliceKey } from '@/engine/animation/animationLayers'
-import { CURRENT_SCHEMA_VERSION, type ProjectMeta, type SerializedAnimLayer, type SerializedClip, type SerializedPose, type SerializedRigBox, type SerializedSliceMask, type SerializedSlicePivot, type SerializedTexture, type ViewSettings, type VoxPaintProjectFile } from './schema'
+import { CURRENT_SCHEMA_VERSION, type ProjectMeta, type SerializedAnimLayer, type SerializedClip, type SerializedRigBox, type SerializedSliceMask, type SerializedSlicePivot, type SerializedTexture, type ViewSettings, type VoxPaintProjectFile } from './schema'
 
 function u8ToBase64(a: Uint8Array): string {
   let s = ''
@@ -115,43 +115,29 @@ function serializeMarkers(markers: Marker[]): SerializedMarkerPosition[] {
   }))
 }
 
-function serializePoses(poses: Pose[]): SerializedPose[] {
-  return poses.map((p) => ({
-    id: p.id,
-    name: p.name,
-    joints: Object.fromEntries(Object.entries(p.joints).map(([id, e]) => [id, [e[0], e[1], e[2]] as [number, number, number]])),
-  }))
-}
-
-function deserializePoses(entries: SerializedPose[] | undefined, validBoxIds: Set<string>): Pose[] {
-  if (!entries) return []
-  const out: Pose[] = []
-  const seen = new Set<string>()
-  for (const e of entries) {
-    const pose = sanitizePose(e, validBoxIds)
-    if (!pose || seen.has(pose.id)) continue
-    seen.add(pose.id)
-    out.push(pose)
-  }
-  return out
-}
-
 function serializeClips(clips: RigClip[]): SerializedClip[] {
   return clips.map((c) => ({
     id: c.id,
     name: c.name,
     loop: c.loop,
     duration: c.duration,
-    keys: c.keys.map((k) => ({ id: k.id, poseId: k.poseId, time: k.time, ease: k.ease })),
+    keys: c.keys.map((k) => ({
+      id: k.id,
+      name: k.name,
+      time: k.time,
+      ease: k.ease,
+      joints: Object.fromEntries(Object.entries(k.joints).map(([id, e]) => [id, [e[0], e[1], e[2]] as [number, number, number]])),
+      ...(k.offsets ? { offsets: Object.fromEntries(Object.entries(k.offsets).map(([id, o]) => [id, [o[0], o[1], o[2]] as [number, number, number]])) } : {}),
+    })),
   }))
 }
 
-function deserializeClips(entries: SerializedClip[] | undefined, validPoseIds: Set<string>): RigClip[] {
+function deserializeClips(entries: SerializedClip[] | undefined, fps: number): RigClip[] {
   if (!entries) return []
   const out: RigClip[] = []
   const seen = new Set<string>()
   for (const e of entries) {
-    const clip = sanitizeRigClip(e, validPoseIds)
+    const clip = sanitizeRigClip(e, fps)
     if (!clip || seen.has(clip.id)) continue
     seen.add(clip.id)
     out.push(clip)
@@ -282,12 +268,11 @@ export type SerializeOptions = {
   slicePivots?: Map<SliceKey, CellKey>
   markers?: Marker[]
   rigBoxes?: RigBox[]
-  poses?: Pose[]
   clips?: RigClip[]
 }
 
 export function serializeProject(model: VoxelModel, palette: PaletteState, meta: ProjectMeta, texture: TextureModel, options: SerializeOptions = {}): VoxPaintProjectFile {
-  const { view, animSettings, sliceMasks, slicePivots, markers, rigBoxes, poses, clips } = options
+  const { view, animSettings, sliceMasks, slicePivots, markers, rigBoxes, clips } = options
   const colorCells = Array.from(model.color.entries()).map(([key, cell]) => {
     const [x, y, z] = decodeKey(key)
     return { x, y, z, paletteSlot: cell.paletteSlot }
@@ -308,12 +293,11 @@ export function serializeProject(model: VoxelModel, palette: PaletteState, meta:
     pivots: slicePivots ? serializeSlicePivots(slicePivots) : undefined,
     markers: markers ? serializeMarkers(markers) : undefined,
     rigBoxes: rigBoxes ? serializeRigBoxes(rigBoxes) : undefined,
-    ...(poses && poses.length > 0 ? { poses: serializePoses(poses) } : {}),
     ...(clips && clips.length > 0 ? { clips: serializeClips(clips) } : {}),
   }
 }
 
-export function deserializeProject(file: VoxPaintProjectFile): { model: VoxelModel; palette: PaletteState; meta: ProjectMeta; texture: TextureModel; view: ViewSettings; animSettings: Map<SliceKey, SliceAnimSettings>; sliceMasks: Map<SliceKey, Set<CellKey>>; slicePivots: Map<SliceKey, CellKey>; markers: Marker[]; rigBoxes: RigBox[]; poses: Pose[]; clips: RigClip[] } {
+export function deserializeProject(file: VoxPaintProjectFile): { model: VoxelModel; palette: PaletteState; meta: ProjectMeta; texture: TextureModel; view: ViewSettings; animSettings: Map<SliceKey, SliceAnimSettings>; sliceMasks: Map<SliceKey, Set<CellKey>>; slicePivots: Map<SliceKey, CellKey>; markers: Marker[]; rigBoxes: RigBox[]; clips: RigClip[] } {
   const model = emptyModel()
   const color = new Map(model.color)
   const chamfer = new Map(model.chamfer)
@@ -336,7 +320,7 @@ export function deserializeProject(file: VoxPaintProjectFile): { model: VoxelMod
   // `voxelScaleY` is the same story one generation later: pre-scale files load as 1x (unit cubes).
   // `texelScale` one generation after that: pre-scale files load at full detail (4). The merged
   // meta must exist before the texture (whose face size derives from gridExtent + texelScale).
-  const meta: ProjectMeta = { ...file.meta, noiseSeed: file.meta.noiseSeed ?? 0, voxelScaleY: file.meta.voxelScaleY ?? 1, texelScale: normalizeTexelScale(file.meta.texelScale ?? TEXEL_SCALE), animationMode: file.meta.animationMode === 'poses' ? 'poses' : 'tweens' }
+  const meta: ProjectMeta = { ...file.meta, noiseSeed: file.meta.noiseSeed ?? 0, voxelScaleY: file.meta.voxelScaleY ?? 1, texelScale: normalizeTexelScale(file.meta.texelScale ?? TEXEL_SCALE), animationMode: file.meta.animationMode === 'poses' ? 'poses' : 'tweens', fps: normalizeFps(file.meta.fps) }
   const texture = file.texture
     ? deserializeTexture(file.texture, meta.gridExtent, meta.texelScale!)
     : emptyTextureModel(meta.gridExtent, meta.texelScale!)
@@ -350,8 +334,6 @@ export function deserializeProject(file: VoxPaintProjectFile): { model: VoxelMod
   const palette: PaletteState = { ...DEFAULT_PALETTE, ...file.palette }
   const markers = deserializeMarkers(file.markers, meta.gridExtent)
   const rigBoxes = deserializeRigBoxes(file.rigBoxes, meta.gridExtent)
-  const validBoxIds = new Set(rigBoxes.map((b) => b.id))
-  const poses = deserializePoses(file.poses, validBoxIds)
-  const clips = deserializeClips(file.clips, new Set(poses.map((p) => p.id)))
-  return { model: { ...built, bounds: recomputeBounds(built) }, palette, meta, texture, view, animSettings, sliceMasks, slicePivots, markers, rigBoxes, poses, clips }
+  const clips = deserializeClips(file.clips, normalizeFps(file.meta.fps))
+  return { model: { ...built, bounds: recomputeBounds(built) }, palette, meta, texture, view, animSettings, sliceMasks, slicePivots, markers, rigBoxes, clips }
 }

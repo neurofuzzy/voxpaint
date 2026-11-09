@@ -8,7 +8,8 @@ import {
   newClipId,
   newKeyId,
   snapClipTime,
-  type Pose,
+  type KeyJoints,
+  type KeyOffsets,
   type RigBox,
   type RigClip,
   type AnimationMode,
@@ -19,7 +20,7 @@ import {
 /**
  * One evaluated clip instant: per-joint local rotations (radians, intrinsic XYZ, sparse —
  * only joints keyed anywhere in the clip appear) plus per-root translation offsets in
- * voxels (sparse likewise). Missing poses read as bind, so absent entries ARE bind.
+ * voxels (sparse likewise). Absent entries ARE bind.
  */
 export type PoseFrame = {
   rot: Map<string, JointEuler>
@@ -52,13 +53,12 @@ export function easePhase(ease: KeyEase, u: number): number {
   }
 }
 
-/** Snapshot of one library pose as a frame: rotations copied, offsets kept to root boxes. */
-function frameOfPose(pose: Pose | undefined, roots: Set<string>): PoseFrame {
+/** Snapshot of one keyframe as a frame: rotations copied, offsets kept to root boxes. */
+function frameOfKey(key: ClipKey, roots: Set<string>): PoseFrame {
   const rot = new Map<string, JointEuler>()
   const off = new Map<string, Coord>()
-  if (!pose) return { rot, off }
-  for (const [id, e] of Object.entries(pose.joints)) rot.set(id, [e[0], e[1], e[2]])
-  for (const [id, o] of Object.entries(pose.offsets ?? {})) {
+  for (const [id, e] of Object.entries(key.joints)) rot.set(id, [e[0], e[1], e[2]])
+  for (const [id, o] of Object.entries(key.offsets ?? {})) {
     if (!roots.has(id)) continue
     off.set(id, [o[0], o[1], o[2]])
   }
@@ -97,18 +97,16 @@ function blendPoseFrames(a: PoseFrame, b: PoseFrame, phase: number): PoseFrame {
 /**
  * Evaluates a clip at clip-local seconds `t`: the segment's phase runs through the
  * OUTGOING key's ease (`hold` steps). A looping clip wraps the last key back to the first
- * over `duration − lastKey.time` (seamless when the wrap lands on the first pose); a
+ * over `duration − lastKey.time` (seamless when the wrap lands on the first keyframe); a
  * non-looping clip holds its last key past the end and its first key before the start
- * (negative `t`). A key whose pose id is unknown reads as bind. Total: an empty clip
- * yields an empty (bind) frame.
+ * (negative `t`). Total: an empty clip yields an empty (bind) frame.
  */
-export function evaluateClip(poses: Pose[], boxes: RigBox[], clip: RigClip, t: number): PoseFrame {
+export function evaluateClip(boxes: RigBox[], clip: RigClip, t: number): PoseFrame {
   const keys = [...clip.keys].sort((a, b) => a.time - b.time)
   if (keys.length === 0) return { rot: new Map(), off: new Map() }
-  const byId = new Map(poses.map((p) => [p.id, p]))
   const roots = new Set<string>()
   for (const b of boxes) if (b.parentId == null) roots.add(b.id)
-  const snapshot = (key: ClipKey): PoseFrame => frameOfPose(byId.get(key.poseId), roots)
+  const snapshot = (key: ClipKey): PoseFrame => frameOfKey(key, roots)
 
   let time = t
   if (clip.loop && clip.duration > 0) time = ((t % clip.duration) + clip.duration) % clip.duration
@@ -136,23 +134,58 @@ export function evaluateClip(poses: Pose[], boxes: RigBox[], clip: RigClip, t: n
 }
 
 /**
- * Converts a legacy from/to pose cycle into a two-key clip named `cycle` (the step-2
- * migration shape): `once` becomes a non-looping in-out segment over one half cycle;
- * `loop` and `pingpong` both become seamless out-and-back loops (from@0, to@half,
- * duration 2×half) with in-out keys — the old `loop` mode's B→A pop goes away on purpose.
+ * Sampled key payload at clip-local seconds `t`: the blended rotations + root offsets
+ * as plain key records, so freezing a mid-tween frame into a key keeps the visible
+ * pose. Values stay verbatim (no degree-snapping — the snapshot lies exactly on the
+ * curve); linear and hold spans reproduce bit-clean through the split, eased spans
+ * keep the frame and inherit the segment's ease around the new key.
  */
-export function clipFromPoseCycle(cycle: { fromId: string; toId: string; mode: 'once' | 'loop' | 'pingpong'; speed: 1 | 2 | 3 }): RigClip {
+export function sampleKeyPayload(
+  boxes: RigBox[],
+  clip: RigClip,
+  t: number,
+): { joints: KeyJoints; offsets: KeyOffsets } {
+  const frame = evaluateClip(boxes, clip, t)
+  const joints: KeyJoints = {}
+  for (const [id, e] of frame.rot) joints[id] = [e[0], e[1], e[2]]
+  const offsets: KeyOffsets = {}
+  for (const [id, o] of frame.off) offsets[id] = [o[0], o[1], o[2]]
+  return { joints, offsets }
+}
+
+/**
+ * Converts a legacy from/to pose cycle into a two-key clip named `cycle` (the step-2
+ * migration shape, now embedding the poses' joints — the pose is the keyframe):
+ * `once` becomes a non-looping in-out segment over one half cycle; `loop` and
+ * `pingpong` both become seamless out-and-back loops (from@0, to@half, duration
+ * 2×half) with in-out keys — the old `loop` mode's B→A pop goes away on purpose.
+ * Key names inherit the poses' names. Unknown pose ids embed empty (bind) joints.
+ */
+export function clipFromPoseCycle(
+  cycle: { fromId: string; toId: string; mode: 'once' | 'loop' | 'pingpong'; speed: 1 | 2 | 3 },
+  poses: Array<{ id: string; name: string; joints?: KeyJoints; offsets?: KeyOffsets }>,
+): RigClip {
   const half = snapClipTime(BASE_CYCLE_SECONDS / cycle.speed)
   const loop = cycle.mode !== 'once'
+  const byId = new Map(poses.map((p) => [p.id, p]))
+  const key = (poseId: string, time: number): ClipKey => {
+    const pose = byId.get(poseId)
+    const offsets = pose?.offsets && Object.keys(pose.offsets).length > 0 ? { ...pose.offsets } : undefined
+    return {
+      id: newKeyId(),
+      name: pose?.name ?? 'Key',
+      time,
+      ease: 'inOut',
+      joints: { ...(pose?.joints ?? {}) },
+      ...(offsets ? { offsets } : {}),
+    }
+  }
   return {
     id: newClipId(),
     name: 'cycle',
     loop,
     duration: Math.max(loop ? half * 2 : half, CLIP_FRAME_SECONDS),
-    keys: [
-      { id: newKeyId(), poseId: cycle.fromId, time: 0, ease: 'inOut' },
-      { id: newKeyId(), poseId: cycle.toId, time: half, ease: 'inOut' },
-    ],
+    keys: [key(cycle.fromId, 0), key(cycle.toId, half)],
   }
 }
 
@@ -163,7 +196,7 @@ export function clipFromPoseCycle(cycle: { fromId: string; toId: string; mode: '
  */
 export function deriveAnimationMode(args: {
   rigBoxes: RigBox[]
-  poses: Pose[]
+  poses: unknown[]
 }): AnimationMode {
   if (args.poses.length > 0 && !hasActiveTweens(args.rigBoxes)) return 'poses'
   return 'tweens'

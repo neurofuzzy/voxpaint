@@ -73,12 +73,19 @@ export const createRiggingSlice: Slice = (set, get) => ({
         // Promote orphans: children of the deleted box move up to its parent.
         .map((b) => (b.parentId === id ? { ...b, parentId: deleted?.parentId ?? null } : b))
       if (state.selectedRigBoxId === id) state.selectedRigBoxId = null
-      // A deleted joint can't hold a pose — strip it from every snapshot (empty poses
+      // A deleted joint can't hold a keyframe — strip it from every key (empty keys
       // survive; they read as bind and can be re-targeted or deleted).
-      for (const pose of state.poses) {
-        if (pose.joints[id] !== undefined) {
-          const { [id]: _dropped, ...rest } = pose.joints
-          pose.joints = rest
+      for (const clip of state.clips) {
+        for (const key of clip.keys) {
+          if (key.joints[id] !== undefined) {
+            const { [id]: _dropped, ...rest } = key.joints
+            key.joints = rest
+          }
+          if (key.offsets?.[id] !== undefined) {
+            const { [id]: _droppedOff, ...restOff } = key.offsets
+            if (Object.keys(restOff).length > 0) key.offsets = restOff
+            else delete key.offsets
+          }
         }
       }
       state.dirty = true

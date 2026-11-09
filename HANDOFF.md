@@ -1,6 +1,6 @@
 # Handoff: rig animation (tweens vs poses)
 
-Updated 2026-10-31 13:10 by the supervising Claude session. The next session supervises opencode with `/supervise-opencode`. It reviews and gates the work, and does not write code itself.
+Updated 2026-10-31 18:45 by the supervising Claude session. The next session supervises opencode with `/supervise-opencode`. It reviews and gates the work, and does not write code itself.
 
 ## Where things are
 
@@ -14,9 +14,10 @@ Updated 2026-10-31 13:10 by the supervising Claude session. The next session sup
 | 1 | `aa15c1f` | Engine: `RigClip` / `ClipKey` / `KeyEase` / `AnimationMode` types, `clip.ts` (`evaluateClip`, easing, cycle→clip, mode derivation), `bakeRigAction` |
 | 2 | `d509326` | Switch-over: schema v17 (`meta.animationMode`, `clips`, pose cycle migrated), clip store and transport, `previewFrame` choke point (`src/engine/rigging/preview.ts`), mode-gated posing, export of one glTF clip per action, Animate panel mode toggle and clips v1 |
 | 3 | `149d346` | Clip editor: key strip (scrub, retime clamped to the clip), key inspector, `editingPoseId` + Update pose, + key and drag-from-library, Machine/Character empty-state cards |
+| 4 | `3eaf62c` | Mirror pose: `rigging/mirror.ts` (`mirrorJointName`, `mirrorPose`, mutual name pairing, sparse-aware), `mirrorPose` store action (stages the mirror, clears `clipTime`), Library row Mirror button |
 
-- **Tests at `149d346`:** 67 files, 884 tests, all green. Build is green. Lint shows only 3 pre-existing warnings, in `lighting.worker.ts` and `AnimatedModelView.tsx`.
-- **Human browser checks still owed:** Step 2's panel and Step 3's clip editor were committed before the human tried them in the app. The Step 3 checklist is in the last report and repeated below. Ask the human for results before or alongside Step 4, and fix anything they find before Step 5.
+- **Tests at `3eaf62c`:** 68 files, 925 tests, all green. Build is green. Lint shows only 3 pre-existing warnings, in `lighting.worker.ts` and `AnimatedModelView.tsx`.
+- **Human browser checks still owed:** Step 2's panel, Step 3's clip editor and Step 4's Mirror button were committed before the human tried them in the app. The Step 3 checklist is in the last report and repeated below. Ask the human for results before or alongside Step 4, and fix anything they find before Step 5.
 
 ### Step 3 browser checklist (Character mode, Poses tab)
 1. Drag on the strip to scrub.
@@ -28,16 +29,13 @@ Updated 2026-10-31 13:10 by the supervising Claude session. The next session sup
 
 Known and accepted: two keys can share the same time, a key's time cannot pass the clip length, and scrubbing or retiming pauses playback.
 
-## Next: Step 4, mirror pose
+## Next: Step 5, hip offset (visual gate)
 
-The spec is in `docs/animation-plan.md` › Step 4 and Acceptance › Step 4.
+The spec is in `docs/animation-plan.md` › Step 5 and Acceptance › Step 5. Root offsets must flow through scratch, capture, Update pose, compose, clip evaluation and export position tracks. `mirrorPose` already flips offset x (Step 4); check it end to end. The UI is root-joint x/y/z steppers (0.25-voxel step, ±8) in the Poses tab. The human must try it in the app before the commit.
 
-- **Human's decision on the mirror axis:** the character faces +Z (south), so left/right runs along X.
-- **Mirroring flips X:** rotations `(rx, ry, rz) → (rx, −ry, −rz)` and root offsets `x → −x`.
-- **Axis:** the engine takes the axis as a parameter, but the UI always flips X.
-- **Joint pairing:** joints pair by name. Swap `left`↔`right`, `l`↔`r` and `L`↔`R` tokens separated by `-`, `_`, `.` or a space, as a prefix or a suffix, keeping case.
+Step 4 browser check (owed): mirror a library pose and check the left and right limbs swap; mirror again while the clip is paused on the timeline and check the viewport shows the mirror.
 
-Steps 5 (hip offset), 6 (onion skin) and 7 (docs) follow. Step 7 runs only when the human asks, per CLAUDE.md.
+Steps 6 (onion skin) and 7 (docs) follow. Step 7 runs only when the human asks, per CLAUDE.md.
 
 ## How to run each step
 

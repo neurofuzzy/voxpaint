@@ -285,24 +285,17 @@ describe('rigPivotLinks', () => {
   })
 })
 
-describe('sanitizePose', () => {
-  it('accepts well-formed poses and prunes unknown box ids', async () => {
-    const { sanitizePose } = await import('./types')
-    const valid = new Set(['arm'])
-    expect(sanitizePose({ id: 'p1', name: 'Wave', joints: { arm: [0.5, 0, 0] } }, valid)).toEqual({
-      id: 'p1',
-      name: 'Wave',
-      joints: { arm: [0.5, 0, 0] },
-    })
-    // Unknown box ids are dropped, not fatal.
-    expect(sanitizePose({ id: 'p1', name: 'Wave', joints: { arm: [0.5, 0, 0], ghost: [1, 0, 0] } }, valid)?.joints).toEqual({
+describe('sanitizeKeyJoints / sanitizeKeyOffsets', () => {
+  it('keeps finite triples and drops the rest (unknown ids are harmless — compose ignores them)', async () => {
+    const { sanitizeKeyJoints, sanitizeKeyOffsets } = await import('./types')
+    expect(sanitizeKeyJoints({ arm: [0.5, 0, 0], ghost: [1, 0, 0] })).toEqual({
       arm: [0.5, 0, 0],
+      ghost: [1, 0, 0],
     })
-    // Malformed joints are skipped, not fatal.
-    expect(sanitizePose({ id: 'p1', name: 'Wave', joints: { arm: [0.5, 'x', 0] } }, valid)?.joints).toEqual({})
-    // Malformed entries fall back to null.
-    expect(sanitizePose(null, valid)).toBeNull()
-    expect(sanitizePose({ id: 'p1', name: 'Wave', joints: 'nope' }, valid)).toBeNull()
-    expect(sanitizePose({ id: '', name: 'Wave', joints: {} }, valid)).toBeNull()
+    expect(sanitizeKeyJoints({ arm: [0.5, 'x', 0] })).toEqual({})
+    expect(sanitizeKeyJoints(null)).toEqual({})
+    expect(sanitizeKeyOffsets({ hips: [0, 1.5, 0] })).toEqual({ hips: [0, 1.5, 0] })
+    expect(sanitizeKeyOffsets({ hips: [0, NaN, 0] })).toBeUndefined()
+    expect(sanitizeKeyOffsets(undefined)).toBeUndefined()
   })
 })

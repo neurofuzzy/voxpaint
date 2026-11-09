@@ -1,9 +1,9 @@
 import { describe, expect, it } from 'vitest'
 import * as THREE from 'three'
 import type { Coord } from '@/engine/grid/types'
-import type { RigBox } from './types'
+import type { RigBox, RigClip } from './types'
 import type { JointEuler } from './pose'
-import { angleAroundAxis, applyPoseMatrices, buildRigBoxWireGeometry, composeAxisAngle, composePoseMatrices, eulerToQuaternion, gizmoRadiusForBox, intersectAxisPlane, localJointMatrix, nearestRingHit, parentChainMatrix, posedPivotWorld, projectToTrackball, trackballEuler } from './pose'
+import { angleAroundAxis, applyPoseMatrices, buildRigBoxWireGeometry, closestAxisParam, composeAxisAngle, composePoseMatrices, eulerToQuaternion, gizmoRadiusForBox, intersectAxisPlane, localJointMatrix, nearestAxisHit, nearestRingHit, parentChainMatrix, posedPivotWorld, projectToTrackball, snapOffsetStep, trackballEuler } from './pose'
 
 function box(id: string, parentId: string | null = null, pivot: Coord | null = null): RigBox {
   return { id, name: id, min: [0, 0, 0], max: [2, 2, 2], parentId, pivot }
@@ -30,6 +30,17 @@ describe('localJointMatrix', () => {
     closeTo(apply(m, [1.5, 0.5, 0.5]), [0.5, 1.5, 0.5])
     // The pivot itself never moves.
     closeTo(apply(m, [0.5, 0.5, 0.5]), [0.5, 0.5, 0.5])
+  })
+
+  it('translates by the offset with a bind euler', () => {
+    const m = localJointMatrix([0, 0, 0], [0, 0, 0], [0, 2, 0])
+    closeTo(apply(m, [1.5, 0.5, 0.5]), [1.5, 2.5, 0.5])
+  })
+
+  it('applies the offset in the parent frame after the pivot rotation', () => {
+    const m = localJointMatrix([0, 0, 0], [0, 0, Math.PI / 2], [0, 2, 0])
+    // +x of the pivot swings to +y, then the whole thing rises 2.
+    closeTo(apply(m, [1.5, 0.5, 0.5]), [0.5, 3.5, 0.5])
   })
 })
 
@@ -67,6 +78,15 @@ describe('composePoseMatrices', () => {
     const out = composePoseMatrices(boxes, new Map([['x', [0, 0, Math.PI / 2]]]))
     expect(out.size).toBe(4)
     closeTo(apply(out.get('d')!, [1, 2, 3]), [1, 2, 3])
+  })
+
+  it('carries a root offset through the whole subtree', () => {
+    const boxes = [box('p', null, [0, 0, 0]), box('c', 'p', [0, 0, 0])]
+    const off = new Map([['p', [0, 2, 0] as Coord]])
+    const out = composePoseMatrices(boxes, new Map(), off)
+    closeTo(apply(out.get('p')!, [1.5, 0.5, 0.5]), [1.5, 2.5, 0.5])
+    // The child rides the parent's bob with no offset of its own.
+    closeTo(apply(out.get('c')!, [1.5, 0.5, 0.5]), [1.5, 2.5, 0.5])
   })
 })
 
@@ -272,6 +292,53 @@ describe('intersectAxisPlane', () => {
   })
 })
 
+describe('nearestAxisHit', () => {
+  // Orthographic stand-in: 10px per grid unit.
+  const project = (p: Coord): [number, number] | null => [p[0] * 10, p[1] * 10]
+  const b: RigBox = { ...box('b', null, [0, 0, 0]), min: [0, 0, 0], max: [0, 0, 0] }
+  // Pivot world (0.5,0.5,0.5), arrow length clamped to 1.8.
+
+  it('hits the arrow shaft under the cursor', () => {
+    // X arrow runs (0.5,0.5,0.5)→(2.3,0.5,0.5) → px (5,5)→(23,5): click mid-shaft.
+    const axis = nearestAxisHit([], new Map(), b, project, 14, 5)
+    expect(axis).toBe('x')
+  })
+
+  it('rides the posed pivot (bobbed arrows stay grabbable)', () => {
+    const off = new Map([['b', [0, 2, 0] as Coord]])
+    // Y arrow now runs (0.5,2.5,0.5)→(0.5,4.3,0.5) → px x=5, y=25..43: click mid-shaft.
+    const axis = nearestAxisHit([], new Map(), b, project, 5, 34, 14, off)
+    expect(axis).toBe('y')
+  })
+
+  it('returns null past the threshold', () => {
+    expect(nearestAxisHit([], new Map(), b, project, 200, 200)).toBeNull()
+  })
+
+  it('returns null when nothing projects', () => {
+    expect(nearestAxisHit([], new Map(), b, () => null, 5, 5)).toBeNull()
+  })
+})
+
+describe('closestAxisParam', () => {
+  it('reads the axis coordinate of the closest approach', () => {
+    // Ray straight down at x=3: closest approach to the x-axis line through origin is x=3.
+    expect(closestAxisParam([3, 5, 0], [0, -1, 0], [0, 0, 0], 'x')).toBeCloseTo(3, 10)
+  })
+
+  it('returns null for parallel rays', () => {
+    expect(closestAxisParam([0, 0, 0], [1, 0, 0], [0, 0, 0], 'x')).toBeNull()
+  })
+})
+
+describe('snapOffsetStep', () => {
+  it('snaps to the 0.25 lattice and normalizes -0', () => {
+    expect(snapOffsetStep(0.3)).toBeCloseTo(0.25, 10)
+    expect(snapOffsetStep(-0.1)).toBe(0)
+    expect(Object.is(snapOffsetStep(-0.1), -0)).toBe(false)
+  })
+})
+
 describe('angleAroundAxis', () => {
   it('reads right-hand-positive angles per axis', () => {
     const c: Coord = [0, 0, 0]
@@ -285,36 +352,32 @@ describe('angleAroundAxis', () => {
 })
 
 describe('previewFrame (engine/rigging/preview.ts)', () => {
-  it('prefers the playing clip, then the scrubbed frame, then staged, then scratch', async () => {
+  it('prefers the playing clip, then the scrubbed frame, then the selected key, else bind', async () => {
     const { previewFrame } = await import('./preview')
-    const scratch = new Map([['arm', [0.1, 0, 0] as [number, number, number]]])
-    const staged = { id: 's', name: 'S', joints: { arm: [0.2, 0, 0] as [number, number, number] } }
-    const plain = { id: 'p', name: 'P', joints: {} }
-    const full = { id: 'f', name: 'F', joints: { arm: [0.3, 0, 0] as [number, number, number] } }
-    const poses = [staged, plain, full]
     const box = { id: 'arm', name: 'arm', min: [0, 0, 0] as [number, number, number], max: [2, 2, 2] as [number, number, number], parentId: null, pivot: null }
-    const clip = {
+    const clip: RigClip = {
       id: 'c', name: 'c', loop: false, duration: 2,
       keys: [
-        { id: 'k0', poseId: 'p', time: 0, ease: 'linear' as const },
-        { id: 'k1', poseId: 'f', time: 2, ease: 'linear' as const },
+        { id: 'k0', name: 'plain', time: 0, ease: 'linear', joints: {} },
+        { id: 'k1', name: 'full', time: 2, ease: 'linear', joints: { arm: [0.3, 0, 0] } },
       ],
     }
     const base = {
-      meta: { animationMode: 'poses' as const }, rigBoxes: [box], poses, clips: [clip],
-      activeClipId: 'c', stagedPoseId: 's' as string | null, poseRotations: scratch,
+      meta: { animationMode: 'poses' as const }, rigBoxes: [box], clips: [clip],
+      activeClipId: 'c', selectedKeyId: 'k0' as string | null,
       clipPlaying: false, clipStartedAt: 0, clipTime: null as number | null,
     }
-    // Off the timeline: staged wins over scratch.
-    expect(previewFrame({ ...base }, 99).pose.get('arm')).toEqual([0.2, 0, 0])
-    // Scrubbed frame wins over staging — including a scrub to exactly 0 (key 0's bind
-    // pose, not the scratch's [0.1, 0, 0]).
-    expect(previewFrame({ ...base, clipTime: 2 }, 99).pose.get('arm')).toEqual([0.3, 0, 0])
-    expect(previewFrame({ ...base, stagedPoseId: null, clipTime: 0 }, 99).pose.get('arm')).toBeUndefined()
-    // Playing wins over staging (t = now - startedAt).
+    // Off the timeline: the selected key drives the preview (bind with none).
+    expect(previewFrame({ ...base }, 99).pose.get('arm')).toBeUndefined()
+    expect(previewFrame({ ...base, selectedKeyId: 'k1' }, 99).pose.get('arm')).toEqual([0.3, 0, 0])
+    // Scrubbed frame wins over selection — including a scrub to exactly 0 (key 0's bind
+    // joints, not a staged pose).
+    expect(previewFrame({ ...base, selectedKeyId: 'k1', clipTime: 2 }, 99).pose.get('arm')).toEqual([0.3, 0, 0])
+    expect(previewFrame({ ...base, selectedKeyId: null, clipTime: 0 }, 99).pose.get('arm')).toBeUndefined()
+    // Playing wins over selection (t = now - startedAt).
     expect(previewFrame({ ...base, clipPlaying: true, clipStartedAt: 97 }, 99).pose.get('arm')).toEqual([0.3, 0, 0])
-    // Unknown staged id falls back to scratch.
-    expect(previewFrame({ ...base, stagedPoseId: 'ghost' }, 99).pose.get('arm')).toEqual([0.1, 0, 0])
+    // Unknown selected id falls back to bind.
+    expect(previewFrame({ ...base, selectedKeyId: 'ghost' }, 99).pose.get('arm')).toBeUndefined()
     // Tweens mode never evaluates poses.
     expect(previewFrame({ ...base, meta: { animationMode: 'tweens' as const }, clipPlaying: true, clipStartedAt: 97 }, 99).pose.size).toBe(0)
   })

@@ -5,7 +5,7 @@ import { emptyTextureModel, getTexel } from '@/engine/texture/TextureStore'
 import { faceSizeFor } from '@/engine/texture/types'
 import { migrateToCurrent } from './migrations'
 import { deserializeProject, serializeProject } from './serialize'
-import type { Pose, RigBox, RigClip } from '@/engine/rigging/types'
+import type { RigBox, RigClip } from '@/engine/rigging/types'
 import type { ProjectMeta, VoxPaintProjectFileV1 } from './schema'
 import { CURRENT_SCHEMA_VERSION } from './schema'
 
@@ -373,38 +373,53 @@ describe('serialize rig boxes', () => {
   })
 })
 
-describe('serialize pose library', () => {
-  it('round-trips poses and clips', () => {
+describe('serialize keyframe clips', () => {
+  it('round-trips clips with embedded keyframes', () => {
     const boxes = [
       { id: 'arm', name: 'arm', min: [0, 0, 0] as [number, number, number], max: [2, 2, 2] as [number, number, number], parentId: null, pivot: null, tweens: [] },
       { id: 'leg', name: 'leg', min: [4, 0, 0] as [number, number, number], max: [6, 2, 2] as [number, number, number], parentId: null, pivot: null, tweens: [] },
     ]
-    const poses: Pose[] = [
-      { id: 'p1', name: 'Wave', joints: { arm: [0.5, 0, 0] } },
-      { id: 'p2', name: 'Kick', joints: { leg: [0, 0, 0.25], ghost: [1, 0, 0] } },
-    ]
     const clips: RigClip[] = [
-      { id: 'c1', name: 'walk', loop: true, duration: 2, keys: [{ id: 'k0', poseId: 'p1', time: 0, ease: 'inOut' }, { id: 'k1', poseId: 'p2', time: 1, ease: 'linear' }] },
+      {
+        id: 'c1', name: 'walk', loop: true, duration: 2,
+        keys: [
+          { id: 'k0', name: 'Wave', time: 0, ease: 'inOut', joints: { arm: [0.5, 0, 0] } },
+          { id: 'k1', name: 'Kick', time: 1, ease: 'linear', joints: { leg: [0, 0, 0.25], ghost: [1, 0, 0] }, offsets: { leg: [0, 1, 0] } },
+        ],
+      },
     ]
-    const file = serializeProject(emptyModel(), DEFAULT_PALETTE, { ...meta, animationMode: 'poses' }, emptyTextureModel(meta.gridExtent), { rigBoxes: boxes, poses, clips })
+    const file = serializeProject(emptyModel(), DEFAULT_PALETTE, { ...meta, animationMode: 'poses' }, emptyTextureModel(meta.gridExtent), { rigBoxes: boxes, clips })
     expect(file.schemaVersion).toBe(CURRENT_SCHEMA_VERSION)
     expect(file.meta.animationMode).toBe('poses')
-    // Unknown joints are pruned on load (ghost box is not in the file).
+    expect(file).not.toHaveProperty('poses')
+    // Joints ride inside the keys (unknown ids are harmless — compose ignores them).
     const restored = deserializeProject(file)
-    expect(restored.poses).toEqual([
-      { id: 'p1', name: 'Wave', joints: { arm: [0.5, 0, 0] } },
-      { id: 'p2', name: 'Kick', joints: { leg: [0, 0, 0.25] } },
-    ])
     expect(restored.clips).toEqual(clips)
     expect(restored.meta.animationMode).toBe('poses')
   })
 
-  it('omits empty poses and clips', () => {
-    const file = serializeProject(emptyModel(), DEFAULT_PALETTE, meta, emptyTextureModel(meta.gridExtent), { rigBoxes: [], poses: [], clips: [] })
+  it('round-trips the project frame rate and snaps loads to its grid', () => {
+    const boxes = [
+      { id: 'arm', name: 'arm', min: [0, 0, 0] as [number, number, number], max: [2, 2, 2] as [number, number, number], parentId: null, pivot: null, tweens: [] },
+    ]
+    const file = serializeProject(emptyModel(), DEFAULT_PALETTE, { ...meta, fps: 12 }, emptyTextureModel(meta.gridExtent), { rigBoxes: boxes })
+    expect(file.meta.fps).toBe(12)
+    expect(deserializeProject(file).meta.fps).toBe(12)
+    // Absent on old files → defaults to 30.
+    expect(deserializeProject({ ...file, meta }).meta.fps).toBe(30)
+    // Clips load snapped to the file's own grid: 0.05 s lands on the 1/12 s frame.
+    const timed = deserializeProject({
+      ...file,
+      clips: [{ id: 'c', name: 'c', loop: false, duration: 1, keys: [{ id: 'k0', name: 'A', time: 0, ease: 'linear', joints: {} }, { id: 'k1', name: 'B', time: 0.05, ease: 'linear', joints: {} }] }],
+    })
+    expect(timed.clips[0].keys[1].time).toBeCloseTo(1 / 12, 10)
+  })
+
+  it('omits empty clips', () => {
+    const file = serializeProject(emptyModel(), DEFAULT_PALETTE, meta, emptyTextureModel(meta.gridExtent), { rigBoxes: [], clips: [] })
     expect(file).not.toHaveProperty('poses')
     expect(file).not.toHaveProperty('clips')
     const restored = deserializeProject(file)
-    expect(restored.poses).toEqual([])
     expect(restored.clips).toEqual([])
   })
 
@@ -415,74 +430,115 @@ describe('serialize pose library', () => {
     expect(deserializeProject(corrupt as any).meta.animationMode).toBe('tweens')
   })
 
-  it('drops malformed poses and clips on load, keeping emptied clips', () => {
+  it('drops malformed clips and keys on load, keeping emptied clips', () => {
     const boxes = [
       { id: 'arm', name: 'arm', min: [0, 0, 0] as [number, number, number], max: [2, 2, 2] as [number, number, number], parentId: null, pivot: null, tweens: [] },
     ]
     const file = {
       ...serializeProject(emptyModel(), DEFAULT_PALETTE, meta, emptyTextureModel(meta.gridExtent), { rigBoxes: boxes }),
-      poses: [
-        { id: 'good', name: 'Good', joints: { arm: [0.5, 0, 0] } },
-        { id: 'bad', name: 'Bad', joints: { arm: [0.5, 'x', 0] } },
-        { id: 'good', name: 'Dupe', joints: {} },
-        { id: '', name: 'Empty', joints: {} },
-      ],
       clips: [
-        { id: 'keep', name: 'keep', loop: true, duration: 2, keys: [{ id: 'k0', poseId: 'good', time: 0, ease: 'linear' }, { id: 'k1', poseId: 'missing', time: 1, ease: 'linear' }] },
-        { id: 'empty', name: 'empty', loop: false, duration: 3, keys: [{ id: 'k0', poseId: 'missing', time: 0, ease: 'linear' }] },
+        {
+          id: 'keep', name: 'keep', loop: true, duration: 2, keys: [
+            { id: 'k0', name: 'A', time: 0, ease: 'linear', joints: { arm: [0.5, 0, 0], bad: [0.5, 'x', 0] } },
+            { id: 'k1', name: 'B', time: NaN, ease: 'linear', joints: {} },
+          ],
+        },
+        { id: 'empty', name: 'empty', loop: false, duration: 3, keys: [] },
         { id: 'keep', name: 'dupe', loop: false, duration: 1, keys: [] },
         'not-a-clip',
       ],
     }
     const restored = deserializeProject(file as any)
-    // Bad joints pruned (pose survives, possibly jointless); dupe + empty ids dropped.
-    expect(restored.poses).toEqual([
-      { id: 'good', name: 'Good', joints: { arm: [0.5, 0, 0] } },
-      { id: 'bad', name: 'Bad', joints: {} },
-    ])
-    // Dangling keys dropped; a clip left keyless survives as an empty shell; dupe ids
-    // and non-objects dropped.
+    // Malformed keys dropped, bad joint entries pruned within survivors; emptied
+    // clips land a bind frame-1 anchor, dupe ids dedupe, and non-objects drop.
     expect(restored.clips.map((c) => c.id).sort()).toEqual(['empty', 'keep'])
-    expect(restored.clips.find((c) => c.id === 'keep')?.keys).toHaveLength(1)
-    expect(restored.clips.find((c) => c.id === 'empty')?.keys).toEqual([])
+    expect(restored.clips.find((c) => c.id === 'keep')?.keys).toEqual([
+      { id: 'k0', name: 'A', time: 0, ease: 'linear', joints: { arm: [0.5, 0, 0] } },
+    ])
+    const emptyKeys = restored.clips.find((c) => c.id === 'empty')?.keys
+    expect(emptyKeys).toHaveLength(1)
+    expect(emptyKeys?.[0].time).toBe(0)
+    expect(emptyKeys?.[0].joints).toEqual({})
   })
 
-  it('migrates v15 files with an empty library and no clips', () => {
+  it('migrates v15 files with no clips', () => {
     const texture = emptyTextureModel(meta.gridExtent)
     const v15 = {
       ...serializeProject(emptyModel(), DEFAULT_PALETTE, meta, texture),
       schemaVersion: 15,
     }
     const restored = deserializeProject(migrateToCurrent(v15))
-    expect(restored.poses).toEqual([])
     expect(restored.clips).toEqual([])
     expect(restored.meta.animationMode).toBe('tweens')
   })
 
-  it('migrates a v16 pose cycle to poses mode with one cycle clip', () => {
+  it('migrates a v16 pose cycle to poses mode with one embedded cycle clip', () => {
     const boxes = [
       { id: 'arm', name: 'arm', min: [0, 0, 0] as [number, number, number], max: [2, 2, 2] as [number, number, number], parentId: null, pivot: null, tweens: [] },
     ]
     const v16 = {
-      ...serializeProject(emptyModel(), DEFAULT_PALETTE, meta, emptyTextureModel(meta.gridExtent), {
-        rigBoxes: boxes,
-        poses: [
-          { id: 'p1', name: 'A', joints: { arm: [0.5, 0, 0] } },
-          { id: 'p2', name: 'B', joints: { arm: [0, 0.5, 0] } },
-        ],
-      }),
+      ...serializeProject(emptyModel(), DEFAULT_PALETTE, meta, emptyTextureModel(meta.gridExtent), { rigBoxes: boxes }),
       schemaVersion: 16,
+      poses: [
+        { id: 'p1', name: 'A', joints: { arm: [0.5, 0, 0] } },
+        { id: 'p2', name: 'B', joints: { arm: [0, 0.5, 0] } },
+      ],
       poseCycle: { fromId: 'p1', toId: 'p2', mode: 'pingpong', speed: 1 },
     }
     const migrated = migrateToCurrent(v16)
     expect(migrated.schemaVersion).toBe(CURRENT_SCHEMA_VERSION)
     expect(migrated).not.toHaveProperty('poseCycle')
+    expect(migrated).not.toHaveProperty('poses')
     const restored = deserializeProject(migrated)
     expect(restored.meta.animationMode).toBe('poses')
     expect(restored.clips).toHaveLength(1)
     expect(restored.clips[0].name).toBe('cycle')
     expect(restored.clips[0].loop).toBe(true)
-    expect(restored.clips[0].keys.map((k) => [k.poseId, k.time])).toEqual([['p1', 0], ['p2', 2]])
+    expect(restored.clips[0].keys.map((k) => [k.name, k.time])).toEqual([['A', 0], ['B', 2]])
+    expect(restored.clips[0].keys.map((k) => k.joints)).toEqual([{ arm: [0.5, 0, 0] }, { arm: [0, 0.5, 0] }])
+  })
+
+  it('migrates v17 poseId keys to embedded keyframes and drops the library', () => {
+    const boxes = [
+      { id: 'arm', name: 'arm', min: [0, 0, 0] as [number, number, number], max: [2, 2, 2] as [number, number, number], parentId: null, pivot: null, tweens: [] },
+    ]
+    const v17 = {
+      ...serializeProject(emptyModel(), DEFAULT_PALETTE, meta, emptyTextureModel(meta.gridExtent), { rigBoxes: boxes }),
+      schemaVersion: 17,
+      poses: [
+        { id: 'p1', name: 'Contact', joints: { arm: [0.5, 0, 0] } },
+        { id: 'p2', name: 'Passing', joints: { arm: [0, 0.5, 0] } },
+      ],
+      clips: [
+        {
+          id: 'c1', name: 'walk', loop: true, duration: 2, keys: [
+            { id: 'k0', poseId: 'p1', time: 0, ease: 'inOut' },
+            { id: 'k1', poseId: 'p1', time: 0.5, ease: 'inOut' },
+            { id: 'k2', poseId: 'p2', time: 1, ease: 'inOut' },
+            { id: 'k3', poseId: 'ghost', time: 1.5, ease: 'inOut' },
+          ],
+        },
+      ],
+    }
+    const migrated = migrateToCurrent(v17)
+    expect(migrated.schemaVersion).toBe(CURRENT_SCHEMA_VERSION)
+    expect(migrated).not.toHaveProperty('poses')
+    const restored = deserializeProject(migrated)
+    const keys = restored.clips[0].keys
+    // Names inherit the poses (uniquified within the clip); dangling ids embed bind.
+    expect(keys.map((k) => [k.name, k.time])).toEqual([
+      ['Contact', 0],
+      ['Contact 2', 0.5],
+      ['Passing', 1],
+      ['Key 4', 1.5],
+    ])
+    expect(keys.map((k) => k.joints)).toEqual([
+      { arm: [0.5, 0, 0] },
+      { arm: [0.5, 0, 0] },
+      { arm: [0, 0.5, 0] },
+      {},
+    ])
+    expect(keys.every((k) => !('poseId' in k))).toBe(true)
   })
 
   it('migrates a v16 tweened file to tweens mode with no clips', () => {

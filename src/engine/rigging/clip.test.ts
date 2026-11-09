@@ -4,27 +4,29 @@ import {
   CLIP_FRAME_SECONDS,
   newClipId,
   newKeyId,
-  sanitizePose,
+  normalizeFps,
+  sanitizeKeyJoints,
+  sanitizeKeyOffsets,
   sanitizeRigClip,
   snapClipTime,
 } from './types'
-import type { Pose, RigBox, RigClip } from './types'
-import { clipFromPoseCycle, deriveAnimationMode, easePhase, evaluateClip } from './clip'
+import type { ClipKey, RigBox, RigClip } from './types'
+import { clipFromPoseCycle, deriveAnimationMode, easePhase, evaluateClip, sampleKeyPayload } from './clip'
 
 function box(id: string, parentId: string | null = null): RigBox {
   return { id, name: id, min: [0, 0, 0], max: [2, 2, 2], parentId, pivot: null }
 }
 
-function pose(
+function key(
   id: string,
+  name: string,
+  time: number,
+  ease: ClipKey['ease'],
   joints: Record<string, [number, number, number]> = {},
   offsets?: Record<string, Coord>,
-): Pose {
-  return offsets ? { id, name: id, joints, offsets } : { id, name: id, joints }
+): ClipKey {
+  return offsets ? { id, name, time, ease, joints, offsets } : { id, name, time, ease, joints }
 }
-
-const A = pose('a')
-const B = pose('b', { arm: [0, Math.PI / 2, 0] })
 
 function twoKeyLoop(): RigClip {
   return {
@@ -33,8 +35,8 @@ function twoKeyLoop(): RigClip {
     loop: true,
     duration: 4,
     keys: [
-      { id: 'k0', poseId: 'a', time: 0, ease: 'inOut' },
-      { id: 'k1', poseId: 'b', time: 2, ease: 'inOut' },
+      key('k0', 'A', 0, 'inOut'),
+      key('k1', 'B', 2, 'inOut', { arm: [0, Math.PI / 2, 0] }),
     ],
   }
 }
@@ -74,146 +76,191 @@ describe('easePhase', () => {
 })
 
 describe('sanitizeRigClip', () => {
-  const valid = new Set(['a', 'b'])
-
   it('sorts keys, forces the first to 0, and snaps times to 1/30 s', () => {
-    const clip = sanitizeRigClip(
-      {
-        id: 'c',
-        name: 'walk',
-        loop: true,
-        duration: 4,
-        keys: [
-          { id: 'late', poseId: 'b', time: 2.04, ease: 'linear' },
-          { id: 'early', poseId: 'a', time: 0.5, ease: 'linear' },
-        ],
-      },
-      valid,
-    )!
-    expect(clip.keys.map((k) => k.poseId)).toEqual(['a', 'b'])
+    const clip = sanitizeRigClip({
+      id: 'c',
+      name: 'walk',
+      loop: true,
+      duration: 4,
+      keys: [
+        { id: 'late', name: 'B', time: 2.04, ease: 'linear', joints: {} },
+        { id: 'early', name: 'A', time: 0.5, ease: 'linear', joints: {} },
+      ],
+    })!
+    expect(clip.keys.map((k) => k.name)).toEqual(['A', 'B'])
     expect(clip.keys[0].time).toBe(0)
     // 2.04 s snaps to the nearest frame (61/30).
     expect(clip.keys[1].time).toBeCloseTo(61 / 30, 10)
   })
 
-  it('keeps a clip whose keys all dangle as an empty shell (duration defaults to 1 s)', () => {
-    const clip = sanitizeRigClip(
-      { id: 'c', name: 'c', loop: true, duration: 2, keys: [{ id: 'k', poseId: 'ghost', time: 0, ease: 'linear' }] },
-      valid,
-    )!
-    // A new unkeyed clip (or one whose poses were all deleted) survives save/load.
+  it('materializes an empty key array as a bind frame-1 anchor', () => {
+    // A new unkeyed clip survives save/load with a keyframe at 0.
+    const clip = sanitizeRigClip({ id: 'c', name: 'c', loop: true, duration: 2, keys: [] })!
     expect(clip).not.toBeNull()
-    expect(clip.keys).toEqual([])
+    expect(clip.keys).toHaveLength(1)
+    expect(clip.keys[0].time).toBe(0)
+    expect(clip.keys[0].joints).toEqual({})
     expect(clip.duration).toBeCloseTo(2, 10)
-    const fresh = sanitizeRigClip(
-      { id: 'c', name: 'c', loop: true, keys: [] },
-      valid,
-    )!
-    expect(fresh.keys).toEqual([])
+    const fresh = sanitizeRigClip({ id: 'c', name: 'c', loop: true, keys: [] })!
+    expect(fresh.keys).toHaveLength(1)
     expect(fresh.duration).toBeCloseTo(1, 10)
-    expect(sanitizeRigClip(null, valid)).toBeNull()
-    expect(sanitizeRigClip({ id: 'c', name: 'c', loop: true, duration: 2 }, valid)).toBeNull()
+    expect(sanitizeRigClip(null)).toBeNull()
+    expect(sanitizeRigClip({ id: 'c', name: 'c', loop: true, duration: 2 })).toBeNull()
   })
 
-  it('drops keys with non-finite times and defaults bad eases to inOut', () => {
-    const clip = sanitizeRigClip(
-      {
-        id: 'c',
-        name: 'c',
-        loop: false,
-        duration: 1,
-        keys: [
-          { id: 'k0', poseId: 'a', time: 0, ease: 'sideways' },
-          { id: 'k1', poseId: 'b', time: NaN, ease: 'linear' },
-        ],
-      },
-      valid,
-    )!
+  it('drops keys with non-finite times and defaults bad eases and names', () => {
+    const clip = sanitizeRigClip({
+      id: 'c',
+      name: 'c',
+      loop: false,
+      duration: 1,
+      keys: [
+        { id: 'k0', time: 0, ease: 'sideways', joints: {} },
+        { id: 'k1', name: 'B', time: NaN, ease: 'linear', joints: {} },
+      ],
+    })!
     expect(clip.keys).toHaveLength(1)
     expect(clip.keys[0].ease).toBe('inOut')
+    expect(clip.keys[0].name).toBe('Key')
+  })
+
+  it('sanitizes joint entries within surviving keys', () => {
+    const clip = sanitizeRigClip({
+      id: 'c',
+      name: 'c',
+      loop: false,
+      duration: 1,
+      keys: [
+        {
+          id: 'k0', name: 'A', time: 0, ease: 'linear',
+          joints: { arm: [0.5, 0, 0], bad: [1, 'x', 0] as unknown as [number, number, number], short: [1, 2] as unknown as [number, number, number] },
+          offsets: { hips: [0, 1.5, 0], bad: [0, NaN, 0] },
+        },
+      ],
+    })!
+    expect(clip.keys[0].joints).toEqual({ arm: [0.5, 0, 0] })
+    expect(clip.keys[0].offsets).toEqual({ hips: [0, 1.5, 0] })
+  })
+
+  it('omits offsets when none survive', () => {
+    const clip = sanitizeRigClip({
+      id: 'c', name: 'c', loop: false, duration: 1,
+      keys: [{ id: 'k0', name: 'A', time: 0, ease: 'linear', joints: { arm: [0.5, 0, 0] } }],
+    })!
+    expect('offsets' in clip.keys[0]).toBe(false)
   })
 
   it('clamps duration to the last key time and above zero', () => {
-    const short = sanitizeRigClip(
-      { id: 'c', name: 'c', loop: false, duration: 0.5, keys: [{ id: 'k0', poseId: 'a', time: 0, ease: 'linear' }, { id: 'k1', poseId: 'b', time: 1.5, ease: 'linear' }] },
-      valid,
-    )!
+    const short = sanitizeRigClip({
+      id: 'c', name: 'c', loop: false, duration: 0.5,
+      keys: [
+        { id: 'k0', name: 'A', time: 0, ease: 'linear', joints: {} },
+        { id: 'k1', name: 'B', time: 1.5, ease: 'linear', joints: {} },
+      ],
+    })!
     expect(short.duration).toBeCloseTo(1.5, 10)
     // A single key at 0 still yields a positive (one-frame) duration.
-    const single = sanitizeRigClip(
-      { id: 'c', name: 'c', loop: false, duration: 0, keys: [{ id: 'k0', poseId: 'a', time: 0, ease: 'linear' }] },
-      valid,
-    )!
+    const single = sanitizeRigClip({
+      id: 'c', name: 'c', loop: false, duration: 0,
+      keys: [{ id: 'k0', name: 'A', time: 0, ease: 'linear', joints: {} }],
+    })!
     expect(single.duration).toBeGreaterThan(0)
     expect(single.duration).toBeCloseTo(CLIP_FRAME_SECONDS, 10)
   })
 
   it('holds a looping clip at least one frame past its last key (no wrap pop)', () => {
-    const looped = sanitizeRigClip(
-      { id: 'c', name: 'c', loop: true, duration: 1.5, keys: [{ id: 'k0', poseId: 'a', time: 0, ease: 'linear' }, { id: 'k1', poseId: 'b', time: 1.5, ease: 'linear' }] },
-      valid,
-    )!
+    const looped = sanitizeRigClip({
+      id: 'c', name: 'c', loop: true, duration: 1.5,
+      keys: [
+        { id: 'k0', name: 'A', time: 0, ease: 'linear', joints: {} },
+        { id: 'k1', name: 'B', time: 1.5, ease: 'linear', joints: {} },
+      ],
+    })!
     expect(looped.duration).toBeCloseTo(1.5 + CLIP_FRAME_SECONDS, 10)
     // A non-looping clip still clamps exactly to its last key.
-    const once = sanitizeRigClip(
-      { id: 'c', name: 'c', loop: false, duration: 1.5, keys: [{ id: 'k0', poseId: 'a', time: 0, ease: 'linear' }, { id: 'k1', poseId: 'b', time: 1.5, ease: 'linear' }] },
-      valid,
-    )!
+    const once = sanitizeRigClip({
+      id: 'c', name: 'c', loop: false, duration: 1.5,
+      keys: [
+        { id: 'k0', name: 'A', time: 0, ease: 'linear', joints: {} },
+        { id: 'k1', name: 'B', time: 1.5, ease: 'linear', joints: {} },
+      ],
+    })!
     expect(once.duration).toBeCloseTo(1.5, 10)
   })
 
   it('fills in missing ids, names, and loop flags', () => {
-    const clip = sanitizeRigClip({ keys: [{ poseId: 'a', time: 0, ease: 'linear' }] }, valid)!
+    const clip = sanitizeRigClip({ keys: [{ time: 0, ease: 'linear', joints: {} }] })!
     expect(clip.id.length).toBeGreaterThan(0)
     expect(clip.name).toBe('clip')
     expect(clip.loop).toBe(true)
     expect(clip.keys[0].id.length).toBeGreaterThan(0)
+    expect(clip.keys[0].name).toBe('Key')
     expect(newClipId().length).toBeGreaterThan(0)
     expect(newKeyId().length).toBeGreaterThan(0)
     expect(snapClipTime(0.05)).toBeCloseTo(2 / 30, 10)
   })
 })
 
-describe('sanitizePose offsets', () => {
-  const valid = new Set(['hips', 'arm'])
-
-  it('keeps finite offset triples on known boxes', () => {
-    const p = sanitizePose({ id: 'p', name: 'P', joints: {}, offsets: { hips: [0, 1.5, 0] } }, valid)!
-    expect(p.offsets).toEqual({ hips: [0, 1.5, 0] })
+describe('project frame rate', () => {
+  it('normalizes to integers 1–120, defaulting to 30', () => {
+    expect(normalizeFps(undefined)).toBe(30)
+    expect(normalizeFps('fast')).toBe(30)
+    expect(normalizeFps(24)).toBe(24)
+    expect(normalizeFps(29.7)).toBe(30)
+    expect(normalizeFps(0)).toBe(1)
+    expect(normalizeFps(-5)).toBe(1)
+    expect(normalizeFps(1000)).toBe(120)
   })
 
-  it('drops non-finite triples and unknown box ids', () => {
-    const p = sanitizePose(
-      { id: 'p', name: 'P', joints: {}, offsets: { hips: [0, NaN, 0], ghost: [1, 0, 0], arm: [1, 2] } },
-      valid,
+  it('snaps times to the given frame grid', () => {
+    expect(snapClipTime(0.05)).toBeCloseTo(2 / 30, 10)
+    expect(snapClipTime(0.05, 12)).toBeCloseTo(1 / 12, 10)
+    expect(snapClipTime(0.05, 24)).toBeCloseTo(1 / 24, 10)
+  })
+
+  it('sanitizes clips onto the given frame grid', () => {
+    const clip = sanitizeRigClip(
+      {
+        id: 'c', name: 'c', loop: false, duration: 1,
+        keys: [
+          { id: 'k0', name: 'A', time: 0, ease: 'linear', joints: {} },
+          { id: 'k1', name: 'B', time: 0.05, ease: 'linear', joints: {} },
+        ],
+      },
+      12,
     )!
-    expect(p.offsets).toBeUndefined()
+    expect(clip.keys[1].time).toBeCloseTo(1 / 12, 10)
+    expect(clip.duration).toBeCloseTo(1, 10)
   })
+})
 
-  it('omits the field when no offsets were authored', () => {
-    const p = sanitizePose({ id: 'p', name: 'P', joints: { arm: [0.5, 0, 0] } }, valid)!
-    expect(p).toEqual({ id: 'p', name: 'P', joints: { arm: [0.5, 0, 0] } })
-    expect('offsets' in p).toBe(false)
+describe('sanitizeKeyJoints / sanitizeKeyOffsets', () => {
+  it('keeps finite triples and drops the rest', () => {
+    expect(sanitizeKeyJoints({ arm: [0.5, 0, 0], bad: [1, 'x', 0], short: [1, 2] })).toEqual({
+      arm: [0.5, 0, 0],
+    })
+    expect(sanitizeKeyJoints(null)).toEqual({})
+    expect(sanitizeKeyOffsets({ hips: [0, 1.5, 0], bad: [0, NaN, 0] })).toEqual({ hips: [0, 1.5, 0] })
+    expect(sanitizeKeyOffsets(undefined)).toBeUndefined()
+    expect(sanitizeKeyOffsets({ bad: [0, NaN, 0] })).toBeUndefined()
   })
 })
 
 describe('evaluateClip', () => {
-  const poses = [A, B]
-
   it('wraps a loop back to the first key with a continuous seam', () => {
     const clip = twoKeyLoop()
-    // Pose A is bind for arm (absent entries ARE bind).
-    const armOf = (t: number) => evaluateClip(poses, [], clip, t).rot.get('arm') ?? [0, 0, 0]
+    // Key A is bind for arm (absent entries ARE bind).
+    const armOf = (t: number) => evaluateClip([], clip, t).rot.get('arm') ?? [0, 0, 0]
     const atStart = armOf(0)
     expect(atStart).toEqual([0, 0, 0])
     expect(armOf(4)).toEqual(atStart)
     const nearSeam = armOf(3.999)
     for (let i = 0; i < 3; i++) expect(nearSeam[i]).toBeCloseTo(atStart[i], 4)
     // Halfway out sits halfway slerped (in-out phase 0.5).
-    const mid = evaluateClip(poses, [], clip, 1).rot.get('arm')!
+    const mid = evaluateClip([], clip, 1).rot.get('arm')!
     expect(mid[1]).toBeCloseTo(Math.PI / 4, 5)
     // The turnaround hits B exactly.
-    expect(evaluateClip(poses, [], clip, 2).rot.get('arm')).toEqual([0, Math.PI / 2, 0])
+    expect(evaluateClip([], clip, 2).rot.get('arm')).toEqual([0, Math.PI / 2, 0])
   })
 
   it('holds the outgoing pose through a hold segment, then steps', () => {
@@ -223,101 +270,93 @@ describe('evaluateClip', () => {
       loop: false,
       duration: 1,
       keys: [
-        { id: 'k0', poseId: 'a', time: 0, ease: 'hold' },
-        { id: 'k1', poseId: 'b', time: 1, ease: 'linear' },
+        key('k0', 'A', 0, 'hold'),
+        key('k1', 'B', 1, 'linear', { arm: [0, Math.PI / 2, 0] }),
       ],
     }
-    expect(evaluateClip([A, B], [], clip, 0.5).rot.get('arm')).toEqual([0, 0, 0])
-    expect(evaluateClip([A, B], [], clip, 0.999).rot.get('arm')).toEqual([0, 0, 0])
-    expect(evaluateClip([A, B], [], clip, 1).rot.get('arm')).toEqual([0, Math.PI / 2, 0])
+    expect(evaluateClip([], clip, 0.5).rot.get('arm')).toEqual([0, 0, 0])
+    expect(evaluateClip([], clip, 0.999).rot.get('arm')).toEqual([0, 0, 0])
+    expect(evaluateClip([], clip, 1).rot.get('arm')).toEqual([0, Math.PI / 2, 0])
   })
 
   it('clamps a non-loop past the end and before the start', () => {
     const clip: RigClip = { ...twoKeyLoop(), loop: false, duration: 2 }
-    expect(evaluateClip(poses, [], clip, 99).rot.get('arm')).toEqual([0, Math.PI / 2, 0])
-    expect(evaluateClip(poses, [], clip, 2).rot.get('arm')).toEqual([0, Math.PI / 2, 0])
-    expect(evaluateClip(poses, [], clip, -5).rot).toEqual(evaluateClip(poses, [], clip, 0).rot)
+    expect(evaluateClip([], clip, 99).rot.get('arm')).toEqual([0, Math.PI / 2, 0])
+    expect(evaluateClip([], clip, 2).rot.get('arm')).toEqual([0, Math.PI / 2, 0])
+    expect(evaluateClip([], clip, -5).rot).toEqual(evaluateClip([], clip, 0).rot)
   })
 
-  it('reads a dangling pose as bind', () => {
-    // Wholly dangling: an empty (bind) frame.
-    const ghost: RigClip = {
-      id: 'c',
-      name: 'g',
-      loop: false,
-      duration: 1,
-      keys: [{ id: 'k0', poseId: 'ghost', time: 0, ease: 'linear' }],
-    }
-    const frame = evaluateClip(poses, [], ghost, 0.5)
-    expect(frame.rot.size).toBe(0)
-    expect(frame.off.size).toBe(0)
-    // Half-dangling: the known side blends toward bind.
+  it('blends an absent joint from bind', () => {
+    // A joint keyed on only one side blends toward bind (absent = bind).
     const half: RigClip = {
       id: 'c',
       name: 'h',
       loop: false,
       duration: 2,
       keys: [
-        { id: 'k0', poseId: 'b', time: 0, ease: 'linear' },
-        { id: 'k1', poseId: 'ghost', time: 2, ease: 'linear' },
+        key('k0', 'B', 0, 'linear', { arm: [0, Math.PI / 2, 0] }),
+        key('k1', 'A', 2, 'linear'),
       ],
     }
-    expect(evaluateClip([A, B], [], half, 1).rot.get('arm')![1]).toBeCloseTo(Math.PI / 4, 5)
+    expect(evaluateClip([], half, 1).rot.get('arm')![1]).toBeCloseTo(Math.PI / 4, 5)
   })
 
   it('lerps root offsets and ignores non-root offsets', () => {
     const boxes = [box('hips'), box('shin', 'hips')]
-    const from = pose('p0', {}, { hips: [0, 0, 0], shin: [0, 5, 5] })
-    const to = pose('p1', {}, { hips: [0, 2, 0] })
     const clip: RigClip = {
       id: 'c',
       name: 'bob',
       loop: false,
       duration: 2,
       keys: [
-        { id: 'k0', poseId: 'p0', time: 0, ease: 'linear' },
-        { id: 'k1', poseId: 'p1', time: 2, ease: 'linear' },
+        key('k0', 'from', 0, 'linear', {}, { hips: [0, 0, 0], shin: [0, 5, 5] }),
+        key('k1', 'to', 2, 'linear', {}, { hips: [0, 2, 0] }),
       ],
     }
-    const mid = evaluateClip([from, to], boxes, clip, 1)
+    const mid = evaluateClip(boxes, clip, 1)
     expect(mid.off.get('hips')).toEqual([0, 1, 0])
     expect(mid.off.has('shin')).toBe(false)
   })
 
   it('yields an empty frame for an empty clip', () => {
-    const frame = evaluateClip(poses, [], { id: 'c', name: 'e', loop: false, duration: 1, keys: [] }, 0.5)
+    const frame = evaluateClip([], { id: 'c', name: 'e', loop: false, duration: 1, keys: [] }, 0.5)
     expect(frame.rot.size).toBe(0)
     expect(frame.off.size).toBe(0)
   })
 })
 
 describe('clipFromPoseCycle', () => {
+  const A = { id: 'a', name: 'A', joints: {} }
+  const B = { id: 'b', name: 'B', joints: { arm: [0, Math.PI / 2, 0] as [number, number, number] } }
+
   it('maps once to a non-looping two-key clip over one half cycle', () => {
-    const clip = clipFromPoseCycle({ fromId: 'a', toId: 'b', mode: 'once', speed: 1 })
+    const clip = clipFromPoseCycle({ fromId: 'a', toId: 'b', mode: 'once', speed: 1 }, [A, B])
     expect(clip.name).toBe('cycle')
     expect(clip.loop).toBe(false)
     expect(clip.duration).toBeCloseTo(2, 10)
-    expect(clip.keys.map((k) => [k.poseId, k.time, k.ease])).toEqual([
-      ['a', 0, 'inOut'],
-      ['b', 2, 'inOut'],
+    expect(clip.keys.map((k) => [k.name, k.time, k.ease])).toEqual([
+      ['A', 0, 'inOut'],
+      ['B', 2, 'inOut'],
     ])
+    expect(clip.keys[0].joints).toEqual({})
+    expect(clip.keys[1].joints).toEqual({ arm: [0, Math.PI / 2, 0] })
     expect(clip.keys[0].id).not.toBe(clip.keys[1].id)
   })
 
   it('maps loop and pingpong to seamless two-key loops over the full pass', () => {
-    const looped = clipFromPoseCycle({ fromId: 'a', toId: 'b', mode: 'loop', speed: 2 })
+    const looped = clipFromPoseCycle({ fromId: 'a', toId: 'b', mode: 'loop', speed: 2 }, [A, B])
     expect(looped.loop).toBe(true)
     // Half cycle at 2x is 1 s; the seamless loop covers out-and-back.
     expect(looped.duration).toBeCloseTo(2, 10)
     expect(looped.keys.map((k) => k.time)).toEqual([0, 1])
-    const pingpong = clipFromPoseCycle({ fromId: 'a', toId: 'b', mode: 'pingpong', speed: 1 })
+    const pingpong = clipFromPoseCycle({ fromId: 'a', toId: 'b', mode: 'pingpong', speed: 1 }, [A, B])
     expect(pingpong.loop).toBe(true)
     expect(pingpong.duration).toBeCloseTo(4, 10)
   })
 
   it('evaluates a converted pingpong as an out-and-back loop', () => {
-    const clip = clipFromPoseCycle({ fromId: 'a', toId: 'b', mode: 'pingpong', speed: 1 })
-    const armOf = (t: number) => evaluateClip([A, B], [], clip, t).rot.get('arm') ?? [0, 0, 0]
+    const clip = clipFromPoseCycle({ fromId: 'a', toId: 'b', mode: 'pingpong', speed: 1 }, [A, B])
+    const armOf = (t: number) => evaluateClip([], clip, t).rot.get('arm') ?? [0, 0, 0]
     // From A at 0, to B at half the pass, back to A at the wrap.
     expect(armOf(0)).toEqual([0, 0, 0])
     expect(armOf(2)).toEqual([0, Math.PI / 2, 0])
@@ -327,6 +366,75 @@ describe('clipFromPoseCycle', () => {
     // ... and the way back mirrors the way out.
     expect(armOf(3)[1]).toBeCloseTo(Math.PI / 4, 5)
   })
+
+  it('embeds empty joints for unknown pose ids', () => {
+    const clip = clipFromPoseCycle({ fromId: 'ghost', toId: 'b', mode: 'once', speed: 1 }, [A, B])
+    expect(clip.keys[0].joints).toEqual({})
+  })
+})
+
+describe('sampleKeyPayload', () => {
+  it('reads a key instant back verbatim (bit-clean, like evaluation)', () => {
+    const clip = twoKeyLoop()
+    expect(sampleKeyPayload([], clip, 2)).toEqual({ joints: { arm: [0, Math.PI / 2, 0] }, offsets: {} })
+  })
+
+  it('freezes a mid-linear-segment blend, so the split reproduces the segment', () => {
+    const clip: RigClip = {
+      id: 'clip',
+      name: 'swing',
+      loop: false,
+      duration: 2,
+      keys: [key('k0', 'A', 0, 'linear'), key('k1', 'B', 2, 'linear', { arm: [0, Math.PI / 2, 0] })],
+    }
+    const at = 1
+    const { joints, offsets } = sampleKeyPayload([], clip, at)
+    // Halfway along a linear slerp of a pure-Y swing: half the angle, still pure-Y.
+    expect(joints.arm![1]).toBeCloseTo(Math.PI / 4, 10)
+    expect(joints.arm![0]).toBeCloseTo(0, 10)
+    expect(joints.arm![2]).toBeCloseTo(0, 10)
+    expect(offsets).toEqual({})
+    // Splitting the segment there reproduces the original curve on both halves.
+    const split: RigClip = {
+      ...clip,
+      keys: [
+        key('k0', 'A', 0, 'linear'),
+        { id: 'km', name: 'M', time: 1, ease: 'linear', joints },
+        key('k1', 'B', 2, 'linear', { arm: [0, Math.PI / 2, 0] }),
+      ],
+    }
+    for (const t of [0.25, 0.5, 1, 1.5, 1.75]) {
+      const before = evaluateClip([], clip, t).rot.get('arm')!
+      const after = evaluateClip([], split, t).rot.get('arm')!
+      expect(after[0]).toBeCloseTo(before[0], 9)
+      expect(after[1]).toBeCloseTo(before[1], 9)
+      expect(after[2]).toBeCloseTo(before[2], 9)
+    }
+  })
+
+  it('freezes a hold span at the outgoing pose', () => {
+    const clip: RigClip = {
+      id: 'clip',
+      name: 'step',
+      loop: false,
+      duration: 2,
+      keys: [key('k0', 'A', 0, 'hold', { arm: [0, 0.4, 0] }), key('k1', 'B', 2, 'linear')],
+    }
+    expect(sampleKeyPayload([], clip, 1).joints).toEqual({ arm: [0, 0.4, 0] })
+  })
+
+  it('carries root offsets through the sample', () => {
+    const clip: RigClip = {
+      id: 'clip',
+      name: 'bob',
+      loop: false,
+      duration: 2,
+      keys: [key('k0', 'A', 0, 'linear', {}, { root: [0, 0, 0] }), key('k1', 'B', 2, 'linear', {}, { root: [0, 4, 0] })],
+    }
+    const boxes = [box('root')]
+    const { offsets } = sampleKeyPayload(boxes, clip, 1)
+    expect(offsets.root![1]).toBeCloseTo(2, 10)
+  })
 })
 
 describe('deriveAnimationMode', () => {
@@ -334,13 +442,13 @@ describe('deriveAnimationMode', () => {
 
   it('uses poses when poses exist and no tween is enabled', () => {
     const muted: RigBox[] = [{ ...box('a'), tweens: [{ ...tweens[0], enabled: false }] }]
-    expect(deriveAnimationMode({ rigBoxes: muted, poses: [A] })).toBe('poses')
-    expect(deriveAnimationMode({ rigBoxes: [box('a')], poses: [A] })).toBe('poses')
+    expect(deriveAnimationMode({ rigBoxes: muted, poses: [{ id: 'a' }] })).toBe('poses')
+    expect(deriveAnimationMode({ rigBoxes: [box('a')], poses: [{ id: 'a' }] })).toBe('poses')
   })
 
   it('uses tweens when a tween is enabled or when neither system is in use', () => {
     const tweened: RigBox[] = [{ ...box('a'), tweens: [...tweens] }]
-    expect(deriveAnimationMode({ rigBoxes: tweened, poses: [A] })).toBe('tweens')
+    expect(deriveAnimationMode({ rigBoxes: tweened, poses: [{ id: 'a' }] })).toBe('tweens')
     expect(deriveAnimationMode({ rigBoxes: [box('a')], poses: [] })).toBe('tweens')
     expect(deriveAnimationMode({ rigBoxes: [], poses: [] })).toBe('tweens')
   })

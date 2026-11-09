@@ -150,10 +150,10 @@ export function useKeyboardShortcuts() {
         // case outside model-mode 3D gestures).
         store.clearSelectedCells()
         if (!isTexture && !isAnimate) store.selectMarker(null)
-        // Animate: Escape also drops the pose preview back to bind (preview is not undoable,
-        // so it needs an explicit exit — selection clearing alone would strand a posed model
-        // with no gizmo to grab).
-        if (isAnimate && (store.poseRotations.size > 0 || store.poseDragging)) store.resetPose()
+        // Animate: Escape stops transport, leaving the frozen frame showing and the key
+        // selection intact — every edit lands in a keyframe, so there is no staged pose
+        // to drop.
+        if (isAnimate && store.clipPlaying) store.setClipPlaying(false)
         e.preventDefault()
         return
       }

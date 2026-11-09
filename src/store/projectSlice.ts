@@ -17,6 +17,7 @@ import { axisIndex } from '@/engine/plane/planeGeometry'
 import { savePlanePref } from '@/engine/persistence/uiPrefs'
 import { showToast } from '@/components/ui/toastBus'
 import { DEFAULT_PALETTE } from '@/engine/palette/defaultPalette'
+import { normalizeFps } from '@/engine/rigging/types'
 import { TEXEL_SCALE } from '@/engine/texture/types'
 import { emptyTextureModel, normalizeTexelScale, resampleTextureModel, rescaleTextureModel2x, resizeTextureModel } from '@/engine/texture/TextureStore'
 import type { TexelScale } from '@/engine/texture/types'
@@ -85,6 +86,13 @@ export const createProjectSlice: Slice = (set, get) => ({
       state.dirty = true
     }),
 
+  setFps: (fps) =>
+    set((state) => {
+      state.meta.fps = normalizeFps(fps)
+      state.meta.modifiedAt = new Date().toISOString()
+      state.dirty = true
+    }),
+
   setAnimationMode: (mode) => {
     if (get().meta.animationMode === mode) return
     set((state) => {
@@ -98,13 +106,11 @@ export const createProjectSlice: Slice = (set, get) => ({
         state.animateTab = 'poses'
         state.activeTool = 'pose'
       }
-      // The switch keeps the other mode's data (tweens stay on their boxes, poses and clips
-      // stay in the file) but mutes it — transport stops and the gizmo scratch clears, so the
-      // first frame after the switch never shows the other mode's leftovers.
+      // The switch keeps the other mode's data (tweens stay on their boxes, keyframe clips
+      // stay in the file) but mutes it — transport stops and the playhead steps off, so
+      // the first frame after the switch never shows the other mode's leftovers.
       state.clipPlaying = false
-      state.poseRotations.clear()
-      state.stagedPoseId = null
-      state.editingPoseId = null
+      state.selectedKeyId = null
       state.clipTime = null
       state.meta.modifiedAt = new Date().toISOString()
       state.dirty = true
@@ -406,17 +412,13 @@ export const createProjectSlice: Slice = (set, get) => ({
       state.selectedMarkerId = null
       state.rigBoxes = []
       state.selectedRigBoxId = null
-      // Pose state is per-project too — scratch, library, clips, staging, and drag latch.
-      state.poseRotations = new Map()
-      state.poses = []
+      // Pose state is per-project too — keyframe clips, selection, and drag latch.
       state.clips = []
       state.activeClipId = null
       state.selectedKeyId = null
       state.clipPlaying = false
       state.clipStartedAt = 0
       state.clipTime = null
-      state.stagedPoseId = null
-      state.editingPoseId = null
       state.poseDragging = false
       state.dirty = true
       // A new project starts grounded (see resetPlaneToGround) instead of inheriting a stale

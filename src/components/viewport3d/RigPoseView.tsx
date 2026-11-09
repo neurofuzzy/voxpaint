@@ -7,6 +7,7 @@ import { previewFrame } from '@/engine/rigging/preview'
 import { hasActiveTweens } from '@/engine/rigging/rigLoop'
 import { TEXEL_SCALE } from '@/engine/texture/types'
 import { tickEmissiveAnimation } from '@/engine/instancing/previewMaterial'
+import { setRigPosePickGroups } from './rigPosePick'
 import { enableGhostDither, setGhostDither } from '@/engine/instancing/ghostDither'
 import { isolationPlanesForBox, setIsolationClip } from '@/engine/instancing/modelIsolate'
 import { useActiveMemo } from './useActiveMemo'
@@ -15,7 +16,7 @@ import { useAppStore } from '@/store/useAppStore'
 /**
  * Animate-mode pose + loop preview: the model partitioned into one static group (unrigged
  * voxels) plus one group per rig box, each driven per frame from the store through
- * `previewFrame` (tween stacks in tweens mode, the clip/scratch pose in poses mode).
+ * `previewFrame` (tween stacks in tweens mode, the clip/selected-key pose in poses mode).
  * Geometry rebuilds only when the model/rigs
  * change — drags and cycles just re-matrix groups (matrixAutoUpdate off), so playback stays
  * at frame rate with zero rebuilds.
@@ -46,6 +47,14 @@ export function RigPoseView({ active }: { active: boolean }) {
     [model, palette, texture, gridExtent, glassRoughnessLevel, texelScale, rigBoxes],
   )
 
+  // Tap-to-select reads these groups through the pick registry — while the pose view
+  // is hidden the registry stays empty so stale (or invisible) matrices never win a
+  // tap. Declared before the build effect so a rebuild re-syncs after it; reactivation
+  // with unchanged inputs skips the rebuild, so this re-syncs the live groups itself.
+  useEffect(() => {
+    setRigPosePickGroups(active ? boxGroups.current : new Map())
+  }, [active])
+
   // Build the scene graph imperatively — one static group plus one group per rig box, each
   // with matrixAutoUpdate off (the frame loop writes matrices straight from the pose store,
   // bypassing React renders during a gizmo drag).
@@ -55,7 +64,11 @@ export function RigPoseView({ active }: { active: boolean }) {
     while (rootGroup.children.length > 0) {
       rootGroup.remove(rootGroup.children[0])
     }
-    if (!built) return
+    if (!built) {
+      // Inactive (or model-less): no posed groups, nothing pickable.
+      setRigPosePickGroups(groups)
+      return
+    }
 
     const statics = new THREE.Group()
     for (const { geometry, materialIndex } of built.staticMeshes) {
@@ -66,12 +79,15 @@ export function RigPoseView({ active }: { active: boolean }) {
     for (const [boxId, meshes] of built.boxMeshes) {
       const group = new THREE.Group()
       group.matrixAutoUpdate = false
+      // Tap-to-select tag: the viewport raycasts these groups and walks hits up here.
+      group.userData.pickBoxId = boxId
       for (const { geometry, materialIndex } of meshes) {
         group.add(new THREE.Mesh(geometry, built.materials[materialIndex]))
       }
       groups.set(boxId, group)
       rootGroup.add(group)
     }
+    setRigPosePickGroups(groups)
   }, [built, rootGroup])
 
   useEffect(() => {
@@ -89,6 +105,7 @@ export function RigPoseView({ active }: { active: boolean }) {
       while (root.children.length > 0) {
         root.remove(root.children[0])
       }
+      setRigPosePickGroups(groups)
     }
   }, [built, rootGroup])
 

@@ -68,55 +68,35 @@ export const DEFAULT_PENDULUM_MIN = -30
 export const DEFAULT_PENDULUM_MAX = 30
 
 /**
- * A named joint snapshot: per-box local rotations (radians, intrinsic XYZ, same
- * representation as the live gizmo scratch). Sparse — only non-bind joints are stored.
- * Poses are data: undoable, persisted, and (phase 2) interpolated by pose cycles.
+ * Per-box local rotations (radians, intrinsic XYZ — the representation the pose gizmo
+ * drags in). Sparse — only non-bind joints are stored; absent entries ARE bind.
  */
-export type Pose = {
-  id: string
-  name: string
-  joints: Record<string, JointEuler>
-  /** Optional root-joint translation offsets in voxels (hip bob, crouch — one offset per
-   * ROOT box; sparse like joints). Roots-only: callers that know the outline pass only
-   * root ids as `validBoxIds` to `sanitizePose` to enforce it. */
-  offsets?: Record<string, Coord>
-}
+export type KeyJoints = Record<string, JointEuler>
 
-export function newPoseId(): string {
-  try {
-    return `pose-${crypto.randomUUID().slice(0, 8)}`
-  } catch {
-    return `pose-${Date.now().toString(36)}-${Math.floor(Math.random() * 0xffff).toString(16)}`
-  }
-}
+/** Per-root translation offsets in voxels (hip bob, crouch). Sparse like joints. */
+export type KeyOffsets = Record<string, Coord>
 
-/** Sanitizes a deserialized pose (hand-edited files): unknown shapes fall back to null. */
-export function sanitizePose(raw: unknown, validBoxIds?: Set<string>): Pose | null {
-  if (!raw || typeof raw !== 'object') return null
-  const p = raw as Partial<Pose>
-  if (typeof p.id !== 'string' || p.id.length === 0) return null
-  if (typeof p.name !== 'string') return null
-  if (!p.joints || typeof p.joints !== 'object') return null
-  const joints: Pose['joints'] = {}
-  for (const [boxId, euler] of Object.entries(p.joints)) {
-    if (validBoxIds && !validBoxIds.has(boxId)) continue
+/** Sanitizes a joints record (hand-edited files): finite triples only, sparseness kept. */
+export function sanitizeKeyJoints(raw: unknown): KeyJoints {
+  const joints: KeyJoints = {}
+  if (!raw || typeof raw !== 'object') return joints
+  for (const [boxId, euler] of Object.entries(raw as Record<string, unknown>)) {
     if (!Array.isArray(euler) || euler.length !== 3 || !euler.every((n) => Number.isFinite(n))) continue
     joints[boxId] = [euler[0], euler[1], euler[2]]
   }
-  // Offsets are sanitized like joints (finite triples on known boxes); the field is omitted
-  // when nothing valid survives, keeping serialized poses sparse.
-  let offsets: Pose['offsets']
-  if (p.offsets && typeof p.offsets === 'object') {
-    for (const [boxId, off] of Object.entries(p.offsets)) {
-      if (validBoxIds && !validBoxIds.has(boxId)) continue
-      if (!Array.isArray(off) || off.length !== 3 || !off.every((n) => Number.isFinite(n))) continue
-      if (!offsets) offsets = {}
-      offsets[boxId] = [off[0], off[1], off[2]]
-    }
+  return joints
+}
+
+/** Sanitizes an offsets record like joints (finite triples); omitted when empty. */
+export function sanitizeKeyOffsets(raw: unknown): KeyOffsets | undefined {
+  if (!raw || typeof raw !== 'object') return undefined
+  let offsets: KeyOffsets | undefined
+  for (const [boxId, off] of Object.entries(raw as Record<string, unknown>)) {
+    if (!Array.isArray(off) || off.length !== 3 || !off.every((n) => Number.isFinite(n))) continue
+    if (!offsets) offsets = {}
+    offsets[boxId] = [off[0], off[1], off[2]]
   }
-  const pose: Pose = { id: p.id.slice(0, 64), name: p.name.slice(0, 64) || 'pose', joints }
-  if (offsets) pose.offsets = offsets
-  return pose
+  return offsets
 }
 
 /**
@@ -132,16 +112,21 @@ export type AnimationMode = 'tweens' | 'poses'
 export type KeyEase = 'linear' | 'inOut' | 'in' | 'out' | 'hold'
 
 /**
- * One keyed pose on a clip timeline: the library pose active at `time`, with the easing
- * that carries the segment LEAVING this key toward the next (the last key's ease carries
- * a looping clip's wrap back to the first).
+ * One keyframe on a clip timeline: the pose IS the key — it owns its joint angles
+ * directly (no library reference). `name` is UI-only (never exported); `ease` carries
+ * the segment LEAVING this key toward the next (the last key's ease carries a looping
+ * clip's wrap back to the first).
  */
 export type ClipKey = {
   id: string
-  poseId: string
+  name: string
   /** Seconds from the clip start, snapped to 1/30 s; the first key is always 0. */
   time: number
   ease: KeyEase
+  joints: KeyJoints
+  /** Optional root-joint translation offsets (hip bob, crouch — roots only, like the
+   * old per-pose offsets; enforced by callers that know the outline). */
+  offsets?: KeyOffsets
 }
 
 /**
@@ -161,13 +146,22 @@ export type RigClip = {
 /** Export frame-rate grid for clip key times: keys snap to 1/30 s (the bake sample rate). */
 export const CLIP_FRAME_SECONDS = 1 / 30
 
+/** Default timeline/export frame rate (frames per second) when a project doesn't stamp one. */
+export const DEFAULT_FPS = 30
+
+/** Normalizes a frame rate: integers 1–120, anything else falls back to the default. */
+export function normalizeFps(fps: unknown): number {
+  return typeof fps === 'number' && Number.isFinite(fps) ? Math.min(120, Math.max(1, Math.round(fps))) : DEFAULT_FPS
+}
+
 /**
- * Snaps a clip-local time onto the 1/30 s export frame grid (nearest frame), normalizing
+ * Snaps a clip-local time onto the export frame grid (nearest frame), normalizing
  * -0 so strict equality never distinguishes it from 0. Non-finite input reads as 0.
  */
-export function snapClipTime(t: number): number {
+export function snapClipTime(t: number, fps: number = DEFAULT_FPS): number {
   if (!Number.isFinite(t)) return 0
-  const s = Math.round(t / CLIP_FRAME_SECONDS) * CLIP_FRAME_SECONDS
+  const frame = 1 / normalizeFps(fps)
+  const s = Math.round(t / frame) * frame
   return s === 0 ? 0 : s
 }
 
@@ -190,45 +184,49 @@ export function newKeyId(): string {
 const KEY_EASES: KeyEase[] = ['linear', 'inOut', 'in', 'out', 'hold']
 
 /**
- * Sanitizes a deserialized clip (hand-edited files): keys with unknown pose ids are
- * dropped (a missing pose would read as bind, so dangling keys are data loss worth
- * surfacing by removal), survivors sort by time with the first forced to 0, and the
+ * Sanitizes a deserialized clip (hand-edited files): keys carry their own joints, so
+ * nothing dangles — malformed keys (bad time) are dropped, bad joint entries are
+ * skipped within the key. Survivors sort by time with the first forced to 0, and the
  * duration clamps to ≥ the last key time (plus one frame when looping, so the wrap
  * segment back to the first key never collapses to zero) and ≥ one frame. A clip whose
- * key array survives empty (e.g. a new unkeyed clip, or one whose poses were all
- * deleted) is kept with a default 1 s duration — empties are valid work in progress.
- * Returns null only when nothing usable survives (not an object, no key array at all).
+ * key array survives empty (authored empty) materializes a bind frame-1 anchor —
+ * every loaded clip has a keyframe at 0. Returns null only when nothing usable
+ * survives (not an object, no key array at all). Times snap to the given frame
+ * rate's grid.
  */
-export function sanitizeRigClip(raw: unknown, validPoseIds?: Set<string>): RigClip | null {
+export function sanitizeRigClip(raw: unknown, fps: number = DEFAULT_FPS): RigClip | null {
   if (!raw || typeof raw !== 'object') return null
+  const frame = 1 / normalizeFps(fps)
   const c = raw as Partial<RigClip>
   if (!Array.isArray(c.keys)) return null
   const keys: ClipKey[] = []
   for (const entry of c.keys) {
     if (!entry || typeof entry !== 'object') continue
     const k = entry as Partial<ClipKey>
-    if (typeof k.poseId !== 'string' || k.poseId.length === 0) continue
-    if (validPoseIds && !validPoseIds.has(k.poseId)) continue
     if (typeof k.time !== 'number' || !Number.isFinite(k.time)) continue
+    const offsets = sanitizeKeyOffsets(k.offsets)
     keys.push({
       id: typeof k.id === 'string' && k.id.length > 0 ? k.id.slice(0, 64) : newKeyId(),
-      poseId: k.poseId,
-      time: Math.max(0, snapClipTime(k.time)),
+      name: (typeof k.name === 'string' ? k.name.slice(0, 64) : '') || 'Key',
+      time: Math.max(0, snapClipTime(k.time, fps)),
       ease: KEY_EASES.includes(k.ease as KeyEase) ? (k.ease as KeyEase) : 'inOut',
+      joints: sanitizeKeyJoints(k.joints),
+      ...(offsets ? { offsets } : {}),
     })
   }
   if (keys.length === 0) {
     // A usable clip shell with no keyed poses yet (authored empty, or every key's pose
-    // deleted): keep it with a default 1 s duration so save/load never eats in-progress
-    // work. Malformed shells (no id/name shape at all) still read through — ids and
-    // names self-heal below.
+    // deleted): land a bind frame-1 anchor so the clip is never keyless — save/load
+    // never eats in-progress work, and the timeline always has something to show.
+    // Malformed shells (no id/name shape at all) still read through — ids and names
+    // self-heal below.
     const rawDuration = typeof c.duration === 'number' && Number.isFinite(c.duration) ? c.duration : 1
     return {
       id: typeof c.id === 'string' && c.id.length > 0 ? c.id.slice(0, 64) : newClipId(),
       name: (typeof c.name === 'string' ? c.name.slice(0, 64) : '') || 'clip',
       loop: c.loop !== false,
-      duration: Math.max(snapClipTime(rawDuration), CLIP_FRAME_SECONDS),
-      keys,
+      duration: Math.max(snapClipTime(rawDuration, fps), frame),
+      keys: [{ id: newKeyId(), name: 'Key 1', time: 0, ease: 'inOut' as KeyEase, joints: {} }],
     }
   }
   keys.sort((a, b) => a.time - b.time)
@@ -239,9 +237,9 @@ export function sanitizeRigClip(raw: unknown, validPoseIds?: Set<string>): RigCl
   // Round snapping can land microscopically below an off-grid authored duration — bump one
   // frame so the sanitizer never shortens a clip (on-grid values are unaffected). A looping
   // clip additionally holds ≥ last key + one frame so the wrap segment never pops.
-  let duration = Math.max(snapClipTime(rawDuration), lastKeyTime, CLIP_FRAME_SECONDS)
-  if (loop) duration = Math.max(duration, snapClipTime(lastKeyTime + CLIP_FRAME_SECONDS))
-  if (duration < rawDuration) duration = snapClipTime(duration + CLIP_FRAME_SECONDS)
+  let duration = Math.max(snapClipTime(rawDuration, fps), lastKeyTime, frame)
+  if (loop) duration = Math.max(duration, snapClipTime(lastKeyTime + frame, fps))
+  if (duration < rawDuration) duration = snapClipTime(duration + frame, fps)
   return {
     id: typeof c.id === 'string' && c.id.length > 0 ? c.id.slice(0, 64) : newClipId(),
     name: (typeof c.name === 'string' ? c.name.slice(0, 64) : '') || 'clip',

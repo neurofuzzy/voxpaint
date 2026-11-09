@@ -40,7 +40,7 @@ export const toolMap: Record<ToolId, ToolHandler> = {
 }
 
 /** Animate-mode tool dispatch, mirroring the panel tabs: Rig tab boxes/selects/moves and
- * pins pivots, Tweens tab only selects (tween params live in the panel), Poses tab selects
+ * pins pivots, Tweens tab only selects (tween params live in the panel), Motion tab selects
  * in 2D and poses in 3D. The voxel model is a non-interactive underlay, so everything
  * else is a no-op. Slice-loop masks from old files still play back; they just can't be
  * authored anymore. */

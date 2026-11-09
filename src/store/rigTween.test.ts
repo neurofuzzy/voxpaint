@@ -58,15 +58,17 @@ describe('rig tweens', () => {
   it('gates by project animation mode: tweens evaluate in tweens mode, poses in poses mode', () => {
     addBox('arm')
     const s = useAppStore.getState()
-    s.setJointRotation('arm', [0.5, 0, 0])
-    expect(useAppStore.getState().poseRotations.size).toBe(1)
-    // Enabling a tween no longer clears the pose — the mode switch mutes it instead.
-    const id = s.addTween('arm')!
-    expect(useAppStore.getState().poseRotations.size).toBe(1)
-    expect(useAppStore.getState().meta.animationMode).toBe('tweens')
-    // Switching to poses keeps the tween (muted) and clears the scratch.
+    // A keyed pose and a tween coexist on the box; the mode switch mutes one side.
     s.setAnimationMode('poses')
-    expect(useAppStore.getState().poseRotations.size).toBe(0)
+    const clipId = s.addClip()
+    const keyId = useAppStore.getState().selectedKeyId!
+    s.setKeyJoint(clipId, keyId, 'arm', [0.5, 0, 0])
+    const id = s.addTween('arm')!
+    expect(useAppStore.getState().meta.animationMode).toBe('poses')
+    expect(useAppStore.getState().clips[0].keys[0].joints).toEqual({ arm: [0.5, 0, 0] })
+    // Switching to tweens keeps every key in the file, muted.
+    s.setAnimationMode('tweens')
+    expect(useAppStore.getState().clips[0].keys[0].joints).toEqual({ arm: [0.5, 0, 0] })
     expect(tweensOf('arm')).toHaveLength(1)
     // Switching back loses nothing.
     s.setAnimationMode('tweens')
