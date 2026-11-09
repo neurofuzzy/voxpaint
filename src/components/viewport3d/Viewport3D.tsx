@@ -8,16 +8,8 @@ import { rigBoxContains, rigIdForCoord, rigPivotOf } from '@/engine/rigging/type
 import { angleAroundAxis, closestAxisParam, composeAxisAngle, intersectAxisPlane, nearestAxisHit, nearestRingHit, posedPivotWorld, snapOffsetStep } from '@/engine/rigging/pose'
 import { previewFrame } from '@/engine/rigging/preview'
 import { hasActiveTweens } from '@/engine/rigging/rigLoop'
-import { showToast } from '@/components/ui/toastBus'
 import type { Axis, CellKey, Coord } from '@/engine/grid/types'
-import type { RigClip } from '@/engine/rigging/types'
 import { hasActiveAnimations } from '@/engine/animation/animationLayers'
-
-/** True when the store has a keyframe selected in the active clip — gizmo drags then
- * direct-write into it (one undo entry per drag). Grabs with none selected refuse. */
-function hasSelectedKey(st: { clips: RigClip[]; activeClipId: string | null; selectedKeyId: string | null }): boolean {
-  return !!st.clips.find((c) => c.id === st.activeClipId)?.keys.some((k) => k.id === st.selectedKeyId)
-}
 
 /**
  * Snaps a joint's angles to whole degrees (runs inside the caller's open undo bracket,
@@ -36,7 +28,7 @@ function snapJointToDegrees(clipId: string, keyId: string, jointId: string) {
 }
 
 /**
- * Snaps a joint's offset to the 0.25-voxel stepper lattice (runs inside the caller's open
+ * Snaps a joint's offset to the third-voxel stepper lattice (runs inside the caller's open
  * undo bracket, so the drag still commits as one entry). Skips the write when already on
  * the lattice, so a grab-release with no real movement records nothing. The drag always
  * runs on the selected key, so this writes straight into it.
@@ -331,7 +323,7 @@ function VoxelInteractionHandler({ managerRef, controlsRef }: {
     // One undo stroke per drag, bracketed here (not per cell); `lastCoord` anchors the
     // Bresenham interpolation so fast sweeps don't gap. Orbit suppressed until pointer-up.
     let paintTouchDrag: { lastCoord: Coord } | null = null
-    // Open pose drag (Animate mode, Pose tool only): pointer went down on a gizmo ring
+    // Open pose drag (Animate mode, Rotate tool only): pointer went down on a gizmo ring
     // (axis drag, immediate — a ring is never a plane-nav target). Presses anywhere
     // else fall through to rig selection / plane navigation: there is no free-rotation
     // mode, every drag is exactly one axis. Orbit suppressed until pointer-up, and the
@@ -339,7 +331,7 @@ function VoxelInteractionHandler({ managerRef, controlsRef }: {
     let poseDrag:
       | { clipId: string; keyId: string; boxId: string; axis: Axis; grabAngle: number; startEuler: [number, number, number] }
       | null = null
-    // Open root-offset drag: same bracketing as a ring drag, one undo entry per drag.
+    // Open offset drag: same bracketing as a ring drag, one undo entry per drag.
     // The axis reference point is fixed at grab time; measuring against the moving
     // pivot would feed the drag's own output back into itself.
     let offsetDrag:
@@ -643,13 +635,14 @@ function VoxelInteractionHandler({ managerRef, controlsRef }: {
     const onPointerDown = (e: PointerEvent) => {
       down = { x: e.clientX, y: e.clientY }
       downOutside = pressOutsideCube(e.clientX, e.clientY)
-      // Pose tool (Animate + poses mode only): a press on a ring of the selected box
-      // opens an axis-rotation drag immediately (a ring is never a plane-nav target).
-      // Rings are hit-tested in screen space (what you see is what's grabbable), so this
-      // runs ahead of the working-cube check below — rings routinely overhang empty
-      // space outside the cube. Body presses fall through to rig selection below.
+      // Pose tools (Animate + poses mode only): Rotate presses a ring of the selected box
+      // and opens an axis-rotation drag immediately (a ring is never a plane-nav target);
+      // Offset presses an arrow and opens an axis-offset drag. Both are hit-tested in
+      // screen space (what you see is what's grabbable), so this runs ahead of the
+      // working-cube check below — gizmos routinely overhang empty space outside the
+      // cube. Body presses fall through to rig selection below.
       // In tweens mode the gizmo never renders, so this branch never arms there.
-      if (e.button === 0 && e.isPrimary && modeRef.current === 'animate' && animationModeRef.current === 'poses' && activeToolRef.current === 'pose') {
+      if (e.button === 0 && e.isPrimary && modeRef.current === 'animate' && animationModeRef.current === 'poses' && (activeToolRef.current === 'pose' || activeToolRef.current === 'offset')) {
         const st = useAppStore.getState()
         const box = st.rigBoxes.find((b) => b.id === st.selectedRigBoxId) ?? null
         if (box) {
@@ -662,9 +655,9 @@ function VoxelInteractionHandler({ managerRef, controlsRef }: {
             return [rect.left + ((pv.x + 1) / 2) * rect.width, rect.top + ((1 - pv.y) / 2) * rect.height]
           }
           const ray = gridSpaceRay(e.clientX, e.clientY)
-          // Hit-test in the resolved preview frame (clip included) — matches the rings.
+          // Hit-test in the resolved preview frame (clip included) — matches the gizmo.
           const { pose: preview } = previewFrame(st, performance.now() / 1000)
-          const axis = ray
+          const axis = ray && activeToolRef.current === 'pose'
             ? nearestRingHit(st.rigBoxes, preview, box, ray.origin, ray.dir, project, e.clientX, e.clientY, e.pointerType === 'touch' ? 24 : 14)
             : null
           if (axis) {
@@ -672,19 +665,15 @@ function VoxelInteractionHandler({ managerRef, controlsRef }: {
             const pw: Coord = [pivot[0] + 0.5, pivot[1] + 0.5, pivot[2] + 0.5]
             const pt = ray ? intersectAxisPlane(ray.origin, ray.dir, pw, axis) : null
             if (pt) {
-              // No key selected, nothing to edit into: refuse instead of staging. (Clips
-              // always open with a frame-1 anchor selected, so this only hits a
-              // deselected timeline.)
-              if (!hasSelectedKey(st)) {
-                setStatusMessage('Select a keyframe first — drags edit the selected key')
-                showToast('Select a keyframe first — drags edit the selected key')
-                return
-              }
+              // Grabs self-heal the key selection (post-reload it always starts cleared):
+              // fall back to Key 1, creating the assembly clip when none exists.
+              if (!useAppStore.getState().ensureKeyframeSelected()) return
               // Direct-write into the selected keyframe (bracketed as one undo entry).
               // Re-seek onto the key first, so the drag continues from the visible pose
               // instead of jumping.
-              const clip = st.clips.find((c) => c.id === st.activeClipId)!
-              const key = clip.keys.find((k) => k.id === st.selectedKeyId)!
+              const fresh = useAppStore.getState()
+              const clip = fresh.clips.find((c) => c.id === fresh.activeClipId)!
+              const key = clip.keys.find((k) => k.id === fresh.selectedKeyId)!
               st.animBeginStroke()
               st.setClipPlaying(false)
               st.setClipTime(key.time)
@@ -719,10 +708,10 @@ function VoxelInteractionHandler({ managerRef, controlsRef }: {
               return
             }
           }
-          // Translate arrows (roots only — offsets never evaluate on children): a press
-          // on an arrow opens an axis-offset drag immediately, same bracketing as rings.
-          // Arrows test after rings (rings keep priority where the arrow ends on them).
-          if (box.parentId === null && ray) {
+          // Translate arrows (Offset tool only — the Rotate tool never reaches here, so
+          // arrows no longer fight rings for the grab): a press on an arrow opens an
+          // axis-offset drag immediately, same bracketing as rings.
+          if (ray && activeToolRef.current === 'offset') {
             const { pose: arrowPreview, off: arrowOff } = previewFrame(st, performance.now() / 1000)
             const moveAxis = nearestAxisHit(
               st.rigBoxes, arrowPreview, box, project, e.clientX, e.clientY,
@@ -732,13 +721,10 @@ function VoxelInteractionHandler({ managerRef, controlsRef }: {
               const at = posedPivotWorld(st.rigBoxes, arrowPreview, box, arrowOff)
               const grabT = closestAxisParam(ray.origin, ray.dir, at, moveAxis)
               if (grabT !== null) {
-                if (!hasSelectedKey(st)) {
-                  setStatusMessage('Select a keyframe first — drags edit the selected key')
-                  showToast('Select a keyframe first — drags edit the selected key')
-                  return
-                }
-                const clip = st.clips.find((c) => c.id === st.activeClipId)!
-                const key = clip.keys.find((k) => k.id === st.selectedKeyId)!
+                if (!useAppStore.getState().ensureKeyframeSelected()) return
+                const fresh = useAppStore.getState()
+                const clip = fresh.clips.find((c) => c.id === fresh.activeClipId)!
+                const key = clip.keys.find((k) => k.id === fresh.selectedKeyId)!
                 st.animBeginStroke()
                 st.setClipPlaying(false)
                 st.setClipTime(key.time)
@@ -767,7 +753,7 @@ function VoxelInteractionHandler({ managerRef, controlsRef }: {
                 lastFaceKey = null
                 setHoverCell(null, null)
                 setHoveredFace(null)
-                setStatusMessage(`Moving along ${moveAxis.toUpperCase()} — release to drop (snaps to 0.25 voxels)`)
+                setStatusMessage(`Moving along ${moveAxis.toUpperCase()} — release to drop (snaps to ⅓-voxel steps)`)
                 dom.style.cursor = 'grabbing'
                 return
               }
@@ -1047,8 +1033,9 @@ function VoxelInteractionHandler({ managerRef, controlsRef }: {
         }
         return
       }
-      // Open root-offset drag: steer the joint along the grabbed axis line (voxels, in
-      // the axis frame the arrow draws in — roots have no ancestors, so world axes).
+      // Open offset drag: steer the joint along the grabbed axis line (voxels, in
+      // the axis frame the arrow draws in — exact for roots; under a rotated ancestor
+      // the part follows the world axis instead of the drawn arrow).
       // Live through setKeyOffset — one undo entry per drag (opened at grab, committed
       // on release); the pose view re-matrices every frame straight from the store.
       if (offsetDrag) {
@@ -1072,7 +1059,7 @@ function VoxelInteractionHandler({ managerRef, controlsRef }: {
             st.setKeyOffset(offsetDrag.clipId, offsetDrag.keyId, offsetDrag.boxId, next)
             const cur = useAppStore.getState().clips.find((c) => c.id === offsetDrag!.clipId)?.keys.find((k) => k.id === offsetDrag!.keyId)?.offsets?.[offsetDrag.boxId] ?? [0, 0, 0]
             const f = (n: number) => `${Math.round(n * 100) / 100}`
-            setStatusMessage(`Offset ${f(cur[0])} ${f(cur[1])} ${f(cur[2])} vx — release to drop (snaps to 0.25)`)
+            setStatusMessage(`Offset ${f(cur[0])} ${f(cur[1])} ${f(cur[2])} vx — release to drop (snaps to ⅓)`)
           }
         }
         return
@@ -1217,10 +1204,10 @@ function VoxelInteractionHandler({ managerRef, controlsRef }: {
       const cellKey = result?.key ?? (empty ? encodeKey(...empty) : null)
       const shownKey = inBox ? cellKey : null
       // Pose mode runs no voxel hover chrome at all (no face highlight, no hover blink) —
-      // the only hover feedback is the ring affordance below. Clear anything stale once,
+      // the only hover feedback is the gizmo affordance below. Clear anything stale once,
       // then skip: taps resolve their own hit on pointer-up.
-      const poseNoHover = modeRef.current === 'animate' && animationModeRef.current === 'poses' && activeToolRef.current === 'pose'
-      if (poseNoHover) {
+      const poseTool = modeRef.current === 'animate' && animationModeRef.current === 'poses' && (activeToolRef.current === 'pose' || activeToolRef.current === 'offset')
+      if (poseTool) {
         if (lastCellKey !== null || lastFaceKey !== null) {
           lastCellKey = null
           lastFaceKey = null
@@ -1233,7 +1220,7 @@ function VoxelInteractionHandler({ managerRef, controlsRef }: {
       }
 
       const faceKey = result && inBox ? `${result.key}|${result.plane.axis}|${result.plane.orientation}` : null
-      if (!poseNoHover && faceKey !== lastFaceKey) {
+      if (!poseTool && faceKey !== lastFaceKey) {
         lastFaceKey = faceKey
         setHoveredFace(result && inBox ? { cellKey: result.key, axis: result.plane.axis, orientation: result.plane.orientation } : null)
       }
@@ -1256,13 +1243,14 @@ function VoxelInteractionHandler({ managerRef, controlsRef }: {
         return
       }
       // Animate mode never edits in 3D — rig/pivot taps fall through to plane navigation
-      // below; orbit otherwise. The 2D canvas owns all rig edits. The pose tool steers the
-      // selected joint instead (see the drag wiring above) and its taps only ever switch the
-      // rig selection — the plane stays put.
-      if (modeRef.current === 'animate' && animationModeRef.current === 'poses' && activeToolRef.current === 'pose') {
-        // Live gizmo affordance: hovering a ring names its axis and grabs the cursor, so it's
-        // obvious what's draggable before pressing. Same screen-space test as the down path.
-        // Roots also test the translate arrows (offsets are roots-only).
+      // below; orbit otherwise. The 2D canvas owns all rig edits. The rotate/offset tools
+      // steer the selected joint instead (see the drag wiring above) and their taps only
+      // ever switch the rig selection — the plane stays put.
+      if (modeRef.current === 'animate' && animationModeRef.current === 'poses' && (activeToolRef.current === 'pose' || activeToolRef.current === 'offset')) {
+        // Live gizmo affordance: hovering a ring (rotate) or an arrow (offset) names its
+        // axis and grabs the cursor, so it's obvious what's draggable before pressing.
+        // Same screen-space test as the down path.
+        const isRotate = activeToolRef.current === 'pose'
         const st = useAppStore.getState()
         const box = st.rigBoxes.find((b) => b.id === st.selectedRigBoxId) ?? null
         let ringAxis: Axis | null = null
@@ -1279,8 +1267,9 @@ function VoxelInteractionHandler({ managerRef, controlsRef }: {
           }
           if (ray) {
             const { pose: preview, off } = previewFrame(st, performance.now() / 1000)
-            ringAxis = nearestRingHit(st.rigBoxes, preview, box, ray.origin, ray.dir, project, e.clientX, e.clientY)
-            if (!ringAxis && box.parentId === null) {
+            if (isRotate) {
+              ringAxis = nearestRingHit(st.rigBoxes, preview, box, ray.origin, ray.dir, project, e.clientX, e.clientY)
+            } else {
               moveAxis = nearestAxisHit(st.rigBoxes, preview, box, project, e.clientX, e.clientY, 14, off)
             }
           }
@@ -1289,9 +1278,9 @@ function VoxelInteractionHandler({ managerRef, controlsRef }: {
         if (ringAxis) {
           setStatusMessage(`Drag to rotate about ${ringAxis} — release snaps to whole degrees`)
         } else if (moveAxis) {
-          setStatusMessage(`Drag to move along ${moveAxis} — release snaps to 0.25 voxels`)
+          setStatusMessage(`Drag to move along ${moveAxis} — release snaps to ⅓-voxel steps`)
         } else {
-          setStatusMessage(result ? 'Drag a ring to rotate about one axis · drag an arrow to move · click selects a rig' : ORBIT_HINT)
+          setStatusMessage(result ? (isRotate ? 'Drag a ring to rotate about one axis · click selects a rig' : 'Drag an arrow to move along one axis · click selects a rig') : ORBIT_HINT)
         }
         return
       }
@@ -1382,7 +1371,7 @@ function VoxelInteractionHandler({ managerRef, controlsRef }: {
       endFloatDrag()
       // A leave mid-pose drops the drag where it is (it commits its one undo entry;
       // the pose is already live in the store either way). Angles snap to whole
-      // degrees (offsets to 0.25 voxels) before the commit so the dropped pose is clean.
+      // degrees (offsets to third-voxel steps) before the commit so the dropped pose is clean.
       if (poseDrag) {
         snapJointToDegrees(poseDrag.clipId, poseDrag.keyId, poseDrag.boxId)
         useAppStore.getState().animCommitStroke()
@@ -1421,7 +1410,7 @@ function VoxelInteractionHandler({ managerRef, controlsRef }: {
       }
       // Open pose drag: release ends it (angles snap to whole degrees first, then the
       // one undo entry commits). Skips the tap path below so a ring press never
-      // navigates the plane. Offset drags end the same way (snap to 0.25 voxels).
+      // navigates the plane. Offset drags end the same way (snap to third-voxel steps).
       if (poseDrag) {
         snapJointToDegrees(poseDrag.clipId, poseDrag.keyId, poseDrag.boxId)
         useAppStore.getState().animCommitStroke()
@@ -1645,10 +1634,10 @@ function VoxelInteractionHandler({ managerRef, controlsRef }: {
       }
 
       const result = resolveFaceHit(e.clientX, e.clientY)
-      // Pose tool taps never touch the construction plane (posing needs a stable frame):
-      // click selects the tapped rig, empty space clears — plain click-to-select semantics.
-      // Poses-mode only; in a tweens project the gizmo never renders and taps navigate.
-      if (modeRef.current === 'animate' && animationModeRef.current === 'poses' && activeToolRef.current === 'pose') {
+      // Rotate/offset tool taps never touch the construction plane (posing needs a stable
+      // frame): click selects the tapped rig, empty space clears — plain click-to-select
+      // semantics. Poses-mode only; in a tweens project the gizmo never renders and taps navigate.
+      if (modeRef.current === 'animate' && animationModeRef.current === 'poses' && (activeToolRef.current === 'pose' || activeToolRef.current === 'offset')) {
         const st = useAppStore.getState()
         // Forgiving pivot pick: raycast the posed rig-box groups first — the limb on
         // screen may sit far from its bind voxels, where the face hit below resolves
@@ -1740,7 +1729,7 @@ export function Viewport3D() {
   const textureMode = mode === 'texture'
   const animateMode = mode === 'animate'
   const animationMode = useAppStore((s) => s.meta.animationMode ?? 'tweens')
-  const poseToolActive = useAppStore((s) => s.mode === 'animate' && s.meta.animationMode === 'poses' && s.activeTool === 'pose')
+  const poseToolsActive = useAppStore((s) => s.mode === 'animate' && s.meta.animationMode === 'poses' && (s.activeTool === 'pose' || s.activeTool === 'offset'))
   const hasAnimations = animateMode && hasActiveAnimations(animSettings)
   const animateModelHidden = useAppStore((s) => s.mode === 'animate' && s.animateModelView === 'hidden')
   const rigBoxes = useAppStore((s) => s.rigBoxes)
@@ -1801,14 +1790,14 @@ export function Viewport3D() {
               {/* Pose mode hides the construction plane chrome entirely (grid, plane-cell
                 ghost, and the origin widget that re-orients the plane on click) — posing
                 needs a stable frame, and taps there never touch the plane. */}
-              {!poseToolActive && <ConstructionPlaneVisual />}
+              {!poseToolsActive && <ConstructionPlaneVisual />}
               <ProjectBoundsBox />
-              {!poseToolActive && <VoxelFaceHighlight />}
-              {!poseToolActive && <VoxelGhostPreview />}
+              {!poseToolsActive && <VoxelFaceHighlight />}
+              {!poseToolsActive && <VoxelGhostPreview />}
               <FloatGhostPreview />
               <SelectionHighlight />
               <SelectionBox3D />
-              {!poseToolActive && <ConstructionPlaneGizmo />}
+              {!poseToolsActive && <ConstructionPlaneGizmo />}
               <PivotGizmo />
               <PoseGizmo />
               <RigLinkLines />

@@ -31,7 +31,7 @@ export const createModeSlice: Slice = (set, get) => ({
       // pointed at one that silently no-ops. Unknown tools fall back to rig + rigbox.
       if (mode === 'animate') {
         const t = state.activeTool
-        if (t === 'pose') {
+        if (t === 'pose' || t === 'offset') {
           state.animateTab = 'poses'
         } else if (t === 'select') {
           state.animateTab = 'tweens'

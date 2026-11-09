@@ -21,7 +21,7 @@ import type { SliceAnimSettings, SliceKey } from '@/engine/animation/types'
 import { assignVoxelsToNodes, hasActiveAnimations, resolveAnimCenter } from '@/engine/animation/animationLayers'
 import { buildAllAnimationClips, type AnimNodeInfo } from '@/engine/animation/animationGLTF'
 import { normalizeFps, rigIdForCoord, rigPivotOf, sanitizeRigName, type AnimationMode, type RigBox, type RigClip } from '@/engine/rigging/types'
-import { bakeRigAction, boxHasActiveTweens, composeTweenMatrices, TWEEN_CYCLE_SECONDS } from '@/engine/rigging/rigLoop'
+import { bakeRigAction, boxHasActiveTweens, composeTweenMatrices, jointLocalDecomposed, TWEEN_CYCLE_SECONDS } from '@/engine/rigging/rigLoop'
 import { composePoseMatrices } from '@/engine/rigging/pose'
 import { evaluateClip } from '@/engine/rigging/clip'
 import { registerEmissiveAnimationExtension, type EmissiveAnimExportTarget } from './emissiveAnimationExport'
@@ -132,6 +132,13 @@ export type GltfExportOptions = {
   animationMode?: AnimationMode
   /** Keyed-pose timelines, baked one action each in poses mode (ignored in tweens mode). */
   clips?: RigClip[]
+  /** Bake the assembly pose (the resolved clip's initial keyframe, t = 0) into the joints'
+   * base transforms (poses mode only, default false). With animations on, clips still export —
+   * they start from that same key, so the base and the clips agree with no pop. */
+  bakeAssemblyPose?: boolean
+  /** Which clip supplies the assembly pose: the given id, falling back to the first clip.
+   * The dialog always passes the first clip — drag the Motion list to choose it. */
+  assemblyClipId?: string | null
   /** Bake sample rate in frames per second (defaults to the project's timeline rate,
    * 30 when unstamped). Keys and durations are seconds; tracks sample at this rate. */
   fps?: number
@@ -371,6 +378,34 @@ export async function exportModelToGlb(
       ? buildRigTree(options.rigBoxes, rigNames, options.voxelScaleY ?? 1)
       : null
   if (rigTree) root.add(rigTree.root)
+  // Assembly bake: pose the joint tree at the resolved clip's initial keyframe (t = 0) and
+  // freeze it into the nodes' base transforms — the exported static model shows the parts
+  // brought together. Same local math as the clip baker (shared helper), so the base and
+  // any exported clips agree exactly. Meshes parent under their joints, so they follow
+  // with no vertex changes.
+  if (rigTree && options.bakeAssemblyPose && (options.animationMode ?? 'tweens') === 'poses') {
+    const boxes = options.rigBoxes ?? []
+    const clips = options.clips ?? []
+    const assembly = clips.find((c) => c.id === options.assemblyClipId) ?? clips[0]
+    if (assembly && assembly.keys.length > 0) {
+      const frame = evaluateClip(boxes, assembly, 0)
+      const worlds = composePoseMatrices(boxes, frame.rot, frame.off)
+      const byId = new Map(boxes.map((b) => [b.id, b]))
+      const identity = new THREE.Matrix4()
+      for (const [id, group] of rigTree.groups) {
+        const box = byId.get(id)
+        if (!box) continue
+        // Same fallback rule as buildRigTree: dangling/self parents attach at the root.
+        const parent =
+          box.parentId && box.parentId !== box.id && byId.has(box.parentId) ? byId.get(box.parentId) : undefined
+        const self = worlds.get(id) ?? identity
+        const parentWorld = parent ? (worlds.get(parent.id) ?? identity) : identity
+        const { position, quaternion } = jointLocalDecomposed(box, parent, self, parentWorld)
+        group.position.set(position.x, position.y * (options.voxelScaleY ?? 1), position.z)
+        group.quaternion.copy(quaternion)
+      }
+    }
+  }
   const rigContextFor = (rigId: string | undefined): RigAttachContext | undefined => {
     if (!rigId || !rigTree || !rigTree.groups.has(rigId)) return undefined
     return { rigId, groups: rigTree.groups, scaledPivots: rigTree.scaledPivots }

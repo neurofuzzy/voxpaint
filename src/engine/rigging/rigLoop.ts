@@ -160,6 +160,35 @@ export function tweenDuration(speed: AnimationSpeed): number {
 }
 
 /**
+ * One joint's parent-relative local transform from composed world matrices:
+ * `local = T(−parentPivot) · parentWorld⁻¹ · selfWorld · T(pivot)` (grid units — the
+ * caller scales Y to export space on write). Shared by the per-sample clip baker below
+ * and the static assembly-pose bake, so the two can never drift apart.
+ */
+export function jointLocalDecomposed(
+  box: RigBox,
+  parent: RigBox | undefined,
+  selfWorld: THREE.Matrix4,
+  parentWorld: THREE.Matrix4,
+): { position: THREE.Vector3; quaternion: THREE.Quaternion } {
+  const pivot = rigPivotOf(box)
+  const parentPivot = parent ? rigPivotOf(parent) : null
+  const unparent = new THREE.Matrix4().makeTranslation(
+    parentPivot ? -(parentPivot[0] + 0.5) : 0,
+    parentPivot ? -(parentPivot[1] + 0.5) : 0,
+    parentPivot ? -(parentPivot[2] + 0.5) : 0,
+  )
+  const repivot = new THREE.Matrix4().makeTranslation(pivot[0] + 0.5, pivot[1] + 0.5, pivot[2] + 0.5)
+  const parentInv = new THREE.Matrix4().copy(parentWorld).invert()
+  const local = unparent.multiply(parentInv).multiply(selfWorld).multiply(repivot)
+  const pos = new THREE.Vector3()
+  const quat = new THREE.Quaternion()
+  const scl = new THREE.Vector3()
+  local.decompose(pos, quat, scl)
+  return { position: pos, quaternion: quat }
+}
+
+/**
  * One joint's parent-relative local track pair over [0, duration], sampled at `fps`:
  * `local(t) = T(−parentPivot) · parentMotion⁻¹(t) · selfMotion(t) · T(pivot)` (grid units,
  * identity at rest so clips start pop-free), with Y scaled to export space on write.
@@ -175,34 +204,17 @@ function bakeJointTracks(
   duration: number,
   sampleWorlds: (t: number) => Map<string, THREE.Matrix4>,
 ): [THREE.VectorKeyframeTrack, THREE.QuaternionKeyframeTrack] {
-  const pivot = rigPivotOf(box)
-  const parentPivot = parent ? rigPivotOf(parent) : null
   const steps = Math.round(duration * fps)
   const times: number[] = []
   const positions: number[] = []
   const quaternions: number[] = []
-  const pos = new THREE.Vector3()
-  const quat = new THREE.Quaternion()
-  const scl = new THREE.Vector3()
-  const parentInv = new THREE.Matrix4()
-  const unparent = new THREE.Matrix4()
-  const repivot = new THREE.Matrix4()
-  const local = new THREE.Matrix4()
   for (let i = 0; i <= steps; i++) {
     const t = (i / steps) * duration
     const worlds = sampleWorlds(t)
     const self = worlds.get(box.id) ?? new THREE.Matrix4()
     const parentWorld = parent ? (worlds.get(parent.id) ?? new THREE.Matrix4()) : new THREE.Matrix4()
     // local(t) in grid units; translation Y scaled to export space on write.
-    unparent.makeTranslation(
-      parentPivot ? -(parentPivot[0] + 0.5) : 0,
-      parentPivot ? -(parentPivot[1] + 0.5) : 0,
-      parentPivot ? -(parentPivot[2] + 0.5) : 0,
-    )
-    repivot.makeTranslation(pivot[0] + 0.5, pivot[1] + 0.5, pivot[2] + 0.5)
-    parentInv.copy(parentWorld).invert()
-    local.copy(unparent).multiply(parentInv).multiply(self).multiply(repivot)
-    local.decompose(pos, quat, scl)
+    const { position: pos, quaternion: quat } = jointLocalDecomposed(box, parent, self, parentWorld)
     times.push(t)
     positions.push(pos.x, pos.y * voxelScaleY, pos.z)
     quaternions.push(quat.x, quat.y, quat.z, quat.w)

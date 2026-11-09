@@ -69,6 +69,7 @@ export function FileMenu() {
         s.exportIncludeAOMaps = view.exportIncludeAOMaps ?? true
         s.exportIncludeMarkers = view.exportIncludeMarkers ?? true
         s.exportIncludeAnimations = view.exportIncludeAnimations ?? true
+        s.exportBakeAssemblyPose = view.exportBakeAssemblyPose ?? false
         s.animSettings = animSettings
         s.sliceMasks = sliceMasks
         s.slicePivots = slicePivots

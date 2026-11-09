@@ -132,8 +132,10 @@ export function RigPoseView({ active }: { active: boolean }) {
     if (!active || !built) return
     const st = useAppStore.getState()
     const elapsed = performance.now() / 1000
-    const { worlds: combined, pose } = previewFrame(st, elapsed)
-    if (pose.size === 0 && !hasActiveTweens(st.rigBoxes)) return
+    const { worlds: combined, pose, off } = previewFrame(st, elapsed)
+    // Offsets-only counts as a pose too (assembly nudges carry no rotations) — without
+    // the `off` term the voxel groups would freeze at bind while the outlines ride along.
+    if (pose.size === 0 && off.size === 0 && !hasActiveTweens(st.rigBoxes)) return
     applyPoseMatrices(boxGroups.current, combined)
     for (const m of built.materials) tickEmissiveAnimation(m, performance.now() / 1000)
   })

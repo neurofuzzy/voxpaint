@@ -1,5 +1,5 @@
 import type { StateCreator } from 'zustand'
-import type { CellKey, Coord } from '@/engine/grid/types'
+import type { CellKey, Coord, VoxelModel } from '@/engine/grid/types'
 import { withinWorkingBounds } from '@/engine/grid/GridStore'
 import type { RigBox, RigClip } from '@/engine/rigging/types'
 import type { JointEuler } from '@/engine/rigging/pose'
@@ -47,13 +47,18 @@ function cloneClips(clips: RigClip[]): RigClip[] {
   }))
 }
 
-function cloneSnapshot(state: { animSettings: Map<SliceKey, SliceAnimSettings>; sliceMasks: Map<SliceKey, Set<CellKey>>; slicePivots: Map<SliceKey, CellKey>; rigBoxes: RigBox[]; clips: RigClip[] }): AnimSnapshot {
+function cloneSnapshot(state: { animSettings: Map<SliceKey, SliceAnimSettings>; sliceMasks: Map<SliceKey, Set<CellKey>>; slicePivots: Map<SliceKey, CellKey>; rigBoxes: RigBox[]; clips: RigClip[]; model: VoxelModel }): AnimSnapshot {
   return {
     animSettings: cloneAnimSettings(state.animSettings),
     sliceMasks: cloneSliceMasks(state.sliceMasks),
     slicePivots: cloneSlicePivots(state.slicePivots),
     rigBoxes: state.rigBoxes.map((b) => ({ ...b, min: [...b.min] as Coord, max: [...b.max] as Coord, pivot: b.pivot ? ([...b.pivot] as Coord) : null, tweens: (b.tweens ?? []).map((t) => ({ ...t })) })),
     clips: cloneClips(state.clips),
+    // Reference-shared (never mutated in place — mutations always produce a new model
+    // object), so this is free. Present on every clone; the equality check below only
+    // treats it as a change when the baseline carried it AND the reference moved, so
+    // ordinary rig strokes never record junk entries for untouched voxels.
+    model: state.model,
   }
 }
 
@@ -119,6 +124,8 @@ export const createAnimationSlice: Slice = (set, get) => ({
       state.slicePivots = prev.slicePivots
       state.rigBoxes = prev.rigBoxes
       state.clips = prev.clips
+      // Part-move entries carry the voxel model so boxes and voxels undo as one gesture.
+      if (prev.model) state.model = prev.model
       // Undo can orphan the active clip or the selected key — stop transport and drop
       // dead selections rather than playing a degraded timeline.
       if (state.clipPlaying && !state.clips.some((c) => c.id === state.activeClipId)) {
@@ -147,6 +154,7 @@ export const createAnimationSlice: Slice = (set, get) => ({
       state.slicePivots = next.slicePivots
       state.rigBoxes = next.rigBoxes
       state.clips = next.clips
+      if (next.model) state.model = next.model
       if (state.clipPlaying && !state.clips.some((c) => c.id === state.activeClipId)) {
         state.clipPlaying = false
       }
@@ -259,6 +267,9 @@ function clipsEqual(a: RigClip[], b: RigClip[]): boolean {
   return true
 }
 
-function snapshotsEqual(a: AnimSnapshot, b: { animSettings: Map<SliceKey, SliceAnimSettings>; sliceMasks: Map<SliceKey, Set<CellKey>>; slicePivots: Map<SliceKey, CellKey>; rigBoxes: RigBox[]; clips: RigClip[] }): boolean {
+function snapshotsEqual(a: AnimSnapshot, b: { animSettings: Map<SliceKey, SliceAnimSettings>; sliceMasks: Map<SliceKey, Set<CellKey>>; slicePivots: Map<SliceKey, CellKey>; rigBoxes: RigBox[]; clips: RigClip[]; model: VoxelModel }): boolean {
+  // The model rides every clone by reference, but only counts as a change when the stroke
+  // actually replaced it — ordinary rig strokes leave the reference alone and stay quiet.
+  if (a.model !== undefined && a.model !== b.model) return false
   return mapsEqual(a.animSettings, b.animSettings) && sliceMasksEqual(a.sliceMasks, b.sliceMasks) && slicePivotsEqual(a.slicePivots, b.slicePivots) && rigBoxesEqual(a.rigBoxes, b.rigBoxes) && clipsEqual(a.clips, b.clips)
 }

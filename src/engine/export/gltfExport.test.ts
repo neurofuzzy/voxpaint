@@ -466,6 +466,67 @@ describe('exportModelToGlb rig boxes', () => {
     expect(meshTranslation(torsoMesh)).toEqual([0, -1, 0])
   })
 
+  it('bakes the assembly pose into the joint base transforms when enabled', async () => {
+    const boxes: RigBox[] = [
+      { id: 'part-id', name: 'part', min: [0, 0, 0] as [number, number, number], max: [0, 0, 0] as [number, number, number], parentId: null, pivot: null },
+      { id: 'tip-id', name: 'tip', min: [2, 0, 0] as [number, number, number], max: [2, 0, 0] as [number, number, number], parentId: 'part-id', pivot: null },
+    ]
+    const clip: RigClip = {
+      id: 'clip-id', name: 'asm', loop: false, duration: 1,
+      keys: [{ id: 'k0', name: 'Key 1', time: 0, ease: 'inOut', joints: {}, offsets: { 'part-id': [1, 0, 0], 'tip-id': [0, 2, 0] } }],
+    }
+    const json = glbJson(
+      await exportModelToGlb(limbModel(), DEFAULT_PALETTE, 16, undefined, {
+        includeTextureMaps: false, rigBoxes: boxes, animationMode: 'poses', clips: [clip],
+        bakeAssemblyPose: true, assemblyClipId: 'clip-id', includeAnimations: true,
+      }),
+    )
+    const nodes = namedNodes(json)
+    // Hand-derived from jointLocalDecomposed (T(−parentPivot)·parent⁻¹·self·T(pivot)):
+    // part: T([1,0,0])·T([0.5,0.5,0.5]); tip: T(−0.5)·T(−1,0,0)·T(1,2,0)·T(2.5,0.5,0.5).
+    expect(translationOf(nodes, 'part')).toEqual([1.5, 0.5, 0.5])
+    expect(translationOf(nodes, 'tip')).toEqual([2, 2, 0])
+    // The clip still exports (its t=0 matches the baked base, so there is no pop).
+    expect((json.animations ?? []).map((a) => a.name)).toContain('asm')
+  })
+
+  it('falls back to the first clip for an unknown assembly id, and to bind with no clips', async () => {
+    const boxes: RigBox[] = [
+      { id: 'part-id', name: 'part', min: [0, 0, 0] as [number, number, number], max: [0, 0, 0] as [number, number, number], parentId: null, pivot: null },
+    ]
+    const clip: RigClip = {
+      id: 'clip-id', name: 'asm', loop: false, duration: 1,
+      keys: [{ id: 'k0', name: 'Key 1', time: 0, ease: 'inOut', joints: {}, offsets: { 'part-id': [1, 0, 0] } }],
+    }
+    const opts = {
+      includeTextureMaps: false, rigBoxes: boxes, animationMode: 'poses' as const, clips: [clip],
+      bakeAssemblyPose: true, includeAnimations: false,
+    }
+    const fallback = glbJson(await exportModelToGlb(limbModel(), DEFAULT_PALETTE, 16, undefined, { ...opts, assemblyClipId: 'nope' }))
+    expect(translationOf(namedNodes(fallback), 'part')).toEqual([1.5, 0.5, 0.5])
+    const bind = glbJson(await exportModelToGlb(limbModel(), DEFAULT_PALETTE, 16, undefined, { ...opts, clips: [] }))
+    expect(translationOf(namedNodes(bind), 'part')).toEqual([0, 0, 0])
+  })
+
+  it('leaves the bind base transforms alone when assembly baking is off', async () => {
+    const boxes: RigBox[] = [
+      { id: 'part-id', name: 'part', min: [0, 0, 0] as [number, number, number], max: [0, 0, 0] as [number, number, number], parentId: null, pivot: null },
+      { id: 'tip-id', name: 'tip', min: [2, 0, 0] as [number, number, number], max: [2, 0, 0] as [number, number, number], parentId: 'part-id', pivot: null },
+    ]
+    const clip: RigClip = {
+      id: 'clip-id', name: 'asm', loop: false, duration: 1,
+      keys: [{ id: 'k0', name: 'Key 1', time: 0, ease: 'inOut', joints: {}, offsets: { 'part-id': [1, 0, 0], 'tip-id': [0, 2, 0] } }],
+    }
+    const json = glbJson(
+      await exportModelToGlb(limbModel(), DEFAULT_PALETTE, 16, undefined, {
+        includeTextureMaps: false, rigBoxes: boxes, animationMode: 'poses', clips: [clip], includeAnimations: false,
+      }),
+    )
+    const nodes = namedNodes(json)
+    expect(translationOf(nodes, 'part')).toEqual([0, 0, 0])
+    expect(translationOf(nodes, 'tip')).toEqual([2, 0, 0])
+  })
+
   it('excludes rigged voxels from slice nodes (rig wins)', async () => {
     const animSettings = new Map([
       [encodeSliceKey('z', 0), { ...defaultAnimationSettings(), animationType: 'rotate-cw' as const }],

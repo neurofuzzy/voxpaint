@@ -10,7 +10,7 @@ import type { BoxFace, TexelScale, TextureModel } from '@/engine/texture/types'
 import type { TexelClip } from '@/engine/texture/texelOps'
 import type { SliceAnimSettings, SliceKey } from '@/engine/animation/types'
 
-export type ToolId = 'paint' | 'erase' | 'eyedropper' | 'select' | 'fill' | 'move' | 'material' | 'pivot' | 'textureface' | 'marker' | 'wand' | 'rigbox' | 'pose'
+export type ToolId = 'paint' | 'erase' | 'eyedropper' | 'select' | 'fill' | 'move' | 'material' | 'pivot' | 'textureface' | 'marker' | 'wand' | 'rigbox' | 'pose' | 'offset'
 export type VoxelKind = 'cube' | 'ramp' | 'convex' | 'concave' | 'wedge' | 'thin' | 'half' | 'post' | 'quarter' | 'flat' | 'flatwedge'
 
 export type SelectionRegion = {
@@ -346,6 +346,10 @@ export type ViewSlice = {
   /** GLTF export: emit animation clips for slice loops, tween stacks, and the pose cycle
    * (default true). Off exports the same joint/node structure posed at bind. */
   exportIncludeAnimations: boolean
+  /** GLTF export: bake the assembly pose (the first clip's initial keyframe) into the
+   * joints' base transforms (default false). With animations on, clips still export — they
+   * start from that same key, so there is no pop. */
+  exportBakeAssemblyPose: boolean
   setFullscreen: (v: boolean) => void
   /** Sets the pane layout. Requests for 3D-only outside Model mode land on split instead —
    * Animate/Texture have no 3D-only editing surface. Model-mode changes also record Model's
@@ -387,6 +391,7 @@ export type ViewSlice = {
   setExportIncludeAOMaps: (v: boolean) => void
   setExportIncludeMarkers: (v: boolean) => void
   setExportIncludeAnimations: (v: boolean) => void
+  setExportBakeAssemblyPose: (v: boolean) => void
 }
 
 export type PersistenceSlice = {
@@ -569,6 +574,23 @@ export type MoveActionsSlice = {
   transformWholeModel: (kind: SelectionTransformKind) => void
 }
 
+/** Animate-mode "move the part" gesture: dragging a rig-box footprint relocates the box, its
+ * whole subtree, AND the voxels inside them as one part (bind edit, not a pose). One
+ * Animate-stack undo entry carries boxes + voxels together (see AnimSnapshot.model). */
+export type PartMoveActionsSlice = {
+  /** Freezes the occupied cells inside the box's subtree volumes and opens the undo stroke.
+   * Returns false on unknown ids (no gesture armed). Bakes any pending float first. */
+  beginPartMove: (id: string) => boolean
+  /** Live-translates the frozen cells and the boxes by the absolute world-space `delta` from
+   * the drag start, shrunk to the largest shift fitting everything in the working cube.
+   * Overlap fuses on drop: covered cells are stashed and restored while scrubbing, so the
+   * drag itself never loses anything. Repeat calls with the same effective shift are no-ops. */
+  updatePartMove: (delta: Coord) => void
+  /** Ends the part-move drag and commits the single undo entry (nothing recorded when the
+   * drag never moved). */
+  endPartMove: () => void
+}
+
 /** The top-level authoring mode. `model` = voxel modeling (the original app); `animate` = per-slice
  * animation assignment (same 2D/3D views as model, animation palette instead of color palette);
  * `texture` = box-mapped surface texturing. The one shared switch every mode-aware component keys off. */
@@ -704,13 +726,18 @@ export type UiSlice = {
 }
 
 /** One Animate-mode undo/redo snapshot: animation settings, mask paint state, pivots,
- * rigging boxes, and keyframe clips travel together. */
+ * rigging boxes, and keyframe clips travel together. A part-move drag additionally carries
+ * the voxel model (only then): box and voxel writes undo as one gesture, since undo is
+ * mode-routed and a split-brain entry would strand half the move a mode-switch away. */
 export type AnimSnapshot = {
   animSettings: Map<SliceKey, SliceAnimSettings>
   sliceMasks: Map<SliceKey, Set<CellKey>>
   slicePivots: Map<SliceKey, CellKey>
   rigBoxes: RigBox[]
   clips: RigClip[]
+  /** Pre-gesture voxel model, present only on part-move entries (reference-shared, never
+   * mutated in place — same discipline as HistorySlice baselines). */
+  model?: VoxelModel
 }
 
 export type MarkerSlice = {
@@ -840,6 +867,10 @@ export type PoseSlice = {
   /** Deletes a clip (clears the active/selected key when they pointed into it).
    * Self-brackets undo. */
   deleteClip: (id: string) => void
+  /** Reorders the clip list by drag: `before`/`after` land beside the target row, `null`
+   * target appends at the end. Order matters — the first clip supplies the assembly pose
+   * on export. Session selection is untouched. Self-brackets undo. */
+  moveClip: (dragId: string, targetId: string | null, position: 'before' | 'after') => void
   /** Patches a clip's loop flag and/or duration (seconds, snapped to 1/30 s; a looping
    * clip holds ≥ last key + one frame). Self-brackets undo. */
   patchClip: (id: string, patch: { loop?: boolean; duration?: number }) => void
@@ -848,6 +879,10 @@ export type PoseSlice = {
   setActiveClip: (id: string | null) => void
   /** Selects the key under edit (no-op on unknown ids). Session-only. */
   setSelectedKey: (id: string | null) => void
+  /** Guarantees a key under edit for a pointer grab: no-op when one is selected,
+   * otherwise selects the active (else first) clip's first key, creating the assembly
+   * clip when none exists. Returns false only if that fails. */
+  ensureKeyframeSelected: () => boolean
   /** Starts/stops clip transport (play resumes from `clipTime ?? 0`; pause freezes the
    * playhead there as a number). */
   setClipPlaying: (playing: boolean) => void
@@ -869,10 +904,22 @@ export type PoseSlice = {
    * Brackets through the nesting-aware stroke like `patchTween`: UI pointer-down → N
    * updates → pointer-up records ONE undo entry, while a lone call records exactly one. */
   setKeyJoint: (clipId: string, keyId: string, jointId: string, euler: JointEuler) => void
-  /** Writes one root offset of a keyframe in voxels (hip bob, crouch — roots only, like
-   * the old per-pose offsets; no-op on unknown or non-root ids; near-zero collapses to
-   * absent). Same stroke bracketing as `setKeyJoint`. */
+  /** Writes one offset of a keyframe in voxels (hip bob, crouch, assembly shifts — any
+   * box; a child shift composes inside its parent's chain. No-op on unknown ids;
+   * near-zero collapses to absent). Same stroke bracketing as `setKeyJoint`. */
   setKeyOffset: (clipId: string, keyId: string, jointId: string, offset: Coord) => void
+  /** Starts an offset drag on a box: snapshots the key's current offset and opens one
+   * undo stroke (self-heals the key selection first, like gizmo grabs). No-op false on
+   * unknown boxes. Offsets live in keyframes — edits land in the key under edit. */
+  beginOffsetMove: (id: string) => boolean
+  /** Live-translates the dragged box's offset by the absolute world-space `delta` from
+   * the drag start. The written total snaps to the third-step lattice live, so the 2D
+   * drag visibly steps through thirds (the release snap is then a no-op safety net).
+   * Repeat calls with the same delta are no-ops. */
+  updateOffsetMove: (delta: Coord) => void
+  /** Ends the offset drag: snaps to the third-step lattice and commits the single undo
+   * entry (nothing recorded when the drag never moved). */
+  endOffsetMove: () => void
   /** Duplicates a keyframe (same pose, one frame later, clamped; name uniquified) and
    * selects the copy. Self-brackets undo. Returns the new id, or null on unknown ids. */
   duplicateKey: (clipId: string, keyId: string) => string | null
@@ -899,6 +946,7 @@ export type AppState = ProjectSlice &
   PaintActionsSlice &
   ToolActionsSlice &
   MoveActionsSlice &
+  PartMoveActionsSlice &
   ModeSlice &
   TextureSlice &
   AnimationSlice &

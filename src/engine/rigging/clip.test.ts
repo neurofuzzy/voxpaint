@@ -301,7 +301,7 @@ describe('evaluateClip', () => {
     expect(evaluateClip([], half, 1).rot.get('arm')![1]).toBeCloseTo(Math.PI / 4, 5)
   })
 
-  it('lerps root offsets and ignores non-root offsets', () => {
+  it('lerps offsets on every box, children included', () => {
     const boxes = [box('hips'), box('shin', 'hips')]
     const clip: RigClip = {
       id: 'c',
@@ -315,7 +315,8 @@ describe('evaluateClip', () => {
     }
     const mid = evaluateClip(boxes, clip, 1)
     expect(mid.off.get('hips')).toEqual([0, 1, 0])
-    expect(mid.off.has('shin')).toBe(false)
+    // A child shift composes inside its parent's chain — kept, lerped from its k0 value.
+    expect(mid.off.get('shin')).toEqual([0, 2.5, 2.5])
   })
 
   it('yields an empty frame for an empty clip', () => {
@@ -423,7 +424,7 @@ describe('sampleKeyPayload', () => {
     expect(sampleKeyPayload([], clip, 1).joints).toEqual({ arm: [0, 0.4, 0] })
   })
 
-  it('carries root offsets through the sample', () => {
+  it('carries offsets through the sample', () => {
     const clip: RigClip = {
       id: 'clip',
       name: 'bob',

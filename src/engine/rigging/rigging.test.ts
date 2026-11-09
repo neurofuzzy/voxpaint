@@ -5,7 +5,7 @@ import { pixelFromGridCoord } from '@/engine/plane/constructionPlane'
 import { toDisplayU, toDisplayV } from '@/engine/plane/planeDisplay'
 import type { ConstructionPlane } from '@/engine/plane/types'
 import type { RigBox } from './types'
-import { boxSliceFootprint, moveRigBoxInList, placePivotOnPlane, rigDepthOf, rigIdForCoord, rigPivotLinks, rigPivotOf, rigSubtreeIds, snapHalf, translateRigSubtree } from './types'
+import { boxSliceFootprint, clampPartDelta, composedKeyOffset, moveRigBoxInList, placePivotOnPlane, posedBoxSliceFootprint, rigDepthOf, rigIdForCoord, rigPivotLinks, rigPivotOf, rigSubtreeIds, snapHalf, translateRigSubtree } from './types'
 
 const box = (id: string, parentId: string | null = null): RigBox => ({
   id,
@@ -216,6 +216,35 @@ describe('translateRigSubtree', () => {
   })
 })
 
+describe('clampPartDelta', () => {
+  it('passes through a shift that fits every moved box and voxel', () => {
+    const boxes: RigBox[] = [{ ...box('a'), min: [0, 0, 0], max: [1, 1, 1] }]
+    expect(clampPartDelta(boxes, 'a', [[0, 0, 0], [1, 1, 1]], [2, -1, 0], 16)).toEqual([2, -1, 0])
+  })
+
+  it('shrinks to fit the tightest box bound', () => {
+    const boxes: RigBox[] = [{ ...box('a'), min: [5, 0, 0], max: [6, 0, 0] }]
+    // +5 requested, only +1 fits before max hits the working-cube edge (hi = 7).
+    expect(clampPartDelta(boxes, 'a', [], [5, 0, 0], 16)).toEqual([1, 0, 0])
+  })
+
+  it('shrinks to fit a voxel sticking out past its box', () => {
+    // Boxes are binding volumes; voxels are the real payload — a voxel outside the box
+    // still constrains the shared shift so boxes and voxels never desync.
+    const boxes: RigBox[] = [{ ...box('a'), min: [0, 0, 0], max: [1, 1, 1] }]
+    expect(clampPartDelta(boxes, 'a', [[6, 0, 0]], [5, 0, 0], 16)).toEqual([1, 0, 0])
+  })
+
+  it('only constrains on the moved subtree, per axis independently', () => {
+    const boxes: RigBox[] = [
+      { ...box('a'), min: [6, 0, 0], max: [6, 0, 0] },
+      { ...box('b'), min: [-8, 0, 0], max: [-8, 0, 0] },
+    ]
+    // 'a' may only move +1 on x (edge at 7); y is free; 'b' is uninvolved and ignored.
+    expect(clampPartDelta(boxes, 'a', [], [5, 3, 0], 16)).toEqual([1, 3, 0])
+  })
+})
+
 describe('snapHalf', () => {
   it('rounds to the half-step lattice', () => {
     expect(snapHalf(1.2)).toBe(1)
@@ -297,5 +326,43 @@ describe('sanitizeKeyJoints / sanitizeKeyOffsets', () => {
     expect(sanitizeKeyOffsets({ hips: [0, 1.5, 0] })).toEqual({ hips: [0, 1.5, 0] })
     expect(sanitizeKeyOffsets({ hips: [0, NaN, 0] })).toBeUndefined()
     expect(sanitizeKeyOffsets(undefined)).toBeUndefined()
+  })
+})
+
+describe('composedKeyOffset / posedBoxSliceFootprint', () => {
+  const plane: ConstructionPlane = { axis: 'z', orientation: 1, offset: 0 }
+
+  it('sums a box’s own offset with its ancestors’ (roots ride along)', () => {
+    const boxes = [box('root'), box('mid', 'root'), box('leaf', 'mid')]
+    const offsets = { root: [1, 0, 0] as Coord, leaf: [0, 0.5, 0] as Coord }
+    expect(composedKeyOffset(boxes, boxes[2], offsets)).toEqual([1, 0.5, 0])
+    expect(composedKeyOffset(boxes, boxes[1], offsets)).toEqual([1, 0, 0])
+    expect(composedKeyOffset(boxes, boxes[0], offsets)).toEqual([1, 0, 0])
+  })
+
+  it('is zero without offsets and immune to parent cycles', () => {
+    const boxes = [box('root'), box('mid', 'root')]
+    expect(composedKeyOffset(boxes, boxes[1])).toEqual([0, 0, 0])
+    expect(composedKeyOffset(boxes, boxes[1], {})).toEqual([0, 0, 0])
+    const cyclic = [box('a', 'b'), box('b', 'a')]
+    expect(composedKeyOffset(cyclic, cyclic[0], { a: [1, 0, 0] })).toEqual([1, 0, 0])
+  })
+
+  it('shifts the footprint by the composed offset, exactly like a moved bind box', () => {
+    const boxes = [box('root'), box('leaf', 'root')]
+    boxes[1].min = [2, 0, 0]
+    boxes[1].max = [3, 1, 0]
+    // z-plane: display u = x, footprint covers x 2..4.
+    expect(posedBoxSliceFootprint(boxes, boxes[1], plane, undefined)).toEqual(boxSliceFootprint(boxes[1], plane))
+    const shifted = posedBoxSliceFootprint(boxes, boxes[1], plane, { leaf: [1, 0, 0] })
+    const movedBox: RigBox = { ...boxes[1], min: [3, 0, 0], max: [4, 1, 0] }
+    expect(shifted).toEqual(boxSliceFootprint(movedBox, plane))
+  })
+
+  it('returns null when the offset carries the box off the slice', () => {
+    const boxes = [box('a')]
+    expect(posedBoxSliceFootprint(boxes, boxes[0], plane, undefined)).not.toBeNull()
+    // Box spans z 0..1; shifting +2 in z leaves slice 0 behind.
+    expect(posedBoxSliceFootprint(boxes, boxes[0], plane, { a: [0, 0, 2] })).toBeNull()
   })
 })

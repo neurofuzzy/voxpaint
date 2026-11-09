@@ -23,14 +23,15 @@ const TOOLS: Array<{ id: ToolId; label: string; icon: typeof Brush; hint: string
  * loops still play back for old files, but only whole-slice. */
 const ANIMATE_TOOLS: Record<AnimateTab, Array<{ id: ToolId; label: string; icon: typeof Brush; hint: string }>> = {
   rig: [
-    { id: 'rigbox', label: 'Rig Box', icon: Bone, hint: 'click a voxel to box its color-connected region · click a box to select it · drag a box to move it on this slice · hold Alt for Pivot' },
+    { id: 'rigbox', label: 'Rig Box', icon: Bone, hint: 'click a voxel to box its color-connected region · click a box to select it · drag a box to move its part — box, subtree and voxels travel together · hold Alt for Pivot' },
     { id: 'pivot', label: 'Pivot Point', icon: Pin, hint: 'click: place pivot on the half-grid · rotate the plane for depth · right-click: reset to center' },
   ],
   tweens: [
     { id: 'select', label: 'Select', icon: MousePointerClick, hint: 'click a box to select it — edit its motion in the Tweens tab' },
   ],
   poses: [
-    { id: 'pose', label: 'Pose', icon: Rotate3d, hint: 'drag a ring to rotate the selected joint about one axis · edits land in the selected keyframe' },
+    { id: 'pose', label: 'Rotate', icon: Rotate3d, hint: 'drag a ring to rotate the selected joint about one axis · edits land in the selected keyframe' },
+    { id: 'offset', label: 'Offset', icon: Move, hint: 'drag an arrow to move the selected joint along one axis · edits land in the selected keyframe' },
   ],
 }
 

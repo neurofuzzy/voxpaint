@@ -6,9 +6,11 @@ describe('resolveGestureTool', () => {
     expect(resolveGestureTool('animate', 'rigbox', true)).toBe('pivot')
   })
 
-  it('springs the pose tool to pivot too', () => {
+  it('springs the pose and offset tools to pivot too', () => {
     expect(resolveGestureTool('animate', 'pose', true)).toBe('pivot')
     expect(resolveGestureTool('animate', 'pose', false)).toBe('pose')
+    expect(resolveGestureTool('animate', 'offset', true)).toBe('pivot')
+    expect(resolveGestureTool('animate', 'offset', false)).toBe('offset')
   })
 
   it('is the identity without Alt', () => {

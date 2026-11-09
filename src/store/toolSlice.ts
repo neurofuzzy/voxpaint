@@ -31,7 +31,7 @@ export const createToolSlice: Slice = (set, get) => ({
     // Posing an invisible model is meaningless — Hidden blanks exactly the voxels that
     // move (boxes, pivots, and the gizmo stay frozen), so entering Pose mode lifts the
     // view to Ghost, which exists precisely to read rigs through the model.
-    if (tool === 'pose' && get().mode === 'animate' && get().animateModelView === 'hidden') {
+    if ((tool === 'pose' || tool === 'offset') && get().mode === 'animate' && get().animateModelView === 'hidden') {
       get().setAnimateModelView('ghost')
       showToast('Model view switched to Ghost — posing needs the model visible')
     }

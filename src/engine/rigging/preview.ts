@@ -28,7 +28,7 @@ export type PreviewInput = {
 /**
  * One evaluated animation instant: the composed world matrix per box, the joint
  * rotations that produced it (empty in tweens mode — poses never evaluate there),
- * and the root translation offsets in voxels (empty likewise; sparse like the key).
+ * and the translation offsets in voxels (empty likewise; sparse like the key).
  */
 export type PreviewFrame = {
   worlds: Map<string, THREE.Matrix4>
@@ -59,14 +59,12 @@ export function previewFrame(state: PreviewInput, nowSeconds: number): PreviewFr
     return { worlds: composePoseMatrices(state.rigBoxes, frame.rot, frame.off), pose: frame.rot, off: frame.off }
   }
   const selected = clip?.keys.find((k) => k.id === state.selectedKeyId)
-  const roots = new Set<string>()
-  for (const b of state.rigBoxes) if (b.parentId == null) roots.add(b.id)
   const pose = new Map(Object.entries(selected?.joints ?? {})) as Map<string, JointEuler>
-  // Key offsets evaluate roots-only (see evaluateClip) — filter the same way so the
-  // selected-key preview agrees with the playing clip exactly.
+  // Selected-key offsets apply to every box (assembly lives on children) — kept verbatim
+  // so the preview agrees with the playing clip exactly.
   const off = new Map<string, Coord>()
   for (const [id, o] of Object.entries(selected?.offsets ?? {})) {
-    if (roots.has(id)) off.set(id, [o[0], o[1], o[2]])
+    off.set(id, [o[0], o[1], o[2]])
   }
   return { worlds: composePoseMatrices(state.rigBoxes, pose, off), pose, off }
 }

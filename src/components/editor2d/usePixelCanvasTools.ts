@@ -23,6 +23,9 @@ import {
 
 const PAN_DRAG_THRESHOLD_PX = 3
 
+/** Stable empty for the selected-key offsets selector below (keeps the ref identical when no key is under edit). */
+const EMPTY_KEY_OFFSETS: Record<string, [number, number, number]> = {}
+
 /** Screen pixel -> logical (model-space) grid cell. `toDisplayU`/`toDisplayV` are involutory, so
  * applying them again here converts the *displayed* u/v (what's visually under the cursor,
  * post-mirroring) back to the logical u/v the rest of the app (tool handlers, gridCoordFromPixel)
@@ -210,6 +213,9 @@ export function usePixelCanvasTools(canvasRef: React.RefObject<HTMLCanvasElement
   const selectedMarkerId = useAppStore((s) => s.selectedMarkerId)
   const rigBoxes = useAppStore((s) => s.rigBoxes)
   const selectedRigBoxId = useAppStore((s) => s.selectedRigBoxId)
+  // The keyframe under edit's per-box offsets — tools shift footprints by the composed
+  // offset so 2D hit-testing agrees with the 3D preview about where an offset box is.
+  const keyOffsets = useAppStore((s) => s.clips.find((c) => c.id === s.activeClipId)?.keys.find((k) => k.id === s.selectedKeyId)?.offsets ?? EMPTY_KEY_OFFSETS)
   vScaleRef.current = vScaleForPlane(plane.axis, voxelScaleY)
 
   const activeToolRef = useRef(activeTool)
@@ -299,8 +305,15 @@ export function usePixelCanvasTools(canvasRef: React.RefObject<HTMLCanvasElement
     applyRigBoxAt: store.applyRigBoxAt,
     rigBoxes,
     selectedRigBoxId,
+    keyOffsets,
     selectRigBox: store.selectRigBox,
     translateRigBox: store.translateRigBox,
+    beginPartMove: store.beginPartMove,
+    updatePartMove: store.updatePartMove,
+    endPartMove: store.endPartMove,
+    beginOffsetMove: store.beginOffsetMove,
+    updateOffsetMove: store.updateOffsetMove,
+    endOffsetMove: store.endOffsetMove,
     liftSelectionToFloat: store.liftSelectionToFloat,
     moveFloatTo: store.moveFloatTo,
     transformFloat: store.transformFloat,
@@ -328,10 +341,11 @@ export function usePixelCanvasTools(canvasRef: React.RefObject<HTMLCanvasElement
       const pos = activeTouchesRef.current.get(pointerId)
       if (!canvas || !pos) return
       const cell = pixelToCell(canvas, pos.clientX, pos.clientY, sizeRef.current, panRef.current, zoomRef.current, ctxRef.current.plane, vScaleRef.current)
-      const normalized = toNormalizedPointerEvent(
+      const [fcu, fcv] = pixelToDisplayFloat(canvas, pos.clientX, pos.clientY, sizeRef.current, panRef.current, zoomRef.current, vScaleRef.current)
+      const normalized = { ...toNormalizedPointerEvent(
         { button: 0, buttons: 0, shiftKey: false, altKey: false, ctrlKey: false, metaKey: false, pointerId },
         cell,
-      )
+      ), cu: fcu, cv: fcv }
       const store = useAppStore.getState()
       const map = store.mode === 'animate' ? animateToolMap : toolMap
       const downTool = gestureToolRef.current.get(pointerId) ?? activeToolRef.current
@@ -480,7 +494,11 @@ export function usePixelCanvasTools(canvasRef: React.RefObject<HTMLCanvasElement
       // buttons held is stale (e.g. a swallowed pointerup) so it is dropped.
       if (e.buttons === 0) gestureToolRef.current.delete(e.pointerId)
       const moveTool = e.buttons === 0 ? activeToolRef.current : (gestureToolRef.current.get(e.pointerId) ?? activeToolRef.current)
-      map[moveTool]?.onMove?.(ctxRef.current, toNormalizedPointerEvent(e, cell))
+      // Continuous display position rides every move (not just the press): sub-cell tools
+      // (the Offset tool's fractional drag) need the travel between cells, not just the
+      // cell the pointer happens to be over.
+      const [mcu, mcv] = pixelToDisplayFloat(canvas, e.clientX, e.clientY, size, pan, zoom, vScaleRef.current)
+      map[moveTool]?.onMove?.(ctxRef.current, { ...toNormalizedPointerEvent(e, cell), cu: mcu, cv: mcv })
     },
     [canvasRef, size, pan, zoom, setHoverCell, gridExtent],
   )
@@ -562,7 +580,8 @@ export function usePixelCanvasTools(canvasRef: React.RefObject<HTMLCanvasElement
       // (or pressing it after) must not reroute the tail of a pin/drag to the other tool.
       const upTool = gestureToolRef.current.get(e.pointerId) ?? activeToolRef.current
       gestureToolRef.current.delete(e.pointerId)
-      map[upTool]?.onUp?.(ctxRef.current, toNormalizedPointerEvent(e, cell))
+      const [ucu, ucv] = pixelToDisplayFloat(canvas, e.clientX, e.clientY, size, pan, zoom, vScaleRef.current)
+      map[upTool]?.onUp?.(ctxRef.current, { ...toNormalizedPointerEvent(e, cell), cu: ucu, cv: ucv })
       canvas.releasePointerCapture(e.pointerId)
     },
     [canvasRef, size, pan, zoom],

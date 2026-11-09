@@ -3,7 +3,7 @@ import type { Axis, Coord, Orientation } from '@/engine/grid/types'
 import type { ConstructionPlane } from './types'
 import { gridCoordFromPixel, pixelFromGridCoord } from './constructionPlane'
 import { axisIndex } from './planeGeometry'
-import { displayPointForGridPoint, displayViewCenter, toDisplayGridlineU, toDisplayGridlineV, toDisplayU, toDisplayV } from './planeDisplay'
+import { displayPointForGridPoint, displayViewCenter, toDisplayGridlineU, toDisplayGridlineV, toDisplayU, toDisplayV, worldDeltaFromDisplayDelta } from './planeDisplay'
 
 const AXES: Axis[] = ['x', 'y', 'z']
 const ORIENTATIONS: Orientation[] = [1, -1]
@@ -136,5 +136,35 @@ describe('displayPointForGridPoint', () => {
     expect(displayPointForGridPoint(fwd, [2, 0.5, 0.5]).u).toBe(2)
     const mir: ConstructionPlane = { axis: 'z', orientation: -1, offset: 0 }
     expect(displayPointForGridPoint(mir, [2, 0.5, 0.5]).u).toBe(-2)
+  })
+})
+
+describe('worldDeltaFromDisplayDelta', () => {
+  it('maps display travel to world travel on every plane/orientation, agreeing with the integer cell path', () => {
+    for (const axis of AXES) {
+      for (const orientation of ORIENTATIONS) {
+        const plane: ConstructionPlane = { axis, orientation, offset: 0 }
+        // A two-by-three display-cell drag, evaluated continuously, must match the integer
+        // cell path between the same two display endpoints (un-mirrored back to logical).
+        const frac = worldDeltaFromDisplayDelta(plane, 2, 3)
+        const from = gridCoordFromPixel(plane, toDisplayU(plane, 10), toDisplayV(plane, 10))
+        const to = gridCoordFromPixel(plane, toDisplayU(plane, 12), toDisplayV(plane, 13))
+        // gridCoordFromPixel bakes the offset axis in; deltas cancel it.
+        expect([frac[0], frac[1], frac[2]]).toEqual([to[0] - from[0], to[1] - from[1], to[2] - from[2]])
+      }
+    }
+  })
+
+  it('is fractional and offset-axis-free on the z-plane', () => {
+    expect(worldDeltaFromDisplayDelta({ axis: 'z', orientation: 1, offset: 5 }, 0.5, -0.25)).toEqual([0.5, 0.25, 0])
+    expect(worldDeltaFromDisplayDelta({ axis: 'z', orientation: -1, offset: 5 }, 0.5, -0.25)).toEqual([-0.5, 0.25, 0])
+  })
+
+  it('un-flips mirrored axes instead of following the screen', () => {
+    // x-plane u runs straight at orientation 1 (u -> -z, so display +1 lands on world -z)
+    // and mirrors at orientation -1; v runs straight down into world -y either way.
+    expect(worldDeltaFromDisplayDelta({ axis: 'x', orientation: 1, offset: 0 }, 1, 0)).toEqual([0, 0, -1])
+    expect(worldDeltaFromDisplayDelta({ axis: 'x', orientation: -1, offset: 0 }, 1, 0)).toEqual([0, 0, 1])
+    expect(worldDeltaFromDisplayDelta({ axis: 'x', orientation: 1, offset: 0 }, 0, 1)).toEqual([0, -1, 0])
   })
 })

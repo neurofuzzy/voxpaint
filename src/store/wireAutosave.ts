@@ -70,7 +70,7 @@ const flush = debounce(() => {
       state.meta,
       state.texture,
       {
-        view: { ambientOcclusion: state.ambientOcclusion, noiseLevel: state.noiseLevel, specularNoiseLevel: state.specularNoiseLevel, noiseScale: state.noiseScale, aoStrength: state.aoStrength, glassRoughnessLevel: state.glassRoughnessLevel, exposure: state.exposure, exportScaleFactor: state.exportScaleFactor, exportAnchor: state.exportAnchor, exportAlignToObjectBounds: state.exportAlignToObjectBounds, exportDisableMeshOptimization: state.exportDisableMeshOptimization, exportCullInteriorFaces: state.exportCullInteriorFaces, exportIncludeTextureMaps: state.exportIncludeTextureMaps, exportIncludeAOMaps: state.exportIncludeAOMaps, exportIncludeMarkers: state.exportIncludeMarkers, exportIncludeAnimations: state.exportIncludeAnimations },
+        view: { ambientOcclusion: state.ambientOcclusion, noiseLevel: state.noiseLevel, specularNoiseLevel: state.specularNoiseLevel, noiseScale: state.noiseScale, aoStrength: state.aoStrength, glassRoughnessLevel: state.glassRoughnessLevel, exposure: state.exposure, exportScaleFactor: state.exportScaleFactor, exportAnchor: state.exportAnchor, exportAlignToObjectBounds: state.exportAlignToObjectBounds, exportDisableMeshOptimization: state.exportDisableMeshOptimization, exportCullInteriorFaces: state.exportCullInteriorFaces, exportIncludeTextureMaps: state.exportIncludeTextureMaps, exportIncludeAOMaps: state.exportIncludeAOMaps, exportIncludeMarkers: state.exportIncludeMarkers, exportIncludeAnimations: state.exportIncludeAnimations, exportBakeAssemblyPose: state.exportBakeAssemblyPose },
         animSettings: state.animSettings,
         sliceMasks: state.sliceMasks,
         slicePivots: state.slicePivots,

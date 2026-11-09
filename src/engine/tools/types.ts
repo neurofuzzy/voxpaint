@@ -1,4 +1,4 @@
-import type { GridExtent, VoxelModel } from '@/engine/grid/types'
+import type { Coord, GridExtent, VoxelModel } from '@/engine/grid/types'
 import type { Marker } from '@/engine/markers/types'
 import type { ConstructionPlane } from '@/engine/plane/types'
 import type { PaletteSlotRef } from '@/engine/palette/types'
@@ -45,8 +45,26 @@ export interface ToolContext {
   rigBoxes: RigBox[]
   selectedRigBoxId: string | null
   selectRigBox: (id: string | null) => void
-  /** Translates a box's whole subtree (no undo bracketing — the caller owns the stroke). */
+  /** The keyframe under edit's per-box offsets (empty when none) — 2D footprint hit-testing
+   * and drawing shift boxes by their composed offset so the editor agrees with the 3D
+   * preview about where an offset box is. Live store-backed, like `rigBoxes`. */
+  keyOffsets: Record<string, Coord>
+  /** Translates a box's whole subtree WITHOUT its voxels (binding-volume slide only — the
+   * part-move gesture below is the voxels-travel-along variant). No undo bracketing — the
+   * caller owns the stroke. */
   translateRigBox: (id: string, delta: [number, number, number]) => void
+  /** Part-move gesture (Animate mode): box + subtree + voxels travel as one part. The delta
+   * is absolute world-space from the drag start (the slice clamps it to the working cube). */
+  beginPartMove: (id: string) => boolean
+  updatePartMove: (delta: [number, number, number]) => void
+  endPartMove: () => void
+  /** Offset drag (Animate mode, Offset tool): the dragged box's keyframe offset follows the
+   * pointer in the slice plane. Absolute world-space delta from the drag start; the store
+   * snaps the written total to the third-step lattice live, so the drag visibly steps
+   * through thirds. Self-heals the key selection when none is under edit. */
+  beginOffsetMove: (id: string) => boolean
+  updateOffsetMove: (delta: [number, number, number]) => void
+  endOffsetMove: () => void
   animBeginStroke: () => void
   animCommitStroke: () => void
   beginMove: (wholeModel: boolean) => void
@@ -117,9 +135,15 @@ export type ToolDragState =
    * yet. A release here resolves to recolor-or-delete; leaving the start cell converts to a
    * `marker` move drag instead. */
   | { kind: 'marker-pending'; id: string; startU: number; startV: number }
-  /** Rig-box move drag (Animate mode): pointer went down on a box footprint and is sliding it
-   * across the slice. Coordinates are logical (u,v) cells; the offset-axis delta is always 0. */
-  | { kind: 'rig-move'; id: string; lastU: number; lastV: number }
+  /** Rig-box part-move gesture (Animate mode): pointer went down on a box footprint and is
+   * sliding its part across the slice. Start is the press cell in logical (u,v); moves pass
+   * the absolute world-space delta from there (offset-axis component always 0). */
+  | { kind: 'rig-move'; id: string; startU: number; startV: number }
+  /** Offset drag (Animate mode, Offset tool): pointer went down on a box footprint and is
+   * sliding its keyframe offset across the slice. Same absolute-delta semantics; startCu/
+   * startCv carry the press's continuous display position (absent on synthetic events, which
+   * fall back to whole-cell deltas) so sub-cell pointer motion yields fractional offsets. */
+  | { kind: 'offset-move'; id: string; startU: number; startV: number; startCu?: number; startCv?: number }
 
 export interface ToolHandler {
   onDown?(ctx: ToolContext, e: NormalizedPointerEvent): void

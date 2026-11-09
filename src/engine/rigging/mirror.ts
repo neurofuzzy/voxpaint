@@ -2,7 +2,7 @@ import type { Axis, Coord } from '@/engine/grid/types'
 import type { JointEuler } from './pose'
 import type { KeyJoints, KeyOffsets, RigBox } from './types'
 
-/** The joint data a keyframe owns (rotations plus optional root offsets). */
+/** The joint data a keyframe owns (rotations plus optional offsets). */
 export type MirrorableJoints = {
   joints: KeyJoints
   offsets?: KeyOffsets
@@ -72,7 +72,7 @@ function mirrorEuler(e: JointEuler, axis: Axis): JointEuler {
 }
 
 /**
- * Mirrors one root offset under the axis reflection: the axis component negates
+ * Mirrors one offset under the axis reflection: the axis component negates
  * (`x` → −x for the default axis), the others pass through. Pure.
  */
 function mirrorOffset(o: Coord, axis: Axis): Coord {
@@ -97,8 +97,8 @@ function mirrorOffset(o: Coord, axis: Axis): Coord {
  * only the mirrored right joint out). Sides present in the source (even explicit
  * bind) are always written, so mirroring twice restores the original exactly.
  *
- * Offsets (optional, roots only) follow the same pairing with the axis component
- * negated; `offsets` stays absent when the source had none. Every component passes
+  * Offsets follow the same pairing with the axis component negated; `offsets` stays
+ * absent when the source had none. Every component passes
  * through `norm`, so no -0 noise breaks a deep-equal double-mirror. Pure.
  */
 export function mirrorJoints(source: MirrorableJoints, boxes: RigBox[], axis: Axis = 'x'): MirrorableJoints {

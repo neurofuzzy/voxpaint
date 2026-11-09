@@ -10,8 +10,9 @@ export interface NormalizedPointerEvent {
   /**
    * Continuous display-space position of the pointer (pre-floor, same space `u`/`v` are
    * floored from) — sub-cell aim for tools that snap onto a finer lattice than cells, like
-   * pivot placement. Optional: only pointer-down dispatch fills it; tools fall back to the
-   * cell center when absent (e.g. synthetic/test events).
+   * pivot placement, or that drag fractionally, like the Offset tool's 2D drag. Pointer-down,
+   * -move, and -up dispatch all fill it; tools fall back to the cell center when absent
+   * (e.g. synthetic/test events).
    */
   cu?: number
   cv?: number

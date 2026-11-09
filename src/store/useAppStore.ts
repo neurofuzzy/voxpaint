@@ -14,6 +14,7 @@ import { createProjectSlice } from './projectSlice'
 import { createSelectionSlice } from './selectionSlice'
 import { createSelection3DSlice } from './selection3DSlice'
 import { createMoveActionsSlice } from './moveActions'
+import { createPartMoveActionsSlice } from './partMoveActions'
 import { createTextureSlice } from './textureSlice'
 import { createToolActionsSlice } from './toolActionsSlice'
 import { createToolSlice } from './toolSlice'
@@ -36,6 +37,7 @@ export const useAppStore = create<AppState>()(
     ...createPaintActionsSlice(...a),
     ...createToolActionsSlice(...a),
     ...createMoveActionsSlice(...a),
+    ...createPartMoveActionsSlice(...a),
     ...createModeSlice(...a),
     ...createTextureSlice(...a),
     ...createAnimationSlice(...a),

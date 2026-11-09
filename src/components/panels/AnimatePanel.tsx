@@ -907,13 +907,13 @@ function JointBlock({ boxName, euler, playing, onSetAxis, onReset }: {
 }
 
 /**
- * The selected root's offset editor: x/y/z steppers in voxels (0.25 step, ±8 — a
- * walk-cycle bob or idle sway), plus a zero-out reset. Roots only: offsets never
- * evaluate on children, so the block hides there (the joint block above still shows).
- * While the transport plays the rows hide behind a pause hint; reset still works
- * (it pauses and lands on the target first).
+ * The selected box's offset editor: x/y/z steppers in voxels (third-steps, ±8 — a
+ * walk-cycle bob, an idle sway, or an assembly shift bringing a separated part home),
+ * plus a zero-out reset. Offsets compose inside the parent chain, so children get the
+ * block too. While the transport plays the rows hide behind a pause hint; reset still
+ * works (it pauses and lands on the target first).
  */
-const OFFSET_STEP = 0.25
+const OFFSET_STEP = 1 / 3
 const OFFSET_MIN = -8
 const OFFSET_MAX = 8
 
@@ -1025,9 +1025,6 @@ function KeyframeCard({ clip, keyId }: { clip: RigClip; keyId: string }) {
 
   const box = rigBoxes.find((b) => b.id === selectedRigBoxId) ?? null
   const euler: JointEuler = box ? (key.joints[box.id] ?? [0, 0, 0]) : [0, 0, 0]
-  // Offsets are roots-only (children ride their parent's chain) — the offset block
-  // only shows on roots, matching the translate gizmo.
-  const isRoot = box !== null && box.parentId === null
   const offset: Coord = box && key.offsets?.[box.id] ? [...key.offsets[box.id]] as Coord : [0, 0, 0]
   // Scrubbed elsewhere: the viewport shows the playhead frame, but an edit pauses and
   // jumps onto this key — say so, so the jump never surprises.
@@ -1186,7 +1183,7 @@ function KeyframeCard({ clip, keyId }: { clip: RigClip; keyId: string }) {
         onSetAxis={(i, deg) => box && setAxis(box.id, i, deg)}
         onReset={() => box && editJoint(box.id, () => [0, 0, 0])}
       />
-      {isRoot && box && (
+      {box && (
         <OffsetBlock
           boxName={box.name}
           offset={offset}
@@ -1194,6 +1191,11 @@ function KeyframeCard({ clip, keyId }: { clip: RigClip; keyId: string }) {
           onSetAxis={(i, v) => setOffsetAxis(box.id, i, v)}
           onReset={() => editOffset(box.id, () => [0, 0, 0])}
         />
+      )}
+      {locked && (
+        <p className="text-[10px] leading-snug text-violet-300/80">
+          Assembly pose — arrange the parts here; export bakes the first animation’s Key 1 into the joints.
+        </p>
       )}
       {away && (
         <p className="text-[10px] leading-snug text-neutral-500">
@@ -1244,11 +1246,31 @@ function AnimationsSection() {
   const setActiveClip = useAppStore((s) => s.setActiveClip)
   const [editingId, setEditingId] = useState<string | null>(null)
   const [draft, setDraft] = useState('')
+  const moveClip = useAppStore((s) => s.moveClip)
+  const [dragId, setDragId] = useState<string | null>(null)
+  const [drop, setDrop] = useState<{ id: string; position: 'before' | 'after' } | null>(null)
 
   function commitRename(id: string) {
     if (draft.trim()) renameClip(id, draft)
     setEditingId(null)
     setDraft('')
+  }
+
+  /** Drop slot within a row: upper half lands before it, lower half after it. */
+  function positionFor(e: React.DragEvent): 'before' | 'after' {
+    const rect = (e.currentTarget as HTMLElement).getBoundingClientRect()
+    return (e.clientY - rect.top) / rect.height < 0.5 ? 'before' : 'after'
+  }
+
+  function commitDrop(targetId: string | null, position: 'before' | 'after') {
+    if (!dragId) return
+    if (targetId === null) {
+      moveClip(dragId, null, 'after')
+    } else if (targetId !== dragId) {
+      moveClip(dragId, targetId, position)
+    }
+    setDragId(null)
+    setDrop(null)
   }
 
   return (
@@ -1278,22 +1300,64 @@ function AnimationsSection() {
           </span>
         </button>
       ) : (
-        <ul className="flex flex-col gap-1">
-          {clips.map((c) => {
+        <ul
+          className="flex flex-col gap-1"
+          onDragOver={(e) => {
+            if ((e.target as HTMLElement).closest('li')) return
+            e.preventDefault()
+          }}
+          onDrop={(e) => {
+            e.preventDefault()
+            if (!(e.target as HTMLElement).closest('li')) commitDrop(null, 'after')
+          }}
+        >
+          {clips.map((c, i) => {
             const active = c.id === activeClipId
             const frames = Math.max(1, Math.round(c.duration * fps))
+            const dropHere = drop?.id === c.id ? drop.position : null
             return (
               <li
                 key={c.id}
                 className={
                   'flex flex-col gap-1 rounded-md border px-1.5 py-1 ' +
-                  (active ? 'border-violet-500/60 bg-violet-500/10' : 'border-neutral-800 hover:bg-neutral-800/60')
+                  (dropHere
+                    ? 'border-violet-400 bg-violet-500/20'
+                    : active ? 'border-violet-500/60 bg-violet-500/10' : 'border-neutral-800 hover:bg-neutral-800/60')
                 }
               >
+                {dropHere === 'before' && <div className="h-0.5 rounded bg-violet-400" />}
                 <div
+                  draggable={editingId === null}
+                  onDragStart={(e) => {
+                    e.stopPropagation()
+                    e.dataTransfer.effectAllowed = 'move'
+                    e.dataTransfer.setData('text/plain', c.id)
+                    setDragId(c.id)
+                    setDrop(null)
+                  }}
+                  onDragOver={(e) => {
+                    if (!dragId || dragId === c.id) return
+                    e.preventDefault()
+                    e.stopPropagation()
+                    e.dataTransfer.dropEffect = 'move'
+                    const position = positionFor(e)
+                    setDrop((prev) => (prev?.id === c.id && prev.position === position ? prev : { id: c.id, position }))
+                  }}
+                  onDragLeave={() => {
+                    setDrop((prev) => (prev?.id === c.id ? null : prev))
+                  }}
+                  onDrop={(e) => {
+                    e.preventDefault()
+                    e.stopPropagation()
+                    commitDrop(c.id, positionFor(e))
+                  }}
+                  onDragEnd={() => {
+                    setDragId(null)
+                    setDrop(null)
+                  }}
                   onClick={() => setActiveClip(active ? null : c.id)}
                   title={active ? 'Deselect — the timeline clears' : `Edit ${c.name} in the timeline below the views`}
-                  className="flex cursor-pointer items-center gap-1 text-left"
+                  className="flex cursor-grab items-center gap-1 text-left active:cursor-grabbing"
                 >
                   {editingId === c.id ? (
                     <input
@@ -1317,6 +1381,14 @@ function AnimationsSection() {
                     >
                       {c.name}
                     </button>
+                  )}
+                  {i === 0 && (
+                    <span
+                      title="First animation: its Key 1 is baked as the joints’ rest pose when assembly export is on — drag to reorder"
+                      className="shrink-0 rounded bg-violet-500/20 px-1 py-px text-[9px] font-semibold uppercase tracking-wide text-violet-300"
+                    >
+                      assembly
+                    </span>
                   )}
                   <span className="shrink-0 font-mono text-[10px] text-neutral-500">
                     {c.keys.length} key{c.keys.length === 1 ? '' : 's'} · {frames}f{c.loop ? '' : ' · once'}
@@ -1369,6 +1441,7 @@ function AnimationsSection() {
                     </label>
                   </div>
                 )}
+                {dropHere === 'after' && <div className="h-0.5 rounded bg-violet-400" />}
               </li>
             )
           })}

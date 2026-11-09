@@ -25,9 +25,12 @@ function RigWinsNote() {
   const animationMode = useAppStore((s) => s.meta.animationMode ?? 'tweens')
   const clips = useAppStore((s) => s.clips)
   const exportIncludeAnimations = useAppStore((s) => s.exportIncludeAnimations)
+  const exportBakeAssemblyPose = useAppStore((s) => s.exportBakeAssemblyPose)
   if (rigBoxes.length === 0) return null
   const tweened = rigBoxes.filter(boxHasActiveTweens).length
   if (!hasActiveAnimations(animSettings) && tweened === 0 && clips.length === 0) return null
+  // The assembly always comes from the first animation — drag to reorder.
+  const assembly = clips[0]
   return (
     <p className="mt-2 rounded-md border border-violet-500/30 bg-violet-500/10 px-3 py-1 text-xs text-violet-200">
       Rigged voxels export as poseable joints and skip slice-loop animation.
@@ -38,6 +41,9 @@ function RigWinsNote() {
       ) : (
         ` Animation is off — joints export posed at bind with no clips.`
       )}
+      {animationMode === 'poses' && exportBakeAssemblyPose && assembly
+        ? ` Base pose baked from “${assembly.name}” Key 1.`
+        : ``}
     </p>
   )
 }
@@ -63,6 +69,10 @@ export function ExportGltfDialog({ open, onOpenChange }: { open: boolean; onOpen
   const setExportIncludeAOMaps = useAppStore((s) => s.setExportIncludeAOMaps)
   const setExportIncludeMarkers = useAppStore((s) => s.setExportIncludeMarkers)
   const setExportIncludeAnimations = useAppStore((s) => s.setExportIncludeAnimations)
+  const clips = useAppStore((s) => s.clips)
+  const animationMode = useAppStore((s) => s.meta.animationMode ?? 'tweens')
+  const exportBakeAssemblyPose = useAppStore((s) => s.exportBakeAssemblyPose)
+  const setExportBakeAssemblyPose = useAppStore((s) => s.setExportBakeAssemblyPose)
 
   useEffect(() => {
     if (open) setScaleInput(String(exportScaleFactor))
@@ -117,6 +127,8 @@ export function ExportGltfDialog({ open, onOpenChange }: { open: boolean; onOpen
         rigBoxes,
         animationMode: meta.animationMode ?? 'tweens',
         clips,
+        bakeAssemblyPose: state.exportBakeAssemblyPose,
+        assemblyClipId: state.clips[0]?.id ?? null,
         fps: normalizeFps(meta.fps),
       }, animSettings, sliceMasks, slicePivots)
       downloadGlb(glb, normalizeProjectFilename(meta.name || 'voxpaint-model'))
@@ -219,6 +231,22 @@ export function ExportGltfDialog({ open, onOpenChange }: { open: boolean; onOpen
                 Include animations
                 <span className="block text-xs text-neutral-500">
                   Off exports joints posed at bind, no clips
+                </span>
+              </span>
+            </label>
+
+            <label className={`flex items-start gap-2.5 ml-[4.5rem] select-none ${animationMode === 'poses' && clips.length > 0 ? 'cursor-pointer' : 'cursor-not-allowed opacity-50'}`} title={animationMode === 'poses' && clips.length > 0 ? 'Freeze the assembly pose (the first animation’s Key 1 — drag the list to reorder) into the joints’ base transforms — the exported static model shows the parts brought together' : 'Needs a poses-mode clip: arrange the parts on any clip’s Key 1 first'}>
+              <input
+                type="checkbox"
+                checked={exportBakeAssemblyPose}
+                disabled={animationMode !== 'poses' || clips.length === 0}
+                onChange={(e) => setExportBakeAssemblyPose(e.target.checked)}
+                className="mt-0.5 h-4 w-4 shrink-0 cursor-pointer accent-violet-500 disabled:cursor-not-allowed"
+              />
+              <span className="text-sm text-neutral-400">
+                Bake assembly pose
+                <span className="block text-xs text-neutral-500">
+                  Key 1 becomes the joints’ rest pose
                 </span>
               </span>
             </label>

@@ -10,6 +10,7 @@ import { moveTool } from './moveTool'
 import { markerTool } from './markerTool'
 import { pivotTool } from './pivotTool'
 import { poseTool } from './poseTool'
+import { offsetTool } from './offsetTool'
 import { textureFaceTool } from './textureFaceTool'
 import { wandTool } from './wandTool'
 import { rigWandTool } from './rigWandTool'
@@ -37,6 +38,8 @@ export const toolMap: Record<ToolId, ToolHandler> = {
   pivot: {},
   // Pose likewise only exists in Animate — same stale-tool fallback (selection-only anyway).
   pose: {},
+  // Offset (pose translate arrows) likewise — same stale-tool fallback.
+  offset: {},
 }
 
 /** Animate-mode tool dispatch, mirroring the panel tabs: Rig tab boxes/selects/moves and
@@ -49,6 +52,8 @@ export const animateToolMap: Partial<Record<ToolId, ToolHandler>> = {
   rigbox: rigWandTool,
   select: rigSelectTool,
   pose: poseTool,
+  // Offset drags in 2D write keyframe offsets (the 3D arrows' counterpart).
+  offset: offsetTool,
 }
 
 /** Gesture-tool resolution for pointer dispatch (see usePixelCanvasTools.ts).
@@ -62,6 +67,6 @@ export const animateToolMap: Partial<Record<ToolId, ToolHandler>> = {
  * on this tool even if Alt (and with it the toolbar) flips back mid-gesture. Outside those
  * tools this is the identity. */
 export function resolveGestureTool(mode: EditorMode, activeTool: ToolId, altKey: boolean): ToolId {
-  if (mode === 'animate' && (activeTool === 'rigbox' || activeTool === 'pose' || activeTool === 'select') && altKey) return 'pivot'
+  if (mode === 'animate' && (activeTool === 'rigbox' || activeTool === 'pose' || activeTool === 'offset' || activeTool === 'select') && altKey) return 'pivot'
   return activeTool
 }

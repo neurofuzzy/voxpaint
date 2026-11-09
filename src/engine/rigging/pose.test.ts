@@ -80,7 +80,7 @@ describe('composePoseMatrices', () => {
     closeTo(apply(out.get('d')!, [1, 2, 3]), [1, 2, 3])
   })
 
-  it('carries a root offset through the whole subtree', () => {
+  it('carries an offset through the whole subtree', () => {
     const boxes = [box('p', null, [0, 0, 0]), box('c', 'p', [0, 0, 0])]
     const off = new Map([['p', [0, 2, 0] as Coord]])
     const out = composePoseMatrices(boxes, new Map(), off)
@@ -333,7 +333,7 @@ describe('closestAxisParam', () => {
 
 describe('snapOffsetStep', () => {
   it('snaps to the 0.25 lattice and normalizes -0', () => {
-    expect(snapOffsetStep(0.3)).toBeCloseTo(0.25, 10)
+    expect(snapOffsetStep(0.3)).toBeCloseTo(1 / 3, 10)
     expect(snapOffsetStep(-0.1)).toBe(0)
     expect(Object.is(snapOffsetStep(-0.1), -0)).toBe(false)
   })

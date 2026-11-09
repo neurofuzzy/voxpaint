@@ -56,6 +56,9 @@ export type ViewSettings = {
   /** GLTF export: emit animation clips for slice loops, tween stacks, and the pose cycle.
    * Defaults true. */
   exportIncludeAnimations?: boolean
+  /** GLTF export: bake the assembly pose (the first clip's initial keyframe) into the
+   * joints' base transforms. Defaults false. */
+  exportBakeAssemblyPose?: boolean
 }
 
 export type ProjectMeta = {

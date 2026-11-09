@@ -18,6 +18,7 @@ const TOOL_KEYS: Record<string, ToolId> = {
   w: 'wand',
   b: 'rigbox',
   o: 'pose',
+  g: 'offset',
 }
 
 /**
@@ -62,7 +63,7 @@ export function useKeyboardShortcuts() {
       // the toolbar instead of sticking.
       if (e.key.toLowerCase() === 'alt') {
         const store = useAppStore.getState()
-        if (!e.repeat && !e.shiftKey && !e.ctrlKey && !e.metaKey && store.mode === 'animate' && (store.activeTool === 'rigbox' || store.activeTool === 'pose' || store.activeTool === 'select')) {
+        if (!e.repeat && !e.shiftKey && !e.ctrlKey && !e.metaKey && store.mode === 'animate' && (store.activeTool === 'rigbox' || store.activeTool === 'pose' || store.activeTool === 'offset' || store.activeTool === 'select')) {
           altPivotRestore = store.activeTool
           store.setActiveTool('pivot')
           e.preventDefault()
@@ -204,7 +205,7 @@ export function useKeyboardShortcuts() {
       // Animate mode's toolbar is rigbox + pivot, select, or pose depending on the
       // panel tab — other tool letters stay inert there rather than switching to a tool
       // with no animate-mode handler.
-      if (tool && (!isAnimate || tool === 'pivot' || tool === 'rigbox' || tool === 'pose' || tool === 'select')) {
+      if (tool && (!isAnimate || tool === 'pivot' || tool === 'rigbox' || tool === 'pose' || tool === 'offset' || tool === 'select')) {
         store.setActiveTool(tool)
         e.preventDefault()
         return

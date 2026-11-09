@@ -5,7 +5,7 @@ import { displayPointForGridPoint, displayViewCenter, toDisplayGridlineU, toDisp
 import { axisIndex } from '@/engine/plane/planeGeometry'
 import { resolveSlotColor, shadeColor } from '@/engine/palette/palette'
 import { markerColorHex } from '@/engine/markers/markers'
-import { boxSliceFootprint, rigPivotOf } from '@/engine/rigging/types'
+import { composedKeyOffset, posedBoxSliceFootprint, rigPivotOf } from '@/engine/rigging/types'
 import { forEachSelectedCell, traceSelectionOutline } from '@/engine/tools/selectionMask'
 import { encodeSliceKey } from '@/engine/animation/animationLayers'
 import { useAppStore } from '@/store/useAppStore'
@@ -89,6 +89,10 @@ export function PixelCanvas() {
   const slicePivots = useAppStore((s) => s.slicePivots)
   const rigBoxes = useAppStore((s) => s.rigBoxes)
   const selectedRigBoxId = useAppStore((s) => s.selectedRigBoxId)
+  // The keyframe under edit's per-box offsets — footprints draw posed (bind + composed
+  // offset) so a 2D offset drag visibly follows the pointer, agreeing with the 3D preview.
+  // Subscribing here is also what re-renders the canvas live mid-drag.
+  const keyOffsets = useAppStore((s) => s.clips.find((c) => c.id === s.activeClipId)?.keys.find((k) => k.id === s.selectedKeyId)?.offsets)
   const gridExtent = useAppStore((s) => s.meta.gridExtent)
   const voxelScaleY = useAppStore((s) => s.meta.voxelScaleY)
   const markers = useAppStore((s) => s.markers)
@@ -294,11 +298,13 @@ export function PixelCanvas() {
 
     // Animate-mode rig footprints — the boxes are what you edit here (the voxel model is just
     // an underlay), so every box intersecting this slice draws its outline in display space,
-    // exactly over its cells. The selected box draws last, white with a translucent fill, so
-    // it reads on top of overlaps.
+    // exactly over its cells. Posed: each outline shifts by the box's composed key offset
+    // (own + ancestors, translation only — exact until rotations enter), so offset drags
+    // visibly follow the pointer and agree with the 3D preview. The selected box draws last,
+    // white with a translucent fill, so it reads on top of overlaps.
     if (mode === 'animate' && rigBoxes.length > 0) {
-      const footprints = rigBoxes.map((box) => ({ box, fp: boxSliceFootprint(box, plane) }))
-        .filter((r): r is { box: (typeof rigBoxes)[number]; fp: NonNullable<ReturnType<typeof boxSliceFootprint>> } => r.fp !== null)
+      const footprints = rigBoxes.map((box) => ({ box, fp: posedBoxSliceFootprint(rigBoxes, box, plane, keyOffsets) }))
+        .filter((r): r is { box: (typeof rigBoxes)[number]; fp: NonNullable<ReturnType<typeof posedBoxSliceFootprint>> } => r.fp !== null)
       const ordered = [
         ...footprints.filter(({ box }) => box.id !== selectedRigBoxId),
         ...footprints.filter(({ box }) => box.id === selectedRigBoxId),
@@ -346,8 +352,11 @@ export function PixelCanvas() {
       for (const pbox of pivotBoxes) {
         const active = pbox.id === selectedRigBoxId
         const pivot = rigPivotOf(pbox)
-        const onSlice = Math.floor(pivot[axisIndex(plane.axis)] + 0.5) === plane.offset
-        const world: [number, number, number] = [pivot[0] + 0.5, pivot[1] + 0.5, pivot[2] + 0.5]
+        // Rides the box's composed key offset like its footprint does, so the pin stays on
+        // the posed box during offset drags (translation-only, same approximation).
+        const shift = composedKeyOffset(rigBoxes, pbox, keyOffsets)
+        const onSlice = Math.floor(pivot[axisIndex(plane.axis)] + shift[axisIndex(plane.axis)] + 0.5) === plane.offset
+        const world: [number, number, number] = [pivot[0] + 0.5 + shift[0], pivot[1] + 0.5 + shift[1], pivot[2] + 0.5 + shift[2]]
         const { u: ru, v: rv } = displayPointForGridPoint(plane, world)
         const [px, py] = worldToScreen(ru, rv, size, pan, zoom, vScale)
         const radius = cellPx * (active ? 0.26 : 0.2)
@@ -480,7 +489,7 @@ export function PixelCanvas() {
       ctx.strokeStyle = selected ? '#ffffff' : 'rgba(0, 0, 0, 0.55)'
       ctx.stroke()
     }
-  }, [model, palette, plane, linePreview, selection, selectPreview, floatContent, floatOrigin, antPhase, altHeld, size, pan, zoom, vScale, mode, slicePivots, rigBoxes, selectedRigBoxId, gridExtent, markers, selectedMarkerId])
+  }, [model, palette, plane, linePreview, selection, selectPreview, floatContent, floatOrigin, antPhase, altHeld, size, pan, zoom, vScale, mode, slicePivots, rigBoxes, selectedRigBoxId, keyOffsets, gridExtent, markers, selectedMarkerId])
 
   useEffect(() => {
     draw()

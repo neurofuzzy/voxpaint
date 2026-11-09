@@ -218,4 +218,6 @@ export const textureToolMap: Record<ToolId, TextureToolHandler> = {
   rigbox: {},
   // Pose selects rig boxes, meaningless on texel grids — harmless no-op here.
   pose: {},
+  // Offset drags pose translate arrows, meaningless on texel grids — harmless no-op here.
+  offset: {},
 }

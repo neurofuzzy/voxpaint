@@ -14,7 +14,8 @@ const TOOL_HINTS: Record<ToolId, string> = {
   marker: 'click empty space to place a marker · tap a marker to recolor it, tap again to delete · drag to move',
   pivot: 'click: place pivot on the half-grid · rotate the plane for depth · right-click: reset to center',
   rigbox: 'click a voxel to box its color-connected region · click a box to select it · drag to move it on this slice',
-  pose: 'tap a box to select it · drag the selected box in 3D to pose it · drag a ring for one axis · Esc resets the pose',
+  pose: 'tap a box to select it · in 3D, drag a ring to rotate the selected joint',
+  offset: 'tap a box to select it · in 3D, drag an arrow to move the selected joint',
   textureface: 'click or drag ramps, wedges + thin slabs to re-map their texture face to the current plane · geometry unchanged',
 }
 

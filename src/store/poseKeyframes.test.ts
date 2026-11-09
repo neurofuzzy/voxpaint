@@ -8,6 +8,53 @@ function addBox(id: string, name?: string) {
   useAppStore.getState().addRigBox({ id, name: name ?? id, min: [0, 0, 0], max: [2, 2, 2], parentId: null, pivot: null, tweens: [] })
 }
 
+/** Clip list order (the first clip supplies the assembly pose on export). */
+describe('moveClip', () => {
+  beforeEach(() => {
+    useAppStore.getState().newProject('Test', 16)
+  })
+
+  function threeClips(): string[] {
+    const s = useAppStore.getState()
+    s.setAnimationMode('poses')
+    // addClip uniquifies: Clip, Clip 2, Clip 3.
+    return [s.addClip(), s.addClip(), s.addClip()]
+  }
+
+  it('reorders before/after and to the end', () => {
+    const [a, b, c] = threeClips()
+    const s = useAppStore.getState()
+    const names = () => useAppStore.getState().clips.map((x) => x.name)
+    expect(names()).toEqual(['Clip', 'Clip 2', 'Clip 3'])
+
+    // Move the first after the last.
+    s.moveClip(a, c, 'after')
+    expect(names()).toEqual(['Clip 2', 'Clip 3', 'Clip'])
+    // Move the last before the first.
+    s.moveClip(a, b, 'before')
+    expect(names()).toEqual(['Clip', 'Clip 2', 'Clip 3'])
+    // Null target appends at the end.
+    s.moveClip(b, null, 'after')
+    expect(names()).toEqual(['Clip', 'Clip 3', 'Clip 2'])
+  })
+
+  it('ignores unknown ids and self-drops, and undoes as one entry', () => {
+    const [a, b] = threeClips()
+    const s = useAppStore.getState()
+    const animBefore = useAppStore.getState().animPast.length
+    s.moveClip('nope', a, 'before')
+    s.moveClip(a, 'nope', 'before')
+    s.moveClip(a, a, 'before')
+    expect(useAppStore.getState().clips.map((x) => x.id)).toEqual([a, b, expect.any(String)])
+    expect(useAppStore.getState().animPast.length).toBe(animBefore)
+
+    s.moveClip(b, a, 'before')
+    expect(useAppStore.getState().clips[0].id).toBe(b)
+    expect(useAppStore.getState().animPast.length).toBe(animBefore + 1)
+    s.animUndo()
+    expect(useAppStore.getState().clips[0].id).toBe(a)
+  })
+})
 /** Poses a key directly — edits land in the key, no staging. */
 function poseKey(clipId: string, keyId: string, joints: Record<string, [number, number, number]>) {
   const s = useAppStore.getState()
@@ -335,7 +382,7 @@ describe('direct keyframe edits', () => {
     expect(useAppStore.getState().clips[0].keys[0].joints).toEqual({ arm: [0.5, 0, 0] })
   })
 
-  it('setKeyOffset writes root offsets and zeroes them out', () => {
+  it('setKeyOffset writes offsets and zeroes them out', () => {
     addBox('hips')
     const { clipId, keyId } = keyframeAt(0, {})
     const s = useAppStore.getState()
@@ -348,14 +395,18 @@ describe('direct keyframe edits', () => {
     expect(useAppStore.getState().clips[0].keys[0].offsets).toBeUndefined()
   })
 
-  it('setKeyOffset refuses children and unknown boxes', () => {
+  it('setKeyOffset writes child offsets but refuses unknown boxes', () => {
     addBox('hips')
     useAppStore.getState().addRigBox({ id: 'shin', name: 'shin', min: [0, 0, 0], max: [1, 1, 1], parentId: 'hips', pivot: null, tweens: [] })
     const { clipId, keyId } = keyframeAt(0, {})
     const s = useAppStore.getState()
+    // A child shift composes inside its parent's chain — assembly lives here.
     s.setKeyOffset(clipId, keyId, 'shin', [0, 1, 0])
+    expect(useAppStore.getState().clips[0].keys[0].offsets).toEqual({ shin: [0, 1, 0] })
+    expect(previewFrame(useAppStore.getState(), 99).off.get('shin')).toEqual([0, 1, 0])
+    // Unknown ids are still a no-op.
     s.setKeyOffset(clipId, keyId, 'ghost', [0, 1, 0])
-    expect(useAppStore.getState().clips[0].keys[0].offsets).toBeUndefined()
+    expect(useAppStore.getState().clips[0].keys[0].offsets).toEqual({ shin: [0, 1, 0] })
   })
 
   it('scrubbing to 0 shows the first key', () => {
@@ -461,5 +512,119 @@ describe('clip editor', () => {
     expect(useAppStore.getState().clips[0].keys[1].time).toBeCloseTo(0.6, 10)
     s.animUndo()
     expect(useAppStore.getState().clips[0].keys[1].time).toBeCloseTo(1 - CLIP_FRAME_SECONDS, 10)
+  })
+})
+
+/** Grab-time key healing (gizmo/offset drags never go dead for want of a key). */
+describe('ensureKeyframeSelected', () => {
+  beforeEach(() => {
+    useAppStore.getState().newProject('Test', 16)
+  })
+
+  it('creates the assembly clip when none exists and selects its anchor', () => {
+    addBox('arm')
+    expect(useAppStore.getState().clips).toHaveLength(0)
+    expect(useAppStore.getState().ensureKeyframeSelected()).toBe(true)
+    const after = useAppStore.getState()
+    expect(after.clips).toHaveLength(1)
+    expect(after.activeClipId).toBe(after.clips[0].id)
+    expect(after.selectedKeyId).toBe(after.clips[0].keys[0].id)
+  })
+
+  it('selects the active clip’s first key when none is under edit', () => {
+    addBox('arm')
+    const s = useAppStore.getState()
+    s.setAnimationMode('poses')
+    const clipId = s.addClip()
+    const k1 = s.addKeyframe(clipId, 0.5)!
+    s.setSelectedKey(k1)
+    // Deselect (timeline cleared, e.g. post-reload): the grab re-selects Key 1.
+    s.setSelectedKey(null)
+    expect(useAppStore.getState().ensureKeyframeSelected()).toBe(true)
+    const after = useAppStore.getState()
+    expect(after.selectedKeyId).toBe(after.clips[0].keys[0].id)
+  })
+
+  it('is a no-op when a key is already under edit', () => {
+    addBox('arm')
+    keyframeAt(0, { arm: [0.5, 0, 0] })
+    const before = useAppStore.getState()
+    expect(useAppStore.getState().ensureKeyframeSelected()).toBe(true)
+    const after = useAppStore.getState()
+    expect(after.selectedKeyId).toBe(before.selectedKeyId)
+    expect(after.clips).toHaveLength(before.clips.length)
+  })
+})
+
+/** 2D offset drags (Offset tool): the keyframe offset follows the pointer. */
+describe('offsetMove gesture', () => {
+  beforeEach(() => {
+    useAppStore.getState().newProject('Test', 16)
+  })
+
+  it('drags the offset live and commits one undo entry', () => {
+    addBox('arm')
+    const s = useAppStore.getState()
+    s.setAnimationMode('poses')
+    const clipId = s.addClip()
+    const keyId = useAppStore.getState().selectedKeyId!
+    const animBefore = useAppStore.getState().animPast.length
+
+    expect(s.beginOffsetMove('arm')).toBe(true)
+    s.updateOffsetMove([2, 0, 0])
+    expect(useAppStore.getState().clips[0].keys[0].offsets).toEqual({ arm: [2, 0, 0] })
+    s.updateOffsetMove([2, 0, 0])
+    s.endOffsetMove()
+
+    expect(useAppStore.getState().clips[0].keys[0].offsets).toEqual({ arm: [2, 0, 0] })
+    expect(useAppStore.getState().animPast.length).toBe(animBefore + 1)
+    s.animUndo()
+    expect(useAppStore.getState().clips[0].keys[0].offsets).toBeUndefined()
+    expect(clipId).toBe(useAppStore.getState().clips[0].id)
+    expect(keyId).toBe(useAppStore.getState().clips[0].keys[0].id)
+  })
+
+  it('snaps to thirds on release and records nothing for a tap', () => {
+    addBox('arm')
+    const s = useAppStore.getState()
+    s.setAnimationMode('poses')
+    s.addClip()
+    const animBefore = useAppStore.getState().animPast.length
+
+    expect(s.beginOffsetMove('arm')).toBe(true)
+    s.updateOffsetMove([0.5, 0, 0])
+    // The lattice engages live, not just on release: the written total is already thirds.
+    expect(useAppStore.getState().clips[0].keys[0].offsets?.arm?.[0]).toBeCloseTo(2 / 3, 10)
+    s.endOffsetMove()
+    // 0.5 snaps to the nearest third (1/2 is equidistant — Math.round ties up).
+    expect(useAppStore.getState().clips[0].keys[0].offsets?.arm?.[0]).toBeCloseTo(2 / 3, 10)
+
+    const animAfterDrag = useAppStore.getState().animPast.length
+    expect(s.beginOffsetMove('arm')).toBe(true)
+    s.endOffsetMove()
+    expect(useAppStore.getState().animPast.length).toBe(animAfterDrag)
+    expect(animAfterDrag).toBe(animBefore + 1)
+  })
+
+  it('refuses unknown boxes and arms nothing', () => {
+    addBox('arm')
+    const s = useAppStore.getState()
+    s.setAnimationMode('poses')
+    s.addClip()
+    expect(s.beginOffsetMove('ghost')).toBe(false)
+    s.updateOffsetMove([3, 0, 0])
+    s.endOffsetMove()
+    expect(useAppStore.getState().clips[0].keys[0].offsets).toBeUndefined()
+  })
+
+  it('auto-creates the assembly clip when none exists', () => {
+    addBox('arm')
+    const s = useAppStore.getState()
+    expect(s.beginOffsetMove('arm')).toBe(true)
+    s.updateOffsetMove([1, 0, 0])
+    s.endOffsetMove()
+    const after = useAppStore.getState()
+    expect(after.clips).toHaveLength(1)
+    expect(after.clips[0].keys[0].offsets).toEqual({ arm: [1, 0, 0] })
   })
 })

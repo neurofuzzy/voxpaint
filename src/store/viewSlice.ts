@@ -54,6 +54,7 @@ export const createViewSlice: Slice = (set, get) => ({
   exportIncludeAOMaps: true,
   exportIncludeMarkers: true,
   exportIncludeAnimations: true,
+  exportBakeAssemblyPose: false,
 
   setFullscreen: (v) => set((state) => { state.fullscreen = v }),
   setLayoutMode: (v) => {
@@ -125,4 +126,5 @@ export const createViewSlice: Slice = (set, get) => ({
   setExportIncludeAOMaps: (v) => set((state) => { state.exportIncludeAOMaps = v; state.dirty = true }),
   setExportIncludeMarkers: (v) => set((state) => { state.exportIncludeMarkers = v; state.dirty = true }),
   setExportIncludeAnimations: (v) => set((state) => { state.exportIncludeAnimations = v; state.dirty = true }),
+  setExportBakeAssemblyPose: (v) => set((state) => { state.exportBakeAssemblyPose = v; state.dirty = true }),
 })

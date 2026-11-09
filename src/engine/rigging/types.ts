@@ -73,7 +73,8 @@ export const DEFAULT_PENDULUM_MAX = 30
  */
 export type KeyJoints = Record<string, JointEuler>
 
-/** Per-root translation offsets in voxels (hip bob, crouch). Sparse like joints. */
+/** Per-box translation offsets in voxels (hip bob, crouch, assembly shifts — a child
+ * shift composes inside its parent's chain). Sparse like joints. */
 export type KeyOffsets = Record<string, Coord>
 
 /** Sanitizes a joints record (hand-edited files): finite triples only, sparseness kept. */
@@ -124,8 +125,8 @@ export type ClipKey = {
   time: number
   ease: KeyEase
   joints: KeyJoints
-  /** Optional root-joint translation offsets (hip bob, crouch — roots only, like the
-   * old per-pose offsets; enforced by callers that know the outline). */
+  /** Optional per-box translation offsets (hip bob, crouch, assembly shifts — children
+   * compose inside the parent chain). */
   offsets?: KeyOffsets
 }
 
@@ -468,6 +469,58 @@ export function boxSliceFootprint(
 }
 
 /**
+ * A box's composed keyframe-offset translation: its own offset plus every ancestor's
+ * (ancestor offsets ride the whole subtree along — see `parentChainMatrix`). Rotations
+ * are ignored, so this is exact for pure-translation posing (assembly nudges, hip bobs)
+ * and a translation-only approximation otherwise. Used to shift 2D footprints/pivots so
+ * the editor agrees with the 3D preview about where an offset box is. Pure.
+ */
+export function composedKeyOffset(
+  boxes: RigBox[],
+  box: RigBox,
+  offsets?: Record<string, Coord>,
+): Coord {
+  if (!offsets) return [0, 0, 0]
+  const byId = new Map(boxes.map((b) => [b.id, b]))
+  const out: Coord = [0, 0, 0]
+  let cur: RigBox | undefined = box
+  const seen = new Set<string>()
+  while (cur && !seen.has(cur.id)) {
+    seen.add(cur.id)
+    const o = offsets[cur.id]
+    if (o) {
+      out[0] += o[0]
+      out[1] += o[1]
+      out[2] += o[2]
+    }
+    cur = cur.parentId ? byId.get(cur.parentId) : undefined
+  }
+  return out
+}
+
+/**
+ * `boxSliceFootprint` for the box as the selected keyframe poses it: shifted by its
+ * composed key-offset translation, so 2D hit-testing and drawing agree with the 3D
+ * preview. Null when the shifted box misses the slice (an offset can carry a box off
+ * its bind slice — same as the 3D view). Pure.
+ */
+export function posedBoxSliceFootprint(
+  boxes: RigBox[],
+  box: RigBox,
+  plane: ConstructionPlane,
+  offsets?: Record<string, Coord>,
+): { uMin: number; uMax: number; vMin: number; vMax: number } | null {
+  const shift = composedKeyOffset(boxes, box, offsets)
+  if (shift[0] === 0 && shift[1] === 0 && shift[2] === 0) return boxSliceFootprint(box, plane)
+  const moved: RigBox = {
+    ...box,
+    min: [box.min[0] + shift[0], box.min[1] + shift[1], box.min[2] + shift[2]],
+    max: [box.max[0] + shift[0], box.max[1] + shift[1], box.max[2] + shift[2]],
+  }
+  return boxSliceFootprint(moved, plane)
+}
+
+/**
  * Rounds onto the 2x placement lattice (cell centers and boundary intersections alike),
  * normalizing -0 so strict equality never distinguishes it from 0.
  */
@@ -519,6 +572,41 @@ export function rigPivotLinks(boxes: RigBox[]): RigPivotLink[] {
 }
 
 /**
+ * Clamps a requested subtree shift so every moved box AND every moved voxel stays inside
+ * the working cube: per axis, the result is the largest shift that fits all of them (relatives
+ * never distort). Voxel coords are cell centers (same integer lattice as box min/max), so one
+ * shared fit keeps boxes and voxels in lockstep. Returns the applied integer delta.
+ */
+export function clampPartDelta(
+  boxes: RigBox[],
+  id: string,
+  voxelCoords: ReadonlyArray<Coord>,
+  delta: Coord,
+  gridExtent: GridExtent,
+): Coord {
+  const moving = rigSubtreeIds(boxes, id)
+  const half = effectiveExtent(gridExtent) / 2
+  const lo = -half
+  const hi = half - 1
+  // Per axis, the shift must satisfy lo <= min + d and max + d <= hi for every moved box and
+  // every moved voxel.
+  return [0, 1, 2].map((a) => {
+    let allowLo = -Infinity
+    let allowHi = Infinity
+    for (const b of boxes) {
+      if (!moving.has(b.id)) continue
+      allowLo = Math.max(allowLo, lo - b.min[a])
+      allowHi = Math.min(allowHi, hi - b.max[a])
+    }
+    for (const c of voxelCoords) {
+      allowLo = Math.max(allowLo, lo - c[a])
+      allowHi = Math.min(allowHi, hi - c[a])
+    }
+    return Math.max(allowLo, Math.min(allowHi, delta[a]))
+  }) as Coord
+}
+
+/**
  * Translates a box and its whole subtree by `delta` grid cells, clamped so every moved box
  * stays inside the working cube (the request shrinks to the largest shift that fits all of
  * them — relatives never distort). Pivots ride along, clamped into the cube independently
@@ -533,21 +621,10 @@ export function translateRigSubtree(
 ): RigBox[] | null {
   if (!boxes.some((b) => b.id === id)) return null
   const moving = rigSubtreeIds(boxes, id)
+  const applied = clampPartDelta(boxes, id, [], delta, gridExtent)
+  if (applied[0] === 0 && applied[1] === 0 && applied[2] === 0) return null
   const half = effectiveExtent(gridExtent) / 2
   const lo = -half
-  const hi = half - 1
-  // Per axis, the shift must satisfy lo <= min + d and max + d <= hi for every moved box.
-  const applied: [number, number, number] = [0, 1, 2].map((a) => {
-    let allowLo = -Infinity
-    let allowHi = Infinity
-    for (const b of boxes) {
-      if (!moving.has(b.id)) continue
-      allowLo = Math.max(allowLo, lo - b.min[a])
-      allowHi = Math.min(allowHi, hi - b.max[a])
-    }
-    return Math.max(allowLo, Math.min(allowHi, delta[a]))
-  }) as [number, number, number]
-  if (applied[0] === 0 && applied[1] === 0 && applied[2] === 0) return null
   // Pivots are grid points, not cells: they may sit on the cube's outer gridlines (half),
   // one half-step beyond the last cell center.
   const pclamp = (v: number) => Math.max(lo, Math.min(half, v))

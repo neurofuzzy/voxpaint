@@ -19,7 +19,7 @@ import {
 
 /**
  * One evaluated clip instant: per-joint local rotations (radians, intrinsic XYZ, sparse —
- * only joints keyed anywhere in the clip appear) plus per-root translation offsets in
+ * only joints keyed anywhere in the clip appear) plus per-box translation offsets in
  * voxels (sparse likewise). Absent entries ARE bind.
  */
 export type PoseFrame = {
@@ -53,13 +53,13 @@ export function easePhase(ease: KeyEase, u: number): number {
   }
 }
 
-/** Snapshot of one keyframe as a frame: rotations copied, offsets kept to root boxes. */
-function frameOfKey(key: ClipKey, roots: Set<string>): PoseFrame {
+/** Snapshot of one keyframe as a frame: rotations copied, offsets kept for every box
+ * (a child shift composes inside its parent's chain — assembly lives on children). */
+function frameOfKey(key: ClipKey): PoseFrame {
   const rot = new Map<string, JointEuler>()
   const off = new Map<string, Coord>()
   for (const [id, e] of Object.entries(key.joints)) rot.set(id, [e[0], e[1], e[2]])
   for (const [id, o] of Object.entries(key.offsets ?? {})) {
-    if (!roots.has(id)) continue
     off.set(id, [o[0], o[1], o[2]])
   }
   return { rot, off }
@@ -101,12 +101,10 @@ function blendPoseFrames(a: PoseFrame, b: PoseFrame, phase: number): PoseFrame {
  * non-looping clip holds its last key past the end and its first key before the start
  * (negative `t`). Total: an empty clip yields an empty (bind) frame.
  */
-export function evaluateClip(boxes: RigBox[], clip: RigClip, t: number): PoseFrame {
+export function evaluateClip(_boxes: RigBox[], clip: RigClip, t: number): PoseFrame {
   const keys = [...clip.keys].sort((a, b) => a.time - b.time)
   if (keys.length === 0) return { rot: new Map(), off: new Map() }
-  const roots = new Set<string>()
-  for (const b of boxes) if (b.parentId == null) roots.add(b.id)
-  const snapshot = (key: ClipKey): PoseFrame => frameOfKey(key, roots)
+  const snapshot = (key: ClipKey): PoseFrame => frameOfKey(key)
 
   let time = t
   if (clip.loop && clip.duration > 0) time = ((t % clip.duration) + clip.duration) % clip.duration
@@ -134,7 +132,7 @@ export function evaluateClip(boxes: RigBox[], clip: RigClip, t: number): PoseFra
 }
 
 /**
- * Sampled key payload at clip-local seconds `t`: the blended rotations + root offsets
+ * Sampled key payload at clip-local seconds `t`: the blended rotations + offsets
  * as plain key records, so freezing a mid-tween frame into a key keeps the visible
  * pose. Values stay verbatim (no degree-snapping — the snapshot lies exactly on the
  * curve); linear and hold spans reproduce bit-clean through the split, eased spans

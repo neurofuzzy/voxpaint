@@ -128,6 +128,11 @@ describe('animate tab/tool sync', () => {
     s.setMode('animate')
     expect(useAppStore.getState().animateTab).toBe('poses')
     expect(useAppStore.getState().activeTool).toBe('pose')
+    s.setActiveTool('offset')
+    s.setMode('model')
+    s.setMode('animate')
+    expect(useAppStore.getState().animateTab).toBe('poses')
+    expect(useAppStore.getState().activeTool).toBe('offset')
   })
 
   it('entering animate with a pose tool in a tweens project lands on tweens + select', () => {

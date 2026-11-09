@@ -17,9 +17,9 @@ function makeCtx(rigBoxes: RigBox[]) {
       rigBoxes,
       selectedRigBoxId: null,
       selectRigBox: vi.fn(),
-      translateRigBox: vi.fn(),
-      animBeginStroke: vi.fn(),
-      animCommitStroke: vi.fn(),
+      beginPartMove: vi.fn().mockReturnValue(true),
+      updatePartMove: vi.fn(),
+      endPartMove: vi.fn(),
       applyRigBoxAt: vi.fn(),
       drag: { current: { kind: 'idle' } },
     } as unknown as ToolContext,
@@ -32,25 +32,34 @@ describe('rigWandTool', () => {
   // Box 'a' over x∈[0,1], y∈[0,1]: display footprint u∈[0,2), v∈[-2,0).
   const boxes = [box('a', [0, 0, 0], [1, 1, 0])]
 
-  it('selects on footprint tap and arms a move drag without creating', () => {
+  it('selects on footprint tap and arms a part-move drag without creating', () => {
     const { ctx } = makeCtx(boxes)
     rigWandTool.onDown!(ctx, evt(0, -1))
     expect(ctx.selectRigBox).toHaveBeenCalledWith('a')
     expect(ctx.applyRigBoxAt).not.toHaveBeenCalled()
-    expect(ctx.animBeginStroke).toHaveBeenCalledTimes(1)
-    expect(ctx.drag.current).toEqual({ kind: 'rig-move', id: 'a', lastU: 0, lastV: -1 })
+    expect(ctx.beginPartMove).toHaveBeenCalledWith('a')
+    expect(ctx.drag.current).toEqual({ kind: 'rig-move', id: 'a', startU: 0, startV: -1 })
   })
 
-  it('drags translate by the grid delta and commits one stroke on up', () => {
+  it('drags move the part by the absolute grid delta and end the stroke on up', () => {
     const { ctx } = makeCtx(boxes)
     rigWandTool.onDown!(ctx, evt(0, -1))
-    // (0,-1) -> grid (0,0,0); (1,-1) -> grid (1,0,0): delta [+1,0,0], offset axis pinned.
+    // (0,-1) -> grid (0,0,0); (2,-1) -> grid (2,0,0): absolute delta [+2,0,0].
     rigWandTool.onMove!(ctx, evt(1, -1))
-    expect(ctx.translateRigBox).toHaveBeenCalledWith('a', [1, 0, 0])
-    expect(ctx.drag.current).toEqual({ kind: 'rig-move', id: 'a', lastU: 1, lastV: -1 })
-    rigWandTool.onUp!(ctx, evt(1, -1))
+    expect(ctx.updatePartMove).toHaveBeenCalledWith([1, 0, 0])
+    rigWandTool.onMove!(ctx, evt(2, -1))
+    expect(ctx.updatePartMove).toHaveBeenCalledWith([2, 0, 0])
+    rigWandTool.onUp!(ctx, evt(2, -1))
     expect(ctx.drag.current).toEqual({ kind: 'idle' })
-    expect(ctx.animCommitStroke).toHaveBeenCalledTimes(1)
+    expect(ctx.endPartMove).toHaveBeenCalledTimes(1)
+  })
+
+  it('stays idle when the part-move refuses to arm', () => {
+    const { ctx } = makeCtx(boxes)
+    vi.mocked(ctx.beginPartMove).mockReturnValue(false)
+    rigWandTool.onDown!(ctx, evt(0, -1))
+    expect(ctx.selectRigBox).toHaveBeenCalledWith('a')
+    expect(ctx.drag.current).toEqual({ kind: 'idle' })
   })
 
   it('creates a new box when the tap misses every footprint', () => {

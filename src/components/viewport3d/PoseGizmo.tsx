@@ -29,14 +29,13 @@ const ARROW_ROTATION: Record<Axis, [number, number, number]> = {
 const RING_AXES: Axis[] = ['x', 'y', 'z']
 
 /**
- * Animate-mode pose gizmo (Pose tool only — this is the 3D manipulation mode): three
- * rotation rings around the selected box's pivot, drawn in the parent-joint frame (bind
- * position/orientation for roots). Roots additionally get three translate arrows (same
- * colors, ending on the rings) for the keyframe's root offset — hip bob, crouch — since
- * offsets are roots-only. Rings and arrows are pure chrome — hit-testing happens in screen
- * space from the same transform (see `nearestRingHit` / `nearestAxisHit`), so what you see
- * is what's grabbable. They read through geometry (depthTest off) like the other rig chrome,
- * and show in every model view mode. Poses-mode only: in a tweens project the gizmo neither
+ * Animate pose gizmos (Pose/Rotate tool shows rings, Offset tool shows translate arrows):
+ * three rotation rings around the selected box's pivot, drawn in the parent-joint frame,
+ * plus three translate arrows (same colors, ending on the rings) for the keyframe's offset
+ * on any box. Rings and arrows are pure chrome — hit-testing happens in screen space from
+ * the same transform (see `nearestRingHit` / `nearestAxisHit`), so what you see is what's
+ * grabbable. They read through geometry (depthTest off) like the other rig chrome, and
+ * show in every model view mode. Poses-mode only: in a tweens project the gizmo neither
  * renders nor accepts drags (see Viewport3D's press handling).
  */
 export function PoseGizmo() {
@@ -47,8 +46,6 @@ export function PoseGizmo() {
   const selectedRigBoxId = useAppStore((s) => s.selectedRigBoxId)
 
   const box = rigBoxes.find((b) => b.id === selectedRigBoxId) ?? null
-  // Translate arrows only on roots — offsets never evaluate on children.
-  const isRoot = box !== null && box.parentId === null
   const group = useRef<THREE.Group>(null)
   // Rings track the resolved preview — including a playing clip — so they sit where the
   // joints are drawn. Written per frame like the other rig chrome; grabs re-seek onto
@@ -70,11 +67,15 @@ export function PoseGizmo() {
   const arrowLen = useMemo(() => (box ? gizmoArrowLength(box) : 0), [box])
 
   // A playing clip is fine — grabs freeze it into the scratch first.
-  if (mode !== 'animate' || animationMode !== 'poses' || activeTool !== 'pose' || !box) return null
+  if (mode !== 'animate' || animationMode !== 'poses' || !box) return null
+  const showRings = activeTool === 'pose'
+  const showArrows = activeTool === 'offset'
+  if (!showRings && !showArrows) return null
 
   return (
     <group ref={group}>
-      {RING_AXES.map((axis) => (
+      {showRings &&
+      RING_AXES.map((axis) => (
         <mesh
           key={axis}
           rotation={RING_ROTATION[axis]}
@@ -92,9 +93,9 @@ export function PoseGizmo() {
           />
         </mesh>
       ))}
-      {isRoot &&
-        RING_AXES.map((axis) => (
-          <group key={`move-${axis}`} rotation={ARROW_ROTATION[axis]}>
+      {showArrows &&
+      RING_AXES.map((axis) => (
+        <group key={`move-${axis}`} rotation={ARROW_ROTATION[axis]}>
             <mesh position={[0, arrowLen / 2, 0]} renderOrder={11} raycast={() => null}>
               <cylinderGeometry args={[0.045, 0.045, arrowLen, 10]} />
               <meshStandardMaterial

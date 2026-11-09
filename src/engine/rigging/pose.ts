@@ -49,8 +49,9 @@ export function composeAxisAngle(current: JointEuler, axis: Axis, angle: number)
 
 /**
  * One joint's local matrix: rotate about the pivot's world point (grid + 0.5 per axis, matching
- * the pivot markers), then translate by the root offset (voxels, parent frame — hip bob, crouch).
- * Identity euler with no offset returns identity — unposed boxes cost nothing.
+ * the pivot markers), then translate by the offset (voxels, parent frame — a bob, a crouch,
+ * or an assembly shift). Identity euler with no offset returns identity — unposed boxes
+ * cost nothing.
  */
 export function localJointMatrix(pivot: Coord, e: JointEuler, offset?: Coord): THREE.Matrix4 {
   const out = new THREE.Matrix4()
@@ -89,8 +90,8 @@ function ancestorChain(boxes: RigBox[], box: RigBox): RigBox[] {
 /**
  * A box's parent-chain matrix (ancestors' locals composed root-first, own local excluded):
  * the frame the pose gizmo draws in (gizmo position = this × pivot, orientation = its
- * rotation part) and the prefix of the box's own posed matrix. Ancestor root offsets
- * ride along, so a root bob carries its whole subtree.
+ * rotation part) and the prefix of the box's own posed matrix. Ancestor offsets ride
+ * along, so a root bob carries its whole subtree.
  */
 export function parentChainMatrix(
   boxes: RigBox[],
@@ -128,7 +129,7 @@ export function composePoseMatrices(
 /**
  * A box's pivot in world space after posing: the parent chain carries it (a joint's own
  * local rotation is about its own pivot, so it never moves itself — but ancestors carry
- * the whole subtree, and its own root offset translates it). This is where pivot markers,
+ * the whole subtree, and its own offset translates it). This is where pivot markers,
  * joint links, and the pose gizmo live.
  */
 export function posedPivotWorld(
@@ -345,8 +346,7 @@ export function gizmoArrowLength(box: RigBox): number {
  * Screen-space arrow hit test for the translate gizmo: projects the posed pivot and the
  * pivot + axis × length through `project` (grid point → screen pixels, null when
  * unprojectable — same contract as `nearestRingHit`), and returns the nearest axis whose
- * segment passes within `thresholdPx` of (`sx`, `sy`). Roots only in practice (offsets
- * are roots-only), but the math is valid for any box.
+ * segment passes within `thresholdPx` of (`sx`, `sy`).
  */
 export function nearestAxisHit(
   boxes: RigBox[],
@@ -415,8 +415,8 @@ export function closestAxisParam(
   return origin[i] + dir[i] * s - point[i]
 }
 
-/** Snaps one offset component onto the 0.25-voxel stepper lattice, normalizing -0. */
-export function snapOffsetStep(v: number, step = 0.25): number {
+/** Snaps one offset component onto the third-voxel stepper lattice, normalizing -0. */
+export function snapOffsetStep(v: number, step = 1 / 3): number {
   if (!Number.isFinite(v)) return 0
   const s = Math.round(v / step) * step
   return s === 0 ? 0 : s
