@@ -509,18 +509,6 @@ function edgeKey(v1: THREE.Vector3, v2: THREE.Vector3): string {
   return k1 < k2 ? `${k1}|${k2}` : `${k2}|${k1}`
 }
 
-function trianglesShareEdge(t1: Tri, t2: Tri): boolean {
-  const edges2 = [
-    edgeKey(t2.vertices[0], t2.vertices[1]),
-    edgeKey(t2.vertices[1], t2.vertices[2]),
-    edgeKey(t2.vertices[2], t2.vertices[0]),
-  ]
-  for (let i = 0; i < 3; i++) {
-    if (edges2.includes(edgeKey(t1.vertices[i], t1.vertices[(i + 1) % 3]))) return true
-  }
-  return false
-}
-
 function simplifyCollinearVertices(vertices: THREE.Vector3[]): THREE.Vector3[] {
   if (vertices.length <= 3) return vertices
   const simplified: THREE.Vector3[] = []
@@ -538,48 +526,85 @@ function simplifyCollinearVertices(vertices: THREE.Vector3[]): THREE.Vector3[] {
   return simplified.length >= 3 ? simplified : vertices
 }
 
-function groupsShareEdge(a: Tri[], b: Tri[]): boolean {
-  for (const ta of a) {
-    for (const tb of b) {
-      if (trianglesShareEdge(ta, tb)) return true
+/**
+ * Partitions triangles into edge-connected coplanar groups via union-find over shared edges.
+ * Each triangle's 3 edges are hashed once, so only triangles sharing a quantized edge are ever
+ * pair-tested — near-linear time instead of the old incremental grouping's O(T²) scan plus the
+ * O(C²) `mergeConnectedGroups` fixpoint below (now removed). The old pipeline's final partition
+ * was exactly the connected components of (same key ∧ coplanar ∧ share an edge), which is what
+ * union-find collects directly.
+ *
+ * The pairwise predicate mirrors the old one: same merge key, normals agreeing past
+ * NORMAL_THRESHOLD, planes within COPLANAR_THRESHOLD (checked both ways so a threshold-fuzz
+ * chain can't bridge two distinct planes). With grid-aligned geometry this is an equivalence
+ * relation in practice (normals are exact or 1ulp apart vs 45°/90° differences), so output is
+ * identical; only abstract threshold-straddling inputs could partition differently.
+ *
+ * Output order is deterministic: groups ordered by lowest member index, members in index order.
+ * Each group's reference triangle (`mergeCoplanarTriangles` projects onto `group[0]`) is the
+ * group's earliest triangle — the same head the old incremental pass picked.
+ */
+function groupCoplanarConnected(triangles: Tri[]): Tri[][] {
+  const parent = triangles.map((_, i) => i)
+  const find = (x: number): number => {
+    let root = x
+    while (parent[root] !== root) root = parent[root]
+    while (parent[x] !== root) {
+      const next = parent[x]
+      parent[x] = root
+      x = next
     }
+    return root
   }
-  return false
-}
+  const union = (a: number, b: number): void => {
+    const ra = find(a)
+    const rb = find(b)
+    if (ra === rb) return
+    // Attach the higher root under the lower one for deterministic (index-ordered) components.
+    if (ra < rb) parent[rb] = ra
+    else parent[ra] = rb
+  }
 
-function mergeConnectedGroups(groups: Tri[][]): Tri[][] {
-  let changed = true
-  let current = groups
+  const coplanarPair = (a: Tri, b: Tri): boolean => {
+    if (a.key !== b.key) return false
+    if (a.normal.dot(b.normal) <= NORMAL_THRESHOLD) return false
+    if (Math.abs(a.plane.distanceToPoint(b.vertices[0])) > COPLANAR_THRESHOLD) return false
+    if (Math.abs(b.plane.distanceToPoint(a.vertices[0])) > COPLANAR_THRESHOLD) return false
+    return true
+  }
 
-  while (changed) {
-    changed = false
-    const next: Tri[][] = []
-    const placed = new Set<number>()
+  const byEdge = new Map<string, number[]>()
+  triangles.forEach((tri, i) => {
+    for (let e = 0; e < 3; e++) {
+      const ek = edgeKey(tri.vertices[e], tri.vertices[(e + 1) % 3])
+      const arr = byEdge.get(ek)
+      if (arr) arr.push(i)
+      else byEdge.set(ek, [i])
+    }
+  })
 
-    for (let i = 0; i < current.length; i++) {
-      if (placed.has(i)) continue
-      let group = current[i]
-      placed.add(i)
-
-      for (let j = i + 1; j < current.length; j++) {
-        if (placed.has(j)) continue
-        const head = current[j][0]
-        if (group[0].key !== head.key) continue
-        if (group[0].normal.dot(head.normal) <= NORMAL_THRESHOLD) continue
-        if (Math.abs(group[0].plane.distanceToPoint(head.vertices[0])) > COPLANAR_THRESHOLD) continue
-        if (!groupsShareEdge(group, current[j])) continue
-        group = [...group, ...current[j]]
-        placed.add(j)
-        changed = true
+  for (const idxs of byEdge.values()) {
+    if (idxs.length < 2) continue
+    for (let a = 0; a < idxs.length; a++) {
+      for (let b = a + 1; b < idxs.length; b++) {
+        const i = idxs[a]
+        const j = idxs[b]
+        if (find(i) === find(j)) continue
+        if (coplanarPair(triangles[i], triangles[j])) union(i, j)
       }
-
-      next.push(group)
     }
-
-    current = next
   }
 
-  return current
+  const groups = new Map<number, Tri[]>()
+  triangles.forEach((tri, i) => {
+    const r = find(i)
+    const g = groups.get(r)
+    if (g) g.push(tri)
+    else groups.set(r, [tri])
+  })
+  // Map iterates in first-insertion order, which is already lowest-member-index order since
+  // triangles are visited by ascending index; sort explicitly to pin that down.
+  return [...groups.entries()].sort((a, b) => a[0] - b[0]).map(([, g]) => g)
 }
 
 function signedArea2D(coords: number[], start: number, end: number): number {
@@ -808,7 +833,7 @@ function toNonIndexed(geometry: THREE.BufferGeometry): THREE.BufferGeometry {
 }
 
 /** Merge coplanar edge-connected faces on a post-CSG geometry to reduce triangle count. */
-function mergeCoplanarFaces(geometry: THREE.BufferGeometry): THREE.BufferGeometry {
+export function mergeCoplanarFaces(geometry: THREE.BufferGeometry): THREE.BufferGeometry {
   return mergeCoplanarFacesWithKeys(geometry, () => '').geometry
 }
 
@@ -845,23 +870,7 @@ export function mergeCoplanarFacesWithKeys(
     })
   }
 
-  const groups: Tri[][] = []
-  for (const tri of triangles) {
-    let placed = false
-    for (const group of groups) {
-      const head = group[0]
-      if (tri.key !== head.key) continue
-      if (tri.normal.dot(head.normal) <= NORMAL_THRESHOLD) continue
-      if (Math.abs(head.plane.distanceToPoint(tri.vertices[0])) > COPLANAR_THRESHOLD) continue
-      if (!group.some((g) => trianglesShareEdge(tri, g))) continue
-      group.push(tri)
-      placed = true
-      break
-    }
-    if (!placed) groups.push([tri])
-  }
-
-  const merged = mergeConnectedGroups(groups)
+  const merged = groupCoplanarConnected(triangles)
 
   const optimized: Tri[] = []
   for (const group of merged) {

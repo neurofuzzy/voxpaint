@@ -4,7 +4,7 @@ import type { CellKey, Coord, VoxelModel } from '@/engine/grid/types'
 import { planeLogicalBasis } from '@/engine/plane/constructionPlane'
 import { outwardNormal } from '@/engine/plane/planeGeometry'
 import { rotateLocal } from '@/engine/chamfer/rampDual'
-import type { UnwrappedAtlas } from './uvUnwrap'
+import type { UnwrappedAtlas, UnwrappedRect } from './uvUnwrap'
 
 const TEXELS_PER_UNIT = 4
 const PADDING = 1
@@ -187,6 +187,88 @@ function hemisphereDirs(): [number, number, number][] {
 }
 
 /**
+ * Conservative per-rect empty-ahead test for the AO bake. A texel can only be occluded by an
+ * occupied grid cell strictly ahead of its own row (the march only counts hits with
+ * `ahead > 0.5`, and both rows are integers on axis-aligned faces) and within 31 steps along
+ * each axis. For an axis-aligned rect the texel row along the normal is uniform, so scanning
+ * the ahead slab (plus a generous tangent margin) decides for the whole rect at once: empty
+ * means every texel bakes zero occlusion and the ray march is skipped entirely.
+ *
+ * Only exact axis normals qualify (face normals from axis-aligned geometry are exactly ±1,
+ * and the tangent basis then carries no normal component, so all texels share one depth);
+ * anything else returns false and bakes the full march. When the slab is empty the output is
+ * bit-identical to marching (totalOcclusion stays 0 either way) — this only skips provably
+ * dead work, and makes bare/convex surfaces (e.g. the outside of a solid cube) bake in
+ * microseconds instead of milliseconds.
+ */
+function rectAheadIsEmpty(
+  grid: Uint8Array,
+  gx: number, gy: number, gz: number,
+  ox: number, oy: number, oz: number,
+  rect: UnwrappedRect,
+): boolean {
+  const nx = rect.normal.x, ny = rect.normal.y, nz = rect.normal.z
+  const a = nx === 1 || nx === -1 ? 0 : ny === 1 || ny === -1 ? 1 : nz === 1 || nz === -1 ? 2 : -1
+  if (a === -1) return false
+  const t1 = rect.tangent1, t2 = rect.tangent2
+  const t1a = a === 0 ? t1.x : a === 1 ? t1.y : t1.z
+  const t2a = a === 0 ? t2.x : a === 1 ? t2.y : t2.z
+  if (t1a !== 0 || t2a !== 0) return false
+
+  const sign = a === 0 ? nx : a === 1 ? ny : nz // 1 or -1
+  const omin = a === 0 ? ox : a === 1 ? oy : oz
+  // Uniform texel row along the normal — the same value the per-texel start-cell formula
+  // yields for every texel (their normal-axis world coordinate is exactly sign * depthCoord).
+  const S = Math.round((sign * rect.depthCoord - omin) * TEXELS_PER_UNIT) - 1
+
+  // Tangent footprint from the rect corners, in start-cell space (matches the per-texel
+  // formula `(w - omin) * 4 - 1`); the ±MARGIN covers ray reach (31 steps), rounding, and
+  // texel centres landing up to half a texel outside the nominal bounds.
+  const MARGIN = 34
+  const { minU, maxU, minV, maxV, depthCoord: D } = rect
+  let b0 = Infinity, b1 = -Infinity, c0 = Infinity, c1 = -Infinity
+  for (const [uu, vv] of [[minU, minV], [minU, maxV], [maxU, minV], [maxU, maxV]] as const) {
+    const wx = nx * D + t1.x * uu + t2.x * vv
+    const wy = ny * D + t1.y * uu + t2.y * vv
+    const wz = nz * D + t1.z * uu + t2.z * vv
+    // The two tangent world axes (everything but a).
+    const w = a === 0 ? [wy, wz] : a === 1 ? [wx, wz] : [wx, wy]
+    const o = a === 0 ? [oy, oz] : a === 1 ? [ox, oz] : [ox, oy]
+    for (let k = 0; k < 2; k++) {
+      const cs = (w[k] - o[k]) * TEXELS_PER_UNIT - 1
+      if (k === 0) { b0 = Math.min(b0, cs); b1 = Math.max(b1, cs) }
+      else { c0 = Math.min(c0, cs); c1 = Math.max(c1, cs) }
+    }
+  }
+  const lo: [number, number, number] = [0, 0, 0]
+  const hi: [number, number, number] = [gx - 1, gy - 1, gz - 1]
+  // Normal axis: only rows strictly ahead of S can ever count as hits (integer ahead ≥ 1).
+  if (sign > 0) { lo[a] = Math.max(lo[a], S + 1); hi[a] = Math.min(hi[a], S + SEARCH_RADIUS_CELLS) }
+  else { lo[a] = Math.max(lo[a], S - SEARCH_RADIUS_CELLS); hi[a] = Math.min(hi[a], S - 1) }
+  const tb = a === 0 ? [1, 2] : a === 1 ? [0, 2] : [0, 1]
+  const tbBounds = [[b0, b1], [c0, c1]]
+  for (let k = 0; k < 2; k++) {
+    const ax2 = tb[k]
+    lo[ax2] = Math.max(lo[ax2], Math.floor(tbBounds[k][0]) - MARGIN)
+    hi[ax2] = Math.min(hi[ax2], Math.ceil(tbBounds[k][1]) + MARGIN)
+  }
+  if (lo[0] > hi[0] || lo[1] > hi[1] || lo[2] > hi[2]) return true
+
+  const [lx, ly, lz] = lo
+  const [hx, hy, hz] = hi
+  const strideY = gx, strideZ = gx * gy
+  for (let z = lz; z <= hz; z++) {
+    for (let y = ly; y <= hy; y++) {
+      const row = z * strideZ + y * strideY
+      for (let x = lx; x <= hx; x++) {
+        if (grid[row + x] === 1) return false
+      }
+    }
+  }
+  return true
+}
+
+/**
  * Bakes ambient occlusion into a uv1-unwrapped atlas via hemisphere ray-casting.
  * For each texel, casts rays into the 4× occupancy grid along precomputed
  * hemisphere directions. Occlusion from each ray is 1/(1 + hitDist²); the
@@ -241,72 +323,100 @@ export function bakeAOToAtlas(
 
   const { grid, gx, gy, gz, min: occMin } = occ
   const dirs = hemisphereDirs()
+  const nDirs = dirs.length
   const bs = blockScale(noiseScale)
+  const gxgy = gx * gy
+  const ox = occMin[0], oy = occMin[1], oz = occMin[2]
 
   for (const rect of atlas.rects) {
     const { normal, tangent1: t1, tangent2: t2 } = rect
+    const nx = normal.x, ny = normal.y, nz = normal.z
+    const t1x = t1.x, t1y = t1.y, t1z = t1.z
+    const t2x = t2.x, t2y = t2.y, t2z = t2.z
+    const depth = rect.depthCoord
+
+    // Hemisphere directions in world space, once per rect: identical values to the old
+    // per-texel transform (same inputs, same operation order), computed nDirs× per rect
+    // instead of nDirs× per texel.
+    const wdx = new Float64Array(nDirs)
+    const wdy = new Float64Array(nDirs)
+    const wdz = new Float64Array(nDirs)
+    for (let i = 0; i < nDirs; i++) {
+      const dt = dirs[i][0], dd = dirs[i][1], dt2 = dirs[i][2]
+      wdx[i] = dd * nx + dt * t1x + dt2 * t2x
+      wdy[i] = dd * ny + dt * t1y + dt2 * t2y
+      wdz[i] = dd * nz + dt * t1z + dt2 * t2z
+    }
+
+    // Whole-rect early-out (see rectAheadIsEmpty): with no occluder ahead, every texel bakes
+    // zero occlusion and the march is skipped. With noise on the texels still loop for the
+    // grain — identical values, since a march with zero hits yields the same ao = 0.
+    const hasInterior = rect.texWidth > PADDING * 2 && rect.texHeight > PADDING * 2
+    const skipRays = hasInterior && rectAheadIsEmpty(grid, gx, gy, gz, ox, oy, oz, rect)
 
     for (let ty = PADDING; ty < rect.texHeight - PADDING; ty++) {
       for (let tx = PADDING; tx < rect.texWidth - PADDING; tx++) {
         const worldU = rect.minU + (tx - PADDING + 0.5) / TEXELS_PER_UNIT
         const worldV = rect.minV + (ty - PADDING + 0.5) / TEXELS_PER_UNIT
 
-        const wx = normal.x * rect.depthCoord + t1.x * worldU + t2.x * worldV
-        const wy = normal.y * rect.depthCoord + t1.y * worldU + t2.y * worldV
-        const wz = normal.z * rect.depthCoord + t1.z * worldU + t2.z * worldV
+        const wx = nx * depth + t1x * worldU + t2x * worldV
+        const wy = ny * depth + t1y * worldU + t2y * worldV
+        const wz = nz * depth + t1z * worldU + t2z * worldV
 
         // Flat-quad texel: backing off along the rect normal lands in a flat cell, the texel
         // sits on that flat's quad plane, and the normals are parallel — bake constant white
         // (data is pre-filled 255) with no raycast. All three tests are needed: the cell test
         // alone would whitewash solid faces sitting exactly on a cell boundary next to a flat,
         // and the plane test alone would whitewash a solid face continuing the pane's plane.
-        const flat = flatByCell.get(encodeKey(Math.floor(wx - normal.x * 1e-3), Math.floor(wy - normal.y * 1e-3), Math.floor(wz - normal.z * 1e-3)))
-        if (flat) {
-          const parallel = Math.abs(normal.x * flat.nx + normal.y * flat.ny + normal.z * flat.nz)
-          const planar = Math.abs((wx - flat.cx) * flat.nx + (wy - flat.cy) * flat.ny + (wz - flat.cz) * flat.nz)
-          if (parallel > 0.999 && planar < 1e-3) continue
+        // Skipped entirely when the model has no flats (avoids a string key build per texel).
+        if (flatByCell.size > 0) {
+          const flat = flatByCell.get(encodeKey(Math.floor(wx - nx * 1e-3), Math.floor(wy - ny * 1e-3), Math.floor(wz - nz * 1e-3)))
+          if (flat) {
+            const parallel = Math.abs(nx * flat.nx + ny * flat.ny + nz * flat.nz)
+            const planar = Math.abs((wx - flat.cx) * flat.nx + (wy - flat.cy) * flat.ny + (wz - flat.cz) * flat.nz)
+            if (parallel > 0.999 && planar < 1e-3) continue
+          }
         }
 
         // Grid cell of the surface texel (no nudge — exact surface position).
-        const sx = Math.round((wx - occMin[0]) * TEXELS_PER_UNIT) - 1;
-        const sy = Math.round((wy - occMin[1]) * TEXELS_PER_UNIT) - 1;
-        const sz = Math.round((wz - occMin[2]) * TEXELS_PER_UNIT) - 1;
+        const sx = Math.round((wx - ox) * TEXELS_PER_UNIT) - 1;
+        const sy = Math.round((wy - oy) * TEXELS_PER_UNIT) - 1;
+        const sz = Math.round((wz - oz) * TEXELS_PER_UNIT) - 1;
 
         let totalOcclusion = 0
 
-        for (const [dt, dd, dt2] of dirs) {
-          // Transform direction from tangent space to world (grid) space
-          const dx = dd * normal.x + dt * t1.x + dt2 * t2.x
-          const dy = dd * normal.y + dt * t1.y + dt2 * t2.y
-          const dz = dd * normal.z + dt * t1.z + dt2 * t2.z
+        if (!skipRays) {
+          for (let i = 0; i < nDirs; i++) {
+            const dx = wdx[i], dy = wdy[i], dz = wdz[i]
 
-          // Ray-cast through the occupancy grid. Step through grid cells along
-          // the direction; first occupied cell hit determines per-ray occlusion.
-          let hitDistCells = Infinity
-          for (let step = 1; step < SEARCH_RADIUS_CELLS; step++) {
-            const gx2 = Math.round(sx + dx * step)
-            const gy2 = Math.round(sy + dy * step)
-            const gz2 = Math.round(sz + dz * step)
-            if (gx2 < 0 || gx2 >= gx || gy2 < 0 || gy2 >= gy || gz2 < 0 || gz2 >= gz) break
+            // Ray-cast through the occupancy grid. Step through grid cells along
+            // the direction; first occupied cell hit determines per-ray occlusion.
+            let hitDistCells = Infinity
+            for (let step = 1; step < SEARCH_RADIUS_CELLS; step++) {
+              const gx2 = Math.round(sx + dx * step)
+              const gy2 = Math.round(sy + dy * step)
+              const gz2 = Math.round(sz + dz * step)
+              if (gx2 < 0 || gx2 >= gx || gy2 < 0 || gy2 >= gy || gz2 < 0 || gz2 >= gz) break
 
-            // Skip cells behind or level with the surface to avoid self-occlusion
-            // from the face's own voxel when rays sweep tangent.
-            const ahead = (gx2 - sx) * normal.x + (gy2 - sy) * normal.y + (gz2 - sz) * normal.z
-            if (ahead <= 0.5) continue
+              // Skip cells behind or level with the surface to avoid self-occlusion
+              // from the face's own voxel when rays sweep tangent.
+              const ahead = (gx2 - sx) * nx + (gy2 - sy) * ny + (gz2 - sz) * nz
+              if (ahead <= 0.5) continue
 
-            if (grid[gx2 + gy2 * gx + gz2 * gx * gy] === 1) {
-              hitDistCells = step
-              break
+              if (grid[gx2 + gy2 * gx + gz2 * gxgy] === 1) {
+                hitDistCells = step
+                break
+              }
             }
-          }
 
-          if (hitDistCells < Infinity) {
-            const hitDist = hitDistCells * CELL_SIZE
-            totalOcclusion += 1 / (1.0 + hitDist)
+            if (hitDistCells < Infinity) {
+              const hitDist = hitDistCells * CELL_SIZE
+              totalOcclusion += 1 / (1.0 + hitDist)
+            }
           }
         }
 
-        const ao = totalOcclusion / dirs.length
+        const ao = totalOcclusion / nDirs
         const shaded = 1 - aoStrength * ao
         // Quantized grain: texels inside the same bs×bs block hash the same block indices, so
         // the grain reads as chunky cells rather than per-texel static (nearest, never blurred).

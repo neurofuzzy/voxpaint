@@ -6,7 +6,7 @@ import { TEXEL_SCALE } from '@/engine/texture/types'
 import { bakeOverlayTexturesByColor } from '@/engine/texture/overlay'
 import { buildTexturedGeometryByColorMerged } from '@/engine/texture/texturedGeometry'
 import { hasTextureContent } from '@/engine/texture/TextureStore'
-import { buildOptimizedVoxelGroups } from '@/engine/instancing/voxelMeshBuilder'
+import { buildOptimizedVoxelGroups, buildOptimizedVoxelGroupsShell } from '@/engine/instancing/voxelMeshBuilder'
 import { buildPreviewMaterial, tickEmissiveAnimation } from '@/engine/instancing/previewMaterial'
 import { enableGhostDither, setGhostDither } from '@/engine/instancing/ghostDither'
 import { isolationPlanesForBox, setIsolationClip } from '@/engine/instancing/modelIsolate'
@@ -74,7 +74,10 @@ export function OptimizedMeshView({ active }: { active: boolean }) {
       const merged = buildTexturedGeometryByColorMerged(model, palette, gridExtent, optimizedMesh, texelScale)
       return { groups: merged.groups, rawTriangles: merged.rawTriangles, optimizedTriangles: merged.optimizedTriangles }
     }
-    return buildOptimizedVoxelGroups(model, palette, optimizedMesh)
+    // Shell fast path for cube/flat models (exact — see buildOptimizedVoxelGroupsShell);
+    // bevel-heavy models fall back to the CSG union, same output as before.
+    return buildOptimizedVoxelGroupsShell(model, palette, optimizedMesh)
+      ?? buildOptimizedVoxelGroups(model, palette, optimizedMesh)
   }, [model, palette, optimizedMesh, textured, gridExtent, texelScale])
 
   // Emissive materials skip AO/noise baking entirely (a glowing surface shouldn't be shadowed or

@@ -6,7 +6,7 @@ import { materialClassFor, resolveSlotColor, type MaterialClass } from '@/engine
 import type { PaletteState } from '@/engine/palette/types'
 import type { SliceKey } from '@/engine/animation/types'
 import { chamferBasisIsReflected, chamferInstanceMatrix } from './basis'
-import { mergeCoplanarFacesWithKeys, optimizeGroupsByCSG, triangleCount, type VoxelGroup } from './meshOptimizer'
+import { mergeCoplanarFaces, mergeCoplanarFacesWithKeys, optimizeGroupsByCSG, triangleCount, type VoxelGroup } from './meshOptimizer'
 
 /**
  * Bakes the whole model into a single optimized "shell" mesh for the 3D preview's optimized-mesh
@@ -162,9 +162,19 @@ function addTri(faces: Face[], a: THREE.Vector3, b: THREE.Vector3, c: THREE.Vect
 }
 
 /** Emit a quad as two triangles split on a canonical diagonal (min→max corner), so coincident
- * faces from adjacent cells produce identical vertex-triples for the shell pass. */
+ * faces from adjacent cells produce identical vertex-triples for the shell pass. The order only
+ * needs to be deterministic on corner sets (any total order gives the same diagonal for the same
+ * quad), so corners are compared as quantized integer triples — far cheaper than the old
+ * `localeCompare` on key strings, which dominated emission time on large models. */
 function pushQuad(faces: Face[], corners: THREE.Vector3[], outward: THREE.Vector3, mat: Mat) {
-  const s = [...corners].sort((p, q) => qkey(p).localeCompare(qkey(q), undefined, { numeric: true }))
+  const keyed = corners.map((p) => ({
+    p,
+    x: Math.round(p.x * QUANT),
+    y: Math.round(p.y * QUANT),
+    z: Math.round(p.z * QUANT),
+  }))
+  keyed.sort((a, b) => a.x - b.x || a.y - b.y || a.z - b.z)
+  const s = keyed.map((e) => e.p)
   addTri(faces, s[0], s[1], s[3], mat, outward)
   addTri(faces, s[0], s[3], s[2], mat, outward)
 }
@@ -469,6 +479,61 @@ export function buildOptimizedVoxelGroups(model: VoxelModel, palette: PaletteSta
   const groups = optimizeGroupsByCSG(Array.from(byGroup.values()), mergeCoplanar ?? true, isOccupied, cullInteriorFaces)
   let optimizedTriangles = 0
   for (const g of groups) optimizedTriangles += triangleCount(g.geometry)
+
+  return { groups, rawTriangles, optimizedTriangles }
+}
+
+/**
+ * Shell-based fast path for `buildOptimizedVoxelGroups`: emits per-cell faces, culls exact
+ * interior pairs via `removeInteriorFaces`, groups by (materialClass, colorKey), and runs the
+ * coplanar merge per group — no BSP booleans, no per-voxel `BoxGeometry` allocation.
+ *
+ * Returns `null` when the model contains a resolved non-flat chamfer (`ramp`/`convex`/
+ * `concave`/`wedge`/`thin`/`half`/`post`/`quarter`): a bevel's side faces can partially overlap
+ * a neighbour's full quad (e.g. two adjacent ramps with mismatched rotations), which exact
+ * triple-matching can neither cull nor keep cleanly — the CSG union is still required there.
+ * Callers fall back to `buildOptimizedVoxelGroups` in that case.
+ *
+ * Exact for everything else, by construction: cubes (and unresolved chamfers, which emit as
+ * cubes) only ever share full quads across a boundary, and every such quad is emitted on the
+ * canonical `pushQuad` diagonal on both sides, so interior interfaces always match exactly and
+ * partial overlaps are impossible. Zero-thickness flats only live on cell centre planes, never
+ * coincident with a boundary face; their opposite-winding pairs never pair in the shell pass
+ * and self-cancel in boundary extraction, so they weld into panes exactly like the CSG flat
+ * pass (see the flat parity test). Glass agrees with the CSG occupancy test on this subset:
+ * every neighbour here either fully occupies its cell (cube) or never shares a triple (flat).
+ */
+export function buildOptimizedVoxelGroupsShell(model: VoxelModel, palette: PaletteState, mergeCoplanar = true, cullInteriorFaces = true): OptimizedVoxelGroups | null {
+  for (const cell of model.chamfer.values()) {
+    const kind = cell.resolvedTo?.shapeKind
+    if (kind !== undefined && kind !== 'flat' && kind !== 'flatwedge') return null
+  }
+
+  const { faces, rawTriangles } = buildShellFaces(model, palette, undefined, cullInteriorFaces)
+
+  const byGroup = new Map<string, { colorKey: number; materialClass: MaterialClass; faces: Face[] }>()
+  for (const f of faces) {
+    const groupKey = `${f.materialClass}:${f.colorKey}`
+    let group = byGroup.get(groupKey)
+    if (!group) {
+      group = { colorKey: f.colorKey, materialClass: f.materialClass, faces: [] }
+      byGroup.set(groupKey, group)
+    }
+    group.faces.push(f)
+  }
+
+  const groups: ColorGroupGeometry[] = []
+  let optimizedTriangles = 0
+  for (const group of byGroup.values()) {
+    let geometry = geometryFromFaces(group.faces)
+    if (mergeCoplanar) {
+      const merged = mergeCoplanarFaces(geometry)
+      geometry.dispose()
+      geometry = merged
+    }
+    optimizedTriangles += triangleCount(geometry)
+    groups.push({ colorKey: group.colorKey, materialClass: group.materialClass, geometry })
+  }
 
   return { groups, rawTriangles, optimizedTriangles }
 }
