@@ -1,8 +1,8 @@
 ```
 # Auto-generated project map
-# Last updated: 2026-11-11 23:14:13
+# Last updated: 2026-11-11 23:25:47
 # Files: 290
-# Lines of code: ~53638
+# Lines of code: ~53656
 ```
 - **/assets**
 - **/components**
@@ -857,7 +857,7 @@
     - [fillTool.ts](../src/engine/tools/fillTool.ts)
       - Variable: `fillTool`
     - [fineFloat.ts](../src/engine/tools/fineFloat.ts)
-      - Function: `fineFloatAtomic` - True when the content holds a chamfer anywhere ...
+      - Function: `fineFloatAtomic` - True when the content holds a whole chamfer cel...
       - Type: `FloatPiece`
       - Function: `floatPieces` - Every piece of a float placed at (originU, orig...
       - Function: `floatFootprintRegion` - The fine footprint of a float as a region (for ...
@@ -882,7 +882,6 @@
     - [fineWand.ts](../src/engine/tools/fineWand.ts)
       - Function: `fineCellColor` - The sub-voxel wand: flood-selects fine cells (t...
       - Function: `floodFineCells`
-      - Function: `selectionTouchesChamfer` - True when a sub-voxel selection covers any cham...
     - [floodFill.ts](../src/engine/tools/floodFill.ts)
       - Function: `floodFillRegion` - 4-connected flood fill over the active plane's ...
       - Function: `fillLeaksToEdges` - True when a flood-fill result touches all 4 edg...

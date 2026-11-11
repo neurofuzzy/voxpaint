@@ -72,7 +72,7 @@ describe('selectTool sub-voxel float drag', () => {
     // Empty model: nothing chamfered, so the recorded step is non-atomic…
     const drag = dragState.current
     expect(drag.kind).toBe('moveFloat')
-    if (drag.kind === 'moveFloat') expect(drag.fineStep).toEqual({ su: 2, sv: 1, atomic: false })
+    if (drag.kind === 'moveFloat') expect(drag.fineStep).toEqual({ su: 2, sv: 1 })
 
     selectTool.onMove!(ctx, evt(1, 0, 1.75, 0.5))
     expect(moveFloatTo).toHaveBeenCalledWith(1, 0, 0, 0)

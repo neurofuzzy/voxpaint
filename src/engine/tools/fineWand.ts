@@ -5,8 +5,7 @@ import { splitChildBits } from '@/engine/grid/subdiv'
 import { gridCoordFromPixel, planeLogicalBasis } from '@/engine/plane/constructionPlane'
 import { axisIndex } from '@/engine/plane/planeGeometry'
 import type { ConstructionPlane } from '@/engine/plane/types'
-import { worldAxisOf, forEachFineCell, type FineDivision } from './fineSelection'
-import type { SelectionRegion } from '@/store/types'
+import { worldAxisOf, type FineDivision } from './fineSelection'
 
 /**
  * The sub-voxel wand: flood-selects fine cells (the grid's resolution) on the active plane slice.
@@ -73,27 +72,4 @@ export function floodFineCells(
     }
   }
   return out
-}
-
-/**
- * True when a sub-voxel selection covers any chamfered part (a beveled detail child or a
- * chamfer cell, both of which ride along atomically). A lifted float with chamfered content
- * moves in whole voxels only, so the select tool records this at lift time — the content it
- * lifts may not be visible in its own context yet.
- */
-export function selectionTouchesChamfer(
-  model: VoxelModel,
-  plane: ConstructionPlane,
-  region: SelectionRegion,
-  gridExtent: GridExtent,
-): boolean {
-  const f = region.fine
-  if (!f) return false
-  const div: FineDivision = { su: f.su, sv: f.sv, slab: f.slab }
-  let hit = false
-  forEachFineCell(region, (fu, fv) => {
-    if (hit) return
-    if ((fineCellColor(model, plane, div, fu, fv, gridExtent) ?? '').includes('#chamfer')) hit = true
-  })
-  return hit
 }

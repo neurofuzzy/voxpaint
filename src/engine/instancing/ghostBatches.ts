@@ -72,11 +72,18 @@ export function buildFloatGhostBatches(
   const byPool = new Map<PoolId, GhostBatch>()
 
   if (floatContent.fine) {
-    // Sub-voxel float: one box per piece, at its exact (half-voxel) place.
+    // Sub-voxel float: one box per piece, at its exact (half-voxel) place — beveled pieces
+    // ghost in their shape's pool, like floating detail children do below.
     for (const piece of floatPieces(plane, floatContent, floatOrigin.originU, floatOrigin.originV, floatOrigin.subU ?? 0, floatOrigin.subV ?? 0)) {
       if (!withinWorkingBounds(piece.cell, gridExtent)) continue
       const origin: [number, number, number] = [piece.cell[0] + piece.origin[0], piece.cell[1] + piece.origin[1], piece.cell[2] + piece.origin[2]]
-      pushMatrixInto(byPool, 'cube', subCubeInstanceMatrix(origin, piece.size), new THREE.Color(resolveSlotColor(palette, piece.slot)))
+      const resolved = piece.chamfer?.resolvedTo
+      if (resolved) {
+        const chamfer = piece.chamfer!
+        pushMatrixInto(byPool, poolIdFor(piece.chamfer), scaledChamferInstanceMatrix(origin, piece.size, chamfer.planeAxis, chamfer.planeOrientation, resolved.rotation), new THREE.Color(resolveSlotColor(palette, piece.slot)))
+      } else {
+        pushMatrixInto(byPool, 'cube', subCubeInstanceMatrix(origin, piece.size), new THREE.Color(resolveSlotColor(palette, piece.slot)))
+      }
     }
   }
 

@@ -2,8 +2,6 @@ import { withinWorkingBounds } from '@/engine/grid/GridStore'
 import { gridCoordFromPixel } from '@/engine/plane/constructionPlane'
 import { bresenhamLine } from '@/engine/tools/lineUtils'
 import { fineDivisionFor, fineRectRegion, fineUnitAt, isFineSelected } from '@/engine/tools/fineSelection'
-import { fineFloatAtomic } from '@/engine/tools/fineFloat'
-import { selectionTouchesChamfer } from '@/engine/tools/fineWand'
 import { isCellSelected, lassoRegion } from '@/engine/tools/selectionMask'
 import type { NormalizedPointerEvent } from '@/engine/input/PointerInputController'
 import type { ToolContext, ToolHandler } from './types'
@@ -19,13 +17,13 @@ function selectionContains(selection: NonNullable<ToolContext['selection']>, ctx
 
 export const selectTool: ToolHandler = {
   onDown(ctx, e) {
-    const { selection, floatContent, floatOrigin, plane, gridExtent, model } = ctx
+    const { selection, floatContent, floatOrigin, plane, gridExtent } = ctx
 
     if (floatContent && selection && isCellSelected(selection, e.u, e.v)) {
       // Continuing to drag the same pending float.
       const ff = floatContent.fine
       ctx.drag.current = { kind: 'moveFloat', startU: e.u, startV: e.v, originAtStart: floatOrigin!, startFine: ff ? fineUnitAt({ su: ff.su, sv: ff.sv, slab: null }, plane, e.u, e.v, e.cu, e.cv) : undefined,
-        fineStep: ff ? { su: ff.su, sv: ff.sv, atomic: fineFloatAtomic(floatContent) } : undefined }
+        fineStep: ff ? { su: ff.su, sv: ff.sv } : undefined }
       return
     }
     if (floatContent) {
@@ -45,8 +43,9 @@ export const selectTool: ToolHandler = {
         originAtStart: { originU: selection.originU, originV: selection.originV, subU: 0, subV: 0 },
         startFine: sf ? fineUnitAt({ su: sf.su, sv: sf.sv, slab: null }, plane, e.u, e.v, e.cu, e.cv) : undefined,
         // The lifted content may not be visible in this context's snapshot yet (no render has
-        // flushed the lift), so record its resolution + atomicity now, from the live selection.
-        fineStep: sf ? { su: sf.su, sv: sf.sv, atomic: selectionTouchesChamfer(model, plane, selection, gridExtent) } : undefined,
+        // flushed the lift), so record its resolution now. Whole-step snapping for whole
+        // chamfer cells is enforced where the origin lands (the store), not here.
+        fineStep: sf ? { su: sf.su, sv: sf.sv } : undefined,
       }
       return
     }
@@ -77,20 +76,14 @@ export const selectTool: ToolHandler = {
     if (drag.kind === 'moveFloat') {
       const { startU, startV, originAtStart, startFine } = drag
       // Prefer the lift-time record: the live content can lag a render behind on the gesture
-      // that performed the lift, which otherwise steps the first drag in whole voxels.
+      // that performed the lift, which would otherwise step the first drag in whole voxels.
       const step = drag.fineStep
-        ?? (ctx.floatContent?.fine
-          ? { su: ctx.floatContent.fine.su, sv: ctx.floatContent.fine.sv, atomic: fineFloatAtomic(ctx.floatContent) }
-          : undefined)
+        ?? (ctx.floatContent?.fine ? { su: ctx.floatContent.fine.su, sv: ctx.floatContent.fine.sv } : undefined)
       if (step && startFine) {
-        // Sub-voxel float: step in fine units (whole voxels when the content holds a chamfer).
+        // Sub-voxel float: step in fine units (the store snaps whole-chamfer content).
         const f = fineUnitAt({ su: step.su, sv: step.sv, slab: null }, ctx.plane, e.u, e.v, e.cu, e.cv)
-        let du = f[0] - startFine[0]
-        let dv = f[1] - startFine[1]
-        if (step.atomic) {
-          du = Math.round(du / step.su) * step.su
-          dv = Math.round(dv / step.sv) * step.sv
-        }
+        const du = f[0] - startFine[0]
+        const dv = f[1] - startFine[1]
         const fu = originAtStart.originU * step.su + (originAtStart.subU ?? 0) + du
         const fv = originAtStart.originV * step.sv + (originAtStart.subV ?? 0) + dv
         const ou = Math.floor(fu / step.su)

@@ -49,7 +49,7 @@ import { placedFloatCoords } from '@/engine/instancing/ghostBatches'
 import type { ClipboardData, FloatOrigin } from '@/store/types'
 import { gridCoordFromPixel, pixelFromGridCoord, planeFromFaceHit, planeLogicalBasis } from '@/engine/plane/constructionPlane'
 import { fineDivisionFor, fineRectRegion, isWholeDivision, type FineDivision } from '@/engine/tools/fineSelection'
-import { fineFloatAtomic, floatFootprintRegion } from '@/engine/tools/fineFloat'
+import { floatFootprintRegion } from '@/engine/tools/fineFloat'
 import type { ConstructionPlane } from '@/engine/plane/types'
 import { bresenhamLine } from '@/engine/tools/lineUtils'
 import { WAND_DOUBLE_TAP_MS } from '@/engine/tools/wandTool'
@@ -1325,7 +1325,7 @@ function VoxelInteractionHandler({ managerRef, controlsRef }: {
         const cell = resolveEmptyCell(e.clientX, e.clientY)
         const fc = useAppStore.getState().floatContent
         if (cell && fc?.fine) {
-          // Sub-voxel float: step in fine units (whole voxels when the content holds a chamfer).
+          // Sub-voxel float: step in fine units (the store snaps whole-chamfer content).
           // The anchor is press-seeded at every drag site; the first-move fallback is safety
           // for drags armed before their float existed.
           const f = fc.fine
@@ -1335,12 +1335,8 @@ function VoxelInteractionHandler({ managerRef, controlsRef }: {
             floatDrag.fineStart = cur
             floatDrag.fineOrigin = useAppStore.getState().floatOrigin ?? { originU: floatDrag.originU, originV: floatDrag.originV }
           }
-          let du = cur[0] - floatDrag.fineStart[0]
-          let dv = cur[1] - floatDrag.fineStart[1]
-          if (fineFloatAtomic(fc)) {
-            du = Math.round(du / f.su) * f.su
-            dv = Math.round(dv / f.sv) * f.sv
-          }
+          const du = cur[0] - floatDrag.fineStart[0]
+          const dv = cur[1] - floatDrag.fineStart[1]
           const o0 = floatDrag.fineOrigin!
           const fu = o0.originU * f.su + (o0.subU ?? 0) + du
           const fv = o0.originV * f.sv + (o0.subV ?? 0) + dv

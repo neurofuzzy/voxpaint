@@ -132,12 +132,12 @@ export type ToolDragState =
   | { kind: 'selectLasso'; points: Array<[number, number]> }
   | { kind: 'moveFloat'; startU: number; startV: number; originAtStart: FloatOrigin; /** Fine-unit pointer position at the start (sub-voxel floats). */ startFine?: [number, number];
     /**
-     * Sub-voxel step recorded at lift time (the float's own resolution + whether its content
-     * is chamfer-atomic). The move uses this instead of re-reading `floatContent`, which can
-     * lag a render behind on the lift gesture itself — without it the first drag steps in
-     * whole voxels. Absent on old/whole drags, which fall back to the live content.
+     * Sub-voxel step recorded at lift time (the float's own resolution). The move uses this
+     * instead of re-reading `floatContent`, which can lag a render behind on the lift gesture
+     * itself — without it the first drag steps in whole voxels. Absent on old/whole drags,
+     * which fall back to the live content.
      */
-    fineStep?: { su: 1 | 2; sv: 1 | 2; atomic: boolean } }
+    fineStep?: { su: 1 | 2; sv: 1 | 2 } }
   | { kind: 'moveGrid'; startU: number; startV: number; lastU: number; lastV: number }
   | { kind: 'marker'; id: string }
   /** Marker tap candidate: pointer went down on an existing marker but hasn't dragged off it

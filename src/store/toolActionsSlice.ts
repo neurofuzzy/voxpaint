@@ -13,7 +13,7 @@ import { mirrorClipboard, rotateClipboard90 } from '@/engine/tools/transform'
 import { forEachSelectedCell, isCellSelected, mirrorRegion, rotateRegion90 } from '@/engine/tools/selectionMask'
 import { clearFineRegion } from '@/engine/grid/fineOps'
 import { liveFineSelection3D } from './selection3DSlice'
-import { applyFineClipboardAt, floatFootprintRegion } from '@/engine/tools/fineFloat'
+import { applyFineClipboardAt, fineFloatAtomic, floatFootprintRegion } from '@/engine/tools/fineFloat'
 import { childInSlab, ensureSplitForPaint, frontSlabBit, paintSubCell } from '@/engine/grid/subdiv'
 import type { AppState, SelectionTransformKind, ToolActionsSlice } from './types'
 
@@ -324,6 +324,13 @@ export const createToolActionsSlice: Slice = (set, get) => ({
   moveFloatTo: (originU, originV, subU = 0, subV = 0) => {
     const { floatContent, plane } = get()
     if (!floatContent) return
+    // Whole chamfer cells have no half-voxel position: snap the offset so their verbatim
+    // restore stays aligned with the shifted pieces. Enforced here (not in each gesture)
+    // so every drag path agrees. Detail children — beveled or not — move freely.
+    if (floatContent.fine && fineFloatAtomic(floatContent)) {
+      subU = Math.round(subU / floatContent.fine.su) * floatContent.fine.su
+      subV = Math.round(subV / floatContent.fine.sv) * floatContent.fine.sv
+    }
     set((state) => {
       if (floatContent.fine) {
         // Sub-voxel float: the selection tracks the float's exact fine footprint.
@@ -339,7 +346,12 @@ export const createToolActionsSlice: Slice = (set, get) => ({
   moveFloatCellsTo: (originU, originV, subU = 0, subV = 0) => {
     // 3D exact-set moves: reposition the pending float without touching the 2D selection
     // (the 3D set tracks position separately — see the drop handler in Viewport3D.tsx).
-    if (!get().floatContent) return
+    const fc = get().floatContent
+    if (!fc) return
+    if (fc.fine && fineFloatAtomic(fc)) {
+      subU = Math.round(subU / fc.fine.su) * fc.fine.su
+      subV = Math.round(subV / fc.fine.sv) * fc.fine.sv
+    }
     set((state) => {
       state.floatOrigin = get().floatContent?.fine ? { originU, originV, subU, subV } : { originU, originV }
     })

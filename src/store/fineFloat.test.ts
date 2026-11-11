@@ -128,6 +128,8 @@ describe('sub-voxel floats preserve beveled children', () => {
     expect(useAppStore.getState().floatContent?.fine).toBeDefined()
     const o = useAppStore.getState().floatOrigin!
     useAppStore.getState().moveFloatTo(o.originU, o.originV, 1, 0)
+    // Beveled detail is NOT atomic: the half-step sticks (no whole-voxel snap).
+    expect(useAppStore.getState().floatOrigin!.subU).toBe(1)
     useAppStore.getState().bakeFloatIfAny()
     // The source half is gone; the dropped half is still a ramp, not a plain cube.
     expect(slots('0,0,0')).toEqual([0, null])
@@ -135,5 +137,32 @@ describe('sub-voxel floats preserve beveled children', () => {
     expect(moved.children[1]).toBeNull()
     expect((moved.children[0]!.slot as { index: number }).index).toBe(1)
     expect(moved.children[0]!.chamfer?.resolvedTo).toEqual({ shapeKind: 'ramp', rotation: 0 })
+  })
+})
+
+describe('sub-voxel floats holding a whole chamfer cell', () => {
+  it('snap the offset to whole voxels — unit-scale shapes have no half-voxel position', () => {
+    const s = useAppStore.getState()
+    s.newProject('T', 16)
+    s.setPlaneAxisOrientation('z', 1)
+    s.setPlaneOffset(0)
+    s.setActiveVoxelKind('ramp')
+    s.beginStroke()
+    s.paintCellAtCoord([0, 0, 0], 'z', 1)
+    s.commitStroke()
+    expect(useAppStore.getState().model.chamfer.has('0,0,0')).toBe(true)
+    s.setPendingSplit(['x'])
+    const plane = useAppStore.getState().plane
+    const v = pixelFromGridCoord(plane, [0, 0, 0]).v
+    useAppStore.getState().setSelection(fineRectRegion(fineDivisionFor(plane, ['x']), 0, v, 1, v))
+    useAppStore.getState().liftSelectionToFloat()
+    expect(useAppStore.getState().floatContent?.fine).toBeDefined()
+    const o = useAppStore.getState().floatOrigin!
+    // A half-step request snaps to a whole multiple (su=2); the shape never sits half-off.
+    useAppStore.getState().moveFloatTo(o.originU, o.originV, 1, 0)
+    const landed = useAppStore.getState().floatOrigin!
+    expect(landed.subU! % 2).toBe(0)
+    useAppStore.getState().bakeFloatIfAny()
+    expect(useAppStore.getState().model.chamfer.has(`${landed.originU},0,0`)).toBe(true)
   })
 })

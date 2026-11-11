@@ -21,13 +21,18 @@ import { worldAxisOf } from './fineSelection'
  * written into whatever target cell it lands in (splitting it just far enough). Dropping first
  * clears the float's fine footprint, so a drop replaces exactly what it covers.
  *
- * Chamfer shapes cannot be cut, so content holding any chamfer is "atomic": it moves in whole
- * voxels only (`fineFloatAtomic`).
+ * Detail children — plain or beveled — move freely: they are 0.5-aligned boxes, so a half-voxel
+ * shift always lands them whole on the child grid and their frozen shapes survive the drop.
+ * Whole chamfer CELLS are the exception: unit-scale frozen geometry with no half-voxel
+ * representation (and the drop restores them verbatim, unshifted), so content holding one is
+ * "atomic" and moves in whole voxels only (`fineFloatAtomic`, enforced where origins land).
  */
 
-/** True when the content holds a chamfer anywhere (a cell's, or a detail child's). */
+/** True when the content holds a whole chamfer cell — unit-scale frozen geometry that has no
+ * half-voxel position, so the float moves in whole voxels only. Beveled detail children do NOT
+ * count: they ride as 0.5-aligned pieces and land whole. */
 export function fineFloatAtomic(clip: ClipboardData): boolean {
-  return clip.cells.some((c) => !!c.chamfer || (c.subdiv?.children.some((ch) => !!ch?.chamfer) ?? false))
+  return clip.cells.some((c) => !!c.chamfer)
 }
 
 export type FloatPiece = {
