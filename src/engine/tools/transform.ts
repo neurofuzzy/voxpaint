@@ -1,4 +1,5 @@
 import type { Axis, ChamferClassification, Rotation } from '@/engine/grid/types'
+import { mirrorSubdivChildren, rotateSubdivChildren } from '@/engine/grid/subdiv'
 import { mirrorChamferCell, rotateChamferCell } from '@/engine/chamfer/chamferTransform'
 import type { ClipboardCell, ClipboardData } from '@/store/types'
 
@@ -74,12 +75,23 @@ export function rotateClipboard90(clipboard: ClipboardData, direction: 'cw' | 'c
     height: width,
     copyPlaneAxis: clipboard.copyPlaneAxis,
     copyPlaneOrientation: clipboard.copyPlaneOrientation,
-    cells: clipboard.cells.map((cell) => ({
-      ...cell,
-      du: cw ? height - 1 - cell.dv : cell.dv,
-      dv: cw ? cell.du : width - 1 - cell.du,
-      chamfer: cell.chamfer ? rotateChamferCell(cell.chamfer, rotationPlaneFor(clipboard, cell), direction) : undefined,
-    })),
+    cells: clipboard.cells.map((cell) => {
+      const planeAxis = rotationPlaneFor(clipboard, cell)
+      const rotated = cell.subdiv
+        ? rotateSubdivChildren(cell.subdiv.children, cell.subdiv.split, planeAxis, direction)
+        : undefined
+      return {
+        ...cell,
+        du: cw ? height - 1 - cell.dv : cell.dv,
+        dv: cw ? cell.du : width - 1 - cell.du,
+        chamfer: cell.chamfer ? rotateChamferCell(cell.chamfer, planeAxis, direction) : undefined,
+        // Detail rotates in the same logical frame as the du/dv rotation above; the split
+        // axes can exchange (a u-split turned on its side is a v-split).
+        subdiv: cell.subdiv && rotated
+          ? { slot: cell.subdiv.slot, split: rotated.split, children: rotated.children }
+          : undefined,
+      }
+    }),
   }
 }
 
@@ -95,11 +107,17 @@ export function mirrorClipboard(clipboard: ClipboardData, axis: 'horizontal' | '
     height,
     copyPlaneAxis: clipboard.copyPlaneAxis,
     copyPlaneOrientation: clipboard.copyPlaneOrientation,
-    cells: clipboard.cells.map((cell) => ({
-      ...cell,
-      du: mirrorU ? width - 1 - cell.du : cell.du,
-      dv: mirrorU ? cell.dv : height - 1 - cell.dv,
-      chamfer: cell.chamfer ? mirrorChamferCell(cell.chamfer, rotationPlaneFor(clipboard, cell), mirrorU, !mirrorU) : undefined,
-    })),
+    cells: clipboard.cells.map((cell) => {
+      const planeAxis = rotationPlaneFor(clipboard, cell)
+      return {
+        ...cell,
+        du: mirrorU ? width - 1 - cell.du : cell.du,
+        dv: mirrorU ? cell.dv : height - 1 - cell.dv,
+        chamfer: cell.chamfer ? mirrorChamferCell(cell.chamfer, planeAxis, mirrorU, !mirrorU) : undefined,
+        subdiv: cell.subdiv
+          ? { slot: cell.subdiv.slot, split: [...cell.subdiv.split], children: mirrorSubdivChildren(cell.subdiv.children, cell.subdiv.split, planeAxis, mirrorU, !mirrorU) }
+          : undefined,
+      }
+    }),
   }
 }

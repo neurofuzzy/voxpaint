@@ -1,6 +1,7 @@
 import type { StateCreator } from 'zustand'
-import type { ChamferCell, ColorCell, Coord } from '@/engine/grid/types'
+import type { ChamferCell, ColorCell, Coord, SubdivCell } from '@/engine/grid/types'
 import { decodeKey, effectiveExtent, encodeKey, recomputeBounds, withinWorkingBounds } from '@/engine/grid/GridStore'
+import { cloneSubdiv } from '@/engine/grid/subdiv'
 import { planeLogicalBasis } from '@/engine/plane/constructionPlane'
 import { axisIndex } from '@/engine/plane/planeGeometry'
 import { cloneTextureModel, hasTextureContent, normalizeTexelScale } from '@/engine/texture/TextureStore'
@@ -16,7 +17,7 @@ type Slice = StateCreator<AppState, [['zustand/immer', never]], [], MoveActionsS
 // world u/v basis and where they were last placed. Module-level (like historySlice's strokeBaseline)
 // so it isn't drafted by Immer and doesn't churn React.
 type MoveGesture = {
-  snapshot: Array<{ coord: Coord; color?: ColorCell; chamfer?: ChamferCell }>
+  snapshot: Array<{ coord: Coord; color?: ColorCell; chamfer?: ChamferCell; subdiv?: SubdivCell }>
   uDir: Coord
   vDir: Coord
   placedKeys: string[]
@@ -56,12 +57,13 @@ export const createMoveActionsSlice: Slice = (set, get) => ({
     const keys = new Set<string>()
     for (const k of model.color.keys()) keys.add(k)
     for (const k of model.chamfer.keys()) keys.add(k)
+    for (const k of model.subdiv.keys()) keys.add(k)
 
     const snapshot: MoveGesture['snapshot'] = []
     for (const key of keys) {
       const coord = decodeKey(key)
       if (!wholeModel && coord[ai] !== plane.offset) continue // layer move: current slice only
-      snapshot.push({ coord, color: model.color.get(key), chamfer: model.chamfer.get(key) })
+      snapshot.push({ coord, color: model.color.get(key), chamfer: model.chamfer.get(key), subdiv: model.subdiv.get(key) })
     }
 
     // Only an unscoped whole-model drag moves the texture: a slice move or an active
@@ -102,6 +104,7 @@ export const createMoveActionsSlice: Slice = (set, get) => ({
       for (const k of g.placedKeys) {
         state.model.color.delete(k)
         state.model.chamfer.delete(k)
+        state.model.subdiv.delete(k)
       }
       const placed: string[] = []
       for (const cell of g.snapshot) {
@@ -112,8 +115,11 @@ export const createMoveActionsSlice: Slice = (set, get) => ({
         ]
         if (!withinWorkingBounds(nc, state.meta.gridExtent)) continue
         const nk = encodeKey(...nc)
-        if (cell.color) state.model.color.set(nk, { paletteSlot: cell.color.paletteSlot })
-        if (cell.chamfer) state.model.chamfer.set(nk, cloneChamfer(cell.chamfer))
+        if (cell.subdiv) state.model.subdiv.set(nk, cloneSubdiv(cell.subdiv))
+        else {
+          if (cell.color) state.model.color.set(nk, { paletteSlot: cell.color.paletteSlot })
+          if (cell.chamfer) state.model.chamfer.set(nk, cloneChamfer(cell.chamfer))
+        }
         placed.push(nk)
       }
       g.placedKeys = placed

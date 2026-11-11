@@ -39,6 +39,16 @@ export const createSelection3DSlice: Slice = (set, get) => ({
   applyWandAt: (start) => {
     const { model, plane, meta, layoutMode } = get()
     const startKey = encodeKey(...start)
+    // Subdivided parents flood as one atomic cell: detail has no color entry, so without this
+    // the wand would silently select nothing on a detail tap.
+    if (model.subdiv.has(startKey)) {
+      lastWandAt = null
+      lastWandCell = null
+      if (layoutMode === '3d-only') get().setSelectedCells(new Set([startKey]))
+      else get().setSelection(regionForFloodedCells(plane, [startKey]))
+      showToast('Wand: 1 voxel (subdivided detail selects whole)')
+      return
+    }
     if (!model.color.has(startKey)) {
       lastWandAt = null
       lastWandCell = null
@@ -99,7 +109,7 @@ export const createSelection3DSlice: Slice = (set, get) => ({
     const { model, plane, meta, layoutMode } = get()
     const startKey = encodeKey(...start)
     if (!model.color.has(startKey)) return
-    const slice: ConstructionPlane = { axis: plane.axis, orientation: plane.orientation, offset: start[axisIndex(plane.axis)] }
+    const slice: ConstructionPlane = { axis: plane.axis, orientation: plane.orientation, offset: start[axisIndex(plane.axis)], half: null }
     const { u, v } = pixelFromGridCoord(slice, start)
     const keys = floodFillRegion(model, slice, u, v, meta.gridExtent)
       .map(([cu, cv]) => encodeKey(...gridCoordFromPixel(slice, cu, cv)))

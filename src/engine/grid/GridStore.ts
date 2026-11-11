@@ -10,7 +10,7 @@ export function decodeKey(key: CellKey): Coord {
 }
 
 export function emptyModel(): VoxelModel {
-  return { color: new Map(), chamfer: new Map(), bounds: null }
+  return { color: new Map(), chamfer: new Map(), subdiv: new Map(), bounds: null }
 }
 
 export function getColorCell(model: VoxelModel, coord: Coord): ColorCell | undefined {
@@ -37,11 +37,13 @@ export function expandBounds(bounds: BBox | null, coord: Coord): BBox {
   }
 }
 
-/** Recomputes bounds from scratch by scanning both layers. Cheap relative to paint frequency; only needed after a removal that might have shrunk the box. */
+/** Recomputes bounds from scratch by scanning all three layers. Cheap relative to paint frequency; only needed after a removal that might have shrunk the box. */
 export function recomputeBounds(model: VoxelModel): BBox | null {
   let bounds: BBox | null = null
   for (const key of model.color.keys()) bounds = expandBounds(bounds, decodeKey(key))
   for (const key of model.chamfer.keys()) bounds = expandBounds(bounds, decodeKey(key))
+  // Subdiv parents occupy the same footprint as the cube they replaced, so the parent coord suffices.
+  for (const key of model.subdiv.keys()) bounds = expandBounds(bounds, decodeKey(key))
   return bounds
 }
 
@@ -84,12 +86,16 @@ export function withinWorkingBounds(coord: Coord, extent: GridExtent): boolean {
 
 /**
  * Counts the model's cells (color layer; every chamfer cell has a matching color cell, so one
- * layer suffices) that fall outside `extent`'s working bounds. Used by the Project Settings
+ * layer suffices — plus subdiv parents, keyed by integer parent coords) that fall outside
+ * `extent`'s working bounds. Used by the Project Settings
  * dialog to warn before a shrink deletes voxels, and by the resize itself to report what was
  * clipped. */
 export function countCellsOutsideBounds(model: VoxelModel, extent: GridExtent): number {
   let count = 0
   for (const key of model.color.keys()) {
+    if (!withinWorkingBounds(decodeKey(key), extent)) count++
+  }
+  for (const key of model.subdiv.keys()) {
     if (!withinWorkingBounds(decodeKey(key), extent)) count++
   }
   return count

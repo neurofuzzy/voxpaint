@@ -97,7 +97,7 @@ export function ExportGltfDialog({ open, onOpenChange }: { open: boolean; onOpen
     const sf = state.exportScaleFactor
     const anchor = state.exportAnchor
     const alignToObjectBounds = state.exportAlignToObjectBounds
-    if (model.color.size === 0) {
+    if (model.color.size === 0 && model.subdiv.size === 0) {
       showToast('Nothing to export — the model is empty.')
       onOpenChange(false)
       return

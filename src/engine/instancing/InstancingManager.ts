@@ -1,10 +1,11 @@
 import * as THREE from 'three'
 import { decodeKey } from '@/engine/grid/GridStore'
-import type { CellKey, VoxelModel } from '@/engine/grid/types'
+import type { CellKey, DetailChild, VoxelModel } from '@/engine/grid/types'
+import { countSubdivChildren, forEachSubdivChild } from '@/engine/grid/subdiv'
 import { unitCubeGeometry } from '@/engine/chamfer/chamferGeometry'
 import { resolveSlotColor } from '@/engine/palette/palette'
 import type { PaletteState } from '@/engine/palette/types'
-import { chamferInstanceMatrix, cubeInstanceMatrix } from './basis'
+import { chamferInstanceMatrix, cubeInstanceMatrix, scaledChamferInstanceMatrix, subCubeInstanceMatrix } from './basis'
 import { buildPoolGeometries, POOL_IDS, poolIdFor, type PoolId } from './pools'
 
 export type { PoolId }
@@ -50,12 +51,15 @@ export class InstancingManager {
   // Picking runs against full-cell AABBs (unit cubes), NOT the visible chamfer meshes: clicking a
   // sloped chamfer face must still resolve to that cell and a clean axis-aligned face normal, so the
   // construction-plane pick is never confused by the bevel geometry. This invisible InstancedMesh
-  // holds one axis-aligned unit cube per occupied cell; raycasting hits it instead of `meshes`.
+  // holds one axis-aligned unit cube per occupied cell, plus one half-cube AABB per live detail
+  // child (subdivided parents contribute 8, minus erased ones) — raycasting the pick mesh yields
+  // the cell and (for detail) the octant, with clean ±axis face normals either way.
   private pickGeometry = unitCubeGeometry()
   private pickMaterial = new THREE.MeshBasicMaterial()
   private pickMesh: THREE.InstancedMesh
   private pickCapacity = INITIAL_CAPACITY
   private pickIndexToCellKey: CellKey[] = []
+  private pickIndexToChild: (number | null)[] = []
 
   constructor() {
     // DoubleSide: the chamfer instance basis (makeBasis of worldU/worldV/outward) is a reflection
@@ -167,17 +171,29 @@ export class InstancingManager {
   }
 
   /** Rebuilds the AABB pick mesh: one axis-aligned unit cube per occupied cell (regardless of its
-   * visible shape), so raycasting always yields the cell and a clean ±axis face normal. */
+   * visible shape), plus one AABB per live detail child (variable sizes), so raycasting always
+   * yields the cell (and child index, for detail) and a clean ±axis face normal. */
   private syncPickMesh(model: VoxelModel) {
-    this.ensurePickCapacity(model.color.size)
+    const liveChildren = countSubdivChildren(model)
+    this.ensurePickCapacity(model.color.size + liveChildren)
     const keys: CellKey[] = []
+    const childIndices: (number | null)[] = []
     const matrix = new THREE.Matrix4()
     for (const key of model.color.keys()) {
       cubeInstanceMatrix(decodeKey(key), matrix)
       this.pickMesh.setMatrixAt(keys.length, matrix)
       keys.push(key)
+      childIndices.push(null)
     }
+    forEachSubdivChild(model, (parentKey, index, origin, size) => {
+      // Erased holes have no pick box — clicks fall through to what's behind.
+      subCubeInstanceMatrix(origin, size, matrix)
+      this.pickMesh.setMatrixAt(keys.length, matrix)
+      keys.push(parentKey)
+      childIndices.push(index)
+    })
     this.pickIndexToCellKey = keys
+    this.pickIndexToChild = childIndices
     this.pickMesh.count = keys.length
     this.pickMesh.instanceMatrix.needsUpdate = true
   }
@@ -195,9 +211,18 @@ export class InstancingManager {
 
     this.cellKeyToInstance.clear()
 
+    // Detail children render in their shape's pool under synthetic `parent/index` keys
+    // (erased holes render nothing) — the hover-blink lookup resolves them like cells.
+    // Chamfer children use the scaled prefab matrix; plain children use the scaled box.
+    type DetailInstance = { parentKey: CellKey; index: number; child: DetailChild; origin: [number, number, number]; size: [number, number, number] }
+    const detailByPool: Record<PoolId, DetailInstance[]> = emptyPools<DetailInstance>()
+    forEachSubdivChild(model, (parentKey, index, origin, size, child) => {
+      detailByPool[child.chamfer?.resolvedTo ? poolIdFor(child.chamfer) : 'cube'].push({ parentKey, index, child, origin, size })
+    })
     for (const id of POOL_IDS) {
       const keys = byPool[id]
-      this.ensureCapacity(id, keys.length)
+      const detail = detailByPool[id]
+      this.ensureCapacity(id, keys.length + detail.length)
       const mesh = this.meshes[id]
       const baseColors: THREE.Color[] = []
 
@@ -220,15 +245,31 @@ export class InstancingManager {
         mesh.setColorAt(i, color)
         this.cellKeyToInstance.set(key, { poolId: id, index: i })
       })
+      let count = keys.length
+      for (const d of detail) {
+        const resolved = d.child.chamfer?.resolvedTo
+        if (resolved) {
+          const chamfer = d.child.chamfer!
+          scaledChamferInstanceMatrix(d.origin, d.size, chamfer.planeAxis, chamfer.planeOrientation, resolved.rotation, matrix)
+        } else {
+          subCubeInstanceMatrix(d.origin, d.size, matrix)
+        }
+        mesh.setMatrixAt(count, matrix)
+        const color = new THREE.Color(resolveSlotColor(palette, d.child.slot))
+        baseColors.push(color)
+        mesh.setColorAt(count, color)
+        this.cellKeyToInstance.set(`${d.parentKey}/${d.index}`, { poolId: id, index: count })
+        count++
+      }
 
       this.baseColors[id] = baseColors
-      mesh.count = keys.length
+      mesh.count = count
       mesh.instanceMatrix.needsUpdate = true
       if (mesh.instanceColor) mesh.instanceColor.needsUpdate = true
 
       // Wireframe overlay: same transforms, same count, always white unlit wireframe.
       const wf = this.wireframeMeshes[id]
-      wf.count = keys.length
+      wf.count = count
       wf.instanceMatrix.copy(mesh.instanceMatrix)
       wf.instanceMatrix.needsUpdate = true
     }
@@ -303,6 +344,11 @@ export class InstancingManager {
   /** Resolves a pick-mesh raycast hit's instanceId back to a grid CellKey. */
   cellKeyForPick(instanceId: number): CellKey | null {
     return this.pickIndexToCellKey[instanceId] ?? null
+  }
+
+  /** Resolves the detail child index for a pick hit on a subdivided parent, or null for full cells. */
+  detailIndexForPick(instanceId: number): number | null {
+    return this.pickIndexToChild[instanceId] ?? null
   }
 
   dispose() {

@@ -10,6 +10,7 @@ const TOOL_HINTS: Record<ToolId, string> = {
   select: 'drag to select · alt+drag: lasso · drag inside to move (alt: full depth)',
   wand: 'click a component for its color · re-tap it quickly for the whole component · drag inside to move · delete removes it at every depth',
   fill: 'click to flood-fill connected cells in 2d, ALT-click to flood fill in 3d',
+  subdivide: 'click a cube to split it (or empty space to scaffold) with the toolbar division (2/4/8, click a type to cycle axes) · click detail to step through its family (whole merges back) · drag to split a patch',
   move: 'drag to shift every pixel on this slice',
   marker: 'click empty space to place a marker · tap a marker to recolor it, tap again to delete · drag to move',
   pivot: 'click: place pivot on the half-grid · rotate the plane for depth · right-click: reset to center',
@@ -25,6 +26,7 @@ const LAYOUT_3D_HINTS: Partial<Record<ToolId, string>> = {
   erase: '3D: click voxels to erase',
   eyedropper: '3D: click a voxel to pick its color and type',
   material: '3D: drag across faces',
+  subdivide: '3D: click a cube to split it (or empty space to scaffold; Alt forces 2×2×2), click detail to step through its family',
 }
 
 /**

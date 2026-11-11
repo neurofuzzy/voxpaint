@@ -1,4 +1,4 @@
-import type { Coord, GridExtent, VoxelModel } from '@/engine/grid/types'
+import type { Coord, GridExtent, SplitAxis, VoxelModel } from '@/engine/grid/types'
 import type { Marker } from '@/engine/markers/types'
 import type { ConstructionPlane } from '@/engine/plane/types'
 import type { PaletteSlotRef } from '@/engine/palette/types'
@@ -25,9 +25,15 @@ export interface ToolContext {
   floatOrigin: FloatOrigin | null
   clipboard: ClipboardData | null
 
-  paintCell: (u: number, v: number) => boolean
-  eraseCell: (coord: [number, number, number]) => void
-  paintMaterialCell: (u: number, v: number) => boolean
+  paintCell: (u: number, v: number, qu?: number, qv?: number) => boolean
+  /** Subdivide-tool toggle at plane-space (u,v): splits a plain cube or scaffolds empty
+   * space, advances/merges detail. Returns false (with a toast) on chamfered cells,
+   * non-subdivided cells on half-step, and out of bounds. */
+  toggleSubdivide: (u: number, v: number, alt?: boolean) => boolean
+  /** The Subdivide tool's pending split (what a plain-voxel tap splits into). */
+  pendingSplit: SplitAxis[] | null
+  eraseCell: (coord: [number, number, number], qu?: number, qv?: number) => void
+  paintMaterialCell: (u: number, v: number, qu?: number, qv?: number) => boolean
   /** Texture-face rebase: re-authors the ramp/wedge at (u,v) onto the active plane's basis. */
   rebaseRampCell: (u: number, v: number) => boolean
   floodFill: (u: number, v: number) => void
@@ -125,7 +131,7 @@ export interface ToolContext {
 
 export type ToolDragState =
   | { kind: 'idle' }
-  | { kind: 'paint'; anchor: [number, number]; last: [number, number] }
+  | { kind: 'paint'; anchor: [number, number]; last: [number, number]; anchorQuad?: [number, number] | null; lastQuad?: [number, number] | null }
   | { kind: 'selectRect'; anchor: [number, number] }
   | { kind: 'selectLasso'; points: Array<[number, number]> }
   | { kind: 'moveFloat'; startU: number; startV: number; originAtStart: FloatOrigin }
@@ -139,6 +145,9 @@ export type ToolDragState =
    * sliding its part across the slice. Start is the press cell in logical (u,v); moves pass
    * the absolute world-space delta from there (offset-axis component always 0). */
   | { kind: 'rig-move'; id: string; startU: number; startV: number }
+  /** Subdivide-tool gesture: pointer went down with the Detail tool. Tap toggles one cell
+   * (split or merge); a drag splits every plain cube entered (never coarsens on drag). */
+  | { kind: 'subdivide'; anchor: [number, number]; last: [number, number]; moved: boolean }
   /** Offset drag (Animate mode, Offset tool): pointer went down on a box footprint and is
    * sliding its keyframe offset across the slice. Same absolute-delta semantics; startCu/
    * startCv carry the press's continuous display position (absent on synthetic events, which

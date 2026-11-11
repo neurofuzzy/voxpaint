@@ -1,4 +1,5 @@
 import type { StateCreator } from 'zustand'
+import { showToast } from '@/components/ui/toastBus'
 import { encodeKey, expandBounds } from '@/engine/grid/GridStore'
 import type { CellKey } from '@/engine/grid/types'
 import { gridCoordFromPixel, pixelFromGridCoord } from '@/engine/plane/constructionPlane'
@@ -62,6 +63,11 @@ export const createToolActionsSlice: Slice = (set, get) => ({
   floodFill3D: (u, v) => {
     get().bakeFloatIfAny()
     const { model, plane, activePaletteSlot, meta } = get()
+    // Half-step fills whole cubes — refused (subdivided voxels keep their flood via paint).
+    if (plane.half !== null) {
+      showToast('Half-step: only subdivided voxels are editable')
+      return
+    }
     const startCoord = gridCoordFromPixel(plane, u, v)
     if (!model.color.has(encodeKey(...startCoord))) return // only fills from an existing voxel
     const keys = floodFillRegion3D(model, startCoord, meta.gridExtent)
@@ -80,6 +86,11 @@ export const createToolActionsSlice: Slice = (set, get) => ({
   floodFillCellsAt: (coord, alt) => {
     get().bakeFloatIfAny()
     const { model, activePaletteSlot, selectedCells, meta } = get()
+    // Half-step fills whole cubes — refused (subdivided voxels keep their per-child edits).
+    if (get().plane.half !== null) {
+      showToast('Half-step: only subdivided voxels are editable')
+      return
+    }
     // Voxel tap: material-only volume fill — recolors, never touches geometry (chamfer) and
     // never moves the plane (the 3D tap path returns before plane-setting). Plain floods the
     // color-connected volume; Alt takes the whole touching component regardless of color,
@@ -301,7 +312,7 @@ export const createToolActionsSlice: Slice = (set, get) => ({
     get().bakeFloatIfAny()
     const { model, plane, floatContent } = get()
     if (cells.size === 0 || floatContent) return
-    const live = [...cells].filter((key) => model.color.has(key))
+    const live = [...cells].filter((key) => model.color.has(key) || model.subdiv.has(key))
     if (live.length === 0) return // every key stale — nothing to lift, no stroke
     const content = copyCellsToClipboard(model, live, plane)
     get().beginStroke()
@@ -309,6 +320,7 @@ export const createToolActionsSlice: Slice = (set, get) => ({
       for (const key of live) {
         state.model.color.delete(key)
         state.model.chamfer.delete(key)
+        state.model.subdiv.delete(key)
       }
       state.floatContent = content
       state.floatOrigin = { originU: content.originU ?? 0, originV: content.originV ?? 0 }
@@ -327,7 +339,7 @@ export const createToolActionsSlice: Slice = (set, get) => ({
     // content on the new plane (`clipboardDepthBase` follows the destination slice).
     // Multi-depth selections fall back to the bbox-anchored volumetric copy below.
     if (isCoplanarWithPlane(selectedCells, plane)) {
-      const live = [...selectedCells].filter((key) => model.color.has(key))
+      const live = [...selectedCells].filter((key) => model.color.has(key) || model.subdiv.has(key))
       if (live.length === 0) return
       const region = selectionRegionFromCoplanarCells(live, plane)
       if (!region) return
@@ -363,7 +375,7 @@ export const createToolActionsSlice: Slice = (set, get) => ({
     // Targeted paste: a selection holding no live voxels whose frame matches the clipboard's
     // dimensions is a paste destination, not something to preserve — stamp into it directly
     // (one undo step; an empty frame has nothing to stomp) and keep the selection.
-    const hasLive = [...selectedCells].some((key) => model.color.has(key))
+    const hasLive = [...selectedCells].some((key) => model.color.has(key) || model.subdiv.has(key))
     const match = !hasLive ? selectionMatchesClipboard(selectedCells, transformed, plane) : null
     if (match) {
       // Same depth base `applyClipboardAt` will land on, so the min-dw shift below is exact.
@@ -401,13 +413,14 @@ export const createToolActionsSlice: Slice = (set, get) => ({
   deleteCells3D: () => {
     get().bakeFloatIfAny()
     const { model, selectedCells } = get()
-    const live = [...selectedCells].filter((key) => model.color.has(key))
+    const live = [...selectedCells].filter((key) => model.color.has(key) || model.subdiv.has(key))
     if (live.length === 0) return
     get().beginStroke()
     set((state) => {
       for (const key of live) {
         state.model.color.delete(key)
         state.model.chamfer.delete(key)
+        state.model.subdiv.delete(key)
       }
       state.meta.modifiedAt = new Date().toISOString()
       state.dirty = true
@@ -427,13 +440,21 @@ export const createToolActionsSlice: Slice = (set, get) => ({
       for (const key of selectedCells) {
         state.model.color.delete(key)
         state.model.chamfer.delete(key)
+        state.model.subdiv.delete(key)
       }
       for (const e of moved) {
         const key = encodeKey(...e.coord)
-        state.model.color.set(key, { paletteSlot: e.paletteSlot })
+        if (e.subdiv) {
+          state.model.subdiv.set(key, e.subdiv)
+          state.model.color.delete(key)
+          state.model.chamfer.delete(key)
+        } else {
+          state.model.color.set(key, { paletteSlot: e.paletteSlot })
+          state.model.subdiv.delete(key)
+          if (e.chamfer) state.model.chamfer.set(key, e.chamfer)
+          else state.model.chamfer.delete(key)
+        }
         state.model.bounds = expandBounds(state.model.bounds, e.coord)
-        if (e.chamfer) state.model.chamfer.set(key, e.chamfer)
-        else state.model.chamfer.delete(key)
         placed.push(key)
       }
       state.selectedCells = new Set(placed)

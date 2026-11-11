@@ -365,3 +365,34 @@ describe('3d replace-only paint', () => {
     expect(after.model.color.size).toBe(1)
   })
 })
+
+describe('half-step ghost suppression', () => {
+  beforeEach(() => {
+    setup('cube', 0, 'paint')
+  })
+
+  it('hides the place-here ghost over plain and empty cells on half-step', () => {
+    const target: Coord = [4, 4, 0]
+    expect(ghostFor(target)?.kind).toBe('cube') // control: whole mode still ghosts
+    useAppStore.getState().setPlaneHalf(1)
+    expect(ghostFor(target)).toBeNull()
+  })
+
+  it('keeps the subdivide ghost on subdivided cells, hides it on plain ones', () => {
+    const s = useAppStore.getState()
+    s.setActiveTool('subdivide')
+    s.beginStroke()
+    expect(s.paintCellAtCoord([0, 0, 0], 'z', 1)).toBe(true)
+    s.commitStroke()
+    s.beginStroke()
+    expect(s.toggleSubdivideAtCoord([0, 0, 0])).toBe(true)
+    s.commitStroke()
+    // Whole mode: parent-volume ghost on both.
+    expect(ghostFor([0, 0, 0])?.kind).toBe('cube')
+    expect(ghostFor([4, 4, 0])?.kind).toBe('cube')
+    useAppStore.getState().setPlaneHalf(1)
+    // Half-step: subdivided keeps its preview, plain cells go dark.
+    expect(ghostFor([0, 0, 0])?.kind).toBe('cube')
+    expect(ghostFor([4, 4, 0])).toBeNull()
+  })
+})

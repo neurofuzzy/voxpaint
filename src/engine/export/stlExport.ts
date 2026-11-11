@@ -67,7 +67,7 @@ export function exportModelToStl(model: VoxelModel, palette: PaletteState, optio
       color.delete(key)
       chamfer.delete(key)
     }
-    buildModel = { color, chamfer, bounds: model.bounds }
+    buildModel = { color, chamfer, subdiv: model.subdiv, bounds: model.bounds }
   }
   const groups = buildOptimizedVoxelGeometryByMaterial(buildModel, palette, true, options.cullInteriorFaces ?? true)
   const geometries: THREE.BufferGeometry[] = []

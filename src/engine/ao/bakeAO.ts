@@ -1,5 +1,6 @@
 import * as THREE from 'three'
 import { decodeKey, encodeKey } from '@/engine/grid/GridStore'
+import { splitChildOrigin, splitChildSize } from '@/engine/grid/subdiv'
 import type { CellKey, Coord, VoxelModel } from '@/engine/grid/types'
 import { planeLogicalBasis } from '@/engine/plane/constructionPlane'
 import { outwardNormal } from '@/engine/plane/planeGeometry'
@@ -114,13 +115,15 @@ export function makeSpecularNoiseTexture(
 
 /**
  * Builds a high-resolution 3D occupancy grid (TEXELS_PER_UNIT cells per world unit).
- * Each occupied voxel fills a TEXELS_PER_UNIT³ block.
+ * Each occupied voxel fills a TEXELS_PER_UNIT³ block; each live detail child fills an exact
+ * half-unit (TEXELS_PER_UNIT/2)³ block at its half origin — the same volume the plain cube
+ * filled, so occlusion never shifts when a cell is subdivided.
  *
  * `excludeKeys`, when given, omits those cells from the occupancy grid entirely — used to keep
  * animated-slice voxels from acting as AO occluders for the rest of the model, since they won't
  * be in their rest-pose position once the exported animation plays.
  */
-function buildOccGrid(model: VoxelModel, excludeKeys?: Set<CellKey>): {
+export function buildOccGrid(model: VoxelModel, excludeKeys?: Set<CellKey>): {
   grid: Uint8Array
   gx: number; gy: number; gz: number
   min: [number, number, number]
@@ -146,6 +149,32 @@ function buildOccGrid(model: VoxelModel, excludeKeys?: Set<CellKey>): {
       for (let dy = 0; dy < TEXELS_PER_UNIT; dy++) {
         for (let dz = 0; dz < TEXELS_PER_UNIT; dz++) {
           grid[(bx + dx) + (by + dy) * gx + (bz + dz) * gx * gy] = 1
+        }
+      }
+    }
+  }
+
+  // Detail children fill fractional texel blocks (size × TEXELS_PER_UNIT per axis) at their
+  // exact origins — occluders at the same resolution the rays march, so contact shadows from
+  // detail read correctly. Erased children stay empty.
+  for (const [parentKey, sub] of model.subdiv) {
+    if (excludeKeys?.has(parentKey)) continue
+    const parent = decodeKey(parentKey)
+    const [sx, sy, sz] = splitChildSize(sub.split)
+    const tx = Math.round(sx * TEXELS_PER_UNIT)
+    const ty = Math.round(sy * TEXELS_PER_UNIT)
+    const tz = Math.round(sz * TEXELS_PER_UNIT)
+    for (let o = 0; o < sub.children.length; o++) {
+      if (!sub.children[o]) continue
+      const [ox, oy, oz] = splitChildOrigin(parent, sub.split, o)
+      const bx = Math.round((ox - min[0]) * TEXELS_PER_UNIT)
+      const by = Math.round((oy - min[1]) * TEXELS_PER_UNIT)
+      const bz = Math.round((oz - min[2]) * TEXELS_PER_UNIT)
+      for (let dx = 0; dx < tx; dx++) {
+        for (let dy = 0; dy < ty; dy++) {
+          for (let dz = 0; dz < tz; dz++) {
+            grid[(bx + dx) + (by + dy) * gx + (bz + dz) * gx * gy] = 1
+          }
         }
       }
     }
@@ -458,6 +487,12 @@ export function bakeOccupancyField(model: VoxelModel): THREE.Data3DTexture | nul
   const data = new Uint8Array(wx * wy * wz)
   for (const key of model.color.keys()) {
     if (model.chamfer.has(key)) continue
+    const [x, y, z] = decodeKey(key)
+    const ix = x - min[0]; const iy = y - min[1]; const iz = z - min[2]
+    data[ix + iy * wx + iz * wx * wy] = 255
+  }
+  // Subdivided parents occupy their cell (conservative — the volume is detail-solid).
+  for (const key of model.subdiv.keys()) {
     const [x, y, z] = decodeKey(key)
     const ix = x - min[0]; const iy = y - min[1]; const iz = z - min[2]
     data[ix + iy * wx + iz * wx * wy] = 255

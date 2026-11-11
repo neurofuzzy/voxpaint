@@ -10,6 +10,7 @@ export const createToolSlice: Slice = (set, get) => ({
   activeVoxelKind: 'cube',
   activePaletteSlot: { kind: 'base', index: 0 },
   brushRotation: 0,
+  pendingSplit: ['x', 'y', 'z'],
   paintLineAnchor: null,
 
   setAnimateTab: (tab) => {
@@ -36,6 +37,7 @@ export const createToolSlice: Slice = (set, get) => ({
       showToast('Model view switched to Ghost — posing needs the model visible')
     }
   },
+  setPendingSplit: (split) => set((state) => { state.pendingSplit = split }),
   setActiveVoxelKind: (kind) => set((state) => { state.activeVoxelKind = kind }),
   setActivePaletteSlot: (slot) => set((state) => { state.activePaletteSlot = slot }),
   setBrushRotation: (r) => set((state) => { state.brushRotation = r }),

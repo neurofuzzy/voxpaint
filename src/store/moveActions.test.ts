@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it } from 'vitest'
 import { encodeKey } from '@/engine/grid/GridStore'
 import type { Coord } from '@/engine/grid/types'
+import type { ConstructionPlane } from '@/engine/plane/types'
 import { gridCoordFromPixel } from '@/engine/plane/constructionPlane'
 import { cloneTextureModel } from '@/engine/texture/TextureStore'
 import { EMPTY, faceSizeFor } from '@/engine/texture/types'
@@ -8,7 +9,7 @@ import type { BoxFace } from '@/engine/texture/types'
 import { rectRegion } from '@/engine/tools/selectionMask'
 import { useAppStore } from './useAppStore'
 
-const PLANE = { axis: 'z' as const, orientation: 1 as const, offset: 0 }
+const PLANE: ConstructionPlane = { axis: 'z', orientation: 1, offset: 0, half: null }
 const keyFor = (u: number, v: number) => encodeKey(...gridCoordFromPixel(PLANE, u, v))
 const SLOT_A = { kind: 'base', index: 0 } as const
 

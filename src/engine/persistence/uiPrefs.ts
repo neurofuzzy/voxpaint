@@ -8,7 +8,13 @@ import type { Axis, Orientation } from '@/engine/grid/types'
 const UI_PREFS_KEY = 'voxpaint:ui-prefs:v1'
 
 /** The construction-plane pose as persisted: axis + orientation + layer offset. */
-export type SavedPlane = { axis: Axis; orientation: Orientation; offset: number }
+export type SavedPlane = {
+  axis: Axis
+  orientation: Orientation
+  offset: number
+  /** Half-step slab selector. Optional so pre-half-step saves still parse; absent reads as null. */
+  half?: 0 | 1 | null
+}
 
 export type UiPrefs = {
   /** True once the user has ticked "Don't show again" on the splash screen. */
@@ -47,6 +53,7 @@ export function loadUiPrefs(): UiPrefs {
       delete prefs.animateModelView
     }
     // Sanitize the plane the same way: known axes, ±1 orientations, integer offsets only.
+    // The half-step slab rides along when valid, else resets to whole-voxel mode.
     const p = parsed.plane
     if (
       p &&
@@ -54,7 +61,12 @@ export function loadUiPrefs(): UiPrefs {
       (p.orientation === 1 || p.orientation === -1) &&
       Number.isInteger(p.offset)
     ) {
-      prefs.plane = { axis: p.axis, orientation: p.orientation, offset: p.offset }
+      prefs.plane = {
+        axis: p.axis,
+        orientation: p.orientation,
+        offset: p.offset,
+        half: p.half === 0 || p.half === 1 ? p.half : null,
+      }
     } else {
       delete prefs.plane
     }

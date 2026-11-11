@@ -238,6 +238,10 @@ export function csgUnionGroups(groups: VoxelGroup[], isOccupied?: (x: number, y:
  * original per-voxel face (CSG union only cancels *exactly* coincident coplanar faces within the
  * same material/colour group; it hasn't re-triangulated anything yet — that's `mergeCoplanarFaces`,
  * which runs after this).
+ *
+ * Detail half-cube faces on half-integer planes sample one half-cell too far (the probe stride
+ * is a full cell) — a documented approximation in the same spirit: exterior detail faces probe
+ * exactly, and an over-report at an interior seam only ever culls already-hidden interior glass.
  */
 export function removeOccludedGlassFaces(
   geometry: THREE.BufferGeometry,

@@ -205,6 +205,15 @@ MIGRATIONS[17] = (doc) => {
   return { ...rest, schemaVersion: 18, clips }
 }
 
+/** v18 → v19: the `subdivCells` array is added for one-level detail voxels. Pre-v19
+ * files simply contain no subdivisions (the array stamps empty); the field is required
+ * from v19 on so older app versions reject detail files with "please update". */
+MIGRATIONS[18] = (doc) => ({
+  ...doc,
+  schemaVersion: 19,
+  model: { ...doc?.model, subdivCells: Array.isArray(doc?.model?.subdivCells) ? doc.model.subdivCells : [] },
+})
+
 export class UnsupportedSchemaVersionError extends Error {
   constructor(foundVersion: unknown) {
     super(`This file is from a newer version of VoxPaint (schemaVersion=${String(foundVersion)}). Please update the app.`)

@@ -18,18 +18,28 @@ export function RescaleProjectDialog({ open, onOpenChange }: { open: boolean; on
   // Subscribe to the model only while open — the counts below scan the whole map per stroke.
   const model = useAppStore((s) => (open ? s.model : null))
   const colorCount = model?.color.size ?? 0
-  // Every color cell yields 8 children except concave corners, which drop one zero-volume
-  // edge child each — counted here so the projection is exact, not "≈8x".
+  // Subdivisions dissolve too (see rescaleVoxelModel): each live child fills its
+  // doubled footprint with plain cubes — bevel detail blockifies, erased children stay
+  // empty. A child on k split axes lands on 2^(3-k) doubled cells, counted here so the
+  // projection stays exact.
   let concaveCount = 0
+  let subdivRescaled = 0
+  let subdivParents = 0
   if (model) {
     for (const cell of model.chamfer.values()) {
       if (cell.resolvedTo?.shapeKind === 'concave') concaveCount++
     }
+    for (const sub of model.subdiv.values()) {
+      let live = 0
+      for (const child of sub.children) if (child) live++
+      subdivRescaled += live * 2 ** (3 - sub.split.length)
+    }
+    subdivParents = model.subdiv.size
   }
 
   const target = rescaleTargetExtent(gridExtent)
   const overCap = target > MAX_GRID_EXTENT
-  const projected = colorCount * 8 - concaveCount
+  const projected = colorCount * 8 - concaveCount + subdivRescaled
 
   function rescale() {
     if (overCap) return
@@ -62,9 +72,10 @@ export function RescaleProjectDialog({ open, onOpenChange }: { open: boolean; on
               <li>
                 <span className="font-mono tabular-nums">{gridExtent}³ → {target}³</span>
                 <span className="text-neutral-500"> · </span>
-                <span className="font-mono tabular-nums">{colorCount} → {projected} voxels</span>
+                <span className="font-mono tabular-nums">{colorCount + subdivParents} → {projected} voxels</span>
               </li>
               <li className="text-neutral-400">Ramps and corners become exact staircases; thin slabs become back-to-back half-slabs, posts become quarter-columns, quarters become full cubes.</li>
+              <li className="text-neutral-400">Subdivided detail dissolves into plain cubes (bevels become solid blocks, erased sub-cells stay empty).</li>
               <li className="text-neutral-400">Flat wedges tile the doubled diagonal; flats shift half a voxel toward their facing (no exact fit).</li>
               <li className="text-neutral-400">Texture paint, markers, and animation scale along.</li>
               <li className="text-neutral-400">Undo history and selections are cleared — this can't be undone.</li>

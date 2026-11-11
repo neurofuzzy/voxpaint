@@ -1,18 +1,20 @@
 import { describe, expect, it } from 'vitest'
 import { encodeKey } from '@/engine/grid/GridStore'
+import { subdivideCell } from '@/engine/grid/subdiv'
 import type { ChamferCell, ChamferShapeKind } from '@/engine/grid/types'
+import type { ConstructionPlane } from '@/engine/plane/types'
 import { gridCoordFromPixel } from '@/engine/plane/constructionPlane'
 import type { VoxelKind } from '@/store/types'
 import { eyedropperTool, voxelKindForCell } from './eyedropperTool'
 import type { ToolContext } from './types'
 
 const SLOT = { kind: 'base', index: 2 } as const
-const PLANE = { axis: 'z' as const, orientation: 1 as const, offset: 0 }
+const PLANE: ConstructionPlane = { axis: 'z', orientation: 1, offset: 0, half: null }
 
 function makeCtx() {
   const calls: { slots: unknown[]; kinds: VoxelKind[]; tools: string[] } = { slots: [], kinds: [], tools: [] }
   const ctx = {
-    model: { color: new Map(), chamfer: new Map(), bounds: null },
+    model: { color: new Map(), chamfer: new Map(), subdiv: new Map(), bounds: null },
     plane: PLANE,
     setActivePaletteSlot: (slot: unknown) => { calls.slots.push(slot) },
     setActiveVoxelKind: (kind: VoxelKind) => { calls.kinds.push(kind) },
@@ -87,5 +89,55 @@ describe('eyedropperTool', () => {
     expect(calls.slots).toEqual([])
     expect(calls.kinds).toEqual([])
     expect(calls.tools).toEqual([])
+  })
+
+  it('samples the hovered quadrant of subdivided detail (front child first)', () => {
+    const { ctx, calls } = makeCtx()
+    // z-plane orientation 1: display == logical quadrants (no mirrors), logical (u,v) frame
+    // has uDir=+x, vDir=-y, viewer on +z — so display quadrant (0,0) is the (x-lo, y-hi)
+    // quarter: front octant 6 (dx=0,dy=1,dz=1), back octant 2 (dx=0,dy=1,dz=0).
+    const coord = gridCoordFromPixel(PLANE, 0, 0)
+    ctx.model.color.set(encodeKey(...coord), { paletteSlot: { kind: 'base', index: 0 } })
+    subdivideCell(ctx.model, coord)
+    const sub = ctx.model.subdiv.get(encodeKey(...coord))!
+    const metal = { kind: 'metal', index: 1 } as const
+    sub.children[6] = { slot: metal }
+    const withFrac = { ...evt(0, 0), cu: 0.25, cv: 0.25 }
+    eyedropperTool.onDown!(ctx, withFrac)
+    expect(calls.slots).toEqual([metal])
+    expect(calls.kinds).toEqual(['cube'])
+    expect(calls.tools).toEqual(['paint'])
+  })
+
+  it('samples a frozen detail bevel kind like a full-size cell', () => {
+    const { ctx, calls } = makeCtx()
+    const coord = gridCoordFromPixel(PLANE, 0, 0)
+    ctx.model.color.set(encodeKey(...coord), { paletteSlot: { kind: 'base', index: 0 } })
+    subdivideCell(ctx.model, coord)
+    const sub = ctx.model.subdiv.get(encodeKey(...coord))!
+    sub.children[6] = {
+      slot: { kind: 'base', index: 0 },
+      chamfer: { planeAxis: 'y', planeOrientation: 1, resolvedTo: { shapeKind: 'convex', rotation: 1 } },
+    }
+    eyedropperTool.onDown!(ctx, { ...evt(0, 0), cu: 0.25, cv: 0.25 })
+    expect(calls.slots).toEqual([{ kind: 'base', index: 0 }])
+    expect(calls.kinds).toEqual(['convex'])
+  })
+
+  it('falls back to the back child, then the parent slot', () => {
+    const { ctx, calls } = makeCtx()
+    const coord = gridCoordFromPixel(PLANE, 0, 0)
+    ctx.model.color.set(encodeKey(...coord), { paletteSlot: { kind: 'base', index: 0 } })
+    subdivideCell(ctx.model, coord)
+    const sub = ctx.model.subdiv.get(encodeKey(...coord))!
+    const glass = { kind: 'glass', index: 0 } as const
+    sub.children[6] = null
+    sub.children[2] = { slot: glass }
+    eyedropperTool.onDown!(ctx, { ...evt(0, 0), cu: 0.25, cv: 0.25 })
+    expect(calls.slots).toEqual([glass])
+    // No continuous position: samples the stored parent slot.
+    sub.children[2] = null
+    eyedropperTool.onDown!(ctx, evt(0, 0))
+    expect(calls.slots).toEqual([glass, { kind: 'base', index: 0 }])
   })
 })

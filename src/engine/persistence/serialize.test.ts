@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { emptyModel, encodeKey } from '@/engine/grid/GridStore'
+import { eraseSubCell, paintSubCell, scaffoldCell, subdivideCell, writeSubCell } from '@/engine/grid/subdiv'
 import { DEFAULT_PALETTE } from '@/engine/palette/defaultPalette'
 import { emptyTextureModel, getTexel } from '@/engine/texture/TextureStore'
 import { faceSizeFor } from '@/engine/texture/types'
@@ -12,8 +13,7 @@ import { CURRENT_SCHEMA_VERSION } from './schema'
 const meta: ProjectMeta = { name: 'T', createdAt: '2026-01-01T00:00:00.000Z', modifiedAt: '2026-01-01T00:00:00.000Z', gridExtent: 16, noiseSeed: 0, voxelScaleY: 1 }
 const faceSize = faceSizeFor(meta.gridExtent)
 
-describe('serialize with texture', () => {
-  it('round-trips a painted texture through serialize → deserialize', () => {    const model = emptyModel()
+describe('serialize with texture', () => {  it('round-trips a painted texture through serialize → deserialize', () => {    const model = emptyModel()
     model.color.set(encodeKey(0, 0, 0), { paletteSlot: { kind: 'base', index: 3 } })
 
     const texture = emptyTextureModel(meta.gridExtent)
@@ -272,6 +272,96 @@ describe('flats persistence (v11)', () => {
     const migrated = migrateToCurrent(v10)
     expect(migrated.schemaVersion).toBe(CURRENT_SCHEMA_VERSION)
     expect(deserializeProject(migrated).model.color.size).toBe(0)
+  })
+})
+
+describe('subdiv persistence (v19)', () => {
+  it('round-trips subdivided cells through serialize → deserialize', () => {
+    const model = emptyModel()
+    model.color.set(encodeKey(0, 0, 0), { paletteSlot: { kind: 'base', index: 3 } })
+    expect(subdivideCell(model, [0, 0, 0], ['x', 'z'])).toBe(true)
+    expect(paintSubCell(model, [0, 0, 0], 3, { kind: 'metal', index: 1 })).toBe(true)
+    expect(writeSubCell(model, [0, 0, 0], 2, {
+      slot: { kind: 'base', index: 0 },
+      chamfer: { planeAxis: 'y', planeOrientation: 1, resolvedTo: { shapeKind: 'ramp', rotation: 2 } },
+    })).toBe(true)
+    expect(eraseSubCell(model, [0, 0, 0], 0)).toBe(true)
+    model.color.set(encodeKey(2, 0, 0), { paletteSlot: { kind: 'base', index: 0 } })
+    const texture = emptyTextureModel(meta.gridExtent)
+    const file = serializeProject(model, DEFAULT_PALETTE, meta, texture)
+    expect(file.schemaVersion).toBe(CURRENT_SCHEMA_VERSION)
+    expect(file.model.subdivCells).toHaveLength(1)
+    expect(file.model.subdivCells[0].split).toEqual(['x', 'z'])
+    const restored = deserializeProject(file)
+    expect(restored.model.color.has(encodeKey(0, 0, 0))).toBe(false)
+    const sub = restored.model.subdiv.get(encodeKey(0, 0, 0))
+    expect(sub?.slot).toEqual({ kind: 'base', index: 3 })
+    expect(sub?.split).toEqual(['x', 'z'])
+    expect(sub?.children[3]).toEqual({ slot: { kind: 'metal', index: 1 } })
+    expect(sub?.children[2]).toEqual({
+      slot: { kind: 'base', index: 0 },
+      chamfer: { planeAxis: 'y', planeOrientation: 1, resolvedTo: { shapeKind: 'ramp', rotation: 2 } },
+    })
+    expect(sub?.children[0]).toBeNull()
+    expect(model.color.has(encodeKey(2, 0, 0))).toBe(true)
+  })
+
+  it('round-trips a scaffold (split from empty space) through serialize → deserialize', () => {
+    const model = emptyModel()
+    expect(scaffoldCell(model, [5, 0, 0], ['y'], { kind: 'glass', index: 2 })).toBe(true)
+    const texture = emptyTextureModel(meta.gridExtent)
+    const file = serializeProject(model, DEFAULT_PALETTE, meta, texture)
+    expect(file.model.subdivCells).toHaveLength(1)
+    expect(file.model.subdivCells[0].scaffold).toBe(true)
+    const restored = deserializeProject(file)
+    const sub = restored.model.subdiv.get(encodeKey(5, 0, 0))
+    expect(sub?.scaffold).toBe(true)
+    expect(sub?.split).toEqual(['y'])
+    expect(sub?.slot).toEqual({ kind: 'glass', index: 2 })
+    expect(sub?.children.every((c) => c === null)).toBe(true)
+    expect(restored.model.color.has(encodeKey(5, 0, 0))).toBe(false)
+  })
+
+  it('migrates v18 files with an empty subdivision array', () => {
+    const v18 = {
+      schemaVersion: 18,
+      meta,
+      palette: DEFAULT_PALETTE,
+      model: { bounds: null, colorCells: [], chamferCells: [] },
+    }
+    const migrated = migrateToCurrent(v18)
+    expect(migrated.schemaVersion).toBe(CURRENT_SCHEMA_VERSION)
+    expect(migrated.model.subdivCells).toEqual([])
+    expect(deserializeProject(migrated).model.subdiv.size).toBe(0)
+  })
+
+  it('sanitizes corrupt subdiv entries on load', () => {
+    const model = emptyModel()
+    model.color.set(encodeKey(0, 0, 0), { paletteSlot: { kind: 'base', index: 3 } })
+    const texture = emptyTextureModel(meta.gridExtent)
+    const file = serializeProject(model, DEFAULT_PALETTE, meta, texture)
+    const kid = (slot: unknown) => ({ slot }) as never
+    file.model.subdivCells = [
+      // Out of bounds.
+      { x: 100, y: 0, z: 0, slot: { kind: 'base', index: 0 }, split: ['x', 'y', 'z'], children: Array(8).fill(kid({ kind: 'base', index: 0 })) },
+      // Wrong child count for the split.
+      { x: 1, y: 0, z: 0, slot: { kind: 'base', index: 0 }, split: ['x', 'y', 'z'], children: [kid({ kind: 'base', index: 0 })] },
+      // Bad split axes.
+      { x: 2, y: 0, z: 0, slot: { kind: 'base', index: 0 }, split: ['x', 'x'] as never, children: Array(4).fill(kid({ kind: 'base', index: 0 })) },
+      // Invalid slot ref.
+      { x: 2, y: 0, z: 0, slot: { kind: 'nope', index: 0 } as never, split: ['y'], children: Array(2).fill(kid({ kind: 'base', index: 0 })) },
+      // Invalid child slot degrades to erased, not a dropped entry.
+      { x: 3, y: 0, z: 0, slot: { kind: 'base', index: 0 }, split: ['y'], children: [kid({ kind: 'nope', index: 0 }), kid({ kind: 'base', index: 0 })] },
+      // Invalid child chamfer degrades to plain.
+      {
+        x: 4, y: 0, z: 0, slot: { kind: 'base', index: 0 }, split: ['y'],
+        children: [kid({ kind: 'base', index: 0 }), { slot: { kind: 'base', index: 0 }, chamfer: { planeAxis: 'w', planeOrientation: 1, resolvedTo: null } } as never],
+      },
+    ]
+    const restored = deserializeProject(file)
+    expect(restored.model.subdiv.size).toBe(2)
+    expect(restored.model.subdiv.get(encodeKey(3, 0, 0))?.children[0]).toBeNull()
+    expect(restored.model.subdiv.get(encodeKey(4, 0, 0))?.children[1]).toEqual({ slot: { kind: 'base', index: 0 } })
   })
 })
 

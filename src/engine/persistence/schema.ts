@@ -1,12 +1,12 @@
 import type { AnimationType, AnimationSpeed } from '@/engine/animation/types'
 import type { AnimationMode, ClipKey, RigTween } from '@/engine/rigging/types'
-import type { Axis, BBox, ChamferClassification, GridExtent, Orientation, VoxelScaleY } from '@/engine/grid/types'
+import type { Axis, BBox, ChamferClassification, GridExtent, Orientation, SplitAxis, VoxelScaleY } from '@/engine/grid/types'
 import type { SerializedMarkerPosition } from '@/engine/markers/types'
 import type { PaletteSlotRef, PaletteState } from '@/engine/palette/types'
 import type { BoxFace } from '@/engine/texture/types'
 import type { GltfExportAnchor } from '@/engine/export/gltfExport'
 
-export const CURRENT_SCHEMA_VERSION = 18 as const
+export const CURRENT_SCHEMA_VERSION = 19 as const
 
 /** One keyframe on a clip timeline (see `RigClip` / `ClipKey` in engine/rigging/types.ts):
  * the pose IS the key — it owns its joint angles (radians, intrinsic XYZ) directly. */
@@ -98,6 +98,23 @@ export type SerializedChamferCell = {
   /** Null if this cell hadn't resolved a shape yet when the project was saved — it stays
    * unresolved (rendered as a plain cube) until enough neighbors are painted around it. */
   resolvedTo: ChamferClassification | null
+}
+/** One subdivided voxel: the parent's integer coords, its original slot, the split world
+ * axes, and the per-child entries (`null` = erased). Child chamfers are frozen explicit
+ * shapes (never autotiled); `rotation` is the brush rotation at paint time. */
+export type SerializedSubdivChild = {
+  slot: PaletteSlotRef
+  chamfer?: Omit<SerializedChamferCell, 'x' | 'y' | 'z'>
+}
+export type SerializedSubdivCell = {
+  x: number
+  y: number
+  z: number
+  slot: PaletteSlotRef
+  split: SplitAxis[]
+  children: (SerializedSubdivChild | null)[]
+  /** Present only when true: the entry was split from empty space (a paint scaffold). */
+  scaffold?: boolean
 }
 
 /** The box-mapped texture, serialized: per-face grayscale texel arrays as base64. `texelScale` and
@@ -229,7 +246,10 @@ export type VoxPaintProjectFileV2 = {
  * v17 → v18: keyframes own their joint angles directly (the pose is the keyframe) — each
  * key embeds the referenced pose's `joints`/`offsets` and inherits its name, and the
  * `poses` library is dropped. Older files load through `MIGRATIONS[17]`, which embeds
- * and drops. */
+ * and drops.
+ *
+ * v18 → v19: the `subdivCells` array is added for one-level detail voxels (see
+ * engine/grid/subdiv.ts). Older files simply contain no subdivisions. */
 export type VoxPaintProjectFile = {
   schemaVersion: typeof CURRENT_SCHEMA_VERSION
   meta: ProjectMeta
@@ -238,6 +258,7 @@ export type VoxPaintProjectFile = {
     bounds: BBox | null
     colorCells: SerializedColorCell[]
     chamferCells: SerializedChamferCell[]
+    subdivCells: SerializedSubdivCell[]
   }
   texture?: SerializedTexture
   view?: ViewSettings

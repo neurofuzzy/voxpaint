@@ -1,7 +1,7 @@
 import * as THREE from 'three'
 import type { Axis, Coord, Orientation } from '@/engine/grid/types'
 import { planeLogicalBasis } from '@/engine/plane/constructionPlane'
-import { ALL_AXES, outwardNormal } from '@/engine/plane/planeGeometry'
+import { ALL_AXES, axisIndex, outwardNormal } from '@/engine/plane/planeGeometry'
 
 function setFromCoord(v: THREE.Vector3, coord: Coord): THREE.Vector3 {
   return v.set(coord[0], coord[1], coord[2])
@@ -36,6 +36,20 @@ export function cubeInstanceMatrix(coord: Coord, out = new THREE.Matrix4()): THR
 }
 
 /**
+ * Placement matrix for one half-scale detail child. `origin` is the child's world-space
+ * minimum corner (see subdiv.ts's `splitChildOrigin` — exact halves), so the instance origin
+ * is origin + (size/2) with a per-axis scale on the shared unit-cube geometry. Defaults to
+ * the 8-split half-cube.
+ */
+export function subCubeInstanceMatrix(
+  origin: [x: number, y: number, z: number],
+  size: [x: number, y: number, z: number] = [0.5, 0.5, 0.5],
+  out = new THREE.Matrix4(),
+): THREE.Matrix4 {
+  return out.makeScale(size[0], size[1], size[2]).setPosition(origin[0] + size[0] / 2, origin[1] + size[1] / 2, origin[2] + size[2] / 2)
+}
+
+/**
  * True when `makeBasis(worldU, worldV, outward)` for this plane is a reflection (negative
  * determinant) rather than a proper rotation. Happens for exactly the (axis, orientation) combos
  * where the 2D editor's u/v frame is left-handed about the outward normal: +Z, +X, and -Y.
@@ -51,6 +65,42 @@ export function chamferBasisIsReflected(planeAxis: Axis, planeOrientation: Orien
   setFromCoord(scratchOutward, outwardNormal(planeAxis, planeOrientation))
   scratchCross.crossVectors(worldV, scratchOutward)
   return worldU.dot(scratchCross) < 0
+}
+
+/**
+ * Placement matrix for a chamfer prefab scaled to fill an arbitrary subcell box. Same
+ * convention as `chamferInstanceMatrix` (proper rotation, mirrored-variant geometry for
+ * reflected planes), composed as T(center)·Basis·Rz·S: the shape rotates in unit space,
+ * then stretches to fill the box exactly. `origin`/`size` are the subcell's world-space
+ * min corner and extents (see subdiv.ts's `splitChildOrigin`/`splitChildSize`); `size` is
+ * remapped into the prefab's (u, v, outward) frame internally, so the stretched shape
+ * always fills exactly the subcell box regardless of which world axes are split.
+ */
+export function scaledChamferInstanceMatrix(
+  origin: [x: number, y: number, z: number],
+  size: [x: number, y: number, z: number],
+  planeAxis: Axis,
+  planeOrientation: Orientation,
+  rotation: 0 | 1 | 2 | 3,
+  out = new THREE.Matrix4(),
+): THREE.Matrix4 {
+  const { worldU, worldV } = PLANE_BASIS[planeAxis]
+  setFromCoord(scratchOutward, outwardNormal(planeAxis, planeOrientation))
+
+  const sign = chamferBasisIsReflected(planeAxis, planeOrientation) ? -1 : 1
+  scratchV.copy(worldV).multiplyScalar(sign)
+  scratchBasis.makeBasis(worldU, scratchV, scratchOutward)
+  scratchBasis.setPosition(origin[0] + size[0] / 2, origin[1] + size[1] / 2, origin[2] + size[2] / 2)
+
+  // Prefab axes (u, v, outward) permute world x/y/z — scale each by the box's extent along
+  // that basis direction (not the world-axis size), so the shape fills the box exactly.
+  const axisOf = (v: THREE.Vector3): 0 | 1 | 2 => (v.getComponent(0) !== 0 ? 0 : v.getComponent(1) !== 0 ? 1 : 2)
+  const su = size[axisOf(worldU)]
+  const sv = size[axisOf(scratchV)]
+  const sw = size[axisIndex(planeAxis)]
+
+  scratchRotZ.makeRotationZ((sign * rotation * Math.PI) / 2)
+  return out.copy(scratchBasis).multiply(scratchRotZ).scale(new THREE.Vector3(su, sv, sw))
 }
 
 /**

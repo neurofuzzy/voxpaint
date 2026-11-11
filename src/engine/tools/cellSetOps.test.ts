@@ -17,12 +17,12 @@ import {
   windowSlabBounds,
 } from './cellSetOps'
 
-const PLANE: ConstructionPlane = { axis: 'z', orientation: 1, offset: 0 }
+const PLANE: ConstructionPlane = { axis: 'z', orientation: 1, offset: 0, half: null }
 const EXTENT = 16 // working bounds [-8, 8)
 const SLOT = { kind: 'base', index: 0 } as PaletteSlotRef
 
 function emptyModel(): VoxelModel {
-  return { color: new Map(), chamfer: new Map(), bounds: null }
+  return { color: new Map(), chamfer: new Map(), subdiv: new Map(), bounds: null }
 }
 
 function paintBox(model: VoxelModel, x0: number, y0: number, z0: number, x1: number, y1: number, z1: number) {
@@ -40,7 +40,7 @@ describe('bboxOfCoords', () => {
 
 describe('windowSlabBounds', () => {
   const ALL_PLANES: ConstructionPlane[] = (['x', 'y', 'z'] as const).flatMap((axis: Axis) =>
-    ([1, -1] as const).map((orientation: Orientation) => ({ axis, orientation, offset: 3 })),
+    ([1, -1] as const).map((orientation: Orientation) => ({ axis, orientation, offset: 3, half: null })),
   )
   const region = { originU: 1, originV: 2, width: 3, height: 2, mask: new Uint8Array(6).fill(1) }
 
@@ -65,13 +65,13 @@ describe('windowSlabBounds', () => {
     // z-plane: u=x, v=-y-1.
     const slab = windowSlabBounds(
       { originU: 0, originV: -2, width: 2, height: 2, mask: new Uint8Array(4).fill(1) },
-      { axis: 'z', orientation: 1, offset: 0 },
+      { axis: 'z', orientation: 1, offset: 0, half: null },
     )
     expect(slab).toEqual({ min: [0, 0, 0], max: [1, 1, 0] })
 
     const single = windowSlabBounds(
       { originU: 4, originV: 5, width: 1, height: 1, mask: new Uint8Array(1).fill(1) },
-      { axis: 'z', orientation: 1, offset: 0 },
+      { axis: 'z', orientation: 1, offset: 0, half: null },
     )
     expect(single.min).toEqual(single.max)
   })

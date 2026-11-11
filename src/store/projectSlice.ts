@@ -154,11 +154,17 @@ export const createProjectSlice: Slice = (set, get) => ({
       if (extent === prevExtent) return // rename only — everything else stays put
 
       // Clip voxels outside the new working cube (chamfer cells always have a matching color
-      // cell, so deleting by color key drops both layers together).
+      // cell, so deleting by color key drops both layers together; subdiv parents clip by
+      // their integer parent coords).
       for (const key of state.model.color.keys()) {
         if (!withinWorkingBounds(decodeKey(key), extent)) {
           state.model.color.delete(key)
           state.model.chamfer.delete(key)
+        }
+      }
+      for (const key of state.model.subdiv.keys()) {
+        if (!withinWorkingBounds(decodeKey(key), extent)) {
+          state.model.subdiv.delete(key)
         }
       }
       state.model.bounds = recomputeBounds(state.model)

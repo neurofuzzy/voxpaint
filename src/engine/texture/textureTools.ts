@@ -220,4 +220,6 @@ export const textureToolMap: Record<ToolId, TextureToolHandler> = {
   pose: {},
   // Offset drags pose translate arrows, meaningless on texel grids — harmless no-op here.
   offset: {},
+  // Subdivide splits voxel-grid cubes, meaningless on texel grids — harmless no-op here.
+  subdivide: {},
 }

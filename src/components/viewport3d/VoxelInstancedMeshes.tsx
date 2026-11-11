@@ -10,6 +10,7 @@ export const VoxelInstancedMeshes = forwardRef<InstancingManager, { visible: boo
   const model = useAppStore((s) => s.model)
   const palette = useAppStore((s) => s.palette)
   const hoverCell = useAppStore((s) => s.hoverCell)
+  const hoveredFace = useAppStore((s) => s.hoveredFace)
   const wireframe = useAppStore((s) => s.wireframe)
 
   useEffect(() => {
@@ -24,8 +25,14 @@ export const VoxelInstancedMeshes = forwardRef<InstancingManager, { visible: boo
   }, [manager, model, palette])
 
   useEffect(() => {
-    manager.setHoveredCell(hoverCell ? encodeKey(...hoverCell) : null)
-  }, [manager, hoverCell])
+    // Detail hovers blink the specific child (synthetic `parent/index` instance keys);
+    // plain-cell hovers resolve as before (subdiv parents have no full-cell instance).
+    if (hoveredFace?.childIndex !== undefined && hoveredFace.childIndex !== null) {
+      manager.setHoveredCell(`${hoveredFace.cellKey}/${hoveredFace.childIndex}`)
+    } else {
+      manager.setHoveredCell(hoverCell ? encodeKey(...hoverCell) : null)
+    }
+  }, [manager, hoverCell, hoveredFace])
 
   useEffect(() => {
     manager.setWireframe(wireframe)

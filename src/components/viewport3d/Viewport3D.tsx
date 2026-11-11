@@ -9,6 +9,7 @@ import { angleAroundAxis, closestAxisParam, composeAxisAngle, intersectAxisPlane
 import { previewFrame } from '@/engine/rigging/preview'
 import { hasActiveTweens } from '@/engine/rigging/rigLoop'
 import type { Axis, CellKey, Coord } from '@/engine/grid/types'
+import { frontSlabBit, splitChildBits, splitChildIndex } from '@/engine/grid/subdiv'
 import { hasActiveAnimations } from '@/engine/animation/animationLayers'
 
 /**
@@ -54,6 +55,7 @@ import { voxelKindForCell } from '@/engine/tools/eyedropperTool'
 import { windowSliceCells } from '@/engine/tools/cellSetOps'
 import { isCellSelected } from '@/engine/tools/selectionMask'
 import { useAppStore } from '@/store/useAppStore'
+import { showToast } from '@/components/ui/toastBus'
 import { usePlaneLayerScroll } from '@/components/usePlaneLayerScroll'
 import { AnimatedModelView } from './AnimatedModelView'
 import { PoseGizmo } from './PoseGizmo'
@@ -61,6 +63,8 @@ import { RigPoseView } from './RigPoseView'
 import { pickRigBoxId } from './rigPosePick'
 import { BoundingBoxFaceSelector } from './BoundingBoxFaceSelector'
 import { CompassIcon, CompassTracker } from './Compass'
+import { DetailEdgesOverlay } from './DetailEdgesOverlay'
+import { SubdivideHoverWireframe } from './SubdivideHoverWireframe'
 import { BrushPreview } from './BrushPreview'
 import { brushViewQuaternion } from './brushViewSync'
 import { ConstructionPlaneGizmo } from './ConstructionPlaneGizmo'
@@ -461,7 +465,10 @@ function VoxelInteractionHandler({ managerRef, controlsRef }: {
         const [x, y, z] = key.split(',').map(Number)
         const worldNormal = hit.face.normal.clone().transformDirection(hit.object.matrixWorld).round()
         const plane = planeFromFaceHit([x, y, z], [worldNormal.x, worldNormal.y, worldNormal.z])
-        return { key, plane }
+        // Detail hits carry their child index (null for full cells) so taps/hover can address the
+        // hovered sub-cell; erased holes have no pick box and fall through to what's behind.
+        const childIndex = manager.detailIndexForPick(hit.instanceId)
+        return { key, plane, childIndex }
       }
       return null
     }
@@ -516,7 +523,7 @@ function VoxelInteractionHandler({ managerRef, controlsRef }: {
      * the active construction plane — never the raycast face — so the write matches the brush
      * preview. The target itself resolves through the shared `resolveDirectPaintTarget`
      * helper, so tap and ghost preview always agree. */
-    function applyBlockingTap(clientX: number, clientY: number, shiftKey: boolean, wasSelectGrab = false) {
+    function applyBlockingTap(clientX: number, clientY: number, shiftKey: boolean, wasSelectGrab = false, altKey = false) {
       const store = useAppStore.getState()
       const tool = activeToolRef.current
       const result = resolveFaceHit(clientX, clientY)
@@ -560,6 +567,26 @@ function VoxelInteractionHandler({ managerRef, controlsRef }: {
       }
       if (result) {
         if (tool === 'eyedropper') {
+          // Detail hits sample the hovered child's slot (erased holes read as empty).
+          // Chamfer children load their frozen kind directly (what you pick is what you paint).
+          // Half-step remaps to the slab-mate (same in-plane position, active depth bit),
+          // so the sample matches what a tap would paint; an erased slab-mate reads empty.
+          if (result.childIndex !== undefined && result.childIndex !== null) {
+            const sub = store.model.subdiv.get(result.key)
+            let index = result.childIndex
+            const half = store.plane.half
+            if (sub && half !== null && sub.split.includes(result.plane.axis)) {
+              const bits = splitChildBits(sub.split, index)
+              bits[axisIndex(result.plane.axis)] = half
+              index = splitChildIndex(sub.split, bits[0], bits[1], bits[2])
+            }
+            const child = sub?.children[index]
+            if (!child) return
+            store.setActivePaletteSlot(child.slot)
+            store.setActiveVoxelKind(child.chamfer?.resolvedTo ? child.chamfer.resolvedTo.shapeKind : 'cube')
+            store.setActiveTool('paint')
+            return
+          }
           const cell = store.model.color.get(result.key)
           if (!cell) return
           store.setActivePaletteSlot(cell.paletteSlot)
@@ -571,12 +598,43 @@ function VoxelInteractionHandler({ managerRef, controlsRef }: {
           const [x, y, z] = result.key.split(',').map(Number)
           store.bakeFloatIfAny()
           store.beginStroke()
-          store.paintMaterialAtCoord([x, y, z])
+          if (result.childIndex !== undefined && result.childIndex !== null) store.paintMaterialSubCellAtCoord([x, y, z], result.childIndex)
+          else store.paintMaterialAtCoord([x, y, z])
           store.commitStroke()
           return
         }
         const [x, y, z] = result.key.split(',').map(Number)
         const cell: Coord = [x, y, z]
+        const subdivided = store.model.subdiv.has(result.key)
+        // Detail taps never reach the full-cell paint path: plain cells split with the
+        // toolbar's pending division (Alt forces full 8-way); tapping a subdivided cell
+        // advances its family division, coarsening past the end. Paint/material
+        // address the hovered child, erase clears it, and the eyedropper samples it — all
+        // inside one undo stroke.
+        if (tool === 'subdivide') {
+          store.bakeFloatIfAny()
+          store.beginStroke()
+          store.toggleSubdivideAtCoord(cell, altKey)
+          store.commitStroke()
+          return
+        }
+        if (subdivided) {
+          if (tool !== 'paint') {
+            if (tool === 'erase') {
+              store.bakeFloatIfAny()
+              store.beginStroke()
+              store.eraseSubCellAtCoord(cell, result.childIndex ?? 0)
+              store.commitStroke()
+            }
+            return
+          }
+          const childIndex = result.childIndex ?? 0
+          store.bakeFloatIfAny()
+          store.beginStroke()
+          store.paintSubCellAtCoord(cell, childIndex)
+          store.commitStroke()
+          return
+        }
         // Paint resolves through the shared helper (replace-only on the construction plane —
         // on-slice face hits replace the hovered voxel, off-slice hits project onto the
         // plane) so the write matches the ghost preview. A null target (out of bounds)
@@ -585,6 +643,12 @@ function VoxelInteractionHandler({ managerRef, controlsRef }: {
         // every tap re-establishes the anchor, so lines chain. The gesture action brackets its
         // own undo stroke either way.
         if (tool === 'paint') {
+          // Half-step admits subdivided voxels only (per-child path below) — plain and
+          // empty taps toast instead of writing (the write itself also fails closed).
+          if (store.plane.half !== null && !subdivided) {
+            showToast('Half-step: only subdivided voxels are editable')
+            return
+          }
           const activePlane = planeRef.current
           const t = resolveDirectPaintTarget(
             activePlane,
@@ -594,6 +658,13 @@ function VoxelInteractionHandler({ managerRef, controlsRef }: {
           )
           if (!t) return
           store.paintLineAtCoord(t, shiftKey)
+          return
+        }
+        // Half-step admits subdivided voxels only — plain taps toast instead of writing
+        // (the write itself also fails closed in applyPaintCell/applyEraseCell).
+        if (store.plane.half !== null && !subdivided
+          && (store.model.color.has(result.key) || store.model.chamfer.has(result.key))) {
+          showToast('Half-step: only subdivided voxels are editable')
           return
         }
         const target: Coord = cell
@@ -606,6 +677,16 @@ function VoxelInteractionHandler({ managerRef, controlsRef }: {
         return
       }
       // Empty space: paint starts a blob on the active slice; erase/eyedrop need a voxel.
+      // Subdivide on empty space toasts its own hint (nothing to split).
+    if (tool === 'subdivide') {
+      const coord = resolveEmptyCell(clientX, clientY)
+      if (!coord) return
+      store.bakeFloatIfAny()
+      store.beginStroke()
+      store.toggleSubdivideAtCoord(coord, altKey)
+      store.commitStroke()
+      return
+    }
       if (tool !== 'paint') return
       const coord = resolveEmptyCell(clientX, clientY)
       if (!coord) return
@@ -1219,20 +1300,24 @@ function VoxelInteractionHandler({ managerRef, controlsRef }: {
         setHoverCell(shownCoord, null)
       }
 
-      const faceKey = result && inBox ? `${result.key}|${result.plane.axis}|${result.plane.orientation}` : null
+      const faceKey = result && inBox ? `${result.key}|${result.plane.axis}|${result.plane.orientation}|${result.childIndex ?? ''}` : null
       if (!poseTool && faceKey !== lastFaceKey) {
         lastFaceKey = faceKey
-        setHoveredFace(result && inBox ? { cellKey: result.key, axis: result.plane.axis, orientation: result.plane.orientation } : null)
+        setHoveredFace(result && inBox ? { cellKey: result.key, axis: result.plane.axis, orientation: result.plane.orientation, childIndex: result.childIndex ?? undefined } : null)
       }
 
       // Material drag recolors each newly crossed voxel (deduped per cell — recoloring is
       // idempotent, so this can never pile anything up). Every other blocking tool is tap-only.
       if (materialDrag && e.buttons !== 0) {
         const result = resolveFaceHit(e.clientX, e.clientY)
-        if (result && result.key !== materialDrag.lastKey) {
-          materialDrag.lastKey = result.key
+        // Dedupe per child, not per parent: crossing children of one subdivided parent
+        // must recolor each one (recoloring is idempotent, so repeats stay free).
+        const dragKey = result ? `${result.key}/${result.childIndex ?? ''}` : null
+        if (result && dragKey !== materialDrag.lastKey) {
+          materialDrag.lastKey = dragKey
           const [x, y, z] = result.key.split(',').map(Number)
-          useAppStore.getState().paintMaterialAtCoord([x, y, z])
+          if (result.childIndex !== undefined && result.childIndex !== null) useAppStore.getState().paintMaterialSubCellAtCoord([x, y, z], result.childIndex)
+          else useAppStore.getState().paintMaterialAtCoord([x, y, z])
         }
       }
 
@@ -1576,7 +1661,7 @@ function VoxelInteractionHandler({ managerRef, controlsRef }: {
       // Only the left button taps (right/middle are orbit/dolly now).
       if (isBlocking()) {
         if (e.button !== 0) return
-        applyBlockingTap(e.clientX, e.clientY, e.shiftKey, wasSelectGrab)
+        applyBlockingTap(e.clientX, e.clientY, e.shiftKey, wasSelectGrab, e.altKey)
         return
       }
 
@@ -1676,7 +1761,27 @@ function VoxelInteractionHandler({ managerRef, controlsRef }: {
           }
         }
       }
-      handleVoxelFaceClick(result.key, result.plane.axis, result.plane.orientation, result.plane.offset)
+      // Tapping a subdivided voxel's face enters half-step mode on that voxel's own layer
+      // (the hit child's depth bit selects the slab) — but only when the split actually
+      // divides the face normal, so there's a second subvoxel behind the first. Plain
+      // voxels (and depth-flat splits) take the normal face plane and exit half-step.
+      {
+        const st = useAppStore.getState()
+        const sub = st.model.subdiv.get(result.key)
+        let half: 0 | 1 | null = null
+        let off = result.plane.offset
+        if (result.childIndex !== undefined && result.childIndex !== null && sub?.split.includes(result.plane.axis)) {
+          half = splitChildBits(sub.split, result.childIndex)[axisIndex(result.plane.axis)] as 0 | 1
+          off = decodeKey(result.key)[axisIndex(result.plane.axis)]
+        }
+        handleVoxelFaceClick(result.key, result.plane.axis, result.plane.orientation, off, half)
+        if (half !== null) {
+          const near = half === frontSlabBit(result.plane.orientation) ? 'front' : 'back'
+          useAppStore.getState().setStatusMessage(
+            `Half-step ${near} slab — only subdivided voxels are editable (click a plain voxel to exit)`,
+          )
+        }
+      }
     }
 
     dom.addEventListener('pointerdown', onPointerDown)
@@ -1794,7 +1899,9 @@ export function Viewport3D() {
               <ProjectBoundsBox />
               {!poseToolsActive && <VoxelFaceHighlight />}
               {!poseToolsActive && <VoxelGhostPreview />}
-              <FloatGhostPreview />
+              {!poseToolsActive && <DetailEdgesOverlay />}
+              {!poseToolsActive && <SubdivideHoverWireframe />}
+                            <FloatGhostPreview />
               <SelectionHighlight />
               <SelectionBox3D />
               {!poseToolsActive && <ConstructionPlaneGizmo />}

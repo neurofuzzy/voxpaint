@@ -1,11 +1,12 @@
 import { decodeKey, effectiveExtent, emptyModel, encodeKey, recomputeBounds, withinWorkingBounds } from '@/engine/grid/GridStore'
-import type { CellKey, GridExtent, VoxelModel } from '@/engine/grid/types'
+import type { CellKey, GridExtent, SplitAxis, VoxelModel } from '@/engine/grid/types'
 import type { Marker, SerializedMarkerPosition } from '@/engine/markers/types'
 import type { RigBox, RigClip, RigTween } from '@/engine/rigging/types'
 import { newTweenId } from '@/engine/rigging/types'
 import { normalizeFps, sanitizeRigClip, sanitizeRigTween } from '@/engine/rigging/types'
 import { MARKER_COLORS } from '@/engine/markers/types'
 import { DEFAULT_PALETTE } from '@/engine/palette/defaultPalette'
+import { isValidSlotRef } from '@/engine/palette/palette'
 import type { PaletteState } from '@/engine/palette/types'
 import type { BoxFace, TextureModel } from '@/engine/texture/types'
 import { BOX_FACES, faceSizeFor, TEXEL_SCALE } from '@/engine/texture/types'
@@ -281,11 +282,24 @@ export function serializeProject(model: VoxelModel, palette: PaletteState, meta:
     const [x, y, z] = decodeKey(key)
     return { x, y, z, ...cell }
   })
+  const subdivCells = Array.from(model.subdiv.entries()).map(([key, cell]) => {
+    const [x, y, z] = decodeKey(key)
+    return {
+      x, y, z,
+      slot: cell.slot,
+      split: [...cell.split],
+      ...(cell.scaffold ? { scaffold: true as const } : {}),
+      children: cell.children.map((c) => c ? {
+        slot: c.slot,
+        ...(c.chamfer ? { chamfer: { planeAxis: c.chamfer.planeAxis, planeOrientation: c.chamfer.planeOrientation, resolvedTo: c.chamfer.resolvedTo ? { ...c.chamfer.resolvedTo } : null } } : {}),
+      } : null),
+    }
+  })
   return {
     schemaVersion: CURRENT_SCHEMA_VERSION,
     meta,
     palette,
-    model: { bounds: model.bounds, colorCells, chamferCells },
+    model: { bounds: model.bounds, colorCells, chamferCells, subdivCells },
     texture: serializeTexture(texture, meta.gridExtent, normalizeTexelScale(meta.texelScale ?? TEXEL_SCALE)),
     view,
     animations: animSettings ? serializeAnimations(animSettings) : undefined,
@@ -301,6 +315,7 @@ export function deserializeProject(file: VoxPaintProjectFile): { model: VoxelMod
   const model = emptyModel()
   const color = new Map(model.color)
   const chamfer = new Map(model.chamfer)
+  const subdiv = new Map(model.subdiv)
 
   for (const cell of file.model.colorCells) {
     color.set(encodeKey(cell.x, cell.y, cell.z), { paletteSlot: cell.paletteSlot })
@@ -313,7 +328,7 @@ export function deserializeProject(file: VoxPaintProjectFile): { model: VoxelMod
     })
   }
 
-  const built: VoxelModel = { color, chamfer, bounds: file.model.bounds }
+  const built: VoxelModel = { color, chamfer, subdiv, bounds: file.model.bounds }
   // `noiseSeed` post-dates `ProjectMeta` being otherwise fully required. Default to 0 (the
   // hash functions' unseeded behavior) rather than a fresh random seed, so an old project's noise
   // looks exactly the same as it always did instead of visibly shifting on next load.
@@ -321,6 +336,42 @@ export function deserializeProject(file: VoxPaintProjectFile): { model: VoxelMod
   // `texelScale` one generation after that: pre-scale files load at full detail (4). The merged
   // meta must exist before the texture (whose face size derives from gridExtent + texelScale).
   const meta: ProjectMeta = { ...file.meta, noiseSeed: file.meta.noiseSeed ?? 0, voxelScaleY: file.meta.voxelScaleY ?? 1, texelScale: normalizeTexelScale(file.meta.texelScale ?? TEXEL_SCALE), animationMode: file.meta.animationMode === 'poses' ? 'poses' : 'tweens', fps: normalizeFps(file.meta.fps) }
+  // Detail voxels (v19+): validate parent coords like any grid cell; the split must be 1–3
+  // distinct world axes and children must number exactly 2^split. Slots sanitize to erased
+  // on invalid; chamfers validate shape/rotation or degrade to plain. A subdiv parent is
+  // mutually exclusive with color/chamfer cells — on overlap the subdivision wins (it was
+  // written from a state where the parent had neither; overlap means hand-edit corruption).
+  const SHAPE_KINDS = ['ramp', 'convex', 'concave', 'wedge', 'thin', 'half', 'post', 'quarter', 'flat', 'flatwedge'] as const
+  for (const cell of file.model.subdivCells ?? []) {
+    if (!cell || !Number.isInteger(cell.x) || !Number.isInteger(cell.y) || !Number.isInteger(cell.z)) continue
+    if (!withinWorkingBounds([cell.x, cell.y, cell.z], meta.gridExtent)) continue
+    const split = cell.split
+    if (!Array.isArray(split) || split.length < 1 || split.length > 3 || new Set(split).size !== split.length || !split.every((a) => a === 'x' || a === 'y' || a === 'z')) continue
+    if (!Array.isArray(cell.children) || cell.children.length !== 2 ** split.length) continue
+    if (!cell.slot || !isValidSlotRef(cell.slot)) continue
+    const key = encodeKey(cell.x, cell.y, cell.z)
+    built.color.delete(key)
+    built.chamfer.delete(key)
+    built.subdiv.set(key, {
+      slot: cell.slot,
+      split: [...split].sort() as SplitAxis[],
+      ...(cell.scaffold === true ? { scaffold: true as const } : {}),
+      children: cell.children.map((c) => {
+        if (!c || !isValidSlotRef(c.slot)) return null
+        const r = c.chamfer?.resolvedTo
+        const chamfer = c.chamfer && (c.chamfer.planeAxis === 'x' || c.chamfer.planeAxis === 'y' || c.chamfer.planeAxis === 'z')
+          && (c.chamfer.planeOrientation === 1 || c.chamfer.planeOrientation === -1)
+          && (r === null || (r && (SHAPE_KINDS as readonly unknown[]).includes(r.shapeKind) && Number.isInteger(r.rotation) && r.rotation >= 0 && r.rotation <= 3))
+          ? {
+            planeAxis: c.chamfer.planeAxis,
+            planeOrientation: c.chamfer.planeOrientation,
+            resolvedTo: r ? { shapeKind: r.shapeKind as (typeof SHAPE_KINDS)[number], rotation: r.rotation as 0 | 1 | 2 | 3 } : null,
+          }
+          : undefined
+        return chamfer ? { slot: c.slot, chamfer } : { slot: c.slot }
+      }),
+    })
+  }
   const texture = file.texture
     ? deserializeTexture(file.texture, meta.gridExtent, meta.texelScale!)
     : emptyTextureModel(meta.gridExtent, meta.texelScale!)

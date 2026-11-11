@@ -21,7 +21,7 @@ describe('displayViewCenter', () => {
   it('centres on the world-origin gridline for even sizes', () => {
     for (const axis of AXES) {
       for (const orientation of ORIENTATIONS) {
-        expect(displayViewCenter({ axis, orientation, offset: 0 }, 8)).toEqual({ u: 0, v: 0 })
+        expect(displayViewCenter({ axis, orientation, offset: 0, half: null }, 8)).toEqual({ u: 0, v: 0 })
       }
     }
   })
@@ -30,7 +30,7 @@ describe('displayViewCenter', () => {
     const n = 9
     for (const axis of AXES) {
       for (const orientation of ORIENTATIONS) {
-        const plane: ConstructionPlane = { axis, orientation, offset: 0 }
+        const plane: ConstructionPlane = { axis, orientation, offset: 0, half: null }
         const centre = displayViewCenter(plane, n)
 
         // The window is `n` display cells wide, centred on `centre`.
@@ -63,7 +63,7 @@ describe('displayViewCenter', () => {
 
 describe('gridline vs cell display transforms', () => {
   const ALL_PLANES: ConstructionPlane[] = AXES.flatMap((axis) =>
-    ORIENTATIONS.map((orientation) => ({ axis, orientation, offset: 0 })),
+    ORIENTATIONS.map((orientation) => ({ axis, orientation, offset: 0, half: null })),
   )
 
   it('places a cell exactly between its own two bounding gridlines on every plane', () => {
@@ -93,17 +93,17 @@ describe('gridline vs cell display transforms', () => {
   })
 
   it('mirrors a gridline as -n where the cell transform uses -n - 1', () => {
-    const mirroredU: ConstructionPlane = { axis: 'z', orientation: -1, offset: 0 }
+    const mirroredU: ConstructionPlane = { axis: 'z', orientation: -1, offset: 0, half: null }
     expect(toDisplayU(mirroredU, 3)).toBe(-4)
     expect(toDisplayGridlineU(mirroredU, 3)).toBe(-3)
 
-    const mirroredV: ConstructionPlane = { axis: 'y', orientation: 1, offset: 0 }
+    const mirroredV: ConstructionPlane = { axis: 'y', orientation: 1, offset: 0, half: null }
     expect(toDisplayV(mirroredV, 3)).toBe(-4)
     expect(toDisplayGridlineV(mirroredV, 3)).toBe(-3)
   })
 
   it('leaves unmirrored axes identical to the cell transform', () => {
-    const plane: ConstructionPlane = { axis: 'z', orientation: 1, offset: 0 }
+    const plane: ConstructionPlane = { axis: 'z', orientation: 1, offset: 0, half: null }
     expect(toDisplayGridlineU(plane, 3)).toBe(toDisplayU(plane, 3))
     expect(toDisplayGridlineV(plane, 3)).toBe(toDisplayV(plane, 3))
   })
@@ -111,7 +111,7 @@ describe('gridline vs cell display transforms', () => {
 
 describe('displayPointForGridPoint', () => {
   const ALL_PLANES: ConstructionPlane[] = AXES.flatMap((axis) =>
-    ORIENTATIONS.map((orientation) => ({ axis, orientation, offset: 0 })),
+    ORIENTATIONS.map((orientation) => ({ axis, orientation, offset: 0, half: null })),
   )
 
   it('agrees with the cell-center formula for integer cell centers on every plane', () => {
@@ -132,9 +132,9 @@ describe('displayPointForGridPoint', () => {
     // z-plane: u is unmirrored at orientation 1, mirrored at -1. Grid point x=2 is the
     // boundary between cells 1 and 2, whose centers sit at display 1.5/2.5 (ori 1) and
     // -1.5/-2.5 (ori -1).
-    const fwd: ConstructionPlane = { axis: 'z', orientation: 1, offset: 0 }
+    const fwd: ConstructionPlane = { axis: 'z', orientation: 1, offset: 0, half: null }
     expect(displayPointForGridPoint(fwd, [2, 0.5, 0.5]).u).toBe(2)
-    const mir: ConstructionPlane = { axis: 'z', orientation: -1, offset: 0 }
+    const mir: ConstructionPlane = { axis: 'z', orientation: -1, offset: 0, half: null }
     expect(displayPointForGridPoint(mir, [2, 0.5, 0.5]).u).toBe(-2)
   })
 })
@@ -143,7 +143,7 @@ describe('worldDeltaFromDisplayDelta', () => {
   it('maps display travel to world travel on every plane/orientation, agreeing with the integer cell path', () => {
     for (const axis of AXES) {
       for (const orientation of ORIENTATIONS) {
-        const plane: ConstructionPlane = { axis, orientation, offset: 0 }
+        const plane: ConstructionPlane = { axis, orientation, offset: 0, half: null }
         // A two-by-three display-cell drag, evaluated continuously, must match the integer
         // cell path between the same two display endpoints (un-mirrored back to logical).
         const frac = worldDeltaFromDisplayDelta(plane, 2, 3)
@@ -156,15 +156,15 @@ describe('worldDeltaFromDisplayDelta', () => {
   })
 
   it('is fractional and offset-axis-free on the z-plane', () => {
-    expect(worldDeltaFromDisplayDelta({ axis: 'z', orientation: 1, offset: 5 }, 0.5, -0.25)).toEqual([0.5, 0.25, 0])
-    expect(worldDeltaFromDisplayDelta({ axis: 'z', orientation: -1, offset: 5 }, 0.5, -0.25)).toEqual([-0.5, 0.25, 0])
+    expect(worldDeltaFromDisplayDelta({ axis: 'z', orientation: 1, offset: 5, half: null }, 0.5, -0.25)).toEqual([0.5, 0.25, 0])
+    expect(worldDeltaFromDisplayDelta({ axis: 'z', orientation: -1, offset: 5, half: null }, 0.5, -0.25)).toEqual([-0.5, 0.25, 0])
   })
 
   it('un-flips mirrored axes instead of following the screen', () => {
     // x-plane u runs straight at orientation 1 (u -> -z, so display +1 lands on world -z)
     // and mirrors at orientation -1; v runs straight down into world -y either way.
-    expect(worldDeltaFromDisplayDelta({ axis: 'x', orientation: 1, offset: 0 }, 1, 0)).toEqual([0, 0, -1])
-    expect(worldDeltaFromDisplayDelta({ axis: 'x', orientation: -1, offset: 0 }, 1, 0)).toEqual([0, 0, 1])
-    expect(worldDeltaFromDisplayDelta({ axis: 'x', orientation: 1, offset: 0 }, 0, 1)).toEqual([0, -1, 0])
+    expect(worldDeltaFromDisplayDelta({ axis: 'x', orientation: 1, offset: 0, half: null }, 1, 0)).toEqual([0, 0, -1])
+    expect(worldDeltaFromDisplayDelta({ axis: 'x', orientation: -1, offset: 0, half: null }, 1, 0)).toEqual([0, 0, 1])
+    expect(worldDeltaFromDisplayDelta({ axis: 'x', orientation: 1, offset: 0, half: null }, 0, 1)).toEqual([0, -1, 0])
   })
 })

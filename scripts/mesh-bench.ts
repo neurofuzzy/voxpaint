@@ -14,6 +14,7 @@ import { buildOptimizedVoxelGroups, buildOptimizedVoxelGroupsShell } from '../sr
 import { unwrapGeometries } from '../src/engine/ao/uvUnwrap.ts'
 import { bakeAOToAtlas } from '../src/engine/ao/bakeAO.ts'
 import { emptyModel, encodeKey, recomputeBounds } from '../src/engine/grid/GridStore.ts'
+import { subdivideCell } from '../src/engine/grid/subdiv.ts'
 import type { VoxelModel } from '../src/engine/grid/types.ts'
 import type { PaletteSlotRef } from '../src/engine/palette/types.ts'
 import { CORPUS } from '../src/engine/instancing/meshBenchCorpus.ts'
@@ -98,4 +99,16 @@ console.log('case\tvox\ttris\tmesh\tunwrap\tao')
   benchPipeline('hollow-12³', shell12, 12 ** 3 - 10 ** 3, true, false)
   const solid16 = solidCube(16)
   benchPipeline('solid-16³+AO', solid16, 16 ** 3, true, true)
+  // Detail patch: solid 8³ with a subdivided face block + AO — the new mixed-seam path.
+  const detailed = solidCube(8)
+  for (let x = 0; x < 4; x++)
+    for (let z = 0; z < 4; z++) subdivideCell(detailed, [x, 7, z])
+  detailed.bounds = recomputeBounds(detailed)
+  benchPipeline('solid-8³+detail+AO', detailed, 8 ** 3, true, true)
+  // Mixed splits: u/halves plus quarters on solid 8³ — exercises variable-size seams.
+  const mixed = solidCube(8)
+  for (let x = 0; x < 4; x++)
+    for (let z = 0; z < 4; z++) subdivideCell(mixed, [x, 7, z], (x + z) % 2 === 0 ? ['x'] : ['x', 'y'])
+  mixed.bounds = recomputeBounds(mixed)
+  benchPipeline('solid-8³+mixed+AO', mixed, 8 ** 3, true, true)
 }

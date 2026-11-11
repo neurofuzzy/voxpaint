@@ -1,8 +1,8 @@
 import { makeEditTool } from './editToolFactory'
 
 export const paintTool = makeEditTool(
-  (ctx, u, v) => {
-    ctx.paintCell(u, v)
+  (ctx, u, v, quad) => {
+    ctx.paintCell(u, v, quad?.[0], quad?.[1])
   },
   {
     beginStroke: (ctx) => ctx.beginStroke(),

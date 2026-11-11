@@ -36,8 +36,11 @@ export function ConstructionPlaneVisual() {
   // Draw the project's own extent (odd or even). The `position` above shifts the group half a cell
   // in-plane for odd sizes, so a size-`n` gridHelper (whose lines sit at half-integers about its
   // centre) lands its lines back on integer cell boundaries and frames cells centred on the pillar.
+  // The half-step slab reuses the whole-slice grid position (the cut plane sits at the same
+  // depth); the grid tints gold instead so the dwell mode reads at a glance.
   const n = gridExtent
   const coarseDivisions = Math.max(1, Math.round(n / 8))
+  const halfStep = plane.half !== null
 
   return (
     <group>
@@ -46,8 +49,8 @@ export function ConstructionPlaneVisual() {
           <planeGeometry args={[n, n]} />
           <meshBasicMaterial color="#4ad9ff" transparent opacity={0.035} depthWrite={false} side={THREE.DoubleSide} />
         </mesh>
-        <gridHelper args={[n, n, '#3a5a70', '#22303a']} />
-        <gridHelper args={[n, coarseDivisions, '#7ac8ff', '#3d6d8a']} />
+        <gridHelper args={[n, n, halfStep ? '#f2c94c' : '#3a5a70', halfStep ? '#5a4d22' : '#22303a']} />
+        <gridHelper args={[n, coarseDivisions, halfStep ? '#f2c94c' : '#7ac8ff', halfStep ? '#8a6d2f' : '#3d6d8a']} />
       </group>
 
       <group position={position} quaternion={arrowQuaternion}>

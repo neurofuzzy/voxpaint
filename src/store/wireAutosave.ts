@@ -53,6 +53,7 @@ export function restoreAutosave(): void {
         state.plane.axis = savedPlane.axis
         state.plane.orientation = savedPlane.orientation
         state.plane.offset = clampPlaneOffset(savedPlane.offset, state.meta.gridExtent)
+        state.plane.half = savedPlane.half === 0 || savedPlane.half === 1 ? savedPlane.half : null
         state.objectModeTarget = null
       })
     }

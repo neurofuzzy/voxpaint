@@ -1,4 +1,4 @@
-import type { Axis, CellKey, ChamferCell, Coord, GridExtent, Orientation, Rotation, VoxelModel, VoxelScaleY } from '@/engine/grid/types'
+import type { Axis, CellKey, ChamferCell, Coord, GridExtent, Orientation, Rotation, SplitAxis, SubdivCell, VoxelModel, VoxelScaleY } from '@/engine/grid/types'
 import type { Marker } from '@/engine/markers/types'
 import type { AnimationMode, ClipKey, KeyEase, KeyJoints, KeyOffsets, RigBox, RigClip, RigTween } from '@/engine/rigging/types'
 import type { JointEuler } from '@/engine/rigging/pose'
@@ -10,7 +10,7 @@ import type { BoxFace, TexelScale, TextureModel } from '@/engine/texture/types'
 import type { TexelClip } from '@/engine/texture/texelOps'
 import type { SliceAnimSettings, SliceKey } from '@/engine/animation/types'
 
-export type ToolId = 'paint' | 'erase' | 'eyedropper' | 'select' | 'fill' | 'move' | 'material' | 'pivot' | 'textureface' | 'marker' | 'wand' | 'rigbox' | 'pose' | 'offset'
+export type ToolId = 'paint' | 'erase' | 'eyedropper' | 'select' | 'fill' | 'move' | 'material' | 'pivot' | 'textureface' | 'marker' | 'wand' | 'rigbox' | 'pose' | 'offset' | 'subdivide'
 export type VoxelKind = 'cube' | 'ramp' | 'convex' | 'concave' | 'wedge' | 'thin' | 'half' | 'post' | 'quarter' | 'flat' | 'flatwedge'
 
 export type SelectionRegion = {
@@ -28,14 +28,18 @@ export type ClipboardCell = {
    * `copyPlaneOffset` for bbox-anchored exact-set content, the destination slice for
    * slice-anchored region content) — 0 for the lift slice / bbox-min itself. Set on every cell
    * (including empty ones) by deep (Alt-drag) lifts, which project the selection window through
-   * the whole model; shallow lifts record 0. A cell with neither `color` nor `chamfer` is an
-   * explicitly empty voxel: dropping it clears whatever it lands on (replace, not merge). */
+   * the whole model; shallow lifts record 0. A cell with neither `color`/`chamfer` nor `subdiv`
+   * is an explicitly empty voxel: dropping it clears whatever it lands on (replace, not merge). */
   dw: number
   color?: { paletteSlot: PaletteSlotRef }
   /** The source cell's full chamfer data (plane basis + resolved shape), copied verbatim and
    * restored on paste with no reclassification — the pasted shape exactly matches the source. A
    * chamfer only ever (re)resolves when the user edits that specific voxel. */
   chamfer?: ChamferCell
+  /** A subdivided parent's detail, deep-copied and restored verbatim — moves/pastes carry
+   * detail atomically. Mutually exclusive with `color`/`chamfer`: a cell with neither `color`
+   * nor `subdiv` is an explicitly empty voxel that clears whatever it lands on (replace, not merge). */
+  subdiv?: SubdivCell
 }
 
 export type ClipboardData = {
@@ -147,6 +151,17 @@ export type PlaneSlice = {
   objectModeTarget: ObjectModeTarget | null
   setPlaneAxisOrientation: (axis: ConstructionPlane['axis'], orientation: ConstructionPlane['orientation']) => void
   setPlaneOffset: (offset: number) => void
+  /**
+   * Selects the half-step slab (0/1 world-axis bit) or back to whole-voxel mode (null).
+   * Frame-preserving: no float bake, no selection change — same slice, narrower edit target.
+   */
+  setPlaneHalf: (half: 0 | 1 | null) => void
+  /**
+   * Steps the plane in half-voxel stops: whole layer → front slab → back slab → next whole
+   * layer (reversed for -1), viewer side first. Used by the edge dragger and Shift+wheel.
+   * `count` walks that many stops in one undo-neutral update (single bake + persist).
+   */
+  stepPlaneHalf: (direction: 1 | -1, count?: number) => void
   /** Grounds the plane (Y-up at the lowest layer for the current extent) and persists it —
    * the project-switch reset, so one project's slice never leaks into the next. Used by
    * new-project and project-import. */
@@ -154,9 +169,11 @@ export type PlaneSlice = {
   /**
    * Handles a 3D face-click on a voxel (spec: first click lands the construction plane on the
    * clicked voxel's own slice; clicking the SAME voxel again advances the plane one step forward
-   * through that same face, into the adjacent empty slice).
+   * through that same face, into the adjacent empty slice). A `half` of 0/1 enters half-step
+   * mode on the voxel's own layer (callers compute it from the hit detail child); null or
+   * omitted stays whole-voxel, and the same-face advance always exits half-step.
    */
-  handleVoxelFaceClick: (cellKey: CellKey, axis: Axis, orientation: Orientation, offset: number) => void
+  handleVoxelFaceClick: (cellKey: CellKey, axis: Axis, orientation: Orientation, offset: number, half?: 0 | 1 | null) => void
 }
 
 export type AnimateTab = 'rig' | 'tweens' | 'poses'
@@ -174,6 +191,11 @@ export type ToolSlice = {
   /** Brush rotation in quarter-turns (0-3), applied additively at paint time for orientable
    * kinds (ramp/wedge/quarter/flatwedge). 0 = legacy autotile/fresh-0 behavior exactly. */
   brushRotation: Rotation
+  /** Pending subdivision for the Subdivide tool (what a plain-voxel tap splits into;
+   * null = whole, i.e. no division selected — taps need an explicit Alt or a toolbar pick).
+   * The toolbar's 2/4/8-cell buttons set it (2- and 4-cell cycle their axes, whole included);
+   * advancing a subdivided voxel adopts its new division, so the toolbar tracks the last split. */
+  pendingSplit: SplitAxis[] | null
   /** 3D shift-paint line anchor: the last 3D-painted cell plus the plane frame it was painted
    * in. Every 3D paint tap re-establishes it (fast chaining); a shift-tap draws the
    * dominant-axis line from it. Null until the first tap; stale frames (plane axis/orientation
@@ -182,6 +204,7 @@ export type ToolSlice = {
   setActiveTool: (tool: ToolId) => void
   setActiveVoxelKind: (kind: VoxelKind) => void
   setActivePaletteSlot: (slot: PaletteSlotRef) => void
+  setPendingSplit: (split: SplitAxis[] | null) => void
   setBrushRotation: (r: Rotation) => void
   /** Steps the brush rotation ±1 quarter-turn (wraps mod 4). */
   rotateBrush: (dir: 1 | -1) => void
@@ -262,7 +285,7 @@ export type Selection3DSlice = {
 /** The specific voxel face currently under the pointer in the 3D view — live, updates on every
  * hover move (including between faces of the same voxel). Drives VoxelFaceHighlight; a click
  * commits the plane to whichever face is current at click time (see handleVoxelFaceClick). */
-export type HoveredFace = { cellKey: CellKey; axis: Axis; orientation: Orientation }
+export type HoveredFace = { cellKey: CellKey; axis: Axis; orientation: Orientation; childIndex?: number }
 
 /** Baked-grain cell size in atlas texels, shared by the AO noise and the metal specular noise:
  * 1 = per-texel grain, 2/4 = chunkier 2×2 / 4×4 quantized blocks (nearest, never blurred). */
@@ -284,6 +307,9 @@ export type ViewSlice = {
   hoverCell: Coord | null
   chamferHoverValid: boolean | null
   hoveredFace: HoveredFace | null
+  /** Hovered 2×2 quadrant of a subdivided cell (display-space [qu,qv]), for the quadrant
+   * hover outline in the 2D canvas. Null when not hovering detail. */
+  hoverQuad: [number, number] | null
   /** 3D preview: render the mesh as wireframe (applies to both the instanced and optimized views). */
   wireframe: boolean
   textureFaceMap: boolean
@@ -357,6 +383,7 @@ export type ViewSlice = {
   setLayoutMode: (v: 'split' | '3d-only') => void
   setHoverCell: (coord: Coord | null, chamferValid: boolean | null) => void
   setHoveredFace: (face: HoveredFace | null) => void
+  setHoverQuad: (quad: [number, number] | null) => void
   /** How the voxel model renders in Animate mode's 3D view. Pure view pref (persisted). */
   animateModelView: AnimateModelVisibility
   setAnimateModelView: (v: AnimateModelVisibility) => void
@@ -407,9 +434,11 @@ export type PaintActionsSlice = {
   /**
    * Paints a cell at plane-space (u,v) using the active vault kind and palette slot.
    * 'cube' writes only color (deletes any existing chamfer). 'ramp' writes both color and chamfer
-   * (auto-resolved from neighbors). Returns false if out of bounds.
+   * (auto-resolved from neighbors). On a subdivided parent, stamps the hovered detail quadrant
+   * (front+back halves; whole entry when qu/qv are absent) instead of the parent volume —
+   * chamfer kinds toast and return false there. Returns false if out of bounds.
    */
-  paintCell: (u: number, v: number) => boolean
+  paintCell: (u: number, v: number, qu?: number, qv?: number) => boolean
   /**
    * End-of-stroke correction pass for bevel (ramp) cells painted since `beginStroke()`: re-runs
    * neighbor classification against the stroke's final color layer and overwrites each
@@ -421,8 +450,9 @@ export type PaintActionsSlice = {
    * contract is untouched. No-op outside an open stroke.
    */
   correctChamferStroke: () => void
-  /** Erases both color and chamfer layers at a cell. */
-  eraseCell: (coord: Coord) => void
+  /** Erases both color and chamfer layers at a cell — or one detail quadrant of a subdivided
+   * parent (whole entry when qu/qv are absent). */
+  eraseCell: (coord: Coord, qu?: number, qv?: number) => void
   /**
    * Direct-3D paint at an explicit grid coordinate, using the caller-supplied axis/orientation
    * as the chamfer context (3D-only taps pass the active construction plane, so orientation
@@ -445,6 +475,32 @@ export type PaintActionsSlice = {
   /** Direct-3D erase at an explicit grid coordinate (3D-only taps). No selection clip. */
   eraseCellAtCoord: (coord: Coord) => void
   /**
+   * Subdivide/coarsen toggle for 2D taps at plane-space (u,v): a plain cube becomes half-scale
+   * children along `split` (default all three axes), empty space scaffolds; a subdivided parent
+   * coarsens back to the stored original slot (scaffolds delete instead). Respects the selection
+   * clip like `paintCell`. Toasts and returns false on chamfered/out-of-bounds cells, on
+   * non-subdivided cells while half-step is set, or an invalid split. One undo stroke
+   * (caller brackets).
+   */
+  toggleSubdivideCell: (u: number, v: number, alt?: boolean) => boolean
+  /**
+   * Subdivide/coarsen toggle for 3D taps with the `subdivide` kind: a plain cube becomes 8
+   * half-scale children (inheriting its slot); a subdivided parent coarsens back to the
+   * stored original slot. Toasts and returns false on empty/chamfered cells. One undo
+   * stroke (caller brackets).
+   */
+  toggleSubdivideAtCoord: (coord: Coord, alt?: boolean) => boolean
+  /**
+   * Paints one half-scale child of a subdivided parent with the active palette slot
+   * (`cube` kind only — chamfer kinds toast and return false; detail stays cubes in v1).
+   * Caller brackets the undo stroke.
+   */
+  paintSubCellAtCoord: (parent: Coord, index: number) => boolean
+  /** Erases one half-scale child (erasing all eight removes the voxel entirely). Caller brackets. */
+  eraseSubCellAtCoord: (parent: Coord, index: number) => void
+  /** Recolors one half-scale child with the active palette slot. No-op when it already matches. Caller brackets. */
+  paintMaterialSubCellAtCoord: (parent: Coord, index: number) => boolean
+  /**
    * Stamps the active brush (voxel kind + palette slot) over the whole active selection in one
    * undo stroke — the 3D selection set in 3D-only layout, the 2D window's cells in split layout
    * (empty cells gain voxels; out-of-grid keys are dropped). Chamfers resolve exactly as a
@@ -454,10 +510,11 @@ export type PaintActionsSlice = {
   fillSelection: () => void
   /**
    * Recolors the voxel at plane-space (u,v) with the active palette slot — existing voxels only,
-   * never adds or deletes cells, never touches chamfer. No-op (false) on empty/out-of-bounds
-   * cells or when the slot already matches (so drags don't record junk undo steps).
+   * never adds or deletes cells, never touches chamfer. On a subdivided parent, recolors the
+   * hovered detail quadrant (whole entry when qu/qv are absent). No-op (false) on
+   * empty/out-of-bounds cells or when the slot already matches (so drags don't record junk undo steps).
    */
-  paintMaterialCell: (u: number, v: number) => boolean
+  paintMaterialCell: (u: number, v: number, qu?: number, qv?: number) => boolean
   /** Direct-3D recolor at an explicit grid coordinate (3D-only taps). No selection clip. */
   paintMaterialAtCoord: (coord: Coord) => boolean
   /**

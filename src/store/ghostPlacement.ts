@@ -91,8 +91,8 @@ export function resolveGhostPlacement(input: GhostPlacementInput): GhostPlacemen
   // at the hover cell — paint, plus marker (which drops a marker there). Material recolors on
   // hover-blink; select/wand show their own overlays; erase/eyedropper/fill/move act on
   // existing voxels or whole regions, so a place-here cube would promise a paint that never
-  // comes.
-  if (directEdit && activeTool !== 'paint' && activeTool !== 'marker') return null
+  // comes. The subdivide tool splits the hovered cube, so it ghosts the same place-here cube.
+  if (directEdit && activeTool !== 'paint' && activeTool !== 'marker' && activeTool !== 'subdivide') return null
   let target: Coord | null = null
   let faceAxis: Axis | null = null
   let faceOrientation: Orientation | null = null
@@ -101,6 +101,11 @@ export function resolveGhostPlacement(input: GhostPlacementInput): GhostPlacemen
     // helper so preview and write agree (replace-only on the construction plane).
     const t = resolveDirectPaintTarget(plane, hoverCell, hoveredFace, gridExtent)
     if (!t) return null
+    // Subdivided parents show no place-here ghost for paint: a tap paints the hovered
+    // half-cell, not the parent volume. (The subdivide tool previews the merge target —
+    // the same parent volume — so it keeps its ghost; see below.) The octant hover blink
+    // + face highlight carry the paint feedback instead.
+    if (activeTool === 'paint' && model.subdiv.has(encodeKey(...t))) return null
     target = t
     // Orientation inherits the active construction plane — never the raycast face — so the
     // preview matches the paint write (see `applyBlockingTap` in Viewport3D.tsx).
@@ -108,16 +113,22 @@ export function resolveGhostPlacement(input: GhostPlacementInput): GhostPlacemen
     faceOrientation = plane.orientation
   } else {
     if (!hoverCell) return null
-    if (model.color.has(encodeKey(...hoverCell))) return null
+    // The subdivide tool ghosts the parent volume on plain and subdivided cells alike
+    // (split preview and merge preview); every other tool hides its ghost on voxels.
+    if (activeTool !== 'subdivide' && (model.color.has(encodeKey(...hoverCell)) || model.subdiv.has(encodeKey(...hoverCell)))) return null
+    // Half-step admits subdivided voxels only — no place-here cube over plain cells,
+    // where a tap would refuse (the write fails closed in applyPaintCell).
+    if (plane.half !== null && (activeTool === 'paint' || activeTool === 'subdivide')
+      && !model.subdiv.has(encodeKey(...hoverCell))) return null
     if (!withinWorkingBounds(hoverCell, gridExtent)) return null
     target = hoverCell
     faceAxis = plane.axis
     faceOrientation = plane.orientation
   }
 
-  if (activeTool !== 'paint') return { kind: 'cube', target }
+  if (activeTool !== 'paint' && activeTool !== 'subdivide') return { kind: 'cube', target }
 
-  const facePlane: ConstructionPlane = { axis: faceAxis, orientation: faceOrientation, offset: target[axisIndex(faceAxis)] }
+  const facePlane: ConstructionPlane = { axis: faceAxis, orientation: faceOrientation, offset: target[axisIndex(faceAxis)], half: null }
   const { u, v } = pixelFromGridCoord(facePlane, target)
   const auto = (activeVoxelKind === 'ramp' || activeVoxelKind === 'wedge')
     ? classify(sampleNeighbors(model, facePlane, u, v))

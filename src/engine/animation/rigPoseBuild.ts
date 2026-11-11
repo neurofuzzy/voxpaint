@@ -1,6 +1,7 @@
 import * as THREE from 'three'
 import type { CellKey, GridExtent, VoxelModel } from '@/engine/grid/types'
 import { decodeKey } from '@/engine/grid/GridStore'
+import { voxelKeys } from '@/engine/grid/subdiv'
 import type { PaletteState } from '@/engine/palette/types'
 import type { TextureModel } from '@/engine/texture/types'
 import { buildBlendAtlas } from '@/engine/texture/boxMapping'
@@ -41,7 +42,8 @@ export function buildRigPoseMeshes(
 ): RigPoseMeshes | null {
   if (!rigBoxes || rigBoxes.length === 0) return null
   const rigAssignment = new Map<CellKey, string>()
-  for (const key of model.color.keys()) {
+  // Detail follows its rig box via the integer parent coord (see voxelKeys).
+  for (const key of voxelKeys(model)) {
     const id = rigIdForCoord(rigBoxes, decodeKey(key))
     if (id) rigAssignment.set(key, id)
   }

@@ -1,5 +1,6 @@
 import type { ChamferClassification, VoxelModel } from '@/engine/grid/types'
 import { decodeKey, encodeKey } from '@/engine/grid/GridStore'
+import { sampleDetailNeighborhood } from '@/engine/grid/subdiv'
 import type { ConstructionPlane } from '@/engine/plane/types'
 import { gridCoordFromPixel, pixelFromGridCoord } from '@/engine/plane/constructionPlane'
 import { axisIndex } from '@/engine/plane/planeGeometry'
@@ -83,10 +84,37 @@ export function classify(n: NeighborSample): ChamferClassification | null {
 }
 
 /**
+ * Detail-scale analogue of `resolveChamferCellsOnPlane`: resolves still-unresolved
+ * (`resolvedTo: null`) detail chamfers on the plane's slice, now that neighbors painted
+ * later — possibly in adjacent subdivided parents — may complete their configuration.
+ * Only ever fills nulls, never re-resolves a frozen shape, and never applies the stroke's
+ * brush offset (that promise belongs to the stroke that made each paint). Returns whether
+ * anything changed. Called from `correctChamferStroke` so every stroke settles its slice.
+ */
+export function resolveDetailChamferCellsOnPlane(model: VoxelModel, plane: ConstructionPlane): boolean {
+  const ai = axisIndex(plane.axis)
+  let changed = false
+  for (const [key, sub] of model.subdiv) {
+    const parent = decodeKey(key)
+    if (parent[ai] !== plane.offset) continue
+    for (let i = 0; i < sub.children.length; i++) {
+      const child = sub.children[i]
+      if (!child?.chamfer || child.chamfer.resolvedTo) continue
+      const rt = classify(sampleDetailNeighborhood(model, plane, parent, i))
+      if (rt) {
+        child.chamfer.resolvedTo = rt
+        changed = true
+      }
+    }
+  }
+  return changed
+}
+
+/**
  * Re-attempts resolution for every still-unresolved (`resolvedTo: null`) chamfer cell that lives
  * on the given plane's exact (axis, offset) slice — the only cells whose neighbor context an edit
- * on this plane could possibly have changed. Once resolved, a cell's shape is frozen forever, so
- * this only ever moves `resolvedTo` from null to non-null, never re-resolves an already-resolved
+ * on this plane could possibly have changed. Once resolved, a shape is frozen forever, so this
+ * only ever moves `resolvedTo` from null to non-null, never re-resolves an already-resolved
  * cell (matching the old "frozen at paint time" rule, just deferred to whenever it first becomes
  * resolvable instead of blocking the paint that couldn't yet resolve it). Mutates the given
  * (draft) model. Cheap to call after every chamfer paint — it only scans one plane's worth of

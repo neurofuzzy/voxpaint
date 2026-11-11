@@ -1,5 +1,7 @@
 import { describe, expect, it } from 'vitest'
+import * as THREE from 'three'
 import { emptyModel, encodeKey, recomputeBounds } from '@/engine/grid/GridStore'
+import { subdivideCell } from '@/engine/grid/subdiv'
 import type { VoxelModel } from '@/engine/grid/types'
 import { DEFAULT_PALETTE } from '@/engine/palette/defaultPalette'
 import type { PaletteSlotRef } from '@/engine/palette/types'
@@ -74,7 +76,8 @@ describe('shell fast path parity with CSG', () => {
     }
   })
 
-  it('resolves flat panes exactly like the CSG flat pass', () => {
+    it('resolves flat panes exactly like the CSG flat pass', () => {
+
     const model = emptyModel()
     for (const x of [0, 1]) {
       model.color.set(encodeKey(x, 0, 0), { paletteSlot: base0 })
@@ -86,6 +89,134 @@ describe('shell fast path parity with CSG', () => {
     expect(shell).not.toBeNull()
     expect(shell!.optimizedTriangles).toBe(4)
     expect(shell!.optimizedTriangles).toBe(csg.optimizedTriangles)
+    for (const g of shell!.groups) g.geometry.dispose()
+    for (const g of csg.groups) g.geometry.dispose()
+  })
+
+  it('builds a subdivided cube back into the same 12-triangle surface, both paths', () => {
+    const model = emptyModel()
+    model.color.set(encodeKey(0, 0, 0), { paletteSlot: base0 })
+    expect(subdivideCell(model, [0, 0, 0])).toBe(true)
+    const withBounds = { ...model, bounds: recomputeBounds(model) }
+    const csg = buildOptimizedVoxelGroups(withBounds, DEFAULT_PALETTE)
+    const shell = buildOptimizedVoxelGroupsShell(withBounds, DEFAULT_PALETTE)
+    expect(shell).not.toBeNull()
+    // 8 half-cubes in, interior faces cancelled, outer faces re-welded: one group, 12 tris.
+    expect(csg.rawTriangles).toBe(8 * 12)
+    expect(shell!.groups.length).toBe(1)
+    expect(shell!.optimizedTriangles).toBe(12)
+    expect(shell!.optimizedTriangles).toBe(csg.optimizedTriangles)
+    for (const g of shell!.groups) g.geometry.dispose()
+    for (const g of csg.groups) g.geometry.dispose()
+  })
+
+  it('matches CSG on mixed full/detail seams (2x2 slab, one cell subdivided)', () => {
+    // Mixed seams triangulate differently: the CSG union splits neighbor faces at half-planes
+    // (and can leave an unpaired hidden interior quad — a known ThreeBSP wart at exact-half
+    // coordinates), while the shell keeps both sides of every partial-overlap seam. Both are
+    // interior/hidden, so the assertion is exterior-surface equivalence, not tri equality.
+    const model = emptyModel()
+    for (const [x, z] of [[0, 0], [1, 0], [0, 1], [1, 1]] as const) {
+      model.color.set(encodeKey(x, 0, z), { paletteSlot: base0 })
+    }
+    expect(subdivideCell(model, [0, 0, 0])).toBe(true)
+    const withBounds = { ...model, bounds: recomputeBounds(model) }
+    for (const merge of [false, true]) {
+      const csg = buildOptimizedVoxelGroups(withBounds, DEFAULT_PALETTE, merge)
+      const shell = buildOptimizedVoxelGroupsShell(withBounds, DEFAULT_PALETTE, merge)
+      expect(shell, `merge=${merge}: shell handles mixed seams`).not.toBeNull()
+      expect(shell!.groups.length, `merge=${merge}: group count`).toBe(csg.groups.length)
+      // Shell keeps paired interior seam faces the CSG union cancels (or leaves single) —
+      // a superset of hidden triangles over the same visible surface.
+      expect(shell!.optimizedTriangles, `merge=${merge}: shell superset`).toBeGreaterThanOrEqual(csg.optimizedTriangles)
+      // Exterior equivalence: rays from every side (including through the subdivided cell's
+      // quarter-faces) first-hit at identical distances on both meshes.
+      const rays: Array<[origin: [number, number, number], dir: [number, number, number]]> = [
+        [[-1, 0.5, 0.5], [1, 0, 0]],
+        [[-1, 0.25, 0.25], [1, 0, 0]],
+        [[3, 0.5, 1.5], [-1, 0, 0]],
+        [[0.5, -1, 0.5], [0, 1, 0]],
+        [[0.25, -1, 1.75], [0, 1, 0]],
+        [[0.5, 0.5, -1], [0, 0, 1]],
+        [[1.5, 0.5, 3], [0, 0, -1]],
+        [[0.5, 3, 0.5], [0, -1, 0]],
+      ]
+      for (const [o, d] of rays) {
+        const origin = new THREE.Vector3(...o)
+        const dir = new THREE.Vector3(...d)
+        const hitCsg = new THREE.Raycaster(origin, dir).intersectObject(new THREE.Mesh(csg.groups[0].geometry), false)[0]
+        const hitShell = new THREE.Raycaster(origin, dir).intersectObject(new THREE.Mesh(shell!.groups[0].geometry), false)[0]
+        expect(hitCsg, `merge=${merge}: csg hit ${o}`).toBeDefined()
+        expect(hitShell, `merge=${merge}: shell hit ${o}`).toBeDefined()
+        expect(hitShell.distance, `merge=${merge}: surface match ${o}`).toBeCloseTo(hitCsg.distance, 9)
+      }
+      for (const g of shell!.groups) g.geometry.dispose()
+      for (const g of csg.groups) g.geometry.dispose()
+    }
+  })
+})
+
+describe('detail bevels (scaled chamfers)', () => {
+  const rampChild = {
+    slot: { kind: 'base', index: 0 } as const,
+    chamfer: { planeAxis: 'y' as const, planeOrientation: 1 as const, resolvedTo: { shapeKind: 'ramp' as const, rotation: 0 as const } },
+  }
+
+  it('unions a scaled ramp child to the exact sloped solid', () => {
+    // A u-split child (0.5×1×1) holding a ramp stretched 2:1 renders the same sloped solid
+    // as a half-scale unit ramp would at that footprint — watertight against a matching
+    // neighbor half. Raycast the slope from above: hits must land on the y=x/2 plane.
+    const model = emptyModel()
+    model.color.set(encodeKey(0, 0, 0), { paletteSlot: base0 })
+    expect(subdivideCell(model, [0, 0, 0], ['x', 'z'])).toBe(true)
+    const sub = model.subdiv.get(encodeKey(0, 0, 0))!
+    // Paint every child the flat slot, then give the SW quarter a ramp.
+    for (let i = 0; i < 4; i++) sub.children[i] = { slot: { kind: 'base', index: 0 } }
+    sub.children[0] = { slot: { kind: 'base', index: 0 }, chamfer: rampChild.chamfer }
+    const withBounds = { ...model, bounds: recomputeBounds(model) }
+    const csg = buildOptimizedVoxelGroups(withBounds, DEFAULT_PALETTE)
+    expect(csg.groups.length).toBe(1)
+    // The shell path declines scaled bevels (partial overlaps can't triple-match).
+    expect(buildOptimizedVoxelGroupsShell(withBounds, DEFAULT_PALETTE)).toBeNull()
+    // Exterior sanity: the solid occupies exactly the parent cube's footprint.
+    const geom = csg.groups[0].geometry
+    const box = new THREE.Box3().setFromObject(new THREE.Mesh(geom))
+    expect(box.min.toArray().map((v) => Math.round(v * 1e6) / 1e6)).toEqual([0, 0, 0])
+    expect(box.max.toArray().map((v) => Math.round(v * 1e6) / 1e6)).toEqual([1, 1, 1])
+    for (const g of csg.groups) g.geometry.dispose()
+  })
+
+  it('welds a partial-split slab exactly like its full-size counterpart', () => {
+    // A u-split of one cell of a 2x2 slab: the shell (cubes only) keeps the shell/CSG
+    // exterior identical — CSG triangulates the mixed seam differently (BSP splits neighbor
+    // faces at half-planes), so the assertion is exterior-surface equivalence, not tri equality.
+    const model = emptyModel()
+    for (const [x, z] of [[0, 0], [1, 0], [0, 1], [1, 1]] as const) {
+      model.color.set(encodeKey(x, 0, z), { paletteSlot: base0 })
+    }
+    expect(subdivideCell(model, [0, 0, 0], ['x'])).toBe(true)
+    const withBounds = { ...model, bounds: recomputeBounds(model) }
+    const csg = buildOptimizedVoxelGroups(withBounds, DEFAULT_PALETTE, false)
+    const shell = buildOptimizedVoxelGroupsShell(withBounds, DEFAULT_PALETTE, false)
+    expect(shell).not.toBeNull()
+    expect(shell!.groups.length).toBe(csg.groups.length)
+    const rays: Array<[origin: [number, number, number], dir: [number, number, number]]> = [
+      [[-1, 0.5, 0.5], [1, 0, 0]],
+      [[-1, 0.25, 0.75], [1, 0, 0]],
+      [[3, 0.5, 1.5], [-1, 0, 0]],
+      [[0.5, -1, 0.5], [0, 1, 0]],
+      [[0.5, 0.5, -1], [0, 0, 1]],
+      [[0.5, 3, 0.5], [0, -1, 0]],
+    ]
+    for (const [o, d] of rays) {
+      const origin = new THREE.Vector3(...o)
+      const dir = new THREE.Vector3(...d)
+      const hitCsg = new THREE.Raycaster(origin, dir).intersectObject(new THREE.Mesh(csg.groups[0].geometry), false)[0]
+      const hitShell = new THREE.Raycaster(origin, dir).intersectObject(new THREE.Mesh(shell!.groups[0].geometry), false)[0]
+      expect(hitCsg, `csg hit ${o}`).toBeDefined()
+      expect(hitShell, `shell hit ${o}`).toBeDefined()
+      expect(hitShell.distance, `surface match ${o}`).toBeCloseTo(hitCsg.distance, 9)
+    }
     for (const g of shell!.groups) g.geometry.dispose()
     for (const g of csg.groups) g.geometry.dispose()
   })

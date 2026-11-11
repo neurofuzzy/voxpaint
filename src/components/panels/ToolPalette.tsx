@@ -1,9 +1,10 @@
 import * as ToggleGroup from '@radix-ui/react-toggle-group'
 import * as Tooltip from '@radix-ui/react-tooltip'
-import { Bone, Brush, Droplet, Eraser, MapPin, MousePointerClick, Move, Pin, Pipette, Rotate3d, SquareArrowOutDownLeft, SquareDashedMousePointer, PaintBucket } from 'lucide-react'
+import { Bone, Brush, Droplet, Eraser, MapPin, MousePointerClick, Move, Pin, Pipette, Rotate3d, Slice, SquareArrowOutDownLeft, SquareDashedMousePointer, PaintBucket } from 'lucide-react'
 import { useAppStore } from '@/store/useAppStore'
 import type { AnimateTab, ToolId } from '@/store/types'
 
+/** Model-mode tools (texture mode reuses the same rail; animate swaps it per tab). */
 const TOOLS: Array<{ id: ToolId; label: string; icon: typeof Brush; hint: string }> = [
   { id: 'paint', label: 'Paint', icon: Brush, hint: 'click or drag to paint · shift+drag: straight line' },
   { id: 'erase', label: 'Erase', icon: Eraser, hint: 'click or drag to erase · shift+drag: straight line' },
@@ -12,6 +13,7 @@ const TOOLS: Array<{ id: ToolId; label: string; icon: typeof Brush; hint: string
   { id: 'material', label: 'Material', icon: Droplet, hint: 'click or drag to repaint occupied voxels · never adds or deletes' },
   { id: 'textureface', label: 'Texture Face', icon: SquareArrowOutDownLeft, hint: 'click or drag ramps, wedges + thin slabs to re-map their texture face to the current plane · geometry unchanged' },
   { id: 'fill', label: 'Fill', icon: PaintBucket, hint: 'click to flood-fill connected cells · alt+click an existing voxel: fill in 3D' },
+  { id: 'subdivide', label: 'Subdivide', icon: Slice, hint: 'click a cube to split it (or empty space to scaffold) with the toolbar division · click detail to step through its family (whole merges back) · drag to split a patch · Alt+click forces 2×2×2' },
   { id: 'move', label: 'Move / Transform', icon: Move, hint: 'drag to shift the current slice' },
   { id: 'marker', label: 'Marker', icon: MapPin, hint: 'click empty space to place a marker · tap a marker to recolor it, tap again to delete · drag to move · right-click: delete' },
 ]

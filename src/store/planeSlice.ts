@@ -1,14 +1,37 @@
 import type { StateCreator } from 'zustand'
 import { clampPlaneOffset, decodeKey, effectiveExtent } from '@/engine/grid/GridStore'
-import type { CellKey } from '@/engine/grid/types'
+import type { CellKey, Orientation } from '@/engine/grid/types'
 import { savePlanePref } from '@/engine/persistence/uiPrefs'
 import { rigIdForCoord } from '@/engine/rigging/types'
 import type { AppState, PlaneSlice } from './types'
 
 type Slice = StateCreator<AppState, [['zustand/immer', never]], [], PlaneSlice>
 
+/**
+ * One half-voxel stop along the plane axis: whole layer → viewer-side (front) slab →
+ * back slab → next whole layer (reversed for -1). Pure so the edge dragger can walk it
+ * from an anchor without dispatching per stop.
+ */
+export function stepHalfStop(
+  offset: number,
+  half: 0 | 1 | null,
+  direction: 1 | -1,
+  orientation: Orientation,
+): { offset: number; half: 0 | 1 | null } {
+  const front = orientation === 1 ? 1 : 0
+  const back = (1 - front) as 0 | 1
+  if (direction === 1) {
+    if (half === null) return { offset, half: front }
+    if (half === front) return { offset, half: back }
+    return { offset: offset + 1, half: null }
+  }
+  if (half === null) return { offset: offset - 1, half: back }
+  if (half === back) return { offset, half: front }
+  return { offset, half: null }
+}
+
 export const createPlaneSlice: Slice = (set, get) => ({
-  plane: { axis: 'z', orientation: 1, offset: 0 },
+  plane: { axis: 'z', orientation: 1, offset: 0, half: null },
   objectModeTarget: null,
 
   // A pending float's cells are offsets interpreted against the plane active at lift/bake time —
@@ -22,12 +45,15 @@ export const createPlaneSlice: Slice = (set, get) => ({
   setPlaneAxisOrientation: (axis, orientation) => {
     get().bakeFloatIfAny()
     const reoriented = get().plane.axis !== axis || get().plane.orientation !== orientation
+    const axisChanged = get().plane.axis !== axis
     set((state) => {
       state.plane.axis = axis
       state.plane.orientation = orientation
       // Any plane change not driven by handleVoxelFaceClick's own logic invalidates the
       // same-voxel-click-again target (the highlighted face no longer corresponds to it).
       state.objectModeTarget = null
+      // A new axis re-frames depth: the half-step slab belongs to the old frame.
+      if (axisChanged) state.plane.half = null
       if (reoriented) {
         state.selection = null
         state.selectedCells = new Set<CellKey>()
@@ -60,12 +86,40 @@ export const createPlaneSlice: Slice = (set, get) => ({
       state.plane.axis = 'y'
       state.plane.orientation = 1
       state.plane.offset = -effectiveExtent(extent) / 2
+      state.plane.half = null
       state.objectModeTarget = null
     })
     savePlanePref(get().plane)
   },
 
-  handleVoxelFaceClick: (cellKey, axis, orientation, offset) => {
+  setPlaneHalf: (half) => {
+    // Slab-only switch: the frame (axis/orientation/offset) doesn't move, so no float bake
+    // and no selection invalidation — same slice, narrower edit target.
+    set((state) => {
+      state.plane.half = half
+    })
+    savePlanePref(get().plane)
+  },
+
+  stepPlaneHalf: (direction, count = 1) => {
+    get().bakeFloatIfAny()
+    const st = get()
+    let offset = st.plane.offset
+    let half = st.plane.half
+    const n = Math.max(0, Math.floor(count))
+    for (let i = 0; i < n; i++) ({ offset, half } = stepHalfStop(offset, half, direction, st.plane.orientation))
+    const clamped = clampPlaneOffset(offset, st.meta.gridExtent)
+    // A clamped overshoot lands on the whole-layer stop (never strand half a slab out of range).
+    if (clamped !== offset) half = null
+    set((state) => {
+      state.plane.offset = clamped
+      state.plane.half = half
+      state.objectModeTarget = null
+    })
+    savePlanePref(get().plane)
+  },
+
+  handleVoxelFaceClick: (cellKey, axis, orientation, offset, half = null) => {
     const current = get().objectModeTarget
     // "Again" means the exact same face, not just the same voxel — a click on a different face
     // of the same voxel must switch the plane to that new face, not advance along the old one.
@@ -82,12 +136,15 @@ export const createPlaneSlice: Slice = (set, get) => ({
           return
         }
       }
-      // Second click on the same face: advance one step forward through it.
+      // Second click on the same face: advance one step forward through it, leaving
+      // half-step mode — dwelling was for the slab just left, stepping moves on.
       get().setPlaneOffset(current.offset + current.orientation)
+      get().setPlaneHalf(null)
       return
     }
     get().setPlaneAxisOrientation(axis, orientation)
     get().setPlaneOffset(offset)
+    get().setPlaneHalf(half)
     set((state) => {
       state.objectModeTarget = { cellKey, axis, orientation, offset }
     })

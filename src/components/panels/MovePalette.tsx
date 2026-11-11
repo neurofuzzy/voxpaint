@@ -18,7 +18,7 @@ const ACTIONS: Array<{ id: string; label: string; icon: typeof RotateCw; hint: s
  * button-only like SelectionPalette (a stray keypress must never mutate the model).
  */
 export function MovePalette({ orientation = 'horizontal' }: { orientation?: PaletteOrientation } = {}) {
-  const isEmpty = useAppStore((s) => s.model.color.size === 0)
+  const isEmpty = useAppStore((s) => s.model.color.size === 0 && s.model.subdiv.size === 0)
   const setStatusMessage = useAppStore((s) => s.setStatusMessage)
   const transformWholeModel = useAppStore((s) => s.transformWholeModel)
   const vertical = orientation === 'vertical'

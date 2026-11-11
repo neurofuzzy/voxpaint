@@ -16,6 +16,7 @@ const TOOL_KEYS: Record<string, ToolId> = {
   v: 'move',
   d: 'marker',
   w: 'wand',
+  n: 'subdivide',
   b: 'rigbox',
   o: 'pose',
   g: 'offset',

@@ -1,10 +1,11 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { effectiveExtent, withinWorkingBounds } from '@/engine/grid/GridStore'
+import { effectiveExtent, encodeKey, withinWorkingBounds } from '@/engine/grid/GridStore'
 import { gridCoordFromPixel } from '@/engine/plane/constructionPlane'
 import { createMarker } from '@/engine/markers/markers'
 import type { Marker } from '@/engine/markers/types'
 import { displayViewCenter, toDisplayU, toDisplayV } from '@/engine/plane/planeDisplay'
 import { toNormalizedPointerEvent } from '@/engine/input/PointerInputController'
+import { displayQuadrantFromFractions, quadrantFromFractions } from '@/engine/tools/quadrant'
 import { animateToolMap, resolveGestureTool, toolMap } from '@/engine/tools'
 import type { ToolContext, ToolDragState } from '@/engine/tools/types'
 import type { ToolId } from '@/store/types'
@@ -75,6 +76,49 @@ function pixelToCell(
 export function usePixelCanvasTools(canvasRef: React.RefObject<HTMLCanvasElement | null>) {
   const drag = useRef<ToolDragState>({ kind: 'idle' })
   const hoverCellRef = useRef<[number, number] | null>(null)
+  // Which 3D cut-target face the 2D hover last mirrored (null = none owned by 2D hover).
+  const hoverFaceRef = useRef<string | null>(null)
+
+  const store = useAppStore.getState() // action references are stable for the store's lifetime
+  const setHoverCell = store.setHoverCell // pulled out so they can be genuine, listable useCallback deps
+  const setHoverQuad = store.setHoverQuad
+  const setHoveredFace = store.setHoveredFace
+  const setStatusMessage = store.setStatusMessage
+
+  /**
+   * Re-resolves hover state for a display cell: the hovered coord (deduped like the 3D
+   * side), the detail quadrant (null unless hovering subdivided), and the 3D cut-target
+   * mirror for the subdivide tool. Runs on every mousemove — and after taps, since a tap
+   * can change what lives under the cursor (e.g. scaffolding empty space), which would
+   * otherwise leave the 2D outline and 3D wireframe stale until the next mousemove.
+   */
+  const refreshHover = useCallback(
+    (cell: [number, number], hcu: number, hcv: number) => {
+      const prevCell = hoverCellRef.current
+      hoverCellRef.current = cell
+      if (!prevCell || prevCell[0] !== cell[0] || prevCell[1] !== cell[1]) {
+        setHoverCell(gridCoordFromPixel(ctxRef.current.plane, cell[0], cell[1]), null)
+      }
+      const hoverCoord = gridCoordFromPixel(ctxRef.current.plane, cell[0], cell[1])
+      const hoverSub = useAppStore.getState().model.subdiv.has(encodeKey(...hoverCoord))
+      setHoverQuad(hoverSub ? displayQuadrantFromFractions(hcu, hcv) : null)
+      const store = useAppStore.getState()
+      if (activeToolRef.current === 'subdivide' && store.mode !== 'animate') {
+        const key = encodeKey(...hoverCoord)
+        const hasVoxel = hoverSub || store.model.color.has(key) || store.model.chamfer.has(key)
+        const faceKey = hasVoxel ? `${key}|${ctxRef.current.plane.axis}|${ctxRef.current.plane.orientation}` : null
+        if (faceKey !== hoverFaceRef.current) {
+          hoverFaceRef.current = faceKey
+          setHoveredFace(
+            faceKey
+              ? { cellKey: key, axis: ctxRef.current.plane.axis, orientation: ctxRef.current.plane.orientation }
+              : null,
+          )
+        }
+      }
+    },
+    [setHoverCell, setHoverQuad, setHoveredFace],
+  )
   const panDragRef = useRef<{ startX: number; startY: number; lastX: number; lastY: number; hasMoved: boolean } | null>(null)
 
   // Multi-touch gesture tracking: every active touch contact's last known client position, a pinch
@@ -221,10 +265,6 @@ export function usePixelCanvasTools(canvasRef: React.RefObject<HTMLCanvasElement
   const activeToolRef = useRef(activeTool)
   activeToolRef.current = activeTool
 
-  const store = useAppStore.getState() // action references are stable for the store's lifetime
-  const setHoverCell = store.setHoverCell // pulled out so it can be a genuine, listable useCallback dep
-  const setStatusMessage = store.setStatusMessage
-
   const ctx: ToolContext = {
     model, plane, gridExtent, activeVoxelKind, activePaletteSlot, selection, floatContent, floatOrigin, clipboard,
     markers, selectedMarkerId,
@@ -284,6 +324,8 @@ export function usePixelCanvasTools(canvasRef: React.RefObject<HTMLCanvasElement
     },
     selectMarker: (id) => useAppStore.getState().selectMarker(id),
     paintCell: store.paintCell,
+    toggleSubdivide: (u, v, alt) => store.toggleSubdivideCell(u, v, alt),
+    pendingSplit: useAppStore((s) => s.pendingSplit),
     eraseCell: store.eraseCell,
     paintMaterialCell: store.paintMaterialCell,
     rebaseRampCell: store.rebaseRampCell,
@@ -480,13 +522,8 @@ export function usePixelCanvasTools(canvasRef: React.RefObject<HTMLCanvasElement
       }
 
       const cell = pixelToCell(canvas, e.clientX, e.clientY, size, pan, zoom, ctxRef.current.plane, vScaleRef.current)
-      const prevCell = hoverCellRef.current
-      hoverCellRef.current = cell
-      // Only push a store update when the hovered *cell* actually changes, not on every mousemove
-      // tick within it — mirrors the same dedup on the 3D side (Viewport3D.tsx).
-      if (!prevCell || prevCell[0] !== cell[0] || prevCell[1] !== cell[1]) {
-        setHoverCell(gridCoordFromPixel(ctxRef.current.plane, cell[0], cell[1]), null)
-      }
+      const [hcu, hcv] = pixelToDisplayFloat(canvas, e.clientX, e.clientY, size, pan, zoom, vScaleRef.current)
+      refreshHover(cell, hcu, hcv)
       const store = useAppStore.getState()
       const map = store.mode === 'animate' ? animateToolMap : toolMap
       // Move follows the gesture's down tool (affinity) while buttons are held; a bare hover
@@ -500,14 +537,21 @@ export function usePixelCanvasTools(canvasRef: React.RefObject<HTMLCanvasElement
       const [mcu, mcv] = pixelToDisplayFloat(canvas, e.clientX, e.clientY, size, pan, zoom, vScaleRef.current)
       map[moveTool]?.onMove?.(ctxRef.current, { ...toNormalizedPointerEvent(e, cell), cu: mcu, cv: mcv })
     },
-    [canvasRef, size, pan, zoom, setHoverCell, gridExtent],
+    [canvasRef, size, pan, zoom, refreshHover, gridExtent],
   )
 
   const onPointerLeave = useCallback(() => {
     hoverCellRef.current = null
     setHoverCell(null, null)
+    setHoverQuad(null)
+    // Release the 3D cut-target mirror — but only what 2D hover owns (a non-null ref means
+    // this canvas set it; a 3D-owned value passes through untouched).
+    if (hoverFaceRef.current !== null) {
+      hoverFaceRef.current = null
+      setHoveredFace(null)
+    }
     setStatusMessage(null)
-  }, [setHoverCell, setStatusMessage])
+  }, [setHoverCell, setHoverQuad, setHoveredFace, setStatusMessage])
 
   const onPointerUp = useCallback(
     (e: React.PointerEvent<HTMLCanvasElement>) => {
@@ -534,10 +578,12 @@ export function usePixelCanvasTools(canvasRef: React.RefObject<HTMLCanvasElement
           if (target) store.deleteMarker(target.id) // self-brackets its own undo stroke
         } else if (!panDrag.hasMoved && (activeToolRef.current === 'paint' || activeToolRef.current === 'erase')) {
           const cell = pixelToCell(canvas, e.clientX, e.clientY, size, pan, zoom, ctxRef.current.plane, vScaleRef.current)
+          const [rcu, rcv] = pixelToDisplayFloat(canvas, e.clientX, e.clientY, size, pan, zoom, vScaleRef.current)
+          const quad = quadrantFromFractions(ctxRef.current.plane, rcu, rcv)
           const c = ctxRef.current
           c.bakeFloatIfAny()
           c.beginStroke()
-          c.eraseCell(gridCoordFromPixel(c.plane, cell[0], cell[1]))
+          c.eraseCell(gridCoordFromPixel(c.plane, cell[0], cell[1]), quad?.[0], quad?.[1])
           c.commitStroke()
         }
         return
@@ -582,9 +628,13 @@ export function usePixelCanvasTools(canvasRef: React.RefObject<HTMLCanvasElement
       gestureToolRef.current.delete(e.pointerId)
       const [ucu, ucv] = pixelToDisplayFloat(canvas, e.clientX, e.clientY, size, pan, zoom, vScaleRef.current)
       map[upTool]?.onUp?.(ctxRef.current, { ...toNormalizedPointerEvent(e, cell), cu: ucu, cv: ucv })
+      // A tap can change what lives under the cursor (splitting, scaffolding, merging) —
+      // re-resolve the hover so the 2D outline and 3D wireframe update without waiting
+      // for the next mousemove.
+      refreshHover(cell, ucu, ucv)
       canvas.releasePointerCapture(e.pointerId)
     },
-    [canvasRef, size, pan, zoom],
+    [canvasRef, size, pan, zoom, refreshHover],
   )
 
   return { onPointerDown, onPointerMove, onPointerUp, onPointerLeave, linePreview, selectPreview, hoverCellRef, size, pan, zoom }

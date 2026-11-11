@@ -1,14 +1,15 @@
 import { describe, expect, it } from 'vitest'
 import type { Axis, ChamferClassification, Orientation, Rotation, VoxelModel } from '@/engine/grid/types'
 import type { ConstructionPlane } from '@/engine/plane/types'
-import { decodeKey, emptyModel, encodeKey } from '@/engine/grid/GridStore'
+import { decodeKey, emptyModel, encodeKey, recomputeBounds } from '@/engine/grid/GridStore'
+import { paintSubCell, subdivideCell } from '@/engine/grid/subdiv'
 import { toDisplayU, toDisplayV } from '@/engine/plane/planeDisplay'
 import type { ClipboardData, SelectionRegion } from '@/store/types'
 import { copyCellsToClipboard } from './cellSetOps'
 import { applyClipboardAt, clearRegion, copyRegionToClipboard, transformClipboardToPlane } from './clipboard'
 import { mirrorClassification, mirrorClipboard, rotateClipboard90 } from './transform'
 
-const plane = (axis: Axis, orientation: Orientation): ConstructionPlane => ({ axis, orientation, offset: 0 })
+const plane = (axis: Axis, orientation: Orientation): ConstructionPlane => ({ axis, orientation, offset: 0, half: null })
 
 const ALL_PLANES: ConstructionPlane[] = (['x', 'y', 'z'] as const).flatMap((axis) =>
   ([1, -1] as const).map((orientation) => plane(axis, orientation)),
@@ -208,7 +209,7 @@ describe('transformClipboardToPlane', () => {
  * (u,v) = (0,0) on z/1/offset-0 is the column [0,-1,w]. */
 describe('deep (cuboid) copy/clear/apply', () => {
   const EXT = 16
-  const z0: ConstructionPlane = { axis: 'z', orientation: 1, offset: 0 }
+  const z0: ConstructionPlane = { axis: 'z', orientation: 1, offset: 0, half: null }
   const slotA = { kind: 'base', index: 0 } as const
   const slotB = { kind: 'base', index: 1 } as const
   const column: SelectionRegion = { originU: 0, originV: 0, width: 1, height: 1, mask: new Uint8Array([1]) }
@@ -285,8 +286,8 @@ describe('depth anchoring (slice vs bbox)', () => {
   const EXT = 16
   const slotA = { kind: 'base', index: 0 } as const
   const slotB = { kind: 'base', index: 1 } as const
-  const z5: ConstructionPlane = { axis: 'z', orientation: 1, offset: 5 }
-  const z6: ConstructionPlane = { axis: 'z', orientation: 1, offset: 6 }
+  const z5: ConstructionPlane = { axis: 'z', orientation: 1, offset: 5, half: null }
+  const z6: ConstructionPlane = { axis: 'z', orientation: 1, offset: 6, half: null }
   const oneCell: SelectionRegion = { originU: 0, originV: 0, width: 1, height: 1, mask: new Uint8Array([1]) }
 
   it('ordinary pastes land on the active slice, not the copy-time slice', () => {
@@ -314,9 +315,9 @@ describe('depth anchoring (slice vs bbox)', () => {
     const src = emptyModel()
     src.color.set(encodeKey(0, -1, 5), { paletteSlot: slotA })
     const clipboard = copyRegionToClipboard(src, z5, oneCell)
-    const rebased = transformClipboardToPlane(clipboard, { axis: 'x', orientation: 1, offset: 3 })
+    const rebased = transformClipboardToPlane(clipboard, { axis: 'x', orientation: 1, offset: 3, half: null })
     const dest = emptyModel()
-    const at = { axis: 'x' as const, orientation: 1 as const, offset: 3 }
+    const at: ConstructionPlane = { axis: 'x', orientation: 1, offset: 3, half: null }
     applyClipboardAt(dest, at, rebased, rebased.originU ?? 0, rebased.originV ?? 0, EXT)
     expect(dest.color.size).toBe(1)
     for (const key of dest.color.keys()) expect(decodeKey(key)[0]).toBe(3)
@@ -334,12 +335,11 @@ describe('depth anchoring (slice vs bbox)', () => {
     expect([...dest.color.keys()].sort()).toEqual([encodeKey(0, 0, 2), encodeKey(1, 0, 3)].sort())
   })
 
-  it('cross-plane rebases drop the bbox anchor onto the destination slice', () => {
-    const src = emptyModel()
+  it('cross-plane rebases drop the bbox anchor onto the destination slice', () => {    const src = emptyModel()
     src.color.set(encodeKey(0, 0, 2), { paletteSlot: slotA })
     src.color.set(encodeKey(1, 0, 3), { paletteSlot: slotB })
     const clipboard = copyCellsToClipboard(src, [encodeKey(0, 0, 2), encodeKey(1, 0, 3)], z5)
-    const at = { axis: 'x' as const, orientation: 1 as const, offset: 3 }
+    const at: ConstructionPlane = { axis: 'x', orientation: 1, offset: 3, half: null }
     const rebased = transformClipboardToPlane(clipboard, at)
     expect(rebased.depthAnchor).toBeUndefined()
     const dest = emptyModel()
@@ -348,5 +348,87 @@ describe('depth anchoring (slice vs bbox)', () => {
     // dw 0..1 rides off the destination slice — the stale z bbox-min (2) must not leak into x.
     const xs = [...dest.color.keys()].map((k) => decodeKey(k)[0]).sort()
     expect(xs).toEqual([3, 4])
+  })
+})
+
+describe('subdivided detail in clipboard flow', () => {
+  const EXT = 16
+  const z0 = plane('z', 1)
+  const slotM = { kind: 'metal', index: 2 } as const
+
+  function detailedModel() {
+    const m = emptyModel()
+    m.color.set(encodeKey(0, 0, 0), { paletteSlot: { kind: 'base', index: 0 } })
+    subdivideCell(m, [0, 0, 0])
+    paintSubCell(m, [0, 0, 0], 7, slotM)
+    m.color.set(encodeKey(1, 0, 0), { paletteSlot: { kind: 'base', index: 1 } })
+    m.bounds = recomputeBounds(m)
+    return m
+  }
+
+  // z-plane: (x,y,z) -> u=x, v=-y-1, so (0,0,0)->(0,-1) and (1,0,0)->(1,-1).
+  const region: SelectionRegion = { originU: 0, originV: -1, width: 2, height: 1, mask: new Uint8Array([1, 1]) }
+
+  it('copies and pastes subdivided parents verbatim, atomically', () => {
+    const src = detailedModel()
+    const clipboard = copyRegionToClipboard(src, z0, region)
+    expect(clipboard.cells).toHaveLength(2)
+    const detail = clipboard.cells.find((c) => c.subdiv)
+    expect(detail?.du).toBe(0)
+    expect(detail?.subdiv?.split).toEqual(['x', 'y', 'z'])
+    expect(detail?.subdiv?.children[7]).toEqual({ slot: slotM })
+    expect(clipboard.cells.find((c) => c.color)?.du).toBe(1)
+
+    const dest = emptyModel()
+    applyClipboardAt(dest, z0, clipboard, 3, -1, EXT)
+    const sub = dest.subdiv.get(encodeKey(3, 0, 0))
+    expect(sub?.slot).toEqual({ kind: 'base', index: 0 })
+    expect(sub?.split).toEqual(['x', 'y', 'z'])
+    expect(sub?.children[7]).toEqual({ slot: slotM })
+    // The parent footprint holds no color/chamfer cell of its own.
+    expect(dest.color.has(encodeKey(3, 0, 0))).toBe(false)
+    expect(dest.color.get(encodeKey(4, 0, 0))).toEqual({ paletteSlot: { kind: 'base', index: 1 } })
+  })
+
+  it('lifts (clears) subdivided parents with the region', () => {
+    const src = detailedModel()
+    clearRegion(src, z0, region)
+    expect(src.subdiv.size).toBe(0)
+    expect(src.color.has(encodeKey(1, 0, 0))).toBe(false)
+  })
+
+  it('empty clipboard cells clear subdivided parents on bake', () => {
+    const dest = detailedModel()
+    const blank: ClipboardData = {
+      width: 1, height: 1, copyPlaneAxis: 'z', copyPlaneOrientation: 1, cells: [{ du: 0, dv: 0, dw: 0 }],
+    }
+    applyClipboardAt(dest, z0, blank, 0, -1, EXT)
+    expect(dest.subdiv.size).toBe(0)
+  })
+
+  it('rotates and mirrors detail with its cells, restoring exactly on inverse', () => {
+    const src = detailedModel()
+    const clipboard = copyRegionToClipboard(src, z0, region)
+    const rotated = rotateClipboard90(clipboard, 'cw')
+    const back = rotateClipboard90(rotated, 'ccw')
+    expect(back.cells).toEqual(clipboard.cells)
+    const mirrored = mirrorClipboard(clipboard, 'horizontal')
+    expect(mirrorClipboard(mirrored, 'horizontal').cells).toEqual(clipboard.cells)
+    // Rotation permutes (not drops) the children: the metal child moved octants.
+    const rotatedDetail = rotated.cells.find((c) => c.subdiv)?.subdiv?.children
+    expect(rotatedDetail?.filter(Boolean)).toHaveLength(8)
+    expect(rotatedDetail?.[7]).not.toEqual({ slot: slotM })
+  })
+
+  it('rebases detail across planes, mirroring octants with the du/dv flip', () => {
+    const src = detailedModel()
+    const clipboard = copyRegionToClipboard(src, z0, region)
+    const at: ConstructionPlane = { axis: 'x', orientation: 1, offset: 0, half: null }
+    const rebased = transformClipboardToPlane(clipboard, at)
+    const detail = rebased.cells.find((c) => c.subdiv)?.subdiv
+    expect(detail?.children.filter(Boolean)).toHaveLength(8)
+    const dest = emptyModel()
+    applyClipboardAt(dest, at, rebased, rebased.originU ?? 0, rebased.originV ?? 0, EXT)
+    expect(dest.subdiv.size).toBe(1)
   })
 })

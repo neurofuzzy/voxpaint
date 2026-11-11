@@ -1,3 +1,4 @@
+import { countSubdivChildren } from '@/engine/grid/subdiv'
 import { useAppStore } from '@/store/useAppStore'
 
 export function ModelStats() {
@@ -7,7 +8,8 @@ export function ModelStats() {
   const meshTriangles = useAppStore((s) => s.meshTriangles)
   const gridExtent = useAppStore((s) => s.meta.gridExtent)
 
-  const cellCount = model.color.size
+  // Subdivided parents count as their live half-voxels — the cells the number stands for.
+  const cellCount = model.color.size + countSubdivChildren(model)
   const bounds = model.bounds
   const span = bounds
     ? Math.max(bounds.max[0] - bounds.min[0], bounds.max[1] - bounds.min[1], bounds.max[2] - bounds.min[2]) + 1

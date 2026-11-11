@@ -1,5 +1,6 @@
 import type { Coord, GridExtent, Orientation, Rotation, VoxelModel } from '@/engine/grid/types'
 import { decodeKey, effectiveExtent, encodeKey, recomputeBounds } from '@/engine/grid/GridStore'
+import { splitChildBits } from '@/engine/grid/subdiv'
 import { planeLogicalBasis } from '@/engine/plane/constructionPlane'
 import { outwardNormal } from '@/engine/plane/planeGeometry'
 
@@ -316,7 +317,32 @@ export function rescaleVoxelModel(model: VoxelModel): VoxelModel {
     }
   }
 
-  const next: VoxelModel = { color, chamfer, bounds: null }
+  // Subdivided parents dissolve into their live children: each child fills the doubled
+  // cells of its footprint with plain cubes (detail bevels blockify — see the dialog copy;
+  // cube children map exactly). Erased (null) children stay empty, so no subdiv entries
+  // survive the rescale. Doubling maps child box [m, m+s] to [2m, 2m+2s]: one doubled cell
+  // on split axes (2·base+bit), two on unsplit axes (2·base, 2·base+1).
+  for (const [key, sub] of model.subdiv) {
+    const base = decodeKey(key)
+    for (let i = 0; i < sub.children.length; i++) {
+      const child = sub.children[i]
+      if (!child) continue
+      const [dx, dy, dz] = splitChildBits(sub.split, i)
+      const bit = { x: dx, y: dy, z: dz }
+      const lanes = (['x', 'y', 'z'] as const).map((a, ai) =>
+        sub.split.includes(a) ? [RESCALE_FACTOR * base[ai] + bit[a]] : [RESCALE_FACTOR * base[ai], RESCALE_FACTOR * base[ai] + 1],
+      )
+      for (const cx of lanes[0]) {
+        for (const cy of lanes[1]) {
+          for (const cz of lanes[2]) {
+            color.set(encodeKey(cx, cy, cz), { paletteSlot: child.slot })
+          }
+        }
+      }
+    }
+  }
+
+  const next: VoxelModel = { color, chamfer, subdiv: new Map(), bounds: null }
   next.bounds = recomputeBounds(next)
   return next
 }

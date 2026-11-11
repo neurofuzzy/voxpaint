@@ -1,6 +1,7 @@
 import * as THREE from 'three'
 import { GLTFExporter } from 'three/addons/exporters/GLTFExporter.js'
 import { decodeKey, viewOriginShift } from '@/engine/grid/GridStore'
+import { voxelKeys } from '@/engine/grid/subdiv'
 import { outwardNormal } from '@/engine/plane/planeGeometry'
 import type { Axis, VoxelModel, CellKey, Coord, GridExtent, VoxelScaleY } from '@/engine/grid/types'
 import type { Marker } from '@/engine/markers/types'
@@ -163,7 +164,7 @@ export function buildRigAssignment(model: VoxelModel, rigBoxes: RigBox[] | undef
     used.add(candidate)
     names.set(box.id, candidate)
   }
-  for (const key of model.color.keys()) {
+  for (const key of voxelKeys(model)) {
     const rigId = rigIdForCoord(rigBoxes, decodeKey(key))
     if (rigId) assignment.set(key, rigId)
   }

@@ -55,10 +55,43 @@ export type BBox = {
   max: Coord
 }
 
+/**
+ * One subdivided voxel: a plain cube replaced by 2, 4, or 8 half-scale children along the
+ * split world axes (one subdivision level only — children never subdivide further). Stored
+ * as one `SubdivCell` under the parent's CellKey; the parent's `color`/`chamfer` cells are
+ * removed while subdivided. Detail children hold any voxel content, scaled to fill their
+ * subcell's bounding box at render/export — chamfer shapes are frozen explicit kinds, never
+ * autotiled or re-resolved (the resolver stays unit-scale).
+ */
+export type SplitAxis = 'x' | 'y' | 'z'
+
+export type DetailChild = {
+  slot: PaletteSlotRef
+  /** Frozen explicit shape, scaled to fill the subcell's bounding box. Absent = plain cube. */
+  chamfer?: ChamferCell
+}
+
+export type SubdivCell = {
+  /** The parent's original slot, stored so coarsening restores it exactly. */
+  slot: PaletteSlotRef
+  /** Split world axes, 1–3 distinct, in x,y,z order. Children = 2^split.length. */
+  split: SplitAxis[]
+  /** Per-child slots in split-bit order (see `splitChildIndex`) — `null` = erased. */
+  children: (DetailChild | null)[]
+  /**
+   * True when the entry was split from empty space (a paint scaffold, not a real voxel).
+   * All children start null; coarsening deletes the entry instead of restoring a cube.
+   * An all-null non-scaffold is impossible — erasing the last child deletes the entry.
+   */
+  scaffold?: boolean
+}
+
 export type VoxelModel = {
   /** Plain cubic voxels, keyed by CellKey. Treat as immutable outside of Immer producers. */
   color: Map<CellKey, ColorCell>
   /** Chamfered voxels, keyed by CellKey. A chamfer cell always has a matching color cell. */
   chamfer: Map<CellKey, ChamferCell>
+  /** Subdivided voxels, keyed by the PARENT CellKey. A subdiv parent has no color/chamfer cell. */
+  subdiv: Map<CellKey, SubdivCell>
   bounds: BBox | null
 }

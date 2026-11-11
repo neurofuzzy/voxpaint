@@ -1,4 +1,5 @@
 import type { ChamferCell, Coord, GridExtent, VoxelModel } from '@/engine/grid/types'
+import { cloneSubdiv, mirrorSubdivChildren } from '@/engine/grid/subdiv'
 import type { ConstructionPlane } from '@/engine/plane/types'
 import { effectiveExtent, encodeKey, expandBounds, withinWorkingBounds } from '@/engine/grid/GridStore'
 import { gridCoordFromPixel } from '@/engine/plane/constructionPlane'
@@ -39,12 +40,14 @@ export function copyRegionToClipboard(
     const key = encodeKey(...gridCoordFromPixel({ ...plane, offset: w }, u, v))
     const color = model.color.get(key)
     const chamfer = model.chamfer.get(key)
+    const subdiv = model.subdiv.get(key)
     cells.push({
       du: u - region.originU,
       dv: v - region.originV,
       dw: w - plane.offset,
       color: color ? { paletteSlot: color.paletteSlot } : undefined,
       chamfer: chamfer ? cloneChamfer(chamfer) : undefined,
+      subdiv: subdiv ? cloneSubdiv(subdiv) : undefined,
     })
   }
   forEachSelectedCell(region, (u, v) => {
@@ -72,6 +75,7 @@ export function clearRegion(
       const key = encodeKey(...gridCoordFromPixel(plane, u, v))
       model.color.delete(key)
       model.chamfer.delete(key)
+      model.subdiv.delete(key)
       return
     }
     const half = effectiveExtent(gridExtent) / 2
@@ -79,6 +83,7 @@ export function clearRegion(
       const key = encodeKey(...gridCoordFromPixel({ ...plane, offset: w }, u, v))
       model.color.delete(key)
       model.chamfer.delete(key)
+      model.subdiv.delete(key)
     }
   })
 }
@@ -119,11 +124,13 @@ export function placeClipboardCell(
  * Stamps clipboard data at a destination origin. Chamfer cells are restored **verbatim** — their
  * copied plane basis and resolved shape are written back unchanged, with no reclassification against
  * the destination's neighbors, so the pasted result exactly matches the source. (A chamfer only ever
- * (re)resolves when the user edits that specific voxel.) Cells with neither `color` nor `chamfer`
- * are explicitly empty voxels: they delete whatever they land on, so every drop replaces its
- * footprint instead of merging into it. Depth lands per `clipboardDepthBase`: ordinary region
- * pastes land on the destination slice, while bbox-anchored exact-set lifts preserve absolute
- * depth on same-plane drops. Mutates the given (draft) model directly.
+ * (re)resolves when the user edits that specific voxel.) Subdivided parents restore verbatim too
+ * (detail rides along atomically, mutually exclusive with color/chamfer). Cells with neither
+ * `color`/`subdiv` nor `chamfer` are explicitly empty voxels: they delete whatever they land on,
+ * so every drop replaces its footprint instead of merging into it. Depth lands per
+ * `clipboardDepthBase`: ordinary region pastes land on the destination slice, while bbox-anchored
+ * exact-set lifts preserve absolute depth on same-plane drops. Mutates the given (draft) model
+ * directly.
  */
 export function applyClipboardAt(
   model: VoxelModel,
@@ -138,6 +145,15 @@ export function applyClipboardAt(
     if (!withinWorkingBounds(coord, gridExtent)) continue
 
     const key = encodeKey(...coord)
+
+    if (cell.subdiv) {
+      model.subdiv.set(key, cloneSubdiv(cell.subdiv))
+      model.color.delete(key)
+      model.chamfer.delete(key)
+      model.bounds = expandBounds(model.bounds, coord)
+      continue
+    }
+    model.subdiv.delete(key)
 
     if (cell.chamfer) model.chamfer.set(key, cloneChamfer(cell.chamfer))
     else model.chamfer.delete(key)
@@ -237,7 +253,7 @@ export function transformClipboardToPlane(clipboard: ClipboardData, toPlane: Con
   if (!copyPlaneAxis || copyPlaneOrientation == null) return clipboard
   if (copyPlaneAxis === toPlane.axis && copyPlaneOrientation === toPlane.orientation) return clipboard
 
-  const fromPlane: ConstructionPlane = { axis: copyPlaneAxis, orientation: copyPlaneOrientation, offset: 0 }
+  const fromPlane: ConstructionPlane = { axis: copyPlaneAxis, orientation: copyPlaneOrientation, offset: 0, half: null }
   const mirrorU = mirrorsU(fromPlane) !== mirrorsU(toPlane)
   const mirrorV = mirrorsV(fromPlane) !== mirrorsV(toPlane)
 
@@ -253,6 +269,11 @@ export function transformClipboardToPlane(clipboard: ClipboardData, toPlane: Con
       du: mirrorU ? width - 1 - cell.du : cell.du,
       dv: mirrorV ? height - 1 - cell.dv : cell.dv,
       chamfer: cell.chamfer ? rebaseChamfer(cell.chamfer, fromPlane, toPlane, mirrorU, mirrorV) : undefined,
+      // Detail mirrors in the source plane's logical frame (same frame as the du/dv flip
+      // above), so the pasted half-cells keep their on-screen arrangement.
+      subdiv: cell.subdiv
+        ? { slot: cell.subdiv.slot, split: [...cell.subdiv.split], children: mirrorSubdivChildren(cell.subdiv.children, cell.subdiv.split, fromPlane.axis, mirrorU, mirrorV) }
+        : undefined,
     })),
   }
 }

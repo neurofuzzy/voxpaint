@@ -1,18 +1,20 @@
 import { decodeKey, encodeKey, withinWorkingBounds } from '@/engine/grid/GridStore'
-import type { CellKey, ChamferCell, Coord, GridExtent, VoxelModel } from '@/engine/grid/types'
+import type { CellKey, ChamferCell, Coord, GridExtent, SubdivCell, VoxelModel } from '@/engine/grid/types'
 import type { PaletteSlotRef } from '@/engine/palette/types'
 import { gridCoordFromPixel, pixelFromGridCoord } from '@/engine/plane/constructionPlane'
 import { axisIndex } from '@/engine/plane/planeGeometry'
 import type { ConstructionPlane } from '@/engine/plane/types'
 import { mirrorChamferCell, rotateChamferCell } from '@/engine/chamfer/chamferTransform'
 import { cloneChamfer } from './clipboard'
+import { cloneSubdiv, mirrorSubdivChildren, rotateSubdivChildren } from '@/engine/grid/subdiv'
 import type { ClipboardCell, ClipboardData, SelectionRegion, SelectionTransformKind } from '@/store/types'
 
-/** One live voxel snapshot: absolute coord plus both layers (chamfer deep-copied). */
+/** One live voxel snapshot: absolute coord plus all layers (chamfer and subdiv deep-copied). */
 export type CellSnapshot = {
   coord: Coord
   paletteSlot: PaletteSlotRef
   chamfer: ChamferCell | undefined
+  subdiv: SubdivCell | undefined
 }
 
 /** Axis-aligned bounding box of grid coords, or null when empty. */
@@ -76,10 +78,16 @@ export function windowSliceCells(
   return keys
 }
 
-/** Live snapshots for a key set, skipping missing cells (stale keys are benign). */
+/** Live snapshots for a key set, skipping missing cells (stale keys are benign). Subdivided
+ * parents snapshot atomically (a subdiv entry has no color cell of its own). */
 export function snapshotCells(model: VoxelModel, keys: Iterable<CellKey>): CellSnapshot[] {
   const out: CellSnapshot[] = []
   for (const key of keys) {
+    const subdiv = model.subdiv.get(key)
+    if (subdiv) {
+      out.push({ coord: decodeKey(key), paletteSlot: subdiv.slot, chamfer: undefined, subdiv: cloneSubdiv(subdiv) })
+      continue
+    }
     const color = model.color.get(key)
     if (!color) continue
     const chamfer = model.chamfer.get(key)
@@ -87,6 +95,7 @@ export function snapshotCells(model: VoxelModel, keys: Iterable<CellKey>): CellS
       coord: decodeKey(key),
       paletteSlot: color.paletteSlot,
       chamfer: chamfer ? cloneChamfer(chamfer) : undefined,
+      subdiv: undefined,
     })
   }
   return out
@@ -125,8 +134,9 @@ export function copyCellsToClipboard(
     du: projected[i].u - minU,
     dv: projected[i].v - minV,
     dw: projected[i].w - minW,
-    color: { paletteSlot: e.paletteSlot },
+    color: e.subdiv ? undefined : { paletteSlot: e.paletteSlot },
     chamfer: e.chamfer,
+    subdiv: e.subdiv ? cloneSubdiv(e.subdiv) : undefined,
   }))
   return {
     width: maxU - minU + 1,
@@ -180,6 +190,7 @@ export function rotateCellsInPlane(
     let nu: number
     let nv: number
     let chamfer = e.chamfer
+    let subdiv = e.subdiv
     if (spin) {
       if (spin === 'cw') {
         nu = minU + maxV - v
@@ -191,6 +202,13 @@ export function rotateCellsInPlane(
       if (chamfer) {
         chamfer = rotateChamferCell(chamfer, plane.axis, spin)
       }
+      if (subdiv) {
+        // Detail rotates with its cells, in the same logical frame as the du/dv rotation.
+        // A quarter turn can exchange the split axes (a u-split turned on its side is a
+        // v-split), so the rotated split travels with the children.
+        const rotated = rotateSubdivChildren(subdiv.children, subdiv.split, plane.axis, spin)
+        subdiv = { slot: subdiv.slot, split: rotated.split, children: rotated.children }
+      }
     } else {
       const mirrorU = kind === 'mirror-h'
       nu = mirrorU ? minU + maxU - u : u
@@ -198,10 +216,13 @@ export function rotateCellsInPlane(
       if (chamfer) {
         chamfer = mirrorChamferCell(chamfer, plane.axis, mirrorU, !mirrorU)
       }
+      if (subdiv) {
+        subdiv = { slot: subdiv.slot, split: [...subdiv.split], children: mirrorSubdivChildren(subdiv.children, subdiv.split, plane.axis, mirrorU, !mirrorU) }
+      }
     }
     const coord = gridCoordFromPixel({ ...plane, offset: w }, nu, nv)
     if (!withinWorkingBounds(coord, gridExtent)) return
-    out.push({ coord, paletteSlot: e.paletteSlot, chamfer })
+    out.push({ coord, paletteSlot: e.paletteSlot, chamfer, subdiv })
   })
   return out
 }

@@ -1,6 +1,7 @@
 import type { StateCreator } from 'zustand'
-import type { ChamferCell, ColorCell, Coord } from '@/engine/grid/types'
+import type { ChamferCell, ColorCell, Coord, SubdivCell } from '@/engine/grid/types'
 import { decodeKey, encodeKey, recomputeBounds, withinWorkingBounds } from '@/engine/grid/GridStore'
+import { cloneSubdiv } from '@/engine/grid/subdiv'
 import { clampPartDelta, rigBoxContains, rigSubtreeIds, translateRigSubtree } from '@/engine/rigging/types'
 import type { RigBox } from '@/engine/rigging/types'
 import type { AppState, PartMoveActionsSlice } from './types'
@@ -12,7 +13,7 @@ type Slice = StateCreator<AppState, [['zustand/immer', never]], [], PartMoveActi
 // churn React.
 type PartMoveGesture = {
   boxId: string
-  snapshot: Array<{ coord: Coord; color?: ColorCell; chamfer?: ChamferCell }>
+  snapshot: Array<{ coord: Coord; color?: ColorCell; chamfer?: ChamferCell; subdiv?: SubdivCell }>
   placedKeys: string[]
   lastApplied: Coord
   /** Box list frozen at drag start (immutable snapshot — producers always replace the array,
@@ -22,7 +23,7 @@ type PartMoveGesture = {
   /** Non-part cells the drag has covered, stashed on first overwrite so scrubbing back
    * restores them exactly — nothing is lost until the drop commits the fuse. Dropped with
    * the gesture (covered victims stay fused; uncovered ones were already restored). */
-  victims: Map<string, { color?: ColorCell; chamfer?: ChamferCell }>
+  victims: Map<string, { color?: ColorCell; chamfer?: ChamferCell; subdiv?: SubdivCell }>
 }
 let gesture: PartMoveGesture | null = null
 
@@ -75,11 +76,17 @@ export const createPartMoveActionsSlice: Slice = (set, get) => ({
       snapshot.push({ coord, color: st.model.color.get(key), chamfer: st.model.chamfer.get(key) })
     }
     // Chamfer cells always have a matching color cell — the union walk is belt-and-braces.
+    // Subdiv parents have neither, so they need their own walk.
     for (const key of st.model.chamfer.keys()) {
       if (seen.has(key)) continue
       const coord = decodeKey(key)
       if (!inPart(coord)) continue
       snapshot.push({ coord, color: st.model.color.get(key), chamfer: st.model.chamfer.get(key) })
+    }
+    for (const key of st.model.subdiv.keys()) {
+      const coord = decodeKey(key)
+      if (!inPart(coord)) continue
+      snapshot.push({ coord, subdiv: st.model.subdiv.get(key) })
     }
 
     gesture = { boxId: id, snapshot, placedKeys: snapshot.map((s) => encodeKey(...s.coord)), lastApplied: [0, 0, 0], boxes: st.rigBoxes, victims: new Map() }
@@ -111,12 +118,14 @@ export const createPartMoveActionsSlice: Slice = (set, get) => ({
       for (const k of g.placedKeys) {
         state.model.color.delete(k)
         state.model.chamfer.delete(k)
+        state.model.subdiv.delete(k)
       }
       // Restore stashed victims the part no longer covers; still-covered ones stay fused.
       for (const [key, cell] of g.victims) {
         if (covered.has(key)) continue
         if (cell.color) state.model.color.set(key, { paletteSlot: cell.color.paletteSlot })
         if (cell.chamfer) state.model.chamfer.set(key, cloneChamfer(cell.chamfer))
+        if (cell.subdiv) state.model.subdiv.set(key, cloneSubdiv(cell.subdiv))
         g.victims.delete(key)
       }
       // Re-lay the snapshot at the new offset, stashing any non-part occupant first (part
@@ -130,16 +139,19 @@ export const createPartMoveActionsSlice: Slice = (set, get) => ({
         // Copy everything out now — values behind a producer are drafts (and so is
         // any object they reference, like the palette slot) and must never escape into
         // the module-level gesture (same discipline as moveActions).
-        if (!g.victims.has(nk) && (state.model.color.has(nk) || state.model.chamfer.has(nk))) {
+        if (!g.victims.has(nk) && (state.model.color.has(nk) || state.model.chamfer.has(nk) || state.model.subdiv.has(nk))) {
           const color = state.model.color.get(nk)
           const chamfer = state.model.chamfer.get(nk)
+          const subdiv = state.model.subdiv.get(nk)
           g.victims.set(nk, {
             color: color ? { paletteSlot: { ...color.paletteSlot } } : undefined,
             chamfer: chamfer ? cloneChamfer(chamfer) : undefined,
+            subdiv: subdiv ? cloneSubdiv(subdiv) : undefined,
           })
         }
         if (cell.color) state.model.color.set(nk, { paletteSlot: cell.color.paletteSlot })
         if (cell.chamfer) state.model.chamfer.set(nk, cloneChamfer(cell.chamfer))
+        if (cell.subdiv) state.model.subdiv.set(nk, cloneSubdiv(cell.subdiv))
         placed.push(nk)
       }
       g.placedKeys = placed
