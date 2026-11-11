@@ -13,12 +13,29 @@ import type { SliceAnimSettings, SliceKey } from '@/engine/animation/types'
 export type ToolId = 'paint' | 'erase' | 'eyedropper' | 'select' | 'fill' | 'move' | 'material' | 'pivot' | 'textureface' | 'marker' | 'wand' | 'rigbox' | 'pose' | 'offset'
 export type VoxelKind = 'cube' | 'ramp' | 'convex' | 'concave' | 'wedge' | 'thin' | 'half' | 'post' | 'quarter' | 'flat' | 'flatwedge'
 
+/**
+ * Sub-voxel refinement of a selection, present only when the grid division was not whole when the
+ * region was made. The region's own `originU/originV/width/height/mask` stay whole-cell COVERAGE
+ * (every cell any fine cell touches), so consumers that are not sub-voxel-aware keep working on
+ * whole cells; the fine mask says exactly which parts of those cells are selected.
+ */
+export type FineSelection = {
+  /** Fine cells per voxel along logical u / v: 2 where the grid cuts that axis, else 1. */
+  su: 1 | 2
+  sv: 1 | 2
+  /** The plane-axis slab the selection covers (the grid cuts the plane's axis), else null = full depth. */
+  slab: 0 | 1 | null
+  /** Row-major over (width*su) x (height*sv) fine units from the region origin. */
+  mask: Uint8Array
+}
+
 export type SelectionRegion = {
   originU: number
   originV: number
   width: number
   height: number
   mask: Uint8Array
+  fine?: FineSelection
 }
 
 export type ClipboardCell = {
@@ -58,6 +75,11 @@ export type ClipboardData = {
    * content that was never copied off a plane. */
   copyPlaneAxis?: Axis
   copyPlaneOrientation?: Orientation
+  /** Sub-voxel footprint when this was copied from a sub-voxel selection: which fine cells of the
+   * `width` x `height` cell frame the content covers (mask is (width*su) x (height*sv), relative to
+   * the frame's origin). Cells then hold only the selected parts (as detail), and a drop clears
+   * exactly this footprint instead of whole cells — see `engine/tools/fineFloat.ts`. */
+  fine?: FineSelection
   /** The copy plane's offset at lift time — the depth anchor every cell's `dw` is relative to
    * for bbox-anchored exact-set content (see `depthAnchor`). The plane can't change while a float
    * is pending, so at bake time this equals the live offset for same-plane floats; region pastes
@@ -220,7 +242,8 @@ export type ToolSlice = {
   clearPaintLineAnchor: () => void
 }
 
-export type FloatOrigin = { originU: number; originV: number }
+/** `subU`/`subV` shift a sub-voxel float by that many fine units (0 .. su-1) past the cell origin. */
+export type FloatOrigin = { originU: number; originV: number; subU?: number; subV?: number }
 
 export type SelectionSlice = {
   selection: SelectionRegion | null
@@ -249,7 +272,20 @@ export type SelectionSlice = {
  * persisted, never undoable — same as the 2D selection); only model mutations take undo steps.
  * Always replace the set wholesale (`new Set`) so subscribers see the change.
  */
+/** A sub-voxel window selection made in 3D-only layout: the fine region plus the plane frame it was
+ * drawn on (the region's u/v are in that plane's logical frame). Always accompanies a
+ * `selectedCells` COVERAGE set holding the whole voxels it touches; it is only live while that set
+ * still equals its coverage (see `liveFineSelection3D`), so any other write to the set drops it. */
+export type Fine3DSelection = { region: SelectionRegion; plane: ConstructionPlane }
+
 export type Selection3DSlice = {
+  /** Sub-voxel refinement of `selectedCells` (use `liveFineSelection3D`, never read this raw). */
+  selectedFine: Fine3DSelection | null
+  /** Live sub-voxel marquee while it is being dragged in 3D-only layout. */
+  selectedFinePreview: Fine3DSelection | null
+  /** Commit a sub-voxel window: sets the fine selection and its coverage set together. */
+  setSelectedFine: (fine: Fine3DSelection) => void
+  setSelectedFinePreview: (fine: Fine3DSelection | null) => void
   /**
    * Explicitly selected voxels. Window selections cover their full slice rect, so the set may
    * hold keys for empty cells alongside occupied ones — every consumer already skips missing
@@ -278,7 +314,7 @@ export type Selection3DSlice = {
    * reset the stage. The wand tool stays active throughout (no handoff) so re-taps land on it.
    * Writes the 3D voxel set in 3D-only layout, the 2D footprint region in split layout.
    */
-  applyWandAt: (start: Coord) => void
+  applyWandAt: (start: Coord, fine?: [number, number]) => void
   /**
    * Plane-constrained wand for the 3D-only window-select tool's double-click: selects the
    * color-connected region on the seed voxel's own slice (same frame as the active plane,
@@ -313,6 +349,9 @@ export type ViewSlice = {
    * the live layout to split without touching this. */
   modelLayout: 'split' | '3d-only'
   hoverCell: Coord | null
+  /** 3D hover: which half of the hovered cell the pointer is over along each world axis (from the
+   * ray's hit on the construction plane). Drives the armed-grid ghost and the 3D tap write. */
+  hoverBits: Coord | null
   chamferHoverValid: boolean | null
   hoveredFace: HoveredFace | null
   /** Hovered 2×2 quadrant of a subdivided cell (display-space [qu,qv]), for the quadrant
@@ -390,6 +429,7 @@ export type ViewSlice = {
    * remembered layout (restored when returning to Model). */
   setLayoutMode: (v: 'split' | '3d-only') => void
   setHoverCell: (coord: Coord | null, chamferValid: boolean | null) => void
+  setHoverBits: (bits: Coord | null) => void
   setHoveredFace: (face: HoveredFace | null) => void
   setHoverQuad: (quad: [number, number] | null) => void
   /** How the voxel model renders in Animate mode's 3D view. Pure view pref (persisted). */
@@ -579,9 +619,9 @@ export type ToolActionsSlice = {
    * selected or a float is already pending. */
   liftSelectionToFloat: (deep?: boolean) => void
   /** Repositions the pending float. Pure — no model writes, no undo-stroke activity. */
-  moveFloatTo: (originU: number, originV: number) => void
+  moveFloatTo: (originU: number, originV: number, subU?: number, subV?: number) => void
   /** Repositions the pending float without touching the 2D selection (3D exact-set moves). */
-  moveFloatCellsTo: (originU: number, originV: number) => void
+  moveFloatCellsTo: (originU: number, originV: number, subU?: number, subV?: number) => void
   /** Lifts an explicit voxel set into the float buffer (3D selection moves): snapshots the live
    * cells anchored at their bbox-min, clears them from the model, and opens an undo stroke that
    * stays uncommitted until `bakeFloatIfAny()`. Missing keys are skipped; no-op on an empty set

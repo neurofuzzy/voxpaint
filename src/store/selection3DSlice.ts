@@ -4,10 +4,12 @@ import type { CellKey, Coord } from '@/engine/grid/types'
 import { axisIndex } from '@/engine/plane/planeGeometry'
 import type { ConstructionPlane } from '@/engine/plane/types'
 import { gridCoordFromPixel, pixelFromGridCoord } from '@/engine/plane/constructionPlane'
+import { coverageKeys, fineDivisionFor, isWholeDivision, regionFromFineCells } from '@/engine/tools/fineSelection'
+import { floodFineCells, fineCellColor } from '@/engine/tools/fineWand'
 import { floodFillOccupied3D, floodFillRegion, floodFillRegion3D } from '@/engine/tools/floodFill'
 import { WAND_DOUBLE_TAP_MS, regionForFloodedCells } from '@/engine/tools/wandTool'
 import { showToast } from '@/components/ui/toastBus'
-import type { AppState, Selection3DSlice } from './types'
+import type { AppState, Fine3DSelection, Selection3DSlice } from './types'
 
 type Slice = StateCreator<AppState, [['zustand/immer', never]], [], Selection3DSlice>
 
@@ -16,10 +18,36 @@ type Slice = StateCreator<AppState, [['zustand/immer', never]], [], Selection3DS
 // re-render subscribers.
 let lastWandAt: number | null = null
 let lastWandCell: Coord | null = null
+// The sub-voxel wand's own two-stage memory (fine cell + time).
+let lastFineWand: { time: number; cell: [number, number] } | null = null
+
+/**
+ * The sub-voxel refinement of the 3D selection, or null when there is none or it went stale. It is
+ * live only while `selectedCells` still equals the coverage it was made with, so every other write
+ * to the set (wand, reorient, project switch, a lift) silently retires it.
+ */
+export function liveFineSelection3D(s: Pick<AppState, 'selectedFine' | 'selectedCells'>): Fine3DSelection | null {
+  const fine = s.selectedFine
+  if (!fine) return null
+  const keys = coverageKeys(fine.plane, fine.region)
+  if (keys.length !== s.selectedCells.size) return null
+  return keys.every((k) => s.selectedCells.has(k)) ? fine : null
+}
 
 export const createSelection3DSlice: Slice = (set, get) => ({
   selectedCells: new Set<CellKey>(),
   selectedCellsPreview: null,
+  selectedFine: null,
+  selectedFinePreview: null,
+  setSelectedFine: (fine) => {
+    get().bakeFloatIfAny()
+    get().clearStatusAlert()
+    set((state) => {
+      state.selectedCells = new Set(coverageKeys(fine.plane, fine.region))
+      state.selectedFine = fine
+    })
+  },
+  setSelectedFinePreview: (fine) => set((state) => { state.selectedFinePreview = fine }),
 
   // A fresh 3D selection bakes any pending float first, mirroring setSelection's rule — a
   // pending float never survives a selection change. Always replace wholesale (never mutate in
@@ -36,8 +64,43 @@ export const createSelection3DSlice: Slice = (set, get) => ({
     set((state) => { state.selectedCellsPreview = cells ? new Set(cells) : null })
   },
 
-  applyWandAt: (start) => {
-    const { model, plane, meta, layoutMode } = get()
+  applyWandAt: (start, fineStart) => {
+    const { model, plane, meta, layoutMode, pendingSplit } = get()
+    // Grid not whole: the wand works at the grid's resolution, flooding fine cells on the plane slice.
+    const div = fineDivisionFor(plane, pendingSplit)
+    if (!isWholeDivision(div)) {
+      const { u, v } = pixelFromGridCoord(plane, start)
+      const f: [number, number] = fineStart ?? [u * div.su, v * div.sv]
+      if (fineCellColor(model, plane, div, f[0], f[1], meta.gridExtent) === null) {
+        lastFineWand = null
+        get().bakeFloatIfAny()
+        if (layoutMode === '3d-only') get().clearSelectedCells()
+        else get().setSelection(null)
+        return
+      }
+      const now = Date.now()
+      let mode: 'color' | 'occupied' = 'color'
+      let cells = floodFineCells(model, plane, div, f, 'color', meta.gridExtent)
+      if (lastFineWand && now - lastFineWand.time <= WAND_DOUBLE_TAP_MS) {
+        const occupied = floodFineCells(model, plane, div, f, 'occupied', meta.gridExtent)
+        const [pu, pv] = lastFineWand.cell
+        if (occupied.some(([a, b]) => a === pu && b === pv)) {
+          mode = 'occupied'
+          cells = occupied
+        }
+      }
+      lastFineWand = { time: now, cell: f }
+      const region = regionFromFineCells(div, cells)
+      if (!region) return
+      if (layoutMode === '3d-only') get().setSelectedFine({ region, plane: { ...plane } })
+      else get().setSelection(region)
+      showToast(
+        mode === 'occupied'
+          ? `Wand: ${cells.length} sub-voxel cells (whole component)`
+          : `Wand: ${cells.length} sub-voxel cell${cells.length === 1 ? '' : 's'} (color-connected) — re-tap quickly for the whole component`,
+      )
+      return
+    }
     const startKey = encodeKey(...start)
     // Subdivided parents flood as one atomic cell: detail has no color entry, so without this
     // the wand would silently select nothing on a detail tap.

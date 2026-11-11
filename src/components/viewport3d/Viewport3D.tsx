@@ -9,6 +9,7 @@ import { angleAroundAxis, closestAxisParam, composeAxisAngle, intersectAxisPlane
 import { previewFrame } from '@/engine/rigging/preview'
 import { hasActiveTweens } from '@/engine/rigging/rigLoop'
 import type { Axis, CellKey, Coord } from '@/engine/grid/types'
+import { armedChildBits } from '@/store/ghostPlacement'
 import { frontSlabBit, splitChildBits, splitChildIndex } from '@/engine/grid/subdiv'
 import { hasActiveAnimations } from '@/engine/animation/animationLayers'
 
@@ -46,7 +47,10 @@ function snapOffsetToGrid(clipId: string, keyId: string, jointId: string) {
 import type { InstancingManager } from '@/engine/instancing/InstancingManager'
 import { placedFloatCoords } from '@/engine/instancing/ghostBatches'
 import type { ClipboardData, FloatOrigin } from '@/store/types'
-import { gridCoordFromPixel, pixelFromGridCoord, planeFromFaceHit } from '@/engine/plane/constructionPlane'
+import { gridCoordFromPixel, pixelFromGridCoord, planeFromFaceHit, planeLogicalBasis } from '@/engine/plane/constructionPlane'
+import { fineDivisionFor, fineRectRegion, isWholeDivision, type FineDivision } from '@/engine/tools/fineSelection'
+import { fineFloatAtomic, floatFootprintRegion } from '@/engine/tools/fineFloat'
+import type { ConstructionPlane } from '@/engine/plane/types'
 import { bresenhamLine } from '@/engine/tools/lineUtils'
 import { WAND_DOUBLE_TAP_MS } from '@/engine/tools/wandTool'
 import { axisIndex } from '@/engine/plane/planeGeometry'
@@ -64,7 +68,6 @@ import { pickRigBoxId } from './rigPosePick'
 import { BoundingBoxFaceSelector } from './BoundingBoxFaceSelector'
 import { CompassIcon, CompassTracker } from './Compass'
 import { DetailEdgesOverlay } from './DetailEdgesOverlay'
-import { GridHoverWireframe } from './GridHoverWireframe'
 import { BrushPreview } from './BrushPreview'
 import { brushViewQuaternion } from './brushViewSync'
 import { ConstructionPlaneGizmo } from './ConstructionPlaneGizmo'
@@ -273,6 +276,7 @@ function VoxelInteractionHandler({ managerRef, controlsRef }: {
   touchPaintHoldRef.current = touchPaintHold
   const setHoverCell = useAppStore((s) => s.setHoverCell)
   const setHoveredFace = useAppStore((s) => s.setHoveredFace)
+  const setHoverBits = useAppStore((s) => s.setHoverBits)
   const setStatusMessage = useAppStore((s) => s.setStatusMessage)
 
   useEffect(() => {
@@ -286,6 +290,7 @@ function VoxelInteractionHandler({ managerRef, controlsRef }: {
     let downOutside = false
     let lastCellKey: string | null = null
     let lastFaceKey: string | null = null
+    let lastBitsKey = ''
     // Open material drag stroke (3D-only layout only): recoloring is idempotent — it never adds or
     // deletes cells — so sweeping across faces is safe, unlike paint/erase drags. One undo stroke
     // per drag, orbit suppressed until pointer-up; `lastKey` dedupes repeat hits on one cell.
@@ -300,7 +305,9 @@ function VoxelInteractionHandler({ managerRef, controlsRef }: {
     // preview every move so the 3D selection box tracks the drag live (`selectPreview` window
     // in split, `selectedCellsPreview` exact keys in 3D-only); `selectPreviewEnd` dedupes
     // repeat resolves on one cell.
-    let selectDrag: { start: Coord } | null = null
+    // `fine` is set when the armed grid is not whole: the marquee then selects at the grid's
+    // resolution (half-voxel cells) instead of whole slice cells.
+    let selectDrag: { start: Coord; fine?: { div: FineDivision; plane: ConstructionPlane; startF: [number, number]; endKey: string } } | null = null
     let selectPreviewEnd: Coord | null = null
     // Open select float-drag (3D-only layout only): pointer went down on a selected voxel. The
     // lift waits until the pointer actually moves past the tap threshold (mirroring the
@@ -308,7 +315,7 @@ function VoxelInteractionHandler({ managerRef, controlsRef }: {
     // churning a lift-and-bake roundtrip; crossing the threshold lifts and converts to a
     // float drag that follows the pointer in the plane's UV axes. Release drops it (baked),
     // exactly like the drop below — orbit suppressed throughout.
-    let floatDrag: { startU: number; startV: number; originU: number; originV: number; cells3D: Set<CellKey> } | null = null
+    let floatDrag: { startU: number; startV: number; originU: number; originV: number; cells3D: Set<CellKey>; /** Sub-voxel floats: pointer fine-unit and float origin at the first move. */ fineStart?: [number, number]; fineOrigin?: FloatOrigin } | null = null
         // Armed select grab (3D-only layout only): pointer went down on a selected voxel with no live
         // float, lift still pending. A tap releases as a no-op through the normal tap path (the
         // selection owns the plane — only double-clicks act from there); movement past the
@@ -508,6 +515,40 @@ function VoxelInteractionHandler({ managerRef, controlsRef }: {
       return coord
     }
 
+    /** Which half of `cell` the ray is over along each in-plane axis, read where it crosses the
+     * construction plane (clamped into the cell, so a side-face hit still resolves). The plane
+     * axis entry is 0 — the plane's slab decides that bit. Null when the ray misses the plane. */
+    function subBitsAt(clientX: number, clientY: number, cell: Coord): Coord | null {
+      const activePlane = planeRef.current
+      raycaster.setFromCamera(ndcFor(clientX, clientY), camera)
+      const ai = axisIndex(activePlane.axis)
+      const sy = useAppStore.getState().meta.voxelScaleY
+      const normal = new THREE.Vector3()
+      normal.setComponent(ai, 1)
+      const coplanar = new THREE.Vector3()
+      coplanar.setComponent(ai, activePlane.axis === 'y' ? (activePlane.offset + 0.5) * sy : activePlane.offset + 0.5)
+      const point = raycaster.ray.intersectPlane(new THREE.Plane().setFromNormalAndCoplanarPoint(normal, coplanar), new THREE.Vector3())
+      if (!point) return null
+      const p = [point.x, point.y / sy, point.z]
+      const bits: Coord = [0, 0, 0]
+      for (let i = 0; i < 3; i++) if (i !== ai) bits[i] = p[i] - cell[i] >= 0.5 ? 1 : 0
+      return bits
+    }
+
+    /** Fine (u,v) unit of the pointer on `cell`: the cell's plane coords plus the half the ray is over. */
+    function fineUnitFor(div: FineDivision, plane: ConstructionPlane, cell: Coord, bits: Coord | null): [number, number] {
+      const { u, v } = pixelFromGridCoord(plane, cell)
+      const { uDir, vDir } = planeLogicalBasis(plane.axis)
+      const uA = uDir[0] !== 0 ? 0 : uDir[1] !== 0 ? 1 : 2
+      const vA = vDir[0] !== 0 ? 0 : vDir[1] !== 0 ? 1 : 2
+      const bu = bits ? bits[uA] : 0
+      const bv = bits ? bits[vA] : 0
+      return [
+        u * div.su + (div.su === 2 ? (uDir[uA] > 0 ? bu : 1 - bu) : 0),
+        v * div.sv + (div.sv === 2 ? (vDir[vA] > 0 ? bv : 1 - bv) : 0),
+      ]
+    }
+
     /** Applies the blocking tool once for a tap (3D-only layout only): paint replaces the
      * construction-plane cell under the cursor (the clicked voxel when it is on-slice,
      * otherwise the plane-projected cell behind it) — erase
@@ -533,7 +574,9 @@ function VoxelInteractionHandler({ managerRef, controlsRef }: {
       if (tool === 'wand') {
         const coord = result ? decodeKey(result.key) : resolveEmptyCell(clientX, clientY)
         if (!coord) return
-        store.applyWandAt(coord)
+        // Grid not whole: hand the wand the fine cell under the pointer (plane-cell halves).
+        const wdiv = fineDivisionFor(planeRef.current, store.pendingSplit)
+        store.applyWandAt(coord, isWholeDivision(wdiv) ? undefined : fineUnitFor(wdiv, planeRef.current, coord, subBitsAt(clientX, clientY, coord)))
         return
       }
       // Rig wand (animate): single tap boxes the color-connected region. Empty taps
@@ -611,21 +654,13 @@ function VoxelInteractionHandler({ managerRef, controlsRef }: {
         // cells split just-in-time to the armed grid first, preserving hovered-child
         // precision); erase clears the hovered child, and the eyedropper samples it — all
         // inside one undo stroke.
-        if (subdivided) {
-          if (tool !== 'paint') {
-            if (tool === 'erase') {
-              store.bakeFloatIfAny()
-              store.beginStroke()
-              store.eraseSubCellAtCoord(cell, result.childIndex ?? 0)
-              store.commitStroke()
-            }
-            return
+        if (subdivided && tool !== 'paint') {
+          if (tool === 'erase') {
+            store.bakeFloatIfAny()
+            store.beginStroke()
+            store.eraseSubCellAtCoord(cell, result.childIndex ?? 0)
+            store.commitStroke()
           }
-          const childIndex = result.childIndex ?? 0
-          store.bakeFloatIfAny()
-          store.beginStroke()
-          store.paintSubCellAtCoord(cell, childIndex)
-          store.commitStroke()
           return
         }
         // Paint resolves through the shared helper (replace-only on the construction plane —
@@ -636,33 +671,10 @@ function VoxelInteractionHandler({ managerRef, controlsRef }: {
         // every tap re-establishes the anchor, so lines chain. The gesture action brackets its
         // own undo stroke either way.
         if (tool === 'paint') {
-          // Half-step admits subdivided voxels only (per-child path below) — plain and
-          // empty taps toast instead of writing (the write itself also fails closed).
-          if (store.plane.half !== null && !subdivided && !store.pendingSplit) {
-            showToast('Half-step: only subdivided voxels are editable')
-            return
-          }
-          // Just-in-time grid split: a plain cell taps into existence as detail first
-          // (same undo stroke as the paint), preserving the hovered child's precision.
-          if (!subdivided && store.pendingSplit) {
-            store.bakeFloatIfAny()
-            store.beginStroke()
-            const ok = store.ensureSubdividedAt(cell)
-            if (ok) {
-              // On a half-voxel stop the tap lands in the plane's slab, not the hovered depth.
-              let index = result.childIndex ?? 0
-              const fresh = useAppStore.getState()
-              const sub = fresh.model.subdiv.get(result.key)
-              if (sub && fresh.plane.half !== null && sub.split.includes(result.plane.axis)) {
-                const bits = splitChildBits(sub.split, index)
-                bits[axisIndex(result.plane.axis)] = fresh.plane.half
-                index = splitChildIndex(sub.split, bits[0], bits[1], bits[2])
-              }
-              store.paintSubCellAtCoord(cell, index)
-            }
-            store.commitStroke()
-            return
-          }
+          // ONE paint path for plain and subdivided voxels alike: the target is the plane cell the
+          // ghost shows; with a grid armed or an already-subdivided target the tap lands in the
+          // child the ghost shows (the plane's slab, and the half the pointer is over), splitting a
+          // plain cell just-in-time first.
           const activePlane = planeRef.current
           const t = resolveDirectPaintTarget(
             activePlane,
@@ -671,6 +683,25 @@ function VoxelInteractionHandler({ managerRef, controlsRef }: {
             store.meta.gridExtent,
           )
           if (!t) return
+          const tKey = encodeKey(...t)
+          const tSubdivided = store.model.subdiv.has(tKey)
+          // Half-step admits subdivided voxels only unless the grid will split the cell.
+          if (store.plane.half !== null && !tSubdivided && !store.pendingSplit) {
+            showToast('Half-step: only subdivided voxels are editable')
+            return
+          }
+          if (tSubdivided || store.pendingSplit) {
+            store.bakeFloatIfAny()
+            store.beginStroke()
+            const ok = tSubdivided || store.ensureSubdividedAt(t)
+            if (ok) {
+              const fresh = useAppStore.getState()
+              const sub = fresh.model.subdiv.get(tKey)
+              if (sub) store.paintSubCellAtCoord(t, armedChildBits(sub.split, fresh.plane, subBitsAt(clientX, clientY, t)).index)
+            }
+            store.commitStroke()
+            return
+          }
           store.paintLineAtCoord(t, shiftKey)
           return
         }
@@ -714,6 +745,7 @@ function VoxelInteractionHandler({ managerRef, controlsRef }: {
       const st = useAppStore.getState()
       st.setSelectPreview(null)
       st.setSelectedCellsPreview(null)
+      st.setSelectedFinePreview(null)
       if (controlsRef.current) controlsRef.current.enabled = true
     }
 
@@ -995,10 +1027,21 @@ function VoxelInteractionHandler({ managerRef, controlsRef }: {
         if (!start) return
         selectDrag = { start }
         selectPreviewEnd = null
+        {
+          // Grid not whole: select at its resolution (sub-voxel window on the active plane).
+          const st0 = useAppStore.getState()
+          const plane0 = { ...planeRef.current }
+          const div = fineDivisionFor(plane0, st0.pendingSplit)
+          if (!isWholeDivision(div)) {
+            const startF = fineUnitFor(div, plane0, start, subBitsAt(e.clientX, e.clientY, start))
+            selectDrag.fine = { div, plane: plane0, startF, endKey: '' }
+            st0.setSelectedFinePreview({ region: fineRectRegion(div, startF[0], startF[1], startF[0], startF[1]), plane: plane0 })
+          }
+        }
         // Seed the live preview so the box appears the moment the drag starts: the full
         // slice window (occupied or empty), mirroring the commit below — unioned when shift
         // is held, so the preview already shows the expanded box.
-        {
+        if (!selectDrag.fine) {
           const st = useAppStore.getState()
           const seed = new Set(windowSliceCells(planeRef.current, start, start, st.meta.gridExtent))
           st.setSelectedCellsPreview(e.shiftKey ? new Set([...st.selectedCells, ...seed]) : seed)
@@ -1238,6 +1281,30 @@ function VoxelInteractionHandler({ managerRef, controlsRef }: {
       // the plane's UV axes. The float ghost is the live feedback; hover stays cleared.
       if (floatDrag) {
         const cell = resolveEmptyCell(e.clientX, e.clientY)
+        const fc = useAppStore.getState().floatContent
+        if (cell && fc?.fine) {
+          // Sub-voxel float: step in fine units (whole voxels when the content holds a chamfer).
+          const f = fc.fine
+          const fdiv: FineDivision = { su: f.su, sv: f.sv, slab: null }
+          const cur = fineUnitFor(fdiv, planeRef.current, cell, subBitsAt(e.clientX, e.clientY, cell))
+          if (!floatDrag.fineStart) {
+            floatDrag.fineStart = cur
+            floatDrag.fineOrigin = useAppStore.getState().floatOrigin ?? { originU: floatDrag.originU, originV: floatDrag.originV }
+          }
+          let du = cur[0] - floatDrag.fineStart[0]
+          let dv = cur[1] - floatDrag.fineStart[1]
+          if (fineFloatAtomic(fc)) {
+            du = Math.round(du / f.su) * f.su
+            dv = Math.round(dv / f.sv) * f.sv
+          }
+          const o0 = floatDrag.fineOrigin!
+          const fu = o0.originU * f.su + (o0.subU ?? 0) + du
+          const fv = o0.originV * f.sv + (o0.subV ?? 0) + dv
+          const ou = Math.floor(fu / f.su)
+          const ov = Math.floor(fv / f.sv)
+          useAppStore.getState().moveFloatCellsTo(ou, ov, fu - ou * f.su, fv - ov * f.sv)
+          return
+        }
         if (cell) {
           const { u, v } = pixelFromGridCoord(planeRef.current, cell)
           const st = useAppStore.getState()
@@ -1253,6 +1320,18 @@ function VoxelInteractionHandler({ managerRef, controlsRef }: {
       if (selectDrag) {
         const hit = resolveFaceHit(e.clientX, e.clientY)
         const end = hit ? decodeKey(hit.key) : resolveEmptyCell(e.clientX, e.clientY)
+        if (selectDrag.fine) {
+          const fd = selectDrag.fine
+          if (end) {
+            const endF = fineUnitFor(fd.div, fd.plane, end, subBitsAt(e.clientX, e.clientY, end))
+            const k = `${endF[0]},${endF[1]}`
+            if (k !== fd.endKey) {
+              fd.endKey = k
+              useAppStore.getState().setSelectedFinePreview({ region: fineRectRegion(fd.div, fd.startF[0], fd.startF[1], endF[0], endF[1]), plane: fd.plane })
+            }
+          }
+          return
+        }
         if (
           end &&
           (!selectPreviewEnd ||
@@ -1302,6 +1381,17 @@ function VoxelInteractionHandler({ managerRef, controlsRef }: {
       } else if (shownKey !== lastCellKey) {
         lastCellKey = shownKey
         setHoverCell(shownCoord, null)
+      }
+
+      // Armed grid: track which half of the hovered cell the pointer is over (drives the ghost).
+      if (!poseTool && shownCoord && (useAppStore.getState().pendingSplit || useAppStore.getState().model.subdiv.has(encodeKey(...shownCoord)))) {
+        const bits = subBitsAt(e.clientX, e.clientY, shownCoord)
+        const bitsKey = bits ? bits.join('') : ''
+        if (bitsKey !== lastBitsKey) {
+          lastBitsKey = bitsKey
+          setHoverBits(bits)
+          useAppStore.getState().setHoverQuad(null) // 3D pointer drives the hover now
+        }
       }
 
       const faceKey = result && inBox ? `${result.key}|${result.plane.axis}|${result.plane.orientation}|${result.childIndex ?? ''}` : null
@@ -1568,8 +1658,14 @@ function VoxelInteractionHandler({ managerRef, controlsRef }: {
         down = null
         const st = useAppStore.getState()
         const originNow = st.floatOrigin
+        const droppedFine = st.floatContent?.fine ? st.floatContent : null
         st.bakeFloatIfAny()
-        if (originNow) {
+        if (originNow && droppedFine) {
+          // Sub-voxel drop: the selection follows as the exact fine footprint it landed on.
+          const plane = planeRef.current
+          const region = floatFootprintRegion(plane, droppedFine, originNow.originU, originNow.originV, originNow.subU ?? 0, originNow.subV ?? 0)
+          if (region) st.setSelectedFine({ region, plane: { ...plane } })
+        } else if (originNow) {
           const du = originNow.originU - drag.originU
           const dv = originNow.originV - drag.originV
           const plane = planeRef.current
@@ -1617,6 +1713,7 @@ function VoxelInteractionHandler({ managerRef, controlsRef }: {
         const st = useAppStore.getState()
         // The live preview made the box track the drag; the commit below takes over from here.
         st.setSelectedCellsPreview(null)
+        st.setSelectedFinePreview(null)
         if (!end) return
         // Select taps (selectDrag only ever opens in 3D-only with the select tool): 2D parity —
         // a tap replaces the selection with the tapped voxel. Plain taps reorient first, like a
@@ -1646,6 +1743,12 @@ function VoxelInteractionHandler({ managerRef, controlsRef }: {
         }
         // A real drag commits (not a tap): any pending double-click tap is void.
         lastSelectTap = null
+        if (drag.fine) {
+          // Sub-voxel window: commit exactly the fine cells the drag covered.
+          const endF = fineUnitFor(drag.fine.div, drag.fine.plane, end, subBitsAt(e.clientX, e.clientY, end))
+          st.setSelectedFine({ region: fineRectRegion(drag.fine.div, drag.fine.startF[0], drag.fine.startF[1], endF[0], endF[1]), plane: drag.fine.plane })
+          return
+        }
         const keys = windowSliceCells(planeRef.current, drag.start, end, st.meta.gridExtent)
         // Shift unions the window into the existing selection (expanding its box); otherwise the
         // drag replaces. A shift-held empty window leaves the selection alone instead of clearing.
@@ -1798,7 +1901,7 @@ function VoxelInteractionHandler({ managerRef, controlsRef }: {
       dom.removeEventListener('pointermove', onPointerMove)
       dom.removeEventListener('pointerleave', onPointerLeave)
     }
-  }, [gl, camera, managerRef, controlsRef, handleVoxelFaceClick, setHoverCell, setHoveredFace, setStatusMessage])
+  }, [gl, camera, managerRef, controlsRef, handleVoxelFaceClick, setHoverCell, setHoveredFace, setHoverBits, setStatusMessage])
 
   return null
 }
@@ -1904,7 +2007,6 @@ export function Viewport3D() {
               {!poseToolsActive && <VoxelFaceHighlight />}
               {!poseToolsActive && <VoxelGhostPreview />}
               {!poseToolsActive && <DetailEdgesOverlay />}
-              {!poseToolsActive && <GridHoverWireframe />}
                             <FloatGhostPreview />
               <SelectionHighlight />
               <SelectionBox3D />

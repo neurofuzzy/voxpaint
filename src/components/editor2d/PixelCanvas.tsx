@@ -11,6 +11,8 @@ import { axisIndex } from '@/engine/plane/planeGeometry'
 import { resolveSlotColor, shadeColor } from '@/engine/palette/palette'
 import { markerColorHex } from '@/engine/markers/markers'
 import { composedKeyOffset, posedBoxSliceFootprint, rigPivotOf } from '@/engine/rigging/types'
+import { fineDisplayRect, fineOutlineEdges, forEachFineCell } from '@/engine/tools/fineSelection'
+import { floatPieces, pieceDisplayRect } from '@/engine/tools/fineFloat'
 import { forEachSelectedCell, traceSelectionOutline } from '@/engine/tools/selectionMask'
 import { encodeSliceKey } from '@/engine/animation/animationLayers'
 import { useAppStore } from '@/store/useAppStore'
@@ -500,9 +502,21 @@ export function PixelCanvas() {
     // base grid (glass cells still get the 50% transparency treatment, same as committed cells).
     // Only the current slice is drawn: deep-lifted (Alt-drag) cells at other depths belong to
     // slices this canvas isn't showing (they still preview in the 3D ghost and bake in place).
+    if (floatContent && floatOrigin && floatContent.fine) {
+      // Sub-voxel float: every piece (half-voxel boxes included) at its exact shifted place.
+      for (const piece of floatPieces(plane, floatContent, floatOrigin.originU, floatOrigin.originV, floatOrigin.subU ?? 0, floatOrigin.subV ?? 0)) {
+        const [x0, y0, x1, y1] = pieceDisplayRect(plane, piece)
+        const [sx, sy] = worldToScreen(x0, y0, size, pan, zoom, vScale)
+        ctx.globalAlpha = piece.slot.kind === 'glass' ? 0.5 : 1
+        ctx.fillStyle = resolveSlotColor(palette, piece.slot)
+        ctx.fillRect(sx, sy, (x1 - x0) * cellPx, (y1 - y0) * cellH)
+      }
+      ctx.globalAlpha = 1
+    }
     if (floatContent && floatOrigin) {
       for (const cell of floatContent.cells) {
         if (cell.dw !== 0) continue
+        if (floatContent.fine && !cell.chamfer) continue // drawn as pieces above
         const u = floatOrigin.originU + cell.du
         const v = floatOrigin.originV + cell.dv
         const [sx, sy] = worldToScreen(toDisplayU(plane, u), toDisplayV(plane, v), size, pan, zoom, vScale)
@@ -535,21 +549,32 @@ export function PixelCanvas() {
     const activeRegion = selectPreview ?? selection
     if (activeRegion) {
       ctx.fillStyle = 'rgba(34, 211, 238, 0.25)'
-      forEachSelectedCell(activeRegion, (u, v) => {
-        const [sx, sy] = worldToScreen(toDisplayU(plane, u), toDisplayV(plane, v), size, pan, zoom, vScale)
-        ctx.fillRect(sx, sy, cellPx, cellH)
-      })
+      if (activeRegion.fine) {
+        // Sub-voxel selection: tint exactly the fine cells (display rects, mirror-corrected).
+        forEachFineCell(activeRegion, (fu, fv) => {
+          const [x0, y0, x1, y1] = fineDisplayRect(plane, activeRegion, fu, fv)
+          const [sx, sy] = worldToScreen(x0, y0, size, pan, zoom, vScale)
+          ctx.fillRect(sx, sy, (x1 - x0) * cellPx, (y1 - y0) * cellH)
+        })
+      } else {
+        forEachSelectedCell(activeRegion, (u, v) => {
+          const [sx, sy] = worldToScreen(toDisplayU(plane, u), toDisplayV(plane, v), size, pan, zoom, vScale)
+          ctx.fillRect(sx, sy, cellPx, cellH)
+        })
+      }
 
       ctx.strokeStyle = 'rgb(34, 211, 238)'
       ctx.lineWidth = 1.5
       ctx.setLineDash([8, 6])
       ctx.lineDashOffset = -antPhase
-      for (const [[au, av], [bu, bv]] of traceSelectionOutline(activeRegion)) {
+      const fineEdges = activeRegion.fine ? fineOutlineEdges(plane, activeRegion) : null
+      for (const [[au, av], [bu, bv]] of fineEdges ?? traceSelectionOutline(activeRegion)) {
         // Outline vertices are gridline positions, not cell indices, so they mirror as `-n` rather
         // than the cells' corner-anchored `-n - 1` — using the cell transform here draws the whole
         // outline one cell off from its own fill on mirrored planes. See planeDisplay.ts.
-        const [ax, ay] = worldToScreen(toDisplayGridlineU(plane, au), toDisplayGridlineV(plane, av), size, pan, zoom, vScale)
-        const [bx, by] = worldToScreen(toDisplayGridlineU(plane, bu), toDisplayGridlineV(plane, bv), size, pan, zoom, vScale)
+        // (Fine edges are already display-space gridline positions.)
+        const [ax, ay] = worldToScreen(fineEdges ? au : toDisplayGridlineU(plane, au), fineEdges ? av : toDisplayGridlineV(plane, av), size, pan, zoom, vScale)
+        const [bx, by] = worldToScreen(fineEdges ? bu : toDisplayGridlineU(plane, bu), fineEdges ? bv : toDisplayGridlineV(plane, bv), size, pan, zoom, vScale)
         // Every outline edge is axis-aligned (traceSelectionOutline only emits unit cell edges),
         // so snap the shared coordinate for the same crisp-line reason as the grid.
         ctx.beginPath()
@@ -609,7 +634,7 @@ export function PixelCanvas() {
       const [hx, hy] = worldToScreen(toDisplayU(plane, hu), toDisplayV(plane, hv), size, pan, zoom, vScale)
       let rect: [number, number, number, number] | null = null
       const gridArmed = !sub && pendingSplit ? pendingSplit : null
-      if ((sub || gridArmed) && hoverQuad && plane.half === null) {
+      if ((sub || gridArmed) && hoverQuad) {
         const [u0, v0, u1, v1] = subdivDisplayFootprint(plane, sub ? sub.split : gridArmed!, hoverQuad[0], hoverQuad[1])
         rect = [hx + u0 * cellPx, hy + v0 * cellH, (u1 - u0) * cellPx, (v1 - v0) * cellH]
       } else if (!sub && !gridArmed && plane.half === null && (model.color.has(key) || model.chamfer.has(key))) {

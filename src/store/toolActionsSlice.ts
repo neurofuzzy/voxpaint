@@ -11,6 +11,9 @@ import { copyCellsToClipboard, isCoplanarWithPlane, rotateCellsInPlane, selectio
 import { placedFloatCoords } from '@/engine/instancing/ghostBatches'
 import { mirrorClipboard, rotateClipboard90 } from '@/engine/tools/transform'
 import { forEachSelectedCell, isCellSelected, mirrorRegion, rotateRegion90 } from '@/engine/tools/selectionMask'
+import { clearFineRegion } from '@/engine/grid/fineOps'
+import { liveFineSelection3D } from './selection3DSlice'
+import { applyFineClipboardAt, floatFootprintRegion } from '@/engine/tools/fineFloat'
 import { childInSlab, ensureSplitForPaint, frontSlabBit, paintSubCell } from '@/engine/grid/subdiv'
 import type { AppState, SelectionTransformKind, ToolActionsSlice } from './types'
 
@@ -209,7 +212,8 @@ export const createToolActionsSlice: Slice = (set, get) => ({
     if (!selection) return
     get().beginStroke()
     set((state) => {
-      clearRegion(state.model, state.plane, selection)
+      if (selection.fine) clearFineRegion(state.model, state.plane, selection)
+      else clearRegion(state.model, state.plane, selection)
       state.meta.modifiedAt = new Date().toISOString()
       state.dirty = true
     })
@@ -256,7 +260,21 @@ export const createToolActionsSlice: Slice = (set, get) => ({
     get().bakeFloatIfAny()
     const { clipboard, plane } = get()
     if (!clipboard) return
+    if (clipboard.fine && (clipboard.copyPlaneAxis !== plane.axis || clipboard.copyPlaneOrientation !== plane.orientation)) {
+      // A sub-voxel copy is expressed in its source plane's frame; re-framing it is not built yet.
+      showToast('Sub-voxel content can only be pasted onto the plane it was copied from')
+      return
+    }
     const transformedClipboard = transformClipboardToPlane(clipboard, plane)
+    if (transformedClipboard.fine) {
+      get().beginStroke()
+      set((state) => {
+        state.floatContent = transformedClipboard
+        state.floatOrigin = { originU: u, originV: v, subU: 0, subV: 0 }
+        state.selection = floatFootprintRegion(plane, transformedClipboard, u, v, 0, 0)
+      })
+      return
+    }
     get().beginStroke()
     set((state) => {
       state.floatContent = transformedClipboard
@@ -274,6 +292,23 @@ export const createToolActionsSlice: Slice = (set, get) => ({
   liftSelectionToFloat: (deep = false) => {
     const { model, plane, selection, floatContent, meta } = get()
     if (!selection || floatContent) return
+    if (selection.fine) {
+      if (deep) {
+        showToast('Full-depth lifts are whole-voxel: turn the grid to whole, or lift without Alt')
+        return
+      }
+      // Sub-voxel lift: copy exactly the selected parts, clear exactly those fine cells.
+      const fineContent = copyRegionToClipboard(model, plane, selection)
+      get().beginStroke()
+      set((state) => {
+        clearFineRegion(state.model, state.plane, selection)
+        state.floatContent = fineContent
+        state.floatOrigin = { originU: selection.originU, originV: selection.originV, subU: 0, subV: 0 }
+        state.meta.modifiedAt = new Date().toISOString()
+        state.dirty = true
+      })
+      return
+    }
     const content = copyRegionToClipboard(model, plane, selection, deep, meta.gridExtent)
     get().beginStroke()
     set((state) => {
@@ -286,20 +321,27 @@ export const createToolActionsSlice: Slice = (set, get) => ({
     // Deliberately no commitStroke() — this stroke stays open until bakeFloatIfAny().
   },
 
-  moveFloatTo: (originU, originV) => {
-    if (!get().floatContent) return
+  moveFloatTo: (originU, originV, subU = 0, subV = 0) => {
+    const { floatContent, plane } = get()
+    if (!floatContent) return
     set((state) => {
+      if (floatContent.fine) {
+        // Sub-voxel float: the selection tracks the float's exact fine footprint.
+        state.floatOrigin = { originU, originV, subU, subV }
+        state.selection = floatFootprintRegion(plane, floatContent, originU, originV, subU, subV)
+        return
+      }
       state.floatOrigin = { originU, originV }
       state.selection = { ...state.selection!, originU, originV }
     })
   },
 
-  moveFloatCellsTo: (originU, originV) => {
+  moveFloatCellsTo: (originU, originV, subU = 0, subV = 0) => {
     // 3D exact-set moves: reposition the pending float without touching the 2D selection
     // (the 3D set tracks position separately — see the drop handler in Viewport3D.tsx).
     if (!get().floatContent) return
     set((state) => {
-      state.floatOrigin = { originU, originV }
+      state.floatOrigin = get().floatContent?.fine ? { originU, originV, subU, subV } : { originU, originV }
     })
   },
 
@@ -311,6 +353,17 @@ export const createToolActionsSlice: Slice = (set, get) => ({
     const flip = kind === 'mirror-h' ? 'horizontal' : 'vertical'
     const transformedContent = spin ? rotateClipboard90(floatContent, spin) : mirrorClipboard(floatContent, flip)
     const transformedRegion = spin ? rotateRegion90(selection, spin) : mirrorRegion(selection, flip)
+    if (transformedContent.fine) {
+      // Sub-voxel float: rotate/mirror in place about its frame; the selection is its new footprint.
+      const o = get().floatOrigin ?? { originU: transformedRegion.originU, originV: transformedRegion.originV }
+      const plane = get().plane
+      set((state) => {
+        state.floatContent = transformedContent
+        state.floatOrigin = { originU: o.originU, originV: o.originV, subU: o.subU ?? 0, subV: o.subV ?? 0 }
+        state.selection = floatFootprintRegion(plane, transformedContent, o.originU, o.originV, o.subU ?? 0, o.subV ?? 0)
+      })
+      return
+    }
     set((state) => {
       state.floatContent = transformedContent
       state.floatOrigin = { originU: transformedRegion.originU, originV: transformedRegion.originV }
@@ -322,7 +375,8 @@ export const createToolActionsSlice: Slice = (set, get) => ({
     const { floatContent, floatOrigin, plane, meta } = get()
     if (!floatContent || !floatOrigin) return
     set((state) => {
-      applyClipboardAt(state.model, plane, floatContent, floatOrigin.originU, floatOrigin.originV, meta.gridExtent)
+      if (floatContent.fine) applyFineClipboardAt(state.model, plane, floatContent, floatOrigin.originU, floatOrigin.originV, floatOrigin.subU ?? 0, floatOrigin.subV ?? 0, meta.gridExtent)
+      else applyClipboardAt(state.model, plane, floatContent, floatOrigin.originU, floatOrigin.originV, meta.gridExtent)
       state.meta.modifiedAt = new Date().toISOString()
       state.dirty = true
     })
@@ -337,6 +391,24 @@ export const createToolActionsSlice: Slice = (set, get) => ({
     get().bakeFloatIfAny()
     const { model, plane, floatContent } = get()
     if (cells.size === 0 || floatContent) return
+    const fine3 = liveFineSelection3D(get())
+    if (fine3) {
+      if (fine3.plane.axis !== plane.axis || fine3.plane.orientation !== plane.orientation) {
+        showToast('Sub-voxel selections move on the plane they were drawn on')
+        return
+      }
+      // Sub-voxel lift: take exactly the selected parts; the float lands via the fine bake.
+      const fineContent = copyRegionToClipboard(model, plane, fine3.region)
+      get().beginStroke()
+      set((state) => {
+        clearFineRegion(state.model, plane, fine3.region)
+        state.floatContent = fineContent
+        state.floatOrigin = { originU: fine3.region.originU, originV: fine3.region.originV, subU: 0, subV: 0 }
+        state.meta.modifiedAt = new Date().toISOString()
+        state.dirty = true
+      })
+      return
+    }
     const live = [...cells].filter((key) => model.color.has(key) || model.subdiv.has(key))
     if (live.length === 0) return // every key stale — nothing to lift, no stroke
     const content = copyCellsToClipboard(model, live, plane)
@@ -359,6 +431,14 @@ export const createToolActionsSlice: Slice = (set, get) => ({
     get().bakeFloatIfAny()
     const { model, plane, selectedCells } = get()
     if (selectedCells.size === 0) return
+    const fine = liveFineSelection3D(get())
+    if (fine) {
+      // Sub-voxel window: copy just its parts, off the plane it was drawn on.
+      const clipboard = copyRegionToClipboard(model, fine.plane, fine.region)
+      if (clipboard.cells.length === 0) return
+      set((state) => { state.clipboard = clipboard })
+      return
+    }
     // Parity rule: a selection lying entirely on the active construction plane copies
     // through the 2D slice-anchored path, so moving the plane then pasting lands the
     // content on the new plane (`clipboardDepthBase` follows the destination slice).
@@ -392,6 +472,11 @@ export const createToolActionsSlice: Slice = (set, get) => ({
     get().bakeFloatIfAny()
     const { clipboard, plane, meta, model, selectedCells } = get()
     if (!clipboard || clipboard.cells.length === 0) return
+    if (clipboard.fine) {
+      // A sub-voxel copy pastes as a sub-voxel float in the same frame (drag it, then drop).
+      get().pasteClipboardInPlace()
+      return
+    }
     // Same rebase as the 2D paste path so cross-plane pastes land on screen correctly.
     const transformed = transformClipboardToPlane(clipboard, plane)
     const originU = transformed.originU ?? 0
@@ -437,6 +522,17 @@ export const createToolActionsSlice: Slice = (set, get) => ({
 
   deleteCells3D: () => {
     get().bakeFloatIfAny()
+    const fine = liveFineSelection3D(get())
+    if (fine) {
+      get().beginStroke()
+      set((state) => {
+        clearFineRegion(state.model, fine.plane, fine.region)
+        state.meta.modifiedAt = new Date().toISOString()
+        state.dirty = true
+      })
+      get().commitStroke()
+      return
+    }
     const { model, selectedCells } = get()
     const live = [...selectedCells].filter((key) => model.color.has(key) || model.subdiv.has(key))
     if (live.length === 0) return
@@ -455,6 +551,26 @@ export const createToolActionsSlice: Slice = (set, get) => ({
 
   rotateCells3D: (kind: SelectionTransformKind) => {
     get().bakeFloatIfAny()
+    const fine3 = liveFineSelection3D(get())
+    if (fine3) {
+      // Sub-voxel transform in place: lift the selected parts, turn them about their frame, drop.
+      const { model, meta } = get()
+      const content = copyRegionToClipboard(model, fine3.plane, fine3.region)
+      const spin = kind === 'rotate' ? 'cw' : kind === 'rotate-ccw' ? 'ccw' : null
+      const transformed = spin ? rotateClipboard90(content, spin) : mirrorClipboard(content, kind === 'mirror-h' ? 'horizontal' : 'vertical')
+      const { originU, originV } = fine3.region
+      const region = floatFootprintRegion(fine3.plane, transformed, originU, originV, 0, 0)
+      get().beginStroke()
+      set((state) => {
+        clearFineRegion(state.model, fine3.plane, fine3.region)
+        applyFineClipboardAt(state.model, fine3.plane, transformed, originU, originV, 0, 0, meta.gridExtent)
+        state.meta.modifiedAt = new Date().toISOString()
+        state.dirty = true
+      })
+      get().commitStroke()
+      if (region) get().setSelectedFine({ region, plane: fine3.plane })
+      return
+    }
     const { model, plane, meta, selectedCells } = get()
     const entries = snapshotCells(model, selectedCells)
     if (entries.length === 0) return

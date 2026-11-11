@@ -1,6 +1,7 @@
 import { useEffect, useMemo } from 'react'
 import * as THREE from 'three'
 import { buildSelectionHighlightBatches } from '@/engine/instancing/ghostBatches'
+import { liveFineSelection3D } from '@/store/selection3DSlice'
 import { useAppStore } from '@/store/useAppStore'
 import { useGhostGroup } from './useGhostGroup'
 
@@ -24,6 +25,7 @@ const CAST_OPACITY = 0.35
 export function SelectionHighlight() {
   const selection = useAppStore((s) => s.selection)
   const selectedCells = useAppStore((s) => s.selectedCells)
+  const selectedFine = useAppStore((s) => s.selectedFine)
   const floatContent = useAppStore((s) => s.floatContent)
   const model = useAppStore((s) => s.model)
   const plane = useAppStore((s) => s.plane)
@@ -49,8 +51,14 @@ export function SelectionHighlight() {
   useEffect(() => () => material.dispose(), [material])
 
   const batches = useMemo(
-    () => (floatContent || !isModelMode ? [] : buildSelectionHighlightBatches(model, plane, selection, gridExtent, selectedCells)),
-    [model, plane, selection, gridExtent, selectedCells, floatContent, isModelMode],
+    () => {
+      if (floatContent || !isModelMode) return []
+      // A sub-voxel 3D window casts exactly its fine cells (off the plane it was drawn on).
+      const fine = liveFineSelection3D({ selectedFine, selectedCells })
+      if (fine) return buildSelectionHighlightBatches(model, fine.plane, fine.region, gridExtent, null)
+      return buildSelectionHighlightBatches(model, plane, selection, gridExtent, selectedCells)
+    },
+    [model, plane, selection, gridExtent, selectedCells, selectedFine, floatContent, isModelMode],
   )
 
   const group = useGhostGroup(batches, material)

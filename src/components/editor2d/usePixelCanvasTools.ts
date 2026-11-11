@@ -108,6 +108,7 @@ export function usePixelCanvasTools(canvasRef: React.RefObject<HTMLCanvasElement
       // not just on already-subdivided cells.
       const gridArmed = store.mode === 'model' && activeToolRef.current === 'paint' && store.pendingSplit !== null
       setHoverQuad(hoverSub || gridArmed ? displayQuadrantFromFractions(hcu, hcv) : null)
+      store.setHoverBits(null) // the 3D pointer half is stale once the 2D pointer drives the hover
       if (activeToolRef.current === 'paint' && store.mode !== 'animate') {
         const key = encodeKey(...hoverCoord)
         const hasVoxel = hoverSub || store.model.color.has(key) || store.model.chamfer.has(key)
@@ -272,6 +273,7 @@ export function usePixelCanvasTools(canvasRef: React.RefObject<HTMLCanvasElement
 
   const ctx: ToolContext = {
     model, plane, gridExtent, activeVoxelKind, activePaletteSlot, selection, floatContent, floatOrigin, clipboard,
+    gridSplit: useAppStore((s) => s.pendingSplit),
     markers, selectedMarkerId,
     activeMarkerColor: useAppStore((s) => s.activeMarkerColor),
     // Live lookups/edits against the store (not the render-time snapshot above), so the marker

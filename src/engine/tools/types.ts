@@ -1,4 +1,4 @@
-import type { Coord, GridExtent, VoxelModel } from '@/engine/grid/types'
+import type { Coord, GridExtent, SplitAxis, VoxelModel } from '@/engine/grid/types'
 import type { Marker } from '@/engine/markers/types'
 import type { ConstructionPlane } from '@/engine/plane/types'
 import type { PaletteSlotRef } from '@/engine/palette/types'
@@ -21,6 +21,8 @@ export interface ToolContext {
   activeVoxelKind: VoxelKind
   activePaletteSlot: PaletteSlotRef
   selection: SelectionRegion | null
+  /** The armed grid division (`pendingSplit`): sets the resolution of new selections. */
+  gridSplit: SplitAxis[] | null
   floatContent: ClipboardData | null
   floatOrigin: FloatOrigin | null
   clipboard: ClipboardData | null
@@ -75,14 +77,14 @@ export interface ToolContext {
   setActiveTool: (tool: ToolId) => void
   setSelection: (region: SelectionRegion | null) => void
   /** Two-stage wand click (color, then whole-component on rapid re-tap). Wand stays active. */
-  applyWandAt: (start: [number, number, number]) => void
+  applyWandAt: (start: [number, number, number], fine?: [number, number]) => void
   /** Rig tool: tap empty space to box the tapped region, tap a footprint to select it, drag
    * a footprint to move its box across the slice. Rig tool stays active. */
   applyRigBoxAt: (start: [number, number, number]) => void
   /** Alt-drag passes `deep` to lift the full cuboid under the selection window (see
    * `liftSelectionToFloat` in store/types.ts). */
   liftSelectionToFloat: (deep?: boolean) => void
-  moveFloatTo: (originU: number, originV: number) => void
+  moveFloatTo: (originU: number, originV: number, subU?: number, subV?: number) => void
   transformFloat: (kind: SelectionTransformKind) => void
   bakeFloatIfAny: () => void
   beginStroke: () => void
@@ -126,9 +128,9 @@ export interface ToolContext {
 export type ToolDragState =
   | { kind: 'idle' }
   | { kind: 'paint'; anchor: [number, number]; last: [number, number]; anchorQuad?: [number, number] | null; lastQuad?: [number, number] | null }
-  | { kind: 'selectRect'; anchor: [number, number] }
+  | { kind: 'selectRect'; anchor: [number, number]; /** Fine-unit anchor (sub-voxel resolution). */ fineAnchor?: [number, number] }
   | { kind: 'selectLasso'; points: Array<[number, number]> }
-  | { kind: 'moveFloat'; startU: number; startV: number; originAtStart: FloatOrigin }
+  | { kind: 'moveFloat'; startU: number; startV: number; originAtStart: FloatOrigin; /** Fine-unit pointer position at the start (sub-voxel floats). */ startFine?: [number, number] }
   | { kind: 'moveGrid'; startU: number; startV: number; lastU: number; lastV: number }
   | { kind: 'marker'; id: string }
   /** Marker tap candidate: pointer went down on an existing marker but hasn't dragged off it

@@ -1,4 +1,4 @@
-import { quadrantSubcells, subdivChildFootprint } from '@/engine/grid/subdiv'
+import { childInSlab, frontSlabBit, quadrantSubcells, splitChildBits, subdivChildFootprint } from '@/engine/grid/subdiv'
 import type { SplitAxis } from '@/engine/grid/types'
 import { toDisplayU, toDisplayV } from '@/engine/plane/planeDisplay'
 import type { ConstructionPlane } from '@/engine/plane/types'
@@ -57,11 +57,38 @@ export function subdivDisplayFootprint(
     mirrorsU ? 1 - dqu : dqu,
     mirrorsV ? 1 - dqv : dqv,
   )
-  const [fu0, fv0, fu1, fv1] = subdivChildFootprint(plane.axis, split, set[0] ?? 0)
+  // On a half-voxel stop only the plane's slab is editable: the footprint is that slab's child.
+  const slab = plane.half ?? frontSlabBit(plane.orientation)
+  const idx = set.find((i) => childInSlab(split, plane.axis, slab, i)) ?? set[0] ?? 0
+  const [fu0, fv0, fu1, fv1] = subdivChildFootprint(plane.axis, split, idx)
   return [
     mirrorsU ? 1 - fu1 : fu0,
     mirrorsV ? 1 - fv1 : fv0,
     mirrorsU ? 1 - fu0 : fu1,
     mirrorsV ? 1 - fv0 : fv1,
   ]
+}
+
+/**
+ * The world-axis halves (0/1 per axis) of the child a display-space hover quadrant addresses on
+ * `plane`, restricted to the plane's editable slab (`plane.half`, else the viewer-side slab) — the
+ * same mirror handling as `subdivDisplayFootprint`, but as bits, so the 3D ghost can show the
+ * sub-voxel the 2D hover is over.
+ */
+export function subdivDisplayBits(
+  plane: ConstructionPlane,
+  split: SplitAxis[],
+  dqu: number,
+  dqv: number,
+): [number, number, number] {
+  const mirrorsU = toDisplayU(plane, 0) !== 0
+  const mirrorsV = toDisplayV(plane, 0) !== 0
+  const set = quadrantSubcells(
+    plane.axis, plane.orientation, split,
+    mirrorsU ? 1 - dqu : dqu,
+    mirrorsV ? 1 - dqv : dqv,
+  )
+  const slab = plane.half ?? frontSlabBit(plane.orientation)
+  const idx = set.find((i) => childInSlab(split, plane.axis, slab, i)) ?? set[0] ?? 0
+  return splitChildBits(split, idx)
 }

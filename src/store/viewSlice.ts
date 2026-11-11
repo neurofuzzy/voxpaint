@@ -25,6 +25,7 @@ export const createViewSlice: Slice = (set, get) => ({
   // Model's own layout, remembered across tab switches and refreshes (see modelLayout pref).
   modelLayout: loadUiPrefs().modelLayout ?? loadUiPrefs().layoutMode ?? 'split',
   hoverCell: null,
+  hoverBits: null,
   chamferHoverValid: null,
   hoveredFace: null,
   /** Hovered 2×2 quadrant of a subdivided cell (display-space [qu,qv]), for the quadrant
@@ -99,6 +100,7 @@ export const createViewSlice: Slice = (set, get) => ({
       state.hoverCell = coord
       state.chamferHoverValid = chamferValid
     }),
+  setHoverBits: (bits) => set((state) => { state.hoverBits = bits }),
   setHoveredFace: (face) => set((state) => { state.hoveredFace = face }),
   setHoverQuad: (quad) => set((state) => { state.hoverQuad = quad }),
   setStatusMessage: (msg) => set((state) => { state.statusMessage = msg }),

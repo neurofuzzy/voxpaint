@@ -1,5 +1,6 @@
 import type { ChamferCell, Coord, GridExtent, VoxelModel } from '@/engine/grid/types'
 import { cloneSubdiv } from '@/engine/grid/subdiv'
+import { extractFineRegion } from '@/engine/grid/fineOps'
 import type { ConstructionPlane } from '@/engine/plane/types'
 import { effectiveExtent, encodeKey, expandBounds, withinWorkingBounds } from '@/engine/grid/GridStore'
 import { gridCoordFromPixel } from '@/engine/plane/constructionPlane'
@@ -34,6 +35,14 @@ export function copyRegionToClipboard(
   gridExtent?: GridExtent,
 ): ClipboardData {
   const cells: ClipboardCell[] = []
+  // A sub-voxel selection copies only its selected parts (the copies keep their finer split).
+  let fineFootprint: ClipboardData['fine']
+  if (region.fine && !deep) {
+    const f = region.fine
+    fineFootprint = { su: f.su, sv: f.sv, slab: f.slab, mask: new Uint8Array(f.mask) }
+    model = extractFineRegion(model, plane, region)
+    region = { originU: region.originU, originV: region.originV, width: region.width, height: region.height, mask: region.mask }
+  }
   const wantDeep = deep && gridExtent !== undefined
   const half = wantDeep ? effectiveExtent(gridExtent!) / 2 : 0
   const push = (u: number, v: number, w: number) => {
@@ -57,7 +66,7 @@ export function copyRegionToClipboard(
     }
     for (let w = -half; w < half; w++) push(u, v, w)
   })
-  return { width: region.width, height: region.height, originU: region.originU, originV: region.originV, cells, copyPlaneAxis: plane.axis, copyPlaneOrientation: plane.orientation, copyPlaneOffset: plane.offset }
+  return { width: region.width, height: region.height, originU: region.originU, originV: region.originV, cells, copyPlaneAxis: plane.axis, copyPlaneOrientation: plane.orientation, copyPlaneOffset: plane.offset, ...(fineFootprint ? { fine: fineFootprint } : {}) }
 }
 
 /** Erases both layers under a selection mask (used by cut/move). With `deep` (Alt-drag lift) the

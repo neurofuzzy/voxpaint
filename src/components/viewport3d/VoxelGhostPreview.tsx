@@ -32,6 +32,8 @@ export function VoxelGhostPreview() {
   const plane = useAppStore((s) => s.plane)
   const gridExtent = useAppStore((s) => s.meta.gridExtent)
   const pendingSplit = useAppStore((s) => s.pendingSplit)
+  const hoverBits = useAppStore((s) => s.hoverBits)
+  const hoverQuad = useAppStore((s) => s.hoverQuad)
   const layoutMode = useAppStore((s) => s.layoutMode)
 
   // One geometry set for the component's lifetime (callers own disposal).
@@ -41,18 +43,20 @@ export function VoxelGhostPreview() {
   }, [pools])
 
   const ghost = useMemo(
-    () => resolveGhostPlacement({ model, plane, hoverCell, hoveredFace, activeVoxelKind, brushRotation, activeTool, directEdit: layoutMode === '3d-only', gridExtent, pendingSplit }),
-    [model, plane, hoverCell, hoveredFace, activeVoxelKind, brushRotation, activeTool, gridExtent, layoutMode, pendingSplit],
+    () => resolveGhostPlacement({ model, plane, hoverCell, hoveredFace, activeVoxelKind, brushRotation, activeTool, directEdit: layoutMode === '3d-only', gridExtent, pendingSplit, hoverBits, hoverQuad }),
+    [model, plane, hoverCell, hoveredFace, activeVoxelKind, brushRotation, activeTool, gridExtent, layoutMode, pendingSplit, hoverBits, hoverQuad],
   )
 
   if (!ghost) return null
   const color = resolveSlotColor(palette, activePaletteSlot)
 
   if (ghost.kind === 'cube') {
-    const [x, y, z] = ghost.target
+    // With a grid armed the ghost is the child a tap would paint, not the whole voxel.
+    const [ox, oy, oz] = ghost.box?.origin ?? ghost.target
+    const [sx, sy, sz] = ghost.box?.size ?? [1, 1, 1]
     return (
-      <mesh position={[x + 0.5, y + 0.5, z + 0.5]} raycast={() => null}>
-        <boxGeometry args={[1, 1, 1]} />
+      <mesh position={[ox + sx / 2, oy + sy / 2, oz + sz / 2]} raycast={() => null}>
+        <boxGeometry args={[sx, sy, sz]} />
         <meshBasicMaterial color={color} transparent opacity={0.32} depthWrite={false} />
       </mesh>
     )

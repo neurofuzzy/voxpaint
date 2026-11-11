@@ -2,8 +2,11 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import * as THREE from 'three'
 import { useFrame } from '@react-three/fiber'
 import { decodeKey, withinWorkingBounds } from '@/engine/grid/GridStore'
+import type { Coord } from '@/engine/grid/types'
 import { placedFloatCoords } from '@/engine/instancing/ghostBatches'
 import { bboxOfCoords, windowSlabBounds } from '@/engine/tools/cellSetOps'
+import { fineWorldBounds } from '@/engine/tools/fineSelection'
+import { liveFineSelection3D } from '@/store/selection3DSlice'
 import { useAppStore } from '@/store/useAppStore'
 
 /** Matches the 2D canvas tint and SelectionHighlight cast (cyan-400). */
@@ -78,6 +81,8 @@ void main() {
 export function SelectionBox3D() {
   const selectedCells = useAppStore((s) => s.selectedCells)
   const selectedCellsPreview = useAppStore((s) => s.selectedCellsPreview)
+  const selectedFine = useAppStore((s) => s.selectedFine)
+  const selectedFinePreview = useAppStore((s) => s.selectedFinePreview)
   const selection = useAppStore((s) => s.selection)
   const selectPreview = useAppStore((s) => s.selectPreview)
   const gridExtent = useAppStore((s) => s.meta.gridExtent)
@@ -89,13 +94,21 @@ export function SelectionBox3D() {
   const activeTool = useAppStore((s) => s.activeTool)
   const [hovered, setHovered] = useState(false)
 
-  const bbox = useMemo(() => {
+  const bounds = useMemo((): { lo: Coord; hi: Coord } | null => {
+    // Cell bboxes are inclusive cell indices; the box itself is in world units (lo..hi).
+    const cellsToBounds = (b: { min: Coord; max: Coord } | null) => (b ? { lo: b.min, hi: [b.max[0] + 1, b.max[1] + 1, b.max[2] + 1] as Coord } : null)
     if (!isModelMode) return null
+    // Sub-voxel 3D window: its true (half-voxel) bounds, live while dragging.
+    if (selectedFinePreview) return fineWorldBounds(selectedFinePreview.plane, selectedFinePreview.region)
+    if (!floatContent) {
+      const fine = liveFineSelection3D({ selectedFine, selectedCells })
+      if (fine && !selectedCellsPreview) return fineWorldBounds(fine.plane, fine.region)
+    }
     // In-flight move — 3D lift or floating window: box the float's live footprint. A non-empty
     // set marks a 3D-originated float, a window a 2D one (2D lifts and pastes leave the set
     // empty, 3D lifts never touch the window).
     if (floatContent && floatOrigin && (selectedCells.size > 0 || selection)) {
-      return bboxOfCoords(placedFloatCoords(floatContent, floatOrigin, plane, gridExtent))
+      return cellsToBounds(bboxOfCoords(placedFloatCoords(floatContent, floatOrigin, plane, gridExtent)))
     }
     if (floatContent) return null
     // Window selections span the full slice rect, occupied or empty — only out-of-grid
@@ -108,7 +121,7 @@ export function SelectionBox3D() {
         if (!withinWorkingBounds(coord, gridExtent)) continue
         coords.push(coord)
       }
-      return bboxOfCoords(coords)
+      return cellsToBounds(bboxOfCoords(coords))
     }
     if (selectedCells.size > 0) {
       const coords = []
@@ -117,12 +130,13 @@ export function SelectionBox3D() {
         if (!withinWorkingBounds(coord, gridExtent)) continue
         coords.push(coord)
       }
-      return bboxOfCoords(coords)
+      return cellsToBounds(bboxOfCoords(coords))
     }
     const window = selectPreview ?? selection
     if (!window) return null
-    return windowSlabBounds(window, plane)
-  }, [floatContent, floatOrigin, isModelMode, selectedCells, selectedCellsPreview, selection, selectPreview, gridExtent, plane])
+    if (window.fine) return fineWorldBounds(plane, window)
+    return cellsToBounds(windowSlabBounds(window, plane))
+  }, [floatContent, floatOrigin, isModelMode, selectedCells, selectedCellsPreview, selectedFine, selectedFinePreview, selection, selectPreview, gridExtent, plane])
 
   // The yellow hover arms only over a committed selection with the fill tool active:
   // transient boxes (marquee preview, float drag) and other tools keep it passive. Taps
@@ -138,22 +152,22 @@ export function SelectionBox3D() {
   const boxColor = hovered && interactive ? HOVER_YELLOW : SELECTION_CYAN
 
   const shapes = useMemo(() => {
-    if (!bbox) return null
+    if (!bounds) return null
     const size: [number, number, number] = [
-      bbox.max[0] - bbox.min[0] + 1 + PAD * 2,
-      bbox.max[1] - bbox.min[1] + 1 + PAD * 2,
-      bbox.max[2] - bbox.min[2] + 1 + PAD * 2,
+      bounds.hi[0] - bounds.lo[0] + PAD * 2,
+      bounds.hi[1] - bounds.lo[1] + PAD * 2,
+      bounds.hi[2] - bounds.lo[2] + PAD * 2,
     ]
-    // Cells are corner-anchored [n, n+1); the centered geometry's middle is (min + max + 1) / 2.
+    // The centered geometry's middle is the midpoint of lo..hi.
     const center: [number, number, number] = [
-      (bbox.min[0] + bbox.max[0] + 1) / 2,
-      (bbox.min[1] + bbox.max[1] + 1) / 2,
-      (bbox.min[2] + bbox.max[2] + 1) / 2,
+      (bounds.lo[0] + bounds.hi[0]) / 2,
+      (bounds.lo[1] + bounds.hi[1]) / 2,
+      (bounds.lo[2] + bounds.hi[2]) / 2,
     ]
     const box = new THREE.BoxGeometry(...size)
     const edges = new THREE.EdgesGeometry(box)
     return { box, edges, center }
-  }, [bbox])
+  }, [bounds])
   useEffect(
     () => () => {
       shapes?.box.dispose()

@@ -4,6 +4,7 @@ import { gridCoordFromPixel, pixelFromGridCoord } from '@/engine/plane/construct
 import { axisIndex } from '@/engine/plane/planeGeometry'
 import type { ConstructionPlane } from '@/engine/plane/types'
 import type { SelectionRegion } from '@/store/types'
+import { fineDivisionFor, fineUnitAt, isWholeDivision } from './fineSelection'
 import type { ToolHandler } from './types'
 
 /** Max gap between two wand clicks for the second to expand (occupied) instead of restart (color). */
@@ -57,6 +58,9 @@ export function regionForFloodedCells(plane: ConstructionPlane, keys: CellKey[])
  */
 export const wandTool: ToolHandler = {
   onDown(ctx, e) {
-    ctx.applyWandAt(gridCoordFromPixel(ctx.plane, e.u, e.v))
+    // With a grid armed the wand works at its resolution: pass the fine cell under the pointer.
+    const div = fineDivisionFor(ctx.plane, ctx.gridSplit)
+    const fine = isWholeDivision(div) ? undefined : fineUnitAt(div, ctx.plane, e.u, e.v, e.cu, e.cv)
+    ctx.applyWandAt(gridCoordFromPixel(ctx.plane, e.u, e.v), fine)
   },
 }

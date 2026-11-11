@@ -1,7 +1,7 @@
 import type { Axis, ChamferClassification, Rotation, SubdivCell } from '@/engine/grid/types'
 import { mirrorSubdivChildren, rotateSubdivChildren } from '@/engine/grid/subdiv'
 import { mirrorChamferCell, rotateChamferCell } from '@/engine/chamfer/chamferTransform'
-import type { ClipboardCell, ClipboardData } from '@/store/types'
+import type { ClipboardCell, ClipboardData, FineSelection } from '@/store/types'
 
 /**
  * Chamfer rotations are numbered in the plane's **logical** u/v frame (N = -v, E = +u, S = +v,
@@ -103,6 +103,36 @@ export function mirrorSubdivEntry(
   }
 }
 
+/** Rotates a sub-voxel footprint 90° with its content: fine extents swap, so su and sv do too. */
+function rotateFineFootprint(fine: FineSelection, width: number, height: number, direction: 'cw' | 'ccw'): FineSelection {
+  const fw = width * fine.su
+  const fh = height * fine.sv
+  const out = new Uint8Array(fw * fh)
+  for (let y = 0; y < fh; y++) {
+    for (let x = 0; x < fw; x++) {
+      if (fine.mask[y * fw + x] !== 1) continue
+      const nx = direction === 'cw' ? fh - 1 - y : y
+      const ny = direction === 'cw' ? x : fw - 1 - x
+      out[ny * fh + nx] = 1
+    }
+  }
+  return { su: fine.sv, sv: fine.su, slab: fine.slab, mask: out }
+}
+
+/** Mirrors a sub-voxel footprint across the frame (horizontal = in u, vertical = in v). */
+function mirrorFineFootprint(fine: FineSelection, width: number, height: number, axis: 'horizontal' | 'vertical'): FineSelection {
+  const fw = width * fine.su
+  const fh = height * fine.sv
+  const out = new Uint8Array(fw * fh)
+  for (let y = 0; y < fh; y++) {
+    for (let x = 0; x < fw; x++) {
+      if (fine.mask[y * fw + x] !== 1) continue
+      out[(axis === 'vertical' ? fh - 1 - y : y) * fw + (axis === 'horizontal' ? fw - 1 - x : x)] = 1
+    }
+  }
+  return { su: fine.su, sv: fine.sv, slab: fine.slab, mask: out }
+}
+
 /**
  * Rotates clipboard content 90° around its own bounding box (width/height swap).
  * `originU`/`originV` are deliberately dropped — they describe a box whose extents just swapped,
@@ -120,6 +150,7 @@ export function rotateClipboard90(clipboard: ClipboardData, direction: 'cw' | 'c
     height: width,
     copyPlaneAxis: clipboard.copyPlaneAxis,
     copyPlaneOrientation: clipboard.copyPlaneOrientation,
+    ...(clipboard.fine ? { fine: rotateFineFootprint(clipboard.fine, width, height, direction) } : {}),
     cells: clipboard.cells.map((cell) => {
       const planeAxis = rotationPlaneFor(clipboard, cell)
       const rotated = cell.subdiv ? rotateSubdivEntry(cell.subdiv, planeAxis, direction) : undefined
@@ -149,6 +180,7 @@ export function mirrorClipboard(clipboard: ClipboardData, axis: 'horizontal' | '
     height,
     copyPlaneAxis: clipboard.copyPlaneAxis,
     copyPlaneOrientation: clipboard.copyPlaneOrientation,
+    ...(clipboard.fine ? { fine: mirrorFineFootprint(clipboard.fine, width, height, axis) } : {}),
     cells: clipboard.cells.map((cell) => {
       const planeAxis = rotationPlaneFor(clipboard, cell)
       return {

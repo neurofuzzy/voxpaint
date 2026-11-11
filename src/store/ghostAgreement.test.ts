@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it } from 'vitest'
 import { encodeKey } from '@/engine/grid/GridStore'
 import type { Axis, Coord, Orientation, Rotation } from '@/engine/grid/types'
 import { poolIdFor } from '@/engine/instancing/pools'
+import { subdivDisplayFootprint } from '@/engine/tools/quadrant'
 import { useAppStore } from './useAppStore'
 import { resolveDirectPaintTarget, resolveGhostPlacement } from './ghostPlacement'
 import type { ToolId, VoxelKind } from './types'
@@ -387,17 +388,88 @@ describe('half-step ghost suppression', () => {
     expect(resolveGhostPlacement({ ...input, pendingSplit: ['z'] })?.kind).toBe('cube')
   })
 
-  it('hides the paint ghost on occupied voxels, keeps it on empty ones', () => {
+  it('ghosts the child of a subdivided voxel like any other cell, and empty ones too', () => {
     const s = useAppStore.getState()
     // Armed grid splits the painted voxel just-in-time.
     s.setPendingSplit(['x', 'y', 'z'])
     s.beginStroke()
     expect(s.paintCellAtCoord([0, 0, 0], 'z', 1)).toBe(true)
     s.commitStroke()
-    // No ghost on the subdivided voxel (detail paints the hovered child, not the
-    // parent volume — the octant blink carries the feedback), parent-volume ghost
-    // on empty cells (paint scaffolds and paints them).
-    expect(ghostFor([0, 0, 0])).toBeNull()
+    // A subdivided voxel ghosts the child a tap paints (same ghost as a plain cell — no scaffold).
+    expect(ghostFor([0, 0, 0])).toMatchObject({ kind: 'cube', box: { size: [1, 1, 0.5] } }) // no pointer half known: the plane's slab
     expect(ghostFor([4, 4, 0])?.kind).toBe('cube')
+  })
+})
+
+describe('armed-grid ghost is the child a tap would paint', () => {
+  beforeEach(() => {
+    setup('cube', 0, 'paint')
+  })
+
+  function ghostWith(split: Array<'x' | 'y' | 'z'> | null, hoverBits: Coord | null) {
+    const s = useAppStore.getState()
+    return resolveGhostPlacement({
+      model: s.model, plane: s.plane, hoverCell: [4, 4, 0], hoveredFace: null, activeVoxelKind: s.activeVoxelKind,
+      brushRotation: s.brushRotation, activeTool: s.activeTool, directEdit: false, gridExtent: s.meta.gridExtent,
+      pendingSplit: split, hoverBits,
+    })
+  }
+
+  it('whole grid: the full voxel (no box)', () => {
+    expect(ghostWith(null, null)).toEqual({ kind: 'cube', target: [4, 4, 0] })
+  })
+
+  it('halves along the plane axis: the slab, half a voxel thick', () => {
+    useAppStore.getState().setPendingSplit(['z']) // plane z, offset 0 -> viewer-side slab (high)
+    const g = ghostWith(['z'], null)
+    expect(g).toMatchObject({ kind: 'cube', box: { origin: [4, 4, 0.5], size: [1, 1, 0.5] } })
+  })
+
+  it('quarters: one quadrant under the pointer, in the plane slab', () => {
+    useAppStore.getState().setPendingSplit(['x', 'z'])
+    const g = ghostWith(['x', 'z'], [1, 0, 0])
+    expect(g).toMatchObject({ kind: 'cube', box: { origin: [4.5, 4, 0.5], size: [0.5, 1, 0.5] } })
+  })
+
+  it('a cut that leaves the plane axis alone does not slab the ghost', () => {
+    useAppStore.getState().setPendingSplit(['x'])
+    expect(ghostWith(['x'], [0, 0, 0])).toMatchObject({ box: { origin: [4, 4, 0], size: [0.5, 1, 1] } })
+  })
+
+  it('the 2D hover quadrant carries over to 3D: the ghost sits where the 2D gold footprint does', () => {
+    const st = useAppStore.getState()
+    st.setPendingSplit(['x', 'y'])
+    const plane = useAppStore.getState().plane // z plane: display u = x, display v = -y
+    for (const quad of [[0, 0], [1, 0], [0, 1], [1, 1]] as Array<[number, number]>) {
+      const s = useAppStore.getState()
+      const g = resolveGhostPlacement({
+        model: s.model, plane: s.plane, hoverCell: [4, 4, 0], hoveredFace: null, activeVoxelKind: s.activeVoxelKind,
+        brushRotation: s.brushRotation, activeTool: s.activeTool, directEdit: false, gridExtent: s.meta.gridExtent,
+        pendingSplit: ['x', 'y'], hoverQuad: quad,
+      })
+      const [u0, v0] = subdivDisplayFootprint(plane, ['x', 'y'], quad[0], quad[1])
+      expect(g).toMatchObject({ kind: 'cube' })
+      if (g?.kind !== 'cube' || !g.box) throw new Error('no box')
+      expect(g.box.origin[0]).toBeCloseTo(4 + u0)
+      // Display v runs down the screen, world y runs up: the top 2D quadrant is the high-y half.
+      expect(g.box.origin[1]).toBeCloseTo(4 + 0.5 - v0)
+    }
+  })
+
+  it('a subdivided voxel ghosts the child under the pointer, same as a plain one (no scaffold)', () => {
+    const st = useAppStore.getState()
+    st.setPendingSplit(['x', 'y'])
+    st.beginStroke()
+    expect(st.paintCellAtCoord([4, 4, 0], 'z', 1)).toBe(true)
+    st.commitStroke()
+    st.setGridDivision('whole') // the voxel keeps ITS split; the ghost follows it, not the grid
+    const s = useAppStore.getState()
+    expect(s.model.subdiv.has('4,4,0')).toBe(true)
+    const g = resolveGhostPlacement({
+      model: s.model, plane: s.plane, hoverCell: [4, 4, 0], hoveredFace: null, activeVoxelKind: s.activeVoxelKind,
+      brushRotation: s.brushRotation, activeTool: s.activeTool, directEdit: false, gridExtent: s.meta.gridExtent,
+      pendingSplit: s.pendingSplit, hoverBits: [1, 0, 0],
+    })
+    expect(g).toMatchObject({ kind: 'cube', box: { size: [0.5, 0.5, 1] } })
   })
 })

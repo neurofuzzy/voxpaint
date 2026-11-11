@@ -4,6 +4,8 @@ import type { CellKey, ChamferCell, Coord, GridExtent, VoxelModel } from '@/engi
 import { splitChildOrigin, splitChildSize } from '@/engine/grid/subdiv'
 import type { ConstructionPlane } from '@/engine/plane/types'
 import { gridCoordFromPixel } from '@/engine/plane/constructionPlane'
+import { fineCellWorldBox, forEachFineCell } from '@/engine/tools/fineSelection'
+import { floatPieces } from '@/engine/tools/fineFloat'
 import { placeClipboardCell } from '@/engine/tools/clipboard'
 import { resolveSlotColor } from '@/engine/palette/palette'
 import type { PaletteState } from '@/engine/palette/types'
@@ -69,7 +71,17 @@ export function buildFloatGhostBatches(
   if (!floatContent || !floatOrigin) return []
   const byPool = new Map<PoolId, GhostBatch>()
 
+  if (floatContent.fine) {
+    // Sub-voxel float: one box per piece, at its exact (half-voxel) place.
+    for (const piece of floatPieces(plane, floatContent, floatOrigin.originU, floatOrigin.originV, floatOrigin.subU ?? 0, floatOrigin.subV ?? 0)) {
+      if (!withinWorkingBounds(piece.cell, gridExtent)) continue
+      const origin: [number, number, number] = [piece.cell[0] + piece.origin[0], piece.cell[1] + piece.origin[1], piece.cell[2] + piece.origin[2]]
+      pushMatrixInto(byPool, 'cube', subCubeInstanceMatrix(origin, piece.size), new THREE.Color(resolveSlotColor(palette, piece.slot)))
+    }
+  }
+
   for (const cell of floatContent.cells) {
+    if (floatContent.fine && !cell.chamfer) continue // pieces above
     const coord = placeClipboardCell(plane, floatContent, floatOrigin.originU, floatOrigin.originV, cell)
     // Cells dragged off-grid are dropped by `applyClipboardAt` on bake — don't promise them here.
     if (!withinWorkingBounds(coord, gridExtent)) continue
@@ -125,7 +137,13 @@ export function placedFloatCoords(
 ): Coord[] {
   if (!floatContent || !floatOrigin) return []
   const out: Coord[] = []
+  if (floatContent.fine) {
+    for (const piece of floatPieces(plane, floatContent, floatOrigin.originU, floatOrigin.originV, floatOrigin.subU ?? 0, floatOrigin.subV ?? 0)) {
+      if (withinWorkingBounds(piece.cell, gridExtent)) out.push(piece.cell)
+    }
+  }
   for (const cell of floatContent.cells) {
+    if (floatContent.fine && !cell.chamfer) continue
     if (!cell.color && !cell.subdiv) continue
     const coord = placeClipboardCell(plane, floatContent, floatOrigin.originU, floatOrigin.originV, cell)
     if (!withinWorkingBounds(coord, gridExtent)) continue
@@ -190,7 +208,52 @@ export function buildSelectionHighlightBatches(
     pushInto(byPool, coord, model.chamfer.get(key))
   }
 
-  if (selection) {
+  if (selection?.fine) {
+    // Sub-voxel selection: cast only the selected parts — children overlapping a selected fine
+    // cell, or a box over the fine cell itself for a plain cube. Chamfer cells are atomic.
+    const f = selection.fine
+    forEachFineCell(selection, (fu, fv) => {
+      const u = Math.floor(fu / f.su)
+      const v = Math.floor(fv / f.sv)
+      const coord = gridCoordFromPixel(plane, u, v)
+      if (!withinWorkingBounds(coord, gridExtent)) return
+      const key = encodeKey(...coord)
+      if (model.chamfer.has(key)) {
+        pushCell(coord)
+        return
+      }
+      const { origin, size } = fineCellWorldBox(plane, selection, fu, fv)
+      const sub = model.subdiv.get(key)
+      if (sub) {
+        const csize = splitChildSize(sub.split)
+        for (let o = 0; o < sub.children.length; o++) {
+          const child = sub.children[o]
+          const tag = `${key}#${o}`
+          if (!child || lit.has(tag)) continue
+          const co = splitChildOrigin(coord, sub.split, o)
+          let overlaps = true
+          for (let a = 0; a < 3; a++) {
+            if (Math.min(co[a] + csize[a], origin[a] + size[a]) - Math.max(co[a], origin[a]) <= 1e-9) overlaps = false
+          }
+          if (!overlaps) continue
+          lit.add(tag)
+          const resolved = child.chamfer?.resolvedTo
+          if (resolved) {
+            const chamfer = child.chamfer!
+            pushMatrixInto(byPool, poolIdFor(child.chamfer), scaledChamferInstanceMatrix(co, csize, chamfer.planeAxis, chamfer.planeOrientation, resolved.rotation))
+          } else {
+            pushMatrixInto(byPool, 'cube', subCubeInstanceMatrix(co, csize))
+          }
+        }
+        return
+      }
+      if (!model.color.has(key)) return
+      const tag = `${key}@${origin.join(',')}`
+      if (lit.has(tag)) return
+      lit.add(tag)
+      pushMatrixInto(byPool, 'cube', subCubeInstanceMatrix(origin, size))
+    })
+  } else if (selection) {
     forEachSelectedCell(selection, (u, v) => {
       pushCell(gridCoordFromPixel(plane, u, v))
     })

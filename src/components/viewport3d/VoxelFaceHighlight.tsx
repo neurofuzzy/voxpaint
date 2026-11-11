@@ -3,6 +3,7 @@ import * as THREE from 'three'
 import { decodeKey } from '@/engine/grid/GridStore'
 import { splitChildBits, splitChildSize } from '@/engine/grid/subdiv'
 import { axisIndex, flushFaceValue } from '@/engine/plane/planeGeometry'
+import { armedHoverIndex } from '@/store/ghostPlacement'
 import { useAppStore } from '@/store/useAppStore'
 import { AXIS_UNIT_VECTOR } from './axisVectors'
 
@@ -19,6 +20,10 @@ const SURFACE_OFFSET = 0.01
  */
 export function VoxelFaceHighlight() {
   const hoveredFace = useAppStore((s) => s.hoveredFace)
+  const pendingSplit = useAppStore((s) => s.pendingSplit)
+  const plane = useAppStore((s) => s.plane)
+  const hoverBits = useAppStore((s) => s.hoverBits)
+  const hoverQuad = useAppStore((s) => s.hoverQuad)
 
   const transform = useMemo(() => {
     if (!hoveredFace) return null
@@ -30,10 +35,14 @@ export function VoxelFaceHighlight() {
     // shift the in-plane center into the child's quadrant.
     let su = 1
     let sv = 1
-    if (hoveredFace.childIndex !== undefined && hoveredFace.childIndex !== null) {
-      const sub = useAppStore.getState().model.subdiv.get(hoveredFace.cellKey)
-      const split = sub?.split ?? (['x', 'y', 'z'] as const)
-      const [dx, dy, dz] = splitChildBits([...split], hoveredFace.childIndex)
+    // A plain cell with a grid armed highlights the child a tap would split into and paint.
+    const sub0 = useAppStore.getState().model.subdiv.get(hoveredFace.cellKey)
+    const armedIndex = !sub0 && pendingSplit ? armedHoverIndex(pendingSplit, plane, hoverBits, hoverQuad) : null
+    const childIndex = hoveredFace.childIndex ?? armedIndex
+    if (childIndex !== undefined && childIndex !== null) {
+      const sub = sub0
+      const split = sub?.split ?? (pendingSplit ?? (['x', 'y', 'z'] as const))
+      const [dx, dy, dz] = splitChildBits([...split], childIndex)
       const [sx, sy, sz] = splitChildSize([...split])
       const off = [dx, dy, dz]
       const dims = [sx, sy, sz]
@@ -59,7 +68,7 @@ export function VoxelFaceHighlight() {
     const tV = new THREE.Vector3().crossVectors(n, tU)
     const quaternion = new THREE.Quaternion().setFromRotationMatrix(new THREE.Matrix4().makeBasis(tU, tV, n))
     return { position, quaternion, su, sv }
-  }, [hoveredFace])
+  }, [hoveredFace, pendingSplit, plane, hoverBits, hoverQuad])
 
   if (!transform) return null
 

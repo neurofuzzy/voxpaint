@@ -12,6 +12,9 @@ import { showToast } from '@/components/ui/toastBus'
 import { dominantAxisLine } from '@/engine/tools/lineUtils'
 import { axisIndex } from '@/engine/plane/planeGeometry'
 import { isCellSelected, forEachSelectedCell } from '@/engine/tools/selectionMask'
+import { isSelectedAt } from '@/engine/tools/fineSelection'
+import { paintFineRegion } from '@/engine/grid/fineOps'
+import { liveFineSelection3D } from './selection3DSlice'
 import type { AppState, PaintActionsSlice, VoxelKind } from './types'
 
 type Slice = StateCreator<AppState, [['zustand/immer', never]], [], PaintActionsSlice>
@@ -839,7 +842,7 @@ export const createPaintActionsSlice: Slice = (set, get) => ({
     const coord = gridCoordFromPixel(plane, u, v)
     if (!withinWorkingBounds(coord, meta.gridExtent)) return false
     // An active selection clips editing to its mask (bakeFloatIfAny above already resolved any float).
-    if (selection && !isCellSelected(selection, u, v)) {
+    if (selection && !isSelectedAt(selection, plane, u, v, qu, qv)) {
       get().flashSelectionBlocked()
       return false
     }
@@ -924,7 +927,7 @@ export const createPaintActionsSlice: Slice = (set, get) => ({
     const { plane, selection } = get()
     if (selection) {
       const { u, v } = pixelFromGridCoord(plane, coord)
-      if (!isCellSelected(selection, u, v)) {
+      if (!isSelectedAt(selection, plane, u, v, qu, qv)) {
         get().flashSelectionBlocked()
         return
       }
@@ -1063,9 +1066,23 @@ export const createPaintActionsSlice: Slice = (set, get) => ({
   fillSelection: () => {
     get().bakeFloatIfAny()
     const { plane, activeVoxelKind, activePaletteSlot, selectedCells, selection, meta } = get()
-    // Selection fill stamps whole cubes — refused on half-step (subdivided voxels keep
-    // their per-child edits).
-    if (plane.half !== null) {
+    const fine3D = liveFineSelection3D(get())
+    if (fine3D && activeVoxelKind === 'cube') {
+      get().beginStroke()
+      set((state) => { paintFineRegion(state.model, fine3D.plane, fine3D.region, activePaletteSlot) })
+      get().commitStroke()
+      return
+    }
+    // A sub-voxel selection fills exactly its fine cells (cube semantics), whatever the slab.
+    if (selection?.fine && selectedCells.size === 0 && activeVoxelKind === 'cube') {
+      get().beginStroke()
+      set((state) => { paintFineRegion(state.model, state.plane, selection, activePaletteSlot) })
+      get().commitStroke()
+      return
+    }
+    // Selection fill stamps whole cubes — refused on half-step unless the grid is cutting the
+    // plane's axis (then it splits and fills like any grid paint).
+    if (plane.half !== null && !get().pendingSplit) {
       showToast('Half-step: only subdivided voxels are editable')
       return
     }
@@ -1104,7 +1121,7 @@ export const createPaintActionsSlice: Slice = (set, get) => ({
     const { plane, activePaletteSlot, selection, meta } = get()
     const coord = gridCoordFromPixel(plane, u, v)
     if (!withinWorkingBounds(coord, meta.gridExtent)) return false
-    if (selection && !isCellSelected(selection, u, v)) {
+    if (selection && !isSelectedAt(selection, plane, u, v, qu, qv)) {
       get().flashSelectionBlocked()
       return false
     }
