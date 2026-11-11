@@ -1,4 +1,4 @@
-import type { Axis, ChamferClassification, Rotation } from '@/engine/grid/types'
+import type { Axis, ChamferClassification, Rotation, SubdivCell } from '@/engine/grid/types'
 import { mirrorSubdivChildren, rotateSubdivChildren } from '@/engine/grid/subdiv'
 import { mirrorChamferCell, rotateChamferCell } from '@/engine/chamfer/chamferTransform'
 import type { ClipboardCell, ClipboardData } from '@/store/types'
@@ -59,6 +59,51 @@ function rotationPlaneFor(clipboard: ClipboardData, cell: ClipboardCell): Axis {
 }
 
 /**
+ * Rotates one subdivided entry 90° in the given plane's logical (u,v) frame: children
+ * permute to their rotated positions (the split axes can exchange, as documented on
+ * `rotateSubdivChildren`) and every beveled child's frozen shape renumbers through the
+ * same rigid motion unit voxels use (`rotateChamferCell`), so the detail turns with its
+ * parent instead of bevelling the old way. Returns a fresh entry (slot refs shared —
+ * slots are immutable values); the scaffold flag rides along.
+ */
+export function rotateSubdivEntry(
+  sub: SubdivCell,
+  planeAxis: Axis,
+  direction: 'cw' | 'ccw' = 'cw',
+): SubdivCell {
+  const rotated = rotateSubdivChildren(sub.children, sub.split, planeAxis, direction)
+  return {
+    slot: sub.slot,
+    split: rotated.split,
+    ...(sub.scaffold ? { scaffold: true as const } : {}),
+    children: rotated.children.map((child) =>
+      child?.chamfer ? { slot: child.slot, chamfer: rotateChamferCell(child.chamfer, planeAxis, direction) } : child,
+    ),
+  }
+}
+
+/**
+ * Mirrors one subdivided entry in the given plane's logical (u,v) frame — the same
+ * contract as `rotateSubdivEntry`: children permute via `mirrorSubdivChildren`, beveled
+ * children renumber via `mirrorChamferCell`, slot and scaffold preserved.
+ */
+export function mirrorSubdivEntry(
+  sub: SubdivCell,
+  planeAxis: Axis,
+  mirrorU: boolean,
+  mirrorV: boolean,
+): SubdivCell {
+  return {
+    slot: sub.slot,
+    split: [...sub.split],
+    ...(sub.scaffold ? { scaffold: true as const } : {}),
+    children: mirrorSubdivChildren(sub.children, sub.split, planeAxis, mirrorU, mirrorV).map((child) =>
+      child?.chamfer ? { slot: child.slot, chamfer: mirrorChamferCell(child.chamfer, planeAxis, mirrorU, mirrorV) } : child,
+    ),
+  }
+}
+
+/**
  * Rotates clipboard content 90° around its own bounding box (width/height swap).
  * `originU`/`originV` are deliberately dropped — they describe a box whose extents just swapped,
  * so transformed content tracks its position via `floatOrigin` instead (see ClipboardData).
@@ -77,19 +122,16 @@ export function rotateClipboard90(clipboard: ClipboardData, direction: 'cw' | 'c
     copyPlaneOrientation: clipboard.copyPlaneOrientation,
     cells: clipboard.cells.map((cell) => {
       const planeAxis = rotationPlaneFor(clipboard, cell)
-      const rotated = cell.subdiv
-        ? rotateSubdivChildren(cell.subdiv.children, cell.subdiv.split, planeAxis, direction)
-        : undefined
+      const rotated = cell.subdiv ? rotateSubdivEntry(cell.subdiv, planeAxis, direction) : undefined
       return {
         ...cell,
         du: cw ? height - 1 - cell.dv : cell.dv,
         dv: cw ? cell.du : width - 1 - cell.du,
         chamfer: cell.chamfer ? rotateChamferCell(cell.chamfer, planeAxis, direction) : undefined,
         // Detail rotates in the same logical frame as the du/dv rotation above; the split
-        // axes can exchange (a u-split turned on its side is a v-split).
-        subdiv: cell.subdiv && rotated
-          ? { slot: cell.subdiv.slot, split: rotated.split, children: rotated.children }
-          : undefined,
+        // axes can exchange (a u-split turned on its side is a v-split) and beveled
+        // children renumber with it — see `rotateSubdivEntry`.
+        subdiv: rotated,
       }
     }),
   }
@@ -114,9 +156,7 @@ export function mirrorClipboard(clipboard: ClipboardData, axis: 'horizontal' | '
         du: mirrorU ? width - 1 - cell.du : cell.du,
         dv: mirrorU ? cell.dv : height - 1 - cell.dv,
         chamfer: cell.chamfer ? mirrorChamferCell(cell.chamfer, planeAxis, mirrorU, !mirrorU) : undefined,
-        subdiv: cell.subdiv
-          ? { slot: cell.subdiv.slot, split: [...cell.subdiv.split], children: mirrorSubdivChildren(cell.subdiv.children, cell.subdiv.split, planeAxis, mirrorU, !mirrorU) }
-          : undefined,
+        subdiv: cell.subdiv ? mirrorSubdivEntry(cell.subdiv, planeAxis, mirrorU, !mirrorU) : undefined,
       }
     }),
   }

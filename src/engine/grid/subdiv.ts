@@ -599,6 +599,7 @@ export function cloneSubdiv(sub: SubdivCell): SubdivCell {
   return {
     slot: sub.slot,
     split: [...sub.split],
+    ...(sub.scaffold ? { scaffold: true as const } : {}),
     children: sub.children.map((c) =>
       c ? { slot: c.slot, ...(c.chamfer ? { chamfer: cloneChamferCell(c.chamfer) } : {}) } : null,
     ),

@@ -167,6 +167,35 @@ describe('3D selection store + exact-set actions', () => {
     expect(after.selectedCells).toEqual(new Set([encodeKey(4, 4, 0)]))
   })
 
+  it('rotateCells3D turns subdivided detail with the parent: split, children, and bevels', () => {
+    paintAt([0, 0, 0])
+    const s = useAppStore.getState()
+    s.setPendingSplit(['x'])
+    s.beginStroke()
+    expect(s.toggleSubdivideAtCoord([0, 0, 0])).toBe(true)
+    s.commitStroke()
+    s.setActivePaletteSlot(SLOT_B)
+    s.beginStroke()
+    expect(s.paintSubCellAtCoord([0, 0, 0], 1)).toBe(true)
+    s.commitStroke()
+    // A frozen bevel on the far half: the rotation must carry and renumber it.
+    useAppStore.setState((st) => {
+      st.model.subdiv.get(encodeKey(0, 0, 0))!.children[1] = {
+        slot: { ...SLOT_B },
+        chamfer: { planeAxis: 'z', planeOrientation: 1, resolvedTo: { shapeKind: 'ramp', rotation: 0 } },
+      }
+    })
+    useAppStore.getState().setSelectedCells(new Set([encodeKey(0, 0, 0)]))
+    useAppStore.getState().rotateCells3D('rotate')
+    const after = useAppStore.getState()
+    // Lone cell stays put; the x-split turns onto its side and the bevel renumbers 0 → 1.
+    const sub = after.model.subdiv.get(encodeKey(0, 0, 0))
+    expect(sub?.split).toEqual(['y'])
+    expect(sub?.children.map((c) => c?.slot)).toEqual([SLOT_B, SLOT_A])
+    expect(sub?.children[0]?.chamfer?.resolvedTo).toEqual({ shapeKind: 'ramp', rotation: 1 })
+    expect(after.selectedCells).toEqual(new Set([encodeKey(0, 0, 0)]))
+  })
+
   it('rotateCells3D expands the model bounds over the placed cells', () => {
     paintAt([0, 0, 0], SLOT_A)
     paintAt([1, 0, 0], SLOT_B)

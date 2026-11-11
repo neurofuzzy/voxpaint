@@ -287,6 +287,47 @@ describe('faceSelection', () => {
   })
 })
 
+describe('transformFloat on subdivided voxels', () => {
+  beforeEach(() => {
+    useAppStore.getState().newProject('Test', 16)
+    useAppStore.getState().setPlaneAxisOrientation('z', 1)
+    useAppStore.getState().setPlaneOffset(0)
+  })
+
+  it('rotates detail with the selection: split, children, and bevels', () => {
+    // (0,0,0) is pixel (0,-1) on the z/1 plane.
+    const s = useAppStore.getState()
+    s.setActiveVoxelKind('cube')
+    s.setActivePaletteSlot(SLOT_A)
+    s.beginStroke()
+    expect(s.paintCell(0, -1)).toBe(true)
+    s.commitStroke()
+    s.setPendingSplit(['x'])
+    s.beginStroke()
+    expect(s.toggleSubdivideAtCoord([0, 0, 0])).toBe(true)
+    s.commitStroke()
+    s.setActivePaletteSlot(SLOT_B)
+    s.beginStroke()
+    expect(s.paintSubCellAtCoord([0, 0, 0], 1)).toBe(true)
+    s.commitStroke()
+    // A frozen bevel on the far half: the rotation must carry and renumber it.
+    useAppStore.setState((st) => {
+      st.model.subdiv.get(encodeKey(0, 0, 0))!.children[1] = {
+        slot: { ...SLOT_B },
+        chamfer: { planeAxis: 'z', planeOrientation: 1, resolvedTo: { shapeKind: 'ramp', rotation: 0 } },
+      }
+    })
+    useAppStore.getState().setSelection({ originU: 0, originV: -1, width: 1, height: 1, mask: new Uint8Array([1]) })
+    useAppStore.getState().transformFloat('rotate')
+    useAppStore.getState().bakeFloatIfAny()
+    const after = useAppStore.getState()
+    const sub = after.model.subdiv.get(encodeKey(0, 0, 0))
+    expect(sub?.split).toEqual(['y'])
+    expect(sub?.children.map((c) => c?.slot)).toEqual([SLOT_B, SLOT_A])
+    expect(sub?.children[0]?.chamfer?.resolvedTo).toEqual({ shapeKind: 'ramp', rotation: 1 })
+  })
+})
+
 describe('floodFillCellsAt (3D viewport fill, 3D-selection aware)', () => {
   beforeEach(() => {
     const s = useAppStore.getState()

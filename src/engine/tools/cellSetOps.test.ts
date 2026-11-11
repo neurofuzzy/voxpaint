@@ -5,6 +5,7 @@ import type { PaletteSlotRef } from '@/engine/palette/types'
 import type { ConstructionPlane } from '@/engine/plane/types'
 import { gridCoordFromPixel } from '@/engine/plane/constructionPlane'
 import { axisIndex } from '@/engine/plane/planeGeometry'
+import { scaffoldCell, subdivideCell, writeSubCell } from '@/engine/grid/subdiv'
 import {
   bboxOfCoords,
   copyCellsToClipboard,
@@ -183,6 +184,35 @@ describe('rotateCellsInPlane', () => {
     })
     const [only] = rotateCellsInPlane(snapshotCells(model, [encodeKey(0, 0, 0)]), PLANE, 'rotate', 16)
     expect(only.chamfer?.resolvedTo).toEqual({ shapeKind: 'ramp', rotation: 1 })
+  })
+
+  it('turns subdivided detail with the cells: split exchanges, children permute, bevels renumber', () => {
+    const model = emptyModel()
+    paintBox(model, 0, 0, 0, 0, 0, 0)
+    expect(subdivideCell(model, [0, 0, 0], ['x'])).toBe(true)
+    expect(
+      writeSubCell(model, [0, 0, 0], 1, {
+        slot: { kind: 'base', index: 3 },
+        chamfer: { planeAxis: 'z', planeOrientation: 1, resolvedTo: { shapeKind: 'ramp', rotation: 0 } },
+      }),
+    ).toBe(true)
+    const [only] = rotateCellsInPlane(snapshotCells(model, [encodeKey(0, 0, 0)]), PLANE, 'rotate', 16)
+    expect(only.coord).toEqual([0, 0, 0])
+    expect(only.subdiv?.split).toEqual(['y'])
+    expect(only.subdiv?.children.map((c) => c?.slot)).toEqual([{ kind: 'base', index: 3 }, SLOT])
+    // The bevel rides its child and renumbers like a unit voxel would (ramp 0 → 1 cw).
+    expect(only.subdiv?.children[0]?.chamfer?.resolvedTo).toEqual({ shapeKind: 'ramp', rotation: 1 })
+  })
+
+  it('mirrors subdivided detail and keeps the scaffold flag', () => {
+    const model = emptyModel()
+    expect(scaffoldCell(model, [1, 0, 0], ['x'], { ...SLOT })).toBe(true)
+    const [only] = rotateCellsInPlane(snapshotCells(model, [encodeKey(1, 0, 0)]), PLANE, 'mirror-h', 16)
+    // Single cell mirrors onto itself; the empty scaffold survives as a scaffold.
+    expect(only.coord).toEqual([1, 0, 0])
+    expect(only.subdiv?.split).toEqual(['x'])
+    expect(only.subdiv?.scaffold).toBe(true)
+    expect(only.subdiv?.children).toEqual([null, null])
   })
 
   it('drops results landing outside the grid', () => {

@@ -6,7 +6,8 @@ import { axisIndex } from '@/engine/plane/planeGeometry'
 import type { ConstructionPlane } from '@/engine/plane/types'
 import { mirrorChamferCell, rotateChamferCell } from '@/engine/chamfer/chamferTransform'
 import { cloneChamfer } from './clipboard'
-import { cloneSubdiv, mirrorSubdivChildren, rotateSubdivChildren } from '@/engine/grid/subdiv'
+import { cloneSubdiv } from '@/engine/grid/subdiv'
+import { mirrorSubdivEntry, rotateSubdivEntry } from './transform'
 import type { ClipboardCell, ClipboardData, SelectionRegion, SelectionTransformKind } from '@/store/types'
 
 /** One live voxel snapshot: absolute coord plus all layers (chamfer and subdiv deep-copied). */
@@ -205,9 +206,8 @@ export function rotateCellsInPlane(
       if (subdiv) {
         // Detail rotates with its cells, in the same logical frame as the du/dv rotation.
         // A quarter turn can exchange the split axes (a u-split turned on its side is a
-        // v-split), so the rotated split travels with the children.
-        const rotated = rotateSubdivChildren(subdiv.children, subdiv.split, plane.axis, spin)
-        subdiv = { slot: subdiv.slot, split: rotated.split, children: rotated.children }
+        // v-split), and beveled children renumber with it — see `rotateSubdivEntry`.
+        subdiv = rotateSubdivEntry(subdiv, plane.axis, spin)
       }
     } else {
       const mirrorU = kind === 'mirror-h'
@@ -217,7 +217,7 @@ export function rotateCellsInPlane(
         chamfer = mirrorChamferCell(chamfer, plane.axis, mirrorU, !mirrorU)
       }
       if (subdiv) {
-        subdiv = { slot: subdiv.slot, split: [...subdiv.split], children: mirrorSubdivChildren(subdiv.children, subdiv.split, plane.axis, mirrorU, !mirrorU) }
+        subdiv = mirrorSubdivEntry(subdiv, plane.axis, mirrorU, !mirrorU)
       }
     }
     const coord = gridCoordFromPixel({ ...plane, offset: w }, nu, nv)

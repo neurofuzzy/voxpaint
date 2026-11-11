@@ -1,12 +1,12 @@
 import type { ChamferCell, Coord, GridExtent, VoxelModel } from '@/engine/grid/types'
-import { cloneSubdiv, mirrorSubdivChildren } from '@/engine/grid/subdiv'
+import { cloneSubdiv } from '@/engine/grid/subdiv'
 import type { ConstructionPlane } from '@/engine/plane/types'
 import { effectiveExtent, encodeKey, expandBounds, withinWorkingBounds } from '@/engine/grid/GridStore'
 import { gridCoordFromPixel } from '@/engine/plane/constructionPlane'
 import { axisIndex } from '@/engine/plane/planeGeometry'
 import { toDisplayU, toDisplayV } from '@/engine/plane/planeDisplay'
 import { forEachSelectedCell } from './selectionMask'
-import { mirrorClassification } from './transform'
+import { mirrorClassification, mirrorSubdivEntry } from './transform'
 import type { ClipboardCell, ClipboardData, SelectionRegion } from '@/store/types'
 
 /** Deep-copy a chamfer cell so the clipboard never shares references with the live model. */
@@ -270,10 +270,9 @@ export function transformClipboardToPlane(clipboard: ClipboardData, toPlane: Con
       dv: mirrorV ? height - 1 - cell.dv : cell.dv,
       chamfer: cell.chamfer ? rebaseChamfer(cell.chamfer, fromPlane, toPlane, mirrorU, mirrorV) : undefined,
       // Detail mirrors in the source plane's logical frame (same frame as the du/dv flip
-      // above), so the pasted half-cells keep their on-screen arrangement.
-      subdiv: cell.subdiv
-        ? { slot: cell.subdiv.slot, split: [...cell.subdiv.split], children: mirrorSubdivChildren(cell.subdiv.children, cell.subdiv.split, fromPlane.axis, mirrorU, mirrorV) }
-        : undefined,
+      // above), so the pasted half-cells keep their on-screen arrangement — bevels
+      // renumber with the mirror via `mirrorSubdivEntry`.
+      subdiv: cell.subdiv ? mirrorSubdivEntry(cell.subdiv, fromPlane.axis, mirrorU, mirrorV) : undefined,
     })),
   }
 }

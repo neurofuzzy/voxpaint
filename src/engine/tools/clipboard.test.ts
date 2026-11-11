@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import type { Axis, ChamferClassification, Orientation, Rotation, VoxelModel } from '@/engine/grid/types'
+import type { PaletteSlotRef } from '@/engine/palette/types'
 import type { ConstructionPlane } from '@/engine/plane/types'
 import { decodeKey, emptyModel, encodeKey, recomputeBounds } from '@/engine/grid/GridStore'
 import { paintSubCell, subdivideCell } from '@/engine/grid/subdiv'
@@ -126,6 +127,38 @@ describe('rotateClipboard90 / mirrorClipboard', () => {
     let out = source
     for (let i = 0; i < 4; i++) out = rotateClipboard90(out, 'ccw')
     expect(out.cells).toEqual(source.cells)
+  })
+
+  it('turns subdivided detail with the cells: children permute and bevels renumber', () => {
+    const slotA = { kind: 'base', index: 0 } as PaletteSlotRef
+    const slotB = { kind: 'base', index: 3 } as PaletteSlotRef
+    const subdivided = clip(plane('z', 1), [
+      {
+        du: 0,
+        dv: 0,
+        dw: 0,
+        subdiv: {
+          slot: slotA,
+          split: ['x'],
+          children: [
+            { slot: slotA },
+            { slot: slotB, chamfer: { planeAxis: 'z', planeOrientation: 1, resolvedTo: ramp(0) } },
+          ],
+        },
+      },
+    ])
+    const cw = rotateClipboard90(subdivided, 'cw')
+    expect(cw.cells[0].subdiv?.split).toEqual(['y'])
+    expect(cw.cells[0].subdiv?.children.map((c) => c?.slot)).toEqual([slotB, slotA])
+    // The bevel rides its child and renumbers like a unit voxel would (ramp 0 → 1 cw).
+    expect(cw.cells[0].subdiv?.children[0]?.chamfer?.resolvedTo).toEqual(ramp(1))
+    const mirrored = mirrorClipboard(subdivided, 'horizontal')
+    expect(mirrored.cells[0].subdiv?.split).toEqual(['x'])
+    expect(mirrored.cells[0].subdiv?.children.map((c) => c?.slot)).toEqual([slotB, slotA])
+    expect(mirrored.cells[0].subdiv?.children[0]?.chamfer?.resolvedTo).toEqual(ramp(2))
+    // Source untouched (fresh objects, no shared mutation).
+    expect(subdivided.cells[0].subdiv?.split).toEqual(['x'])
+    expect(subdivided.cells[0].subdiv?.children[1]?.chamfer?.resolvedTo).toEqual(ramp(0))
   })
 
   it('turns chamfer shapes the opposite way from clockwise', () => {
