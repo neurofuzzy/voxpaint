@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it } from 'vitest'
 import { pixelFromGridCoord } from '@/engine/plane/constructionPlane'
+import { subdivideCell } from '@/engine/grid/subdiv'
 import { fineDivisionFor, fineRectRegion } from '@/engine/tools/fineSelection'
 import { useAppStore } from './useAppStore'
 
@@ -97,5 +98,42 @@ describe('sub-voxel floats (2D)', () => {
     useAppStore.getState().bakeFloatIfAny()
     const m = useAppStore.getState().model
     expect(m.subdiv.size).toBeGreaterThan(0)
+  })
+})
+
+describe('sub-voxel floats preserve beveled children', () => {
+  it('lifting, moving, and dropping a ramp child keeps its shape (not a plain cube)', () => {
+    const s = useAppStore.getState()
+    s.newProject('T', 16)
+    s.setPlaneAxisOrientation('z', 1)
+    s.setPlaneOffset(0)
+    s.setActivePaletteSlot(A)
+    s.beginStroke()
+    s.paintCellAtCoord([0, 0, 0], 'z', 1)
+    s.commitStroke()
+    // Split the cube and bevel its x-high half by hand (as auto-bevel would leave it).
+    useAppStore.setState((state) => {
+      subdivideCell(state.model, [0, 0, 0], ['x'])
+      const sub = state.model.subdiv.get('0,0,0')!
+      sub.children[1] = {
+        slot: B,
+        chamfer: { planeAxis: 'z', planeOrientation: 1, resolvedTo: { shapeKind: 'ramp', rotation: 0 } },
+      }
+    })
+    const plane = useAppStore.getState().plane
+    const v = pixelFromGridCoord(plane, [0, 0, 0]).v
+    // Select exactly the beveled half, lift it, and shift it half a voxel over.
+    useAppStore.getState().setSelection(fineRectRegion(fineDivisionFor(plane, ['x']), 1, v, 1, v))
+    useAppStore.getState().liftSelectionToFloat()
+    expect(useAppStore.getState().floatContent?.fine).toBeDefined()
+    const o = useAppStore.getState().floatOrigin!
+    useAppStore.getState().moveFloatTo(o.originU, o.originV, 1, 0)
+    useAppStore.getState().bakeFloatIfAny()
+    // The source half is gone; the dropped half is still a ramp, not a plain cube.
+    expect(slots('0,0,0')).toEqual([0, null])
+    const moved = useAppStore.getState().model.subdiv.get('1,0,0')!
+    expect(moved.children[1]).toBeNull()
+    expect((moved.children[0]!.slot as { index: number }).index).toBe(1)
+    expect(moved.children[0]!.chamfer?.resolvedTo).toEqual({ shapeKind: 'ramp', rotation: 0 })
   })
 })

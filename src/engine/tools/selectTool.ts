@@ -3,6 +3,7 @@ import { gridCoordFromPixel } from '@/engine/plane/constructionPlane'
 import { bresenhamLine } from '@/engine/tools/lineUtils'
 import { fineDivisionFor, fineRectRegion, fineUnitAt, isFineSelected } from '@/engine/tools/fineSelection'
 import { fineFloatAtomic } from '@/engine/tools/fineFloat'
+import { selectionTouchesChamfer } from '@/engine/tools/fineWand'
 import { isCellSelected, lassoRegion } from '@/engine/tools/selectionMask'
 import type { NormalizedPointerEvent } from '@/engine/input/PointerInputController'
 import type { ToolContext, ToolHandler } from './types'
@@ -18,11 +19,13 @@ function selectionContains(selection: NonNullable<ToolContext['selection']>, ctx
 
 export const selectTool: ToolHandler = {
   onDown(ctx, e) {
-    const { selection, floatContent, floatOrigin, plane, gridExtent } = ctx
+    const { selection, floatContent, floatOrigin, plane, gridExtent, model } = ctx
 
     if (floatContent && selection && isCellSelected(selection, e.u, e.v)) {
       // Continuing to drag the same pending float.
-      ctx.drag.current = { kind: 'moveFloat', startU: e.u, startV: e.v, originAtStart: floatOrigin!, startFine: floatContent.fine ? fineUnitAt({ su: floatContent.fine.su, sv: floatContent.fine.sv, slab: null }, plane, e.u, e.v, e.cu, e.cv) : undefined }
+      const ff = floatContent.fine
+      ctx.drag.current = { kind: 'moveFloat', startU: e.u, startV: e.v, originAtStart: floatOrigin!, startFine: ff ? fineUnitAt({ su: ff.su, sv: ff.sv, slab: null }, plane, e.u, e.v, e.cu, e.cv) : undefined,
+        fineStep: ff ? { su: ff.su, sv: ff.sv, atomic: fineFloatAtomic(floatContent) } : undefined }
       return
     }
     if (floatContent) {
@@ -33,13 +36,17 @@ export const selectTool: ToolHandler = {
       // separate "Move" tool needed for this; Select handles both selecting and repositioning.
       // Alt-drag lifts the full-depth cuboid under the selection window (like the Move tool's
       // Alt-drag moves the whole model); a plain drag lifts just the current slice.
+      const sf = selection.fine
       ctx.liftSelectionToFloat(e.altKey)
       ctx.drag.current = {
         kind: 'moveFloat',
         startU: e.u,
         startV: e.v,
         originAtStart: { originU: selection.originU, originV: selection.originV, subU: 0, subV: 0 },
-        startFine: selection.fine ? fineUnitAt({ su: selection.fine.su, sv: selection.fine.sv, slab: null }, plane, e.u, e.v, e.cu, e.cv) : undefined,
+        startFine: sf ? fineUnitAt({ su: sf.su, sv: sf.sv, slab: null }, plane, e.u, e.v, e.cu, e.cv) : undefined,
+        // The lifted content may not be visible in this context's snapshot yet (no render has
+        // flushed the lift), so record its resolution + atomicity now, from the live selection.
+        fineStep: sf ? { su: sf.su, sv: sf.sv, atomic: selectionTouchesChamfer(model, plane, selection, gridExtent) } : undefined,
       }
       return
     }
@@ -69,21 +76,26 @@ export const selectTool: ToolHandler = {
     const drag = ctx.drag.current
     if (drag.kind === 'moveFloat') {
       const { startU, startV, originAtStart, startFine } = drag
-      const fine = ctx.floatContent?.fine
-      if (fine && startFine) {
+      // Prefer the lift-time record: the live content can lag a render behind on the gesture
+      // that performed the lift, which otherwise steps the first drag in whole voxels.
+      const step = drag.fineStep
+        ?? (ctx.floatContent?.fine
+          ? { su: ctx.floatContent.fine.su, sv: ctx.floatContent.fine.sv, atomic: fineFloatAtomic(ctx.floatContent) }
+          : undefined)
+      if (step && startFine) {
         // Sub-voxel float: step in fine units (whole voxels when the content holds a chamfer).
-        const f = fineUnitAt({ su: fine.su, sv: fine.sv, slab: null }, ctx.plane, e.u, e.v, e.cu, e.cv)
+        const f = fineUnitAt({ su: step.su, sv: step.sv, slab: null }, ctx.plane, e.u, e.v, e.cu, e.cv)
         let du = f[0] - startFine[0]
         let dv = f[1] - startFine[1]
-        if (fineFloatAtomic(ctx.floatContent!)) {
-          du = Math.round(du / fine.su) * fine.su
-          dv = Math.round(dv / fine.sv) * fine.sv
+        if (step.atomic) {
+          du = Math.round(du / step.su) * step.su
+          dv = Math.round(dv / step.sv) * step.sv
         }
-        const fu = originAtStart.originU * fine.su + (originAtStart.subU ?? 0) + du
-        const fv = originAtStart.originV * fine.sv + (originAtStart.subV ?? 0) + dv
-        const ou = Math.floor(fu / fine.su)
-        const ov = Math.floor(fv / fine.sv)
-        ctx.moveFloatTo(ou, ov, fu - ou * fine.su, fv - ov * fine.sv)
+        const fu = originAtStart.originU * step.su + (originAtStart.subU ?? 0) + du
+        const fv = originAtStart.originV * step.sv + (originAtStart.subV ?? 0) + dv
+        const ou = Math.floor(fu / step.su)
+        const ov = Math.floor(fv / step.sv)
+        ctx.moveFloatTo(ou, ov, fu - ou * step.su, fv - ov * step.sv)
         return
       }
       ctx.moveFloatTo(originAtStart.originU + (e.u - startU), originAtStart.originV + (e.v - startV))

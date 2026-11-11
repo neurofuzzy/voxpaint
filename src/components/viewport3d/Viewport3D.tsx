@@ -315,16 +315,16 @@ function VoxelInteractionHandler({ managerRef, controlsRef }: {
     // churning a lift-and-bake roundtrip; crossing the threshold lifts and converts to a
     // float drag that follows the pointer in the plane's UV axes. Release drops it (baked),
     // exactly like the drop below — orbit suppressed throughout.
-    let floatDrag: { startU: number; startV: number; originU: number; originV: number; cells3D: Set<CellKey>; /** Sub-voxel floats: pointer fine-unit and float origin at the first move. */ fineStart?: [number, number]; fineOrigin?: FloatOrigin } | null = null
+    let floatDrag: { startU: number; startV: number; originU: number; originV: number; cells3D: Set<CellKey>; /** Pointer fine-unit at press (sub-voxel floats) and float origin then — seeding the anchor at press (not the first move) makes the converting move displace and keeps short drags exact. Falls back to the first move when the press predates the float. */ fineStart?: [number, number]; fineOrigin?: FloatOrigin } | null = null
         // Armed select grab (3D-only layout only): pointer went down on a selected voxel with no live
         // float, lift still pending. A tap releases as a no-op through the normal tap path (the
         // selection owns the plane — only double-clicks act from there); movement past the
         // threshold converts to `floatDrag` above.
-        let pendingSelectGrab: { startU: number; startV: number; alt: boolean } | null = null
+        let pendingSelectGrab: { startU: number; startV: number; alt: boolean; pressCell: Coord; pressBits: Coord | null } | null = null
     // Pending wand grab (3D-only layout only): pointer went down on a selected voxel with the wand.
     // Unlike select it must NOT lift yet — a tap here is a two-stage wand click, so the lift
     // waits until the pointer actually moves past the tap threshold, then converts to floatDrag.
-    let pendingWandDrag: { startU: number; startV: number } | null = null
+    let pendingWandDrag: { startU: number; startV: number; pressCell: Coord; pressBits: Coord | null } | null = null
     // Open whole-model move drag (3D-only layout, Model mode only): the plane-UV anchor plus the
     // last-applied UV (integer-deduped, like the 2D tool) and whether the undo stroke opened. The
     // stroke opens on the first over-threshold move; a tap orients the plane instead. Orbit
@@ -977,6 +977,8 @@ function VoxelInteractionHandler({ managerRef, controlsRef }: {
           const empty = resolveEmptyCell(e.clientX, e.clientY)
           if (empty) continuePasteFloat(empty)
         }
+        // The press cell, for anchoring a sub-voxel drag at press time (not the first move).
+        const pressCell: Coord | null = hit ? decodeKey(hit.key) : resolveEmptyCell(e.clientX, e.clientY)
         if (grabUV) {
           const { u, v } = grabUV
           if (store.floatContent) {
@@ -984,12 +986,23 @@ function VoxelInteractionHandler({ managerRef, controlsRef }: {
             // is one to continue; otherwise arm below.
             const origin = useAppStore.getState().floatOrigin
             if (origin) {
+              const fcPress = useAppStore.getState().floatContent
               floatDrag = {
                 startU: u,
                 startV: v,
                 originU: origin.originU,
                 originV: origin.originV,
                 cells3D: grabFloatCells ?? new Set(store.selectedCells),
+                // Press-anchored: the drag tracks from here, so even the first move displaces.
+                ...(fcPress?.fine && pressCell
+                  ? {
+                    fineStart: fineUnitFor(
+                      { su: fcPress.fine.su, sv: fcPress.fine.sv, slab: null },
+                      activePlane, pressCell, subBitsAt(e.clientX, e.clientY, pressCell),
+                    ),
+                    fineOrigin: origin,
+                  }
+                  : {}),
               }
               if (controlsRef.current) controlsRef.current.enabled = false
               try {
@@ -1009,7 +1022,11 @@ function VoxelInteractionHandler({ managerRef, controlsRef }: {
             // moves past the tap threshold (mirroring the wand's pendingWandDrag), so a tap
             // resolves as a plain click on release. Taps never mutate the model and never
             // touch the selection; only a real drag lifts.
-            pendingSelectGrab = { startU: u, startV: v, alt: e.altKey }
+            pendingSelectGrab = {
+              startU: u, startV: v, alt: e.altKey,
+              pressCell: pressCell ?? gridCoordFromPixel(activePlane, u, v),
+              pressBits: pressCell ? subBitsAt(e.clientX, e.clientY, pressCell) : null,
+            }
             if (controlsRef.current) controlsRef.current.enabled = false
             try {
               dom.setPointerCapture(e.pointerId)
@@ -1077,7 +1094,11 @@ function VoxelInteractionHandler({ managerRef, controlsRef }: {
           else if (store.floatContent && store.floatOrigin && uvInFloatRect(store.floatContent, store.floatOrigin, uv.u, uv.v)) grabbed = uv
         }
         if (grabbed) {
-          pendingWandDrag = { startU: grabbed.u, startV: grabbed.v }
+          const pressCell = hit ? decodeKey(hit.key) : gridCoordFromPixel(planeRef.current, grabbed.u, grabbed.v)
+          pendingWandDrag = {
+            startU: grabbed.u, startV: grabbed.v,
+            pressCell, pressBits: subBitsAt(e.clientX, e.clientY, pressCell),
+          }
             if (controlsRef.current) controlsRef.current.enabled = false
             try {
               dom.setPointerCapture(e.pointerId)
@@ -1233,6 +1254,7 @@ function VoxelInteractionHandler({ managerRef, controlsRef }: {
           const origin = useAppStore.getState().floatOrigin
           if (origin) {
             const st = useAppStore.getState()
+            const liftedFine = st.floatContent?.fine
             floatDrag = {
               startU: pendingWandDrag.startU,
               startV: pendingWandDrag.startV,
@@ -1244,6 +1266,16 @@ function VoxelInteractionHandler({ managerRef, controlsRef }: {
               cells3D: continuingFloat && st.floatContent
                 ? new Set(placedFloatCoords(st.floatContent, origin, planeRef.current, st.meta.gridExtent).map((c) => encodeKey(...c)))
                 : new Set(st.selectedCells),
+              // Press-anchored (same frame as the first over-threshold move): it displaces.
+              ...(liftedFine
+                ? {
+                  fineStart: fineUnitFor(
+                    { su: liftedFine.su, sv: liftedFine.sv, slab: null },
+                    planeRef.current, pendingWandDrag.pressCell, pendingWandDrag.pressBits,
+                  ),
+                  fineOrigin: origin,
+                }
+                : {}),
             }
           }
           pendingWandDrag = null
@@ -1263,12 +1295,22 @@ function VoxelInteractionHandler({ managerRef, controlsRef }: {
           }
           const origin = useAppStore.getState().floatOrigin
           if (origin) {
+            const liftedFine = useAppStore.getState().floatContent?.fine
             floatDrag = {
               startU: pendingSelectGrab.startU,
               startV: pendingSelectGrab.startV,
               originU: origin.originU,
               originV: origin.originV,
               cells3D: new Set(store.selectedCells),
+              ...(liftedFine
+                ? {
+                  fineStart: fineUnitFor(
+                    { su: liftedFine.su, sv: liftedFine.sv, slab: null },
+                    planeRef.current, pendingSelectGrab.pressCell, pendingSelectGrab.pressBits,
+                  ),
+                  fineOrigin: origin,
+                }
+                : {}),
             }
             setStatusMessage('Dragging selection in the plane — release to drop it')
           }
@@ -1284,6 +1326,8 @@ function VoxelInteractionHandler({ managerRef, controlsRef }: {
         const fc = useAppStore.getState().floatContent
         if (cell && fc?.fine) {
           // Sub-voxel float: step in fine units (whole voxels when the content holds a chamfer).
+          // The anchor is press-seeded at every drag site; the first-move fallback is safety
+          // for drags armed before their float existed.
           const f = fc.fine
           const fdiv: FineDivision = { su: f.su, sv: f.sv, slab: null }
           const cur = fineUnitFor(fdiv, planeRef.current, cell, subBitsAt(e.clientX, e.clientY, cell))

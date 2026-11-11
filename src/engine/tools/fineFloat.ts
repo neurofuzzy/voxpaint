@@ -1,5 +1,5 @@
 import { encodeKey, expandBounds, withinWorkingBounds } from '@/engine/grid/GridStore'
-import type { Coord, GridExtent, SplitAxis, VoxelModel } from '@/engine/grid/types'
+import type { Coord, DetailChild, GridExtent, SplitAxis, VoxelModel } from '@/engine/grid/types'
 import {
   normalizeSplit, remapChildren, scaffoldCell, splitChildOrigin, splitChildSize, subdivideCell,
 } from '@/engine/grid/subdiv'
@@ -37,6 +37,12 @@ export type FloatPiece = {
   origin: [number, number, number]
   size: [number, number, number]
   slot: PaletteSlotRef
+  /**
+   * Frozen shape of the source child, carried so beveled detail survives the drop. Only
+   * restored when the piece covers its target child exactly (see `writePiece`) — a cut
+   * chamfer is unrepresentable, so partial covers land as plain slots.
+   */
+  chamfer?: DetailChild['chamfer']
 }
 
 const EPS = 1e-6
@@ -54,14 +60,14 @@ function worldShift(plane: ConstructionPlane, clip: ClipboardData, subU: number,
   return out
 }
 
-function cellPieces(cell: ClipboardCell): Array<{ origin: [number, number, number]; size: [number, number, number]; slot: PaletteSlotRef }> {
+function cellPieces(cell: ClipboardCell): Array<{ origin: [number, number, number]; size: [number, number, number]; slot: PaletteSlotRef; chamfer?: DetailChild['chamfer'] }> {
   if (cell.subdiv) {
     const out = []
     const size = splitChildSize(cell.subdiv.split)
     for (let o = 0; o < cell.subdiv.children.length; o++) {
       const child = cell.subdiv.children[o]
       if (!child) continue
-      out.push({ origin: splitChildOrigin([0, 0, 0], cell.subdiv.split, o), size, slot: child.slot })
+      out.push({ origin: splitChildOrigin([0, 0, 0], cell.subdiv.split, o), size, slot: child.slot, ...(child.chamfer ? { chamfer: cloneChamfer(child.chamfer) } : {}) })
     }
     return out
   }
@@ -106,6 +112,9 @@ export function floatPieces(
               origin: [x0 - cellCoord[0], y0 - cellCoord[1], z0 - cellCoord[2]],
               size: [x1 - x0, y1 - y0, z1 - z0],
               slot: piece.slot,
+              // Voxel-boundary cuts never split a 0.5-aligned child, so a chamfered piece
+              // still covers its whole child here; `writePiece` re-checks before restoring.
+              ...(piece.chamfer ? { chamfer: piece.chamfer } : {}),
             })
           }
         }
@@ -188,7 +197,12 @@ function writePiece(model: VoxelModel, piece: FloatPiece): void {
     for (let a = 0; a < 3; a++) {
       if (co[a] < piece.origin[a] - EPS || co[a] + csize[a] > piece.origin[a] + piece.size[a] + EPS) return
     }
-    sub!.children[o] = { slot: piece.slot }
+    // Restore the frozen shape only when the piece IS the whole child — a chamfered piece
+    // landing on an over-split target (or a partial cover) lands as a plain slot instead.
+    const exact = [0, 1, 2].every(
+      (a) => Math.abs(co[a] - piece.origin[a]) < EPS && Math.abs(csize[a] - piece.size[a]) < EPS,
+    )
+    sub!.children[o] = exact && piece.chamfer ? { slot: piece.slot, chamfer: cloneChamfer(piece.chamfer) } : { slot: piece.slot }
   })
   sub.scaffold = false
   model.bounds = expandBounds(model.bounds, piece.cell)
