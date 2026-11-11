@@ -2,8 +2,8 @@ import { useEffect } from 'react'
 import { useAppStore } from '@/store/useAppStore'
 
 /**
- * Shift + mouse wheel steps the construction plane in half-voxel stops — whole layer, front
- * slab, back slab, next layer — on whichever panel the pointer is over. Attaches a
+ * Shift + mouse wheel steps the construction plane by the grid's stops (whole voxels, or
+ * half-voxel stops when the grid cuts the plane's axis — see `stepPlaneHalf`) on whichever panel the pointer is over. Attaches a
  * **capture-phase, non-passive** wheel listener on `containerRef` so it runs before, and
  * suppresses, the panel's own wheel behaviour (OrbitControls zoom in the 3D view; canvas
  * pan/zoom in the 2D editor) and can `preventDefault`. Plain (unshifted) wheel is left

@@ -44,6 +44,21 @@ describe('plane offset bounds', () => {
     expect(useAppStore.getState().plane.offset).toBe(7)
   })
 
+  it('clicking a subdivided voxel adopts its division as the grid; a plain voxel leaves it', () => {
+    const s = useAppStore.getState()
+    s.setPendingSplit(['x', 'y'])
+    s.beginStroke()
+    expect(s.ensureSubdividedAt([2, 3, 4])).toBe(true) // armed x,y -> that voxel splits x,y
+    s.commitStroke()
+    s.setGridDivision('whole')
+    s.handleVoxelFaceClick('2,3,4', 'z', 1, 4, 1)
+    expect(useAppStore.getState()).toMatchObject({ gridFamily: 'quarter', pendingSplit: ['x', 'y'] })
+    // The grid doesn't cut z, so the slab dwell snaps to the whole voxel.
+    expect(useAppStore.getState().plane).toMatchObject({ axis: 'z', offset: 4, half: null })
+    s.handleVoxelFaceClick('9,9,9', 'z', 1, 9)
+    expect(useAppStore.getState().pendingSplit).toEqual(['x', 'y'])
+  })
+
   it('a new project starts grounded regardless of the old offset', () => {
     useAppStore.getState().setPlaneOffset(7)
     useAppStore.getState().newProject('Small', 8)
@@ -209,6 +224,8 @@ describe('half-step slab mode', () => {
     useAppStore.getState().newProject('Test', 16)
     useAppStore.getState().setPlaneAxisOrientation('z', 1)
     useAppStore.getState().setPlaneOffset(0)
+    // A slab only exists where the grid cuts the plane's axis.
+    useAppStore.getState().setPendingSplit(['z'])
   })
 
   it('face taps carry an explicit half slab', () => {
@@ -216,7 +233,8 @@ describe('half-step slab mode', () => {
     expect(useAppStore.getState().plane).toEqual({ axis: 'z', orientation: 1, offset: 0, half: 1 })
   })
 
-  it('omitted half stays whole-voxel', () => {
+  it('omitted half is whole-voxel only when the grid does not cut the axis', () => {
+    useAppStore.getState().setPendingSplit(['x'])
     useAppStore.getState().handleVoxelFaceClick('0,0,0', 'z', 1, 0)
     expect(useAppStore.getState().plane.half).toBeNull()
   })
@@ -228,7 +246,8 @@ describe('half-step slab mode', () => {
     s.handleVoxelFaceClick('0,0,0', 'z', 1, 0)
     const after = useAppStore.getState()
     expect(after.plane.offset).toBe(1)
-    expect(after.plane.half).toBeNull()
+    // The grid still cuts z, so the advance lands on a slab of the next voxel, not a whole stop.
+    expect(after.plane.half).toBe(1)
   })
 
   it('sliding the offset keeps the slab, reorienting clears it', () => {
@@ -255,60 +274,84 @@ describe('half-step slab mode', () => {
   })
 })
 
-/** Half-voxel stepping walks whole → front slab → back slab → next whole (reversed for -1). */
+/**
+ * The one stepping rule: grid cuts the plane's axis → half-voxel stops ALWAYS (low slab → high
+ * slab → next voxel's low slab, monotonic, no whole stop between); otherwise whole voxels.
+ */
 describe('stepPlaneHalf', () => {
   beforeEach(() => {
     useAppStore.getState().newProject('Test', 16)
     useAppStore.getState().setPlaneAxisOrientation('z', 1)
     useAppStore.getState().setPlaneOffset(0)
+    useAppStore.getState().setPendingSplit(['z']) // snaps onto the viewer-side slab (high bit)
   })
 
-  it('steps whole → front → back → next whole forward, reversed backward', () => {
+  it('walks half-voxel stops monotonically and never rests on a whole stop', () => {
     const s = useAppStore.getState()
-    // Orientation 1 views from +z: front slab is the high bit.
-    s.stepPlaneHalf(1)
     expect(useAppStore.getState().plane).toMatchObject({ offset: 0, half: 1 })
     s.stepPlaneHalf(1)
-    expect(useAppStore.getState().plane).toMatchObject({ offset: 0, half: 0 })
+    expect(useAppStore.getState().plane).toMatchObject({ offset: 1, half: 0 })
     s.stepPlaneHalf(1)
-    expect(useAppStore.getState().plane).toMatchObject({ offset: 1, half: null })
+    expect(useAppStore.getState().plane).toMatchObject({ offset: 1, half: 1 })
     s.stepPlaneHalf(-1)
-    expect(useAppStore.getState().plane).toMatchObject({ offset: 0, half: 0 })
+    expect(useAppStore.getState().plane).toMatchObject({ offset: 1, half: 0 })
     s.stepPlaneHalf(-1)
     expect(useAppStore.getState().plane).toMatchObject({ offset: 0, half: 1 })
     s.stepPlaneHalf(-1)
-    expect(useAppStore.getState().plane).toMatchObject({ offset: 0, half: null })
-    // Backward from whole drops to the previous layer's back slab.
+    expect(useAppStore.getState().plane).toMatchObject({ offset: 0, half: 0 })
     s.stepPlaneHalf(-1)
-    expect(useAppStore.getState().plane).toMatchObject({ offset: -1, half: 0 })
+    expect(useAppStore.getState().plane).toMatchObject({ offset: -1, half: 1 })
   })
 
-  it('leads with the viewer side on flipped orientations', () => {
+  it('enters the cut axis on the viewer-side slab of the current orientation', () => {
     const s = useAppStore.getState()
     s.setPlaneAxisOrientation('z', -1)
-    // Viewed from -z: front slab is the low bit.
-    s.stepPlaneHalf(1)
+    s.setPendingSplit(null)
+    s.setPendingSplit(['z'])
     expect(useAppStore.getState().plane).toMatchObject({ offset: 0, half: 0 })
-    s.stepPlaneHalf(1)
-    expect(useAppStore.getState().plane).toMatchObject({ offset: 0, half: 1 })
+  })
+
+  it('steps whole voxels when the grid does not cut the plane axis', () => {
+    const s = useAppStore.getState()
+    s.setPendingSplit(['x'])
+    expect(useAppStore.getState().plane.half).toBeNull()
     s.stepPlaneHalf(1)
     expect(useAppStore.getState().plane).toMatchObject({ offset: 1, half: null })
+    s.stepPlaneHalf(-1, 2)
+    expect(useAppStore.getState().plane).toMatchObject({ offset: -1, half: null })
+    s.setPendingSplit(null)
+    s.stepPlaneHalf(1)
+    expect(useAppStore.getState().plane).toMatchObject({ offset: 0, half: null })
+  })
+
+  it('a grid change moves the plane onto the grid: slab <-> whole voxel, inside the bounds', () => {
+    const s = useAppStore.getState()
+    s.stepPlaneHalf(-1) // (0, low slab)
+    s.setGridDivision('whole')
+    expect(useAppStore.getState().plane).toMatchObject({ offset: 0, half: null })
+    s.setPendingSplit(['x', 'y']) // quarters that leave z alone
+    expect(useAppStore.getState().plane).toMatchObject({ offset: 0, half: null })
+    s.setPendingSplit(['x', 'y', 'z'])
+    expect(useAppStore.getState().plane).toMatchObject({ offset: 0, half: 1 })
+  })
+
+  it('changing the plane axis re-evaluates against the grid', () => {
+    const s = useAppStore.getState()
+    s.setPlaneAxisOrientation('x', 1) // grid cuts z only
+    expect(useAppStore.getState().plane.half).toBeNull()
+    s.setPlaneAxisOrientation('z', 1)
+    expect(useAppStore.getState().plane.half).toBe(1)
   })
 
   it('walks multiple stops in one call and pins at the bounds', () => {
     const s = useAppStore.getState()
-    s.stepPlaneHalf(1, 4)
-    // (0,null) → (0,1) → (0,0) → (1,null) → (1,1).
-    expect(useAppStore.getState().plane).toMatchObject({ offset: 1, half: 1 })
-    // Stepping past the top layer lands whole on the top layer.
+    s.stepPlaneHalf(1, 4) // (0,1) -> (1,0) -> (1,1) -> (2,0) -> (2,1)
+    expect(useAppStore.getState().plane).toMatchObject({ offset: 2, half: 1 })
     s.stepPlaneHalf(1, 100)
     const top = useAppStore.getState().plane
-    expect(top.offset).toBe(7)
-    expect(top.half).toBeNull()
-    // And past the bottom similarly.
+    expect(top).toMatchObject({ offset: 7, half: 1 }) // last stop of the top layer
     s.stepPlaneHalf(-1, 100)
     const bottom = useAppStore.getState().plane
-    expect(bottom.offset).toBe(-8)
-    expect(bottom.half).toBeNull()
+    expect(bottom).toMatchObject({ offset: -8, half: 0 }) // first stop of the bottom layer
   })
 })

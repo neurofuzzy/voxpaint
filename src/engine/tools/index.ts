@@ -12,7 +12,6 @@ import { pivotTool } from './pivotTool'
 import { poseTool } from './poseTool'
 import { offsetTool } from './offsetTool'
 import { textureFaceTool } from './textureFaceTool'
-import { subdivideTool } from './subdivideTool'
 import { wandTool } from './wandTool'
 import { rigWandTool } from './rigWandTool'
 import { rigSelectTool } from './rigSelectTool'
@@ -26,7 +25,6 @@ export const toolMap: Record<ToolId, ToolHandler> = {
   material: materialTool,
   select: selectTool,
   fill: fillTool,
-  subdivide: subdivideTool,
   move: moveTool,
   textureface: textureFaceTool,
   marker: markerTool,

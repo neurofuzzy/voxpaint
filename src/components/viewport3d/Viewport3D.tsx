@@ -54,9 +54,9 @@ import { resolveDirectPaintTarget } from '@/store/ghostPlacement'
 import { voxelKindForCell } from '@/engine/tools/eyedropperTool'
 import { windowSliceCells } from '@/engine/tools/cellSetOps'
 import { isCellSelected } from '@/engine/tools/selectionMask'
+import { usePlaneLayerScroll } from '@/components/usePlaneLayerScroll'
 import { useAppStore } from '@/store/useAppStore'
 import { showToast } from '@/components/ui/toastBus'
-import { usePlaneLayerScroll } from '@/components/usePlaneLayerScroll'
 import { AnimatedModelView } from './AnimatedModelView'
 import { PoseGizmo } from './PoseGizmo'
 import { RigPoseView } from './RigPoseView'
@@ -64,7 +64,7 @@ import { pickRigBoxId } from './rigPosePick'
 import { BoundingBoxFaceSelector } from './BoundingBoxFaceSelector'
 import { CompassIcon, CompassTracker } from './Compass'
 import { DetailEdgesOverlay } from './DetailEdgesOverlay'
-import { SubdivideHoverWireframe } from './SubdivideHoverWireframe'
+import { GridHoverWireframe } from './GridHoverWireframe'
 import { BrushPreview } from './BrushPreview'
 import { brushViewQuaternion } from './brushViewSync'
 import { ConstructionPlaneGizmo } from './ConstructionPlaneGizmo'
@@ -82,6 +82,7 @@ import { SceneLighting } from './SceneLighting'
 import { SelectionBox3D } from './SelectionBox3D'
 import { TexturedModelView } from './TexturedModelView'
 import { TextureFaceHighlight } from './TextureFaceHighlight'
+import { GridFloatingPanel } from '@/components/panels/GridToggle'
 import { ViewOptionsOverlay } from './ViewOptionsOverlay'
 import { VoxelFaceHighlight } from './VoxelFaceHighlight'
 import { SettingsPalette } from './SettingsPalette'
@@ -523,7 +524,7 @@ function VoxelInteractionHandler({ managerRef, controlsRef }: {
      * the active construction plane — never the raycast face — so the write matches the brush
      * preview. The target itself resolves through the shared `resolveDirectPaintTarget`
      * helper, so tap and ghost preview always agree. */
-    function applyBlockingTap(clientX: number, clientY: number, shiftKey: boolean, wasSelectGrab = false, altKey = false) {
+    function applyBlockingTap(clientX: number, clientY: number, shiftKey: boolean, wasSelectGrab = false) {
       const store = useAppStore.getState()
       const tool = activeToolRef.current
       const result = resolveFaceHit(clientX, clientY)
@@ -606,18 +607,10 @@ function VoxelInteractionHandler({ managerRef, controlsRef }: {
         const [x, y, z] = result.key.split(',').map(Number)
         const cell: Coord = [x, y, z]
         const subdivided = store.model.subdiv.has(result.key)
-        // Detail taps never reach the full-cell paint path: plain cells split with the
-        // toolbar's pending division (Alt forces full 8-way); tapping a subdivided cell
-        // advances its family division, coarsening past the end. Paint/material
-        // address the hovered child, erase clears it, and the eyedropper samples it — all
+        // Paint and material address the hovered detail child on subdivided voxels (fresh
+        // cells split just-in-time to the armed grid first, preserving hovered-child
+        // precision); erase clears the hovered child, and the eyedropper samples it — all
         // inside one undo stroke.
-        if (tool === 'subdivide') {
-          store.bakeFloatIfAny()
-          store.beginStroke()
-          store.toggleSubdivideAtCoord(cell, altKey)
-          store.commitStroke()
-          return
-        }
         if (subdivided) {
           if (tool !== 'paint') {
             if (tool === 'erase') {
@@ -645,8 +638,29 @@ function VoxelInteractionHandler({ managerRef, controlsRef }: {
         if (tool === 'paint') {
           // Half-step admits subdivided voxels only (per-child path below) — plain and
           // empty taps toast instead of writing (the write itself also fails closed).
-          if (store.plane.half !== null && !subdivided) {
+          if (store.plane.half !== null && !subdivided && !store.pendingSplit) {
             showToast('Half-step: only subdivided voxels are editable')
+            return
+          }
+          // Just-in-time grid split: a plain cell taps into existence as detail first
+          // (same undo stroke as the paint), preserving the hovered child's precision.
+          if (!subdivided && store.pendingSplit) {
+            store.bakeFloatIfAny()
+            store.beginStroke()
+            const ok = store.ensureSubdividedAt(cell)
+            if (ok) {
+              // On a half-voxel stop the tap lands in the plane's slab, not the hovered depth.
+              let index = result.childIndex ?? 0
+              const fresh = useAppStore.getState()
+              const sub = fresh.model.subdiv.get(result.key)
+              if (sub && fresh.plane.half !== null && sub.split.includes(result.plane.axis)) {
+                const bits = splitChildBits(sub.split, index)
+                bits[axisIndex(result.plane.axis)] = fresh.plane.half
+                index = splitChildIndex(sub.split, bits[0], bits[1], bits[2])
+              }
+              store.paintSubCellAtCoord(cell, index)
+            }
+            store.commitStroke()
             return
           }
           const activePlane = planeRef.current
@@ -677,16 +691,6 @@ function VoxelInteractionHandler({ managerRef, controlsRef }: {
         return
       }
       // Empty space: paint starts a blob on the active slice; erase/eyedrop need a voxel.
-      // Subdivide on empty space toasts its own hint (nothing to split).
-    if (tool === 'subdivide') {
-      const coord = resolveEmptyCell(clientX, clientY)
-      if (!coord) return
-      store.bakeFloatIfAny()
-      store.beginStroke()
-      store.toggleSubdivideAtCoord(coord, altKey)
-      store.commitStroke()
-      return
-    }
       if (tool !== 'paint') return
       const coord = resolveEmptyCell(clientX, clientY)
       if (!coord) return
@@ -1661,7 +1665,7 @@ function VoxelInteractionHandler({ managerRef, controlsRef }: {
       // Only the left button taps (right/middle are orbit/dolly now).
       if (isBlocking()) {
         if (e.button !== 0) return
-        applyBlockingTap(e.clientX, e.clientY, e.shiftKey, wasSelectGrab, e.altKey)
+        applyBlockingTap(e.clientX, e.clientY, e.shiftKey, wasSelectGrab)
         return
       }
 
@@ -1900,7 +1904,7 @@ export function Viewport3D() {
               {!poseToolsActive && <VoxelFaceHighlight />}
               {!poseToolsActive && <VoxelGhostPreview />}
               {!poseToolsActive && <DetailEdgesOverlay />}
-              {!poseToolsActive && <SubdivideHoverWireframe />}
+              {!poseToolsActive && <GridHoverWireframe />}
                             <FloatGhostPreview />
               <SelectionHighlight />
               <SelectionBox3D />
@@ -1946,6 +1950,7 @@ export function Viewport3D() {
         showExposure={showExposure}
         onToggleExposure={() => setShowExposure((v) => !v)}
       />
+      {layoutMode === '3d-only' && <GridFloatingPanel offsetForCompass />}
       <SettingsPalette />
       {showExposure && <ExposureSlider />}
       <BrushPreview />

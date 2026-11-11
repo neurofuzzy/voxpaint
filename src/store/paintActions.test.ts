@@ -1168,7 +1168,8 @@ describe('3D shift-paint lines', () => {
 
 /** 2D quadrant addressing of subdivided detail: paint/erase/material act on the hovered
  * set (front+back pair for 8-splits, fewer for partial splits); chamfer kinds write frozen
- * explicit shapes; the subdivide tool toggles through `toggleSubdivideCell`. z-plane
+ * explicit shapes; the grid picker arms the just-in-time division (whole paints whole
+ * voxels, halves/quarters/octal split fresh cells on first paint). z-plane
  * orientation 1 throughout, so display quadrant (0,0) is the (x-lo, y-hi) quarter:
  * front octant 6, back octant 2. */
 describe('detail quadrants in 2D', () => {
@@ -1186,37 +1187,35 @@ describe('detail quadrants in 2D', () => {
   })
 
   function subdividedAt(u: number, v: number) {
+    // The pinned full grid splits fresh cells just-in-time on first paint.
     const s = useAppStore.getState()
     s.beginStroke()
     expect(s.paintCell(u, v)).toBe(true)
     s.commitStroke()
-    const coord = gridCoordFromPixel(PLANE, u, v)
-    s.beginStroke()
-    expect(s.toggleSubdivideAtCoord(coord)).toBe(true)
-    s.commitStroke()
-    return coord
+    return gridCoordFromPixel(PLANE, u, v)
   }
 
-  it('toggles subdivision through toggleSubdivideCell', () => {
+  it('paints whole voxels with whole grid, splits just-in-time with a grid armed', () => {
     const s = useAppStore.getState()
+    useAppStore.getState().setGridDivision('whole')
     s.beginStroke()
     expect(s.paintCell(0, -1)).toBe(true)
     s.commitStroke()
-    s.beginStroke()
-    expect(s.toggleSubdivideCell(0, -1)).toBe(true)
-    s.commitStroke()
     let after = useAppStore.getState()
-    expect(after.model.subdiv.has(encodeKey(0, 0, 0))).toBe(true)
-    // Tapping a full split advances past the end → merges back to a cube.
+    expect(after.model.color.has(encodeKey(0, 0, 0))).toBe(true)
+    expect(after.model.subdiv.has(encodeKey(0, 0, 0))).toBe(false)
+    // Armed halves split the next fresh voxel on paint (no separate split step).
+    useAppStore.getState().setGridDivision('half') // arms ['x']
     s.beginStroke()
-    expect(s.toggleSubdivideCell(0, -1)).toBe(true)
+    expect(s.paintCell(2, -1)).toBe(true)
     s.commitStroke()
     after = useAppStore.getState()
-    expect(after.model.subdiv.has(encodeKey(0, 0, 0))).toBe(false)
-    expect(after.model.color.has(encodeKey(0, 0, 0))).toBe(true)
+    const sub = after.model.subdiv.get(encodeKey(2, 0, 0))!
+    expect(sub.split).toEqual(['x'])
+    expect(sub.children).toHaveLength(2)
   })
 
-  it('paints exactly the hovered front child, leaving the rest inherited', () => {
+  it('paints exactly the hovered front child, leaving the rest empty', () => {
     subdividedAt(0, -1)
     const s = useAppStore.getState()
     useAppStore.getState().setActivePaletteSlot(SLOT_M)
@@ -1225,12 +1224,11 @@ describe('detail quadrants in 2D', () => {
     s.commitStroke()
     const sub = useAppStore.getState().model.subdiv.get(encodeKey(0, 0, 0))!
     // Quadrant (0,0) addresses [6, 2] front-sorted; whole-voxel mode paints the front one.
+    // Just-in-time splits start from empty scaffolds — unpainted children stay null.
     expect(sub.children[6]).toEqual({ slot: SLOT_M })
-    expect(sub.children[2]).toEqual({ slot: { kind: 'base', index: 0 } })
-    for (let i = 0; i < 8; i++) {
-      if (i === 6) continue
-      expect(sub.children[i]).toEqual({ slot: { kind: 'base', index: 0 } })
-    }
+    expect(sub.children[2]).toBeNull()
+    for (const i of [4, 5, 7]) expect(sub.children[i]).toEqual({ slot: SLOT_B })
+    for (const i of [0, 1, 3]) expect(sub.children[i]).toBeNull()
   })
 
   it('paints the front slab without a quadrant (shift-lines, synthetic events)', () => {
@@ -1241,9 +1239,9 @@ describe('detail quadrants in 2D', () => {
     expect(s.paintCell(0, -1)).toBe(true)
     s.commitStroke()
     const sub = useAppStore.getState().model.subdiv.get(encodeKey(0, 0, 0))!
-    // The viewer-side depth half (dz=1: children 4-7); the back half stays inherited.
+    // The viewer-side depth half (dz=1: children 4-7); the back half stays empty.
     for (const o of [4, 5, 6, 7]) expect(sub.children[o]).toEqual({ slot: SLOT_M })
-    for (const o of [0, 1, 2, 3]) expect(sub.children[o]).toEqual({ slot: { kind: 'base', index: 0 } })
+    for (const o of [0, 1, 2, 3]) expect(sub.children[o]).toBeNull()
   })
 
   it('erases content only, clearing the subdivision only when already empty', () => {
@@ -1253,9 +1251,11 @@ describe('detail quadrants in 2D', () => {
     s.eraseCell([0, 0, 0], 0, 0)
     s.commitStroke()
     let sub = useAppStore.getState().model.subdiv.get(encodeKey(0, 0, 0))!
+    // JIT splits start half-empty: erasing (0,0) nulls the painted front child 6
+    // (back child 2 was already null), leaving the other front pair live.
     expect(sub.children[6]).toBeNull()
     expect(sub.children[2]).toBeNull()
-    expect(sub.children.filter(Boolean)).toHaveLength(6)
+    expect(sub.children.filter(Boolean)).toHaveLength(3)
     // Erase the other three quadrants: content gone, structure kept for repainting.
     s.beginStroke()
     s.eraseCell([0, 0, 0], 1, 0)
@@ -1273,7 +1273,7 @@ describe('detail quadrants in 2D', () => {
     expect(useAppStore.getState().model.subdiv.has(encodeKey(0, 0, 0))).toBe(false)
   })
 
-  it('recolors the hovered pair only', () => {
+  it('recolors the hovered live child only', () => {
     subdividedAt(0, -1)
     const s = useAppStore.getState()
     useAppStore.getState().setActivePaletteSlot(SLOT_M)
@@ -1281,10 +1281,10 @@ describe('detail quadrants in 2D', () => {
     expect(s.paintMaterialCell(0, -1, 1, 1)).toBe(true)
     s.commitStroke()
     const sub = useAppStore.getState().model.subdiv.get(encodeKey(0, 0, 0))!
+    // Quadrant (1,1) addresses [5, 1] front-sorted, but only the live front child 5
+    // recolors — JIT back children are empty holes, not inherited cubes.
     const changed = sub.children.map((c, i) => (c?.slot.kind === 'metal' ? i : -1)).filter((i) => i >= 0)
-    expect(changed).toHaveLength(2)
-    // The pair differs from quadrant (0,0)'s pair — different in-plane quarter.
-    expect(new Set(changed)).not.toEqual(new Set([6, 2]))
+    expect(changed).toEqual([5])
     // Same-slot recolor is a no-op.
     s.beginStroke()
     expect(s.paintMaterialCell(0, -1, 1, 1)).toBe(false)
@@ -1326,7 +1326,7 @@ describe('detail quadrants in 2D', () => {
       slot: SLOT_B,
       chamfer: { planeAxis: 'z', planeOrientation: 1, resolvedTo: { shapeKind: 'ramp', rotation: 2 } },
     })
-    expect(sub.children[2]).toEqual({ slot: SLOT_B })
+    expect(sub.children[2]).toBeNull()
   })
 
   it('leaves ramps unresolved without neighbors, then resolves them on a later stroke', () => {
@@ -1470,25 +1470,23 @@ describe('detail quadrants in 2D', () => {
     expect(useAppStore.getState().model.subdiv.get(encodeKey(0, 0, 0))!.children[6]!.chamfer!.resolvedTo).toEqual({ shapeKind: 'ramp', rotation: 3 })
   })
 
-  it('subdivides with an explicit split (u-split → 2 children)', () => {
+  it('splits with the armed grid division directly (half → 2 children)', () => {
     const s = useAppStore.getState()
+    useAppStore.getState().setGridDivision('half') // arms ['x']
     s.beginStroke()
     expect(s.paintCell(0, -1)).toBe(true)
-    s.commitStroke()
-    s.setPendingSplit(['x'])
-    s.beginStroke()
-    expect(s.toggleSubdivideCell(0, -1)).toBe(true)
     s.commitStroke()
     const sub = useAppStore.getState().model.subdiv.get(encodeKey(0, 0, 0))!
     expect(sub.split).toEqual(['x'])
     expect(sub.children).toHaveLength(2)
-    // Painting one quadrant of a u-split addresses the matching half (both qv map to it).
+    // Painting one quadrant of an x-split addresses the matching half (both qv map to it).
     useAppStore.getState().setActivePaletteSlot(SLOT_M)
     s.beginStroke()
     expect(s.paintCell(0, -1, 1, 0)).toBe(true)
     s.commitStroke()
     const after = useAppStore.getState().model.subdiv.get(encodeKey(0, 0, 0))!
     expect(after.children[1]).toEqual({ slot: SLOT_M })
+    // An x-split has no depth axis, so the whole entry (both halves) takes the paint.
     expect(after.children[0]).toEqual({ slot: SLOT_B })
   })
 
@@ -1501,11 +1499,9 @@ describe('detail quadrants in 2D', () => {
     }
     s.commitStroke()
     const mid = gridCoordFromPixel(PLANE, 0, 0)
+    // Scaffold the middle (empty entry, no paint) — the flood stops at it.
     s.beginStroke()
-    expect(s.paintCell(0, 0)).toBe(true)
-    s.commitStroke()
-    s.beginStroke()
-    expect(s.toggleSubdivideAtCoord(mid)).toBe(true)
+    expect(s.ensureSubdividedAt(mid)).toBe(true)
     s.commitStroke()
     // Filling from inside the ring: the flood stops at the subdivided cell (no color there
     // to match, and it blocks traversal), so nothing paints.
@@ -1513,11 +1509,11 @@ describe('detail quadrants in 2D', () => {
     s.floodFill(0, 0)
     s.commitStroke()
     const sub = useAppStore.getState().model.subdiv.get(encodeKey(...mid))!
-    expect(sub.children.every((c) => c?.slot.kind === 'base')).toBe(true)
+    expect(sub.children.every((c) => c === null)).toBe(true)
   })
 })
 
-describe('subdivision advance cycling and pending splits', () => {
+describe('grid just-in-time splits', () => {
   const SLOT_M = { kind: 'metal', index: 1 } as const
   const SLOT_B = { kind: 'base', index: 0 } as const
   beforeEach(() => {
@@ -1531,180 +1527,129 @@ describe('subdivision advance cycling and pending splits', () => {
 
   function subdividedAt(u: number, v: number, pending?: SplitAxis[] | null) {
     if (pending !== undefined) useAppStore.getState().setPendingSplit(pending)
+    // The armed grid splits fresh cells on first paint — no separate split step.
     const s = useAppStore.getState()
     s.beginStroke()
     expect(s.paintCell(u, v)).toBe(true)
     s.commitStroke()
-    const coord = gridCoordFromPixel(PLANE, u, v)
-    s.beginStroke()
-    expect(s.toggleSubdivideAtCoord(coord)).toBe(true)
-    s.commitStroke()
-    return coord
+    return gridCoordFromPixel(PLANE, u, v)
   }
 
-  it('splits with the pending division and adopts it', () => {
+  it('splits fresh voxels with the armed division on paint, leaving the grid alone', () => {
     useAppStore.getState().setPendingSplit(['z'])
     subdividedAt(0, -1)
     expect(useAppStore.getState().model.subdiv.get(encodeKey(0, 0, 0))!.split).toEqual(['z'])
     expect(useAppStore.getState().pendingSplit).toEqual(['z'])
   })
 
-  it('plain taps with no pending division toast a hint and change nothing', () => {
+  it('whole grid paints whole voxels and empty space, splitting nothing', () => {
     useAppStore.getState().setPendingSplit(null)
     const s = useAppStore.getState()
     s.beginStroke()
     expect(s.paintCell(0, -1)).toBe(true)
     s.commitStroke()
     s.beginStroke()
-    expect(s.toggleSubdivideAtCoord(gridCoordFromPixel(PLANE, 0, -1))).toBe(false)
+    expect(s.paintCell(2, 2)).toBe(true)
     s.commitStroke()
-    expect(useAppStore.getState().model.subdiv.size).toBe(0)
+    const after = useAppStore.getState()
+    expect(after.model.subdiv.size).toBe(0)
+    expect(after.model.color.has(encodeKey(0, 0, 0))).toBe(true)
+    expect(after.model.color.has(keyFor(2, 2))).toBe(true)
   })
 
-  it('scaffolds empty space with the pending division and active slot', () => {
+  it('painting empty space scaffolds, then paints the hovered set in place', () => {
     useAppStore.getState().setPendingSplit(['x', 'y'])
     useAppStore.getState().setActivePaletteSlot(SLOT_M)
     const coord = gridCoordFromPixel(PLANE, 2, 2)
     const s = useAppStore.getState()
     s.beginStroke()
-    expect(s.toggleSubdivideAtCoord(coord)).toBe(true)
+    expect(s.paintCell(2, 2)).toBe(true)
     s.commitStroke()
     const after = useAppStore.getState()
     const sub = after.model.subdiv.get(encodeKey(...coord))!
     expect(sub.scaffold).toBe(true)
     expect(sub.split).toEqual(['x', 'y'])
     expect(sub.slot).toEqual(SLOT_M)
-    expect(sub.children.every((c) => c === null)).toBe(true)
-    expect(after.model.color.has(encodeKey(...coord))).toBe(false)
-    expect(after.pendingSplit).toEqual(['x', 'y'])
-  })
-
-  it('empty taps with no pending division toast a hint and change nothing', () => {
-    useAppStore.getState().setPendingSplit(null)
-    const coord = gridCoordFromPixel(PLANE, 2, 2)
-    const s = useAppStore.getState()
-    s.beginStroke()
-    expect(s.toggleSubdivideAtCoord(coord)).toBe(false)
-    s.commitStroke()
-    expect(useAppStore.getState().model.subdiv.size).toBe(0)
-  })
-
-  it('a scaffold paints per-child, then tapping past the end clears it', () => {
-    useAppStore.getState().setPendingSplit(['x', 'y', 'z'])
-    const s = useAppStore.getState()
-    const coord = gridCoordFromPixel(PLANE, 0, -1)
-    s.beginStroke()
-    expect(s.toggleSubdivideAtCoord(coord)).toBe(true)
-    s.commitStroke()
-    // Paint one octant through the quadrant path.
-    s.beginStroke()
-    expect(s.paintCell(0, -1, 1, 1)).toBe(true)
-    s.commitStroke()
-    expect(useAppStore.getState().model.subdiv.get(encodeKey(...coord))!.children.some((c) => c !== null)).toBe(true)
-    // A full split advances straight past the end — the scaffold vanishes, no cube appears.
-    s.beginStroke()
-    expect(s.toggleSubdivideAtCoord(coord)).toBe(true)
-    s.commitStroke()
-    const after = useAppStore.getState()
-    expect(after.model.subdiv.has(encodeKey(...coord))).toBe(false)
     expect(after.model.color.has(encodeKey(...coord))).toBe(false)
   })
 
-  it('Alt forces the full split regardless of pending', () => {
-    useAppStore.getState().setPendingSplit(['x'])
-    subdividedAt(0, -1)
-    const after = useAppStore.getState()
-    expect(after.model.subdiv.get(encodeKey(0, 0, 0))!.split).toEqual(['x'])
-    // Alt on an already-subdivided cell re-splits to full.
-    const s = useAppStore.getState()
-    s.beginStroke()
-    expect(s.toggleSubdivideAtCoord([0, 0, 0], true)).toBe(true)
-    s.commitStroke()
-    expect(useAppStore.getState().model.subdiv.get(encodeKey(0, 0, 0))!.split).toEqual(['x', 'y', 'z'])
-  })
-
-  it('taps cycle within the voxel family without touching the toolbar, then merge past the end', () => {
+  it('repainting a subdivided voxel paints detail in place, never re-splits', () => {
     subdividedAt(0, -1, ['x'])
-    const s = useAppStore.getState()
-    // x → y → z; the toolbar keeps its division (no axis state in the tool).
-    for (const want of [['y'], ['z']]) {
-      s.beginStroke()
-      expect(s.toggleSubdivideAtCoord([0, 0, 0])).toBe(true)
-      s.commitStroke()
-      expect(useAppStore.getState().model.subdiv.get(encodeKey(0, 0, 0))!.split).toEqual(want)
-    }
-    expect(useAppStore.getState().pendingSplit).toEqual(['x'])
-    // Past the end of the family → merge back to a cube.
-    s.beginStroke()
-    expect(s.toggleSubdivideAtCoord([0, 0, 0])).toBe(true)
-    s.commitStroke()
-    const after = useAppStore.getState()
-    expect(after.model.subdiv.has(encodeKey(0, 0, 0))).toBe(false)
-    expect(after.model.color.has(encodeKey(0, 0, 0))).toBe(true)
-    // The next plain tap splits with the unchanged toolbar division — the cycle restarts.
-    s.beginStroke()
-    expect(s.toggleSubdivideAtCoord([0, 0, 0])).toBe(true)
-    s.commitStroke()
-    expect(useAppStore.getState().model.subdiv.get(encodeKey(0, 0, 0))!.split).toEqual(['x'])
-  })
-
-  it('taps cycle the voxel family even when the toolbar names another one, and whole merges back', () => {
-    subdividedAt(0, -1, ['x'])
-    // A different toolbar family does NOT divert the cycle — taps follow voxel state.
-    useAppStore.getState().setPendingSplit(['x', 'y'])
-    const s = useAppStore.getState()
-    s.beginStroke()
-    expect(s.toggleSubdivideAtCoord([0, 0, 0])).toBe(true)
-    s.commitStroke()
-    expect(useAppStore.getState().model.subdiv.get(encodeKey(0, 0, 0))!.split).toEqual(['y'])
-    expect(useAppStore.getState().pendingSplit).toEqual(['x', 'y'])
-    // Whole mode (nothing selected) merges back to a cube.
-    useAppStore.getState().setPendingSplit(null)
-    s.beginStroke()
-    expect(s.toggleSubdivideAtCoord([0, 0, 0])).toBe(true)
-    s.commitStroke()
-    const after = useAppStore.getState()
-    expect(after.model.subdiv.has(encodeKey(0, 0, 0))).toBe(false)
-    expect(after.model.color.has(encodeKey(0, 0, 0))).toBe(true)
-  })
-
-  it('plain splits adopt the toolbar division, and taps cycle without adopting', () => {
-    expect(useAppStore.getState().pendingSplit).toEqual(['x', 'y', 'z'])
-    subdividedAt(0, -1, ['y'])
-    expect(useAppStore.getState().pendingSplit).toEqual(['y'])
-    // Tapping advances within the family but leaves the toolbar alone.
-    const s = useAppStore.getState()
-    s.beginStroke()
-    expect(s.toggleSubdivideAtCoord([0, 0, 0])).toBe(true)
-    s.commitStroke()
-    expect(useAppStore.getState().model.subdiv.get(encodeKey(0, 0, 0))!.split).toEqual(['z'])
-    expect(useAppStore.getState().pendingSplit).toEqual(['y'])
-    // Alt forces full as a momentary override — the toolbar keeps its division.
-    s.beginStroke()
-    expect(s.toggleSubdivideAtCoord([0, 0, 0], true)).toBe(true)
-    s.commitStroke()
-    expect(useAppStore.getState().model.subdiv.get(encodeKey(0, 0, 0))!.split).toEqual(['x', 'y', 'z'])
-    expect(useAppStore.getState().pendingSplit).toEqual(['y'])
-  })
-
-  it('explicit re-split replaces the division and preserves content by overlap', () => {
-    subdividedAt(0, -1, ['x'])
-    // Paint the x-high half metal.
+    // A different armed grid does NOT divert the entry — detail paints onto the
+    // voxel's own split.
+    useAppStore.getState().setPendingSplit(['y'])
     useAppStore.getState().setActivePaletteSlot(SLOT_M)
     const s = useAppStore.getState()
     s.beginStroke()
     expect(s.paintCell(0, -1, 1, 0)).toBe(true)
     s.commitStroke()
-    // Alt-style explicit re-split to 8: the metal half's volume maps onto its octants.
-    s.beginStroke()
-    expect(s.toggleSubdivideAtCoord([0, 0, 0], true)).toBe(true)
-    s.commitStroke()
     const sub = useAppStore.getState().model.subdiv.get(encodeKey(0, 0, 0))!
-    expect(sub.split).toEqual(['x', 'y', 'z'])
-    const metal = sub.children.map((c, i) => (c?.slot.kind === 'metal' ? i : -1)).filter((i) => i >= 0)
-    // The x-high half covers octants with dx=1: 1, 3, 5, 7 (overlap remap preserves by
-    // volume — the front-most paint rule applies to taps, not to content migration).
-    expect(metal).toEqual([1, 3, 5, 7])
+    expect(sub.split).toEqual(['x'])
+    expect(sub.children[1]).toEqual({ slot: SLOT_M })
+    expect(useAppStore.getState().pendingSplit).toEqual(['y'])
+  })
+
+  it('splitting a chamfered voxel clears its bevel first, then splits', () => {
+    // Bevel a cube with whole grid armed (no split on paint).
+    useAppStore.getState().setPendingSplit(null)
+    useAppStore.getState().setActiveVoxelKind('ramp')
+    const s = useAppStore.getState()
+    s.beginStroke()
+    expect(s.paintCell(0, -1)).toBe(true)
+    s.commitStroke()
+    expect(useAppStore.getState().model.chamfer.has(encodeKey(0, 0, 0))).toBe(true)
+    // Painting detail onto it clears the bevel and splits — detail wins.
+    useAppStore.getState().setActiveVoxelKind('cube')
+    useAppStore.getState().setPendingSplit(['z'])
+    useAppStore.getState().setActivePaletteSlot(SLOT_M)
+    s.beginStroke()
+    expect(s.paintCell(0, -1)).toBe(true)
+    s.commitStroke()
+    const after = useAppStore.getState()
+    expect(after.model.chamfer.has(encodeKey(0, 0, 0))).toBe(false)
+    expect(after.model.subdiv.get(encodeKey(0, 0, 0))!.split).toEqual(['z'])
+  })
+
+  it('setGridDivision arms families and re-clicks cycle them globally', () => {
+    const after = () => useAppStore.getState()
+    after().setGridDivision('half')
+    expect(after().pendingSplit).toEqual(['x'])
+    expect(after().gridFamily).toBe('half')
+    // Re-click cycles the family globally (no voxel involved).
+    after().setGridDivision('half')
+    expect(after().pendingSplit).toEqual(['y'])
+    after().setGridDivision('half')
+    expect(after().pendingSplit).toEqual(['z'])
+    after().setGridDivision('half')
+    expect(after().pendingSplit).toEqual(['x'])
+    // Quarters cycle their leave-order; octal is singular; whole clears.
+    after().setGridDivision('quarter')
+    expect(after().pendingSplit).toEqual(['y', 'z'])
+    after().setGridDivision('quarter')
+    expect(after().pendingSplit).toEqual(['x', 'z'])
+    after().setGridDivision('quarter')
+    expect(after().pendingSplit).toEqual(['x', 'y'])
+    after().setGridDivision('quarter')
+    expect(after().pendingSplit).toEqual(['y', 'z'])
+    after().setGridDivision('octal')
+    expect(after().pendingSplit).toEqual(['x', 'y', 'z'])
+    after().setGridDivision('octal')
+    expect(after().pendingSplit).toEqual(['x', 'y', 'z'])
+    after().setGridDivision('whole')
+    expect(after().pendingSplit).toBeNull()
+    expect(after().gridFamily).toBe('whole')
+  })
+
+  it('switching grids mid-stream only affects fresh voxels', () => {
+    subdividedAt(0, -1, ['x'])
+    useAppStore.getState().setPendingSplit(['y'])
+    const s = useAppStore.getState()
+    s.beginStroke()
+    expect(s.paintCell(2, -1)).toBe(true)
+    s.commitStroke()
+    const after = useAppStore.getState()
+    expect(after.model.subdiv.get(encodeKey(0, 0, 0))!.split).toEqual(['x'])
+    expect(after.model.subdiv.get(encodeKey(2, 0, 0))!.split).toEqual(['y'])
   })
 
   it('3D per-child edits always work (no scope gates)', () => {
@@ -1722,26 +1667,31 @@ describe('subdivision advance cycling and pending splits', () => {
       useAppStore.getState().setPlaneHalf(null)
     })
 
-    it('paints only the active slab of a subdivided voxel, refusing plain cubes', () => {
+    it('paints only the active slab, splitting plain cubes just-in-time', () => {
       subdividedAt(0, -1) // full 8-way split at (0,0,0), base slots
       useAppStore.getState().setPlaneHalf(1)
       useAppStore.getState().setActivePaletteSlot(SLOT_M)
       const s = useAppStore.getState()
       s.beginStroke()
-      s.paintCell(2, 2) // plain cube — refused silently
+      // Plain cubes split on paint even on half-step, clipped to the active slab.
+      expect(s.paintCell(2, 2)).toBe(true)
       // Quadrant (0,0) addresses children [6, 2] (front-sorted); slab 1 keeps only 6.
       expect(s.paintCell(0, -1, 0, 0)).toBe(true)
       s.commitStroke()
       const after = useAppStore.getState()
-      expect(after.model.color.has(keyFor(2, 2))).toBe(false)
+      const fresh = after.model.subdiv.get(keyFor(2, 2))!
+      expect(fresh.split).toEqual(['x', 'y', 'z'])
+      for (const o of [4, 5, 6, 7]) expect(fresh.children[o]).toEqual({ slot: SLOT_M })
+      for (const o of [0, 1, 2, 3]) expect(fresh.children[o]).toBeNull()
       const sub = after.model.subdiv.get(encodeKey(0, 0, 0))!
       expect(sub.children[6]).toEqual({ slot: SLOT_M })
-      expect(sub.children[2]).toEqual({ slot: SLOT_B })
+      expect(sub.children[2]).toBeNull()
     })
 
     it('erases only the active slab, refusing plain cubes', () => {
       subdividedAt(0, -1)
-      // Seed a plain cube elsewhere in whole-voxel mode first.
+      // Seed a plain cube elsewhere in whole-voxel mode first (the grid would split it).
+      useAppStore.getState().setGridDivision('whole')
       const s = useAppStore.getState()
       s.beginStroke()
       expect(s.paintCell(2, 2)).toBe(true)
@@ -1755,47 +1705,45 @@ describe('subdivision advance cycling and pending splits', () => {
       expect(after.model.color.has(keyFor(2, 2))).toBe(true)
       const sub = after.model.subdiv.get(encodeKey(0, 0, 0))!
       expect(sub.children[6]).toBeNull()
-      expect(sub.children[2]).not.toBeNull()
+      // JIT back children start empty — nothing to erase there.
+      expect(sub.children[2]).toBeNull()
     })
 
     it('recolors only the active slab, refusing plain cubes', () => {
       subdividedAt(0, -1)
+      // Seed a plain cube elsewhere in whole-voxel mode first (the grid would split it).
+      useAppStore.getState().setGridDivision('whole')
       const s = useAppStore.getState()
       s.beginStroke()
       expect(s.paintCell(2, 2)).toBe(true)
       s.commitStroke()
-      useAppStore.getState().setPlaneHalf(0)
+      useAppStore.getState().setPlaneHalf(1)
       useAppStore.getState().setActivePaletteSlot(SLOT_M)
       s.beginStroke()
       expect(s.paintMaterialCell(2, 2)).toBe(false)
+      // Quadrant (0,0) addresses [6, 2]; slab 1 recolors the live front child 6 only
+      // (the JIT back child is an empty hole — recolor never paints into holes).
       expect(s.paintMaterialCell(0, -1, 0, 0)).toBe(true)
       s.commitStroke()
       const after = useAppStore.getState()
       expect(after.model.color.get(keyFor(2, 2))).toEqual({ paletteSlot: SLOT_B })
       const sub = after.model.subdiv.get(encodeKey(0, 0, 0))!
-      // Slab 0 keeps the depth-back child 2; the front child 6 is untouched.
-      expect(sub.children[2]).toEqual({ slot: SLOT_M })
-      expect(sub.children[6]).toEqual({ slot: SLOT_B })
+      expect(sub.children[6]).toEqual({ slot: SLOT_M })
+      expect(sub.children[2]).toBeNull()
     })
 
-    it('refuses splitting and scaffolding, but advances subdivided cells', () => {
-      subdividedAt(0, -1, ['x'])
+    it('half-step paint splits plain cubes to the armed grid, clipped to the slab', () => {
+      subdividedAt(0, -1)
       useAppStore.getState().setPlaneHalf(1)
+      // Plain paint on half-step splits just-in-time instead of refusing.
+      useAppStore.getState().setActivePaletteSlot(SLOT_M)
       const s = useAppStore.getState()
       s.beginStroke()
-      expect(s.toggleSubdivideAtCoord(gridCoordFromPixel(PLANE, 2, 2))).toBe(false)
-      // Same family → advance within the family.
-      expect(s.toggleSubdivideAtCoord([0, 0, 0])).toBe(true)
-      s.commitStroke()
-      expect(useAppStore.getState().model.subdiv.get(encodeKey(0, 0, 0))!.split).toEqual(['y'])
-      // A different toolbar family does NOT divert the cycle on half-step either.
-      useAppStore.getState().setPendingSplit(['y', 'z'])
-      s.beginStroke()
-      expect(s.toggleSubdivideAtCoord([0, 0, 0])).toBe(true)
+      expect(s.paintCell(2, 2)).toBe(true)
       s.commitStroke()
       const after = useAppStore.getState()
-      expect(after.model.subdiv.has(keyFor(2, 2))).toBe(false)
-      expect(after.model.subdiv.get(encodeKey(0, 0, 0))!.split).toEqual(['z'])
+      expect(after.model.subdiv.get(keyFor(2, 2))?.split).toEqual(['x', 'y', 'z'])
+      expect(after.model.color.has(keyFor(2, 2))).toBe(false)
     })
 
     it('3D per-child writes clip to the slab and the slice', () => {
@@ -1814,11 +1762,14 @@ describe('subdivision advance cycling and pending splits', () => {
       s.commitStroke()
       const sub = useAppStore.getState().model.subdiv.get(encodeKey(0, 0, 0))!
       expect(sub.children[6]).toEqual({ slot: SLOT_M })
-      expect(sub.children[2]).toEqual({ slot: SLOT_B })
+      // JIT back children start empty — the depth-back child stays null.
+      expect(sub.children[2]).toBeNull()
     })
 
     it('fillSelection refuses on half-step', () => {
       const s = useAppStore.getState()
+      // Seed a plain cube in whole-voxel mode (the grid would split it).
+      useAppStore.getState().setGridDivision('whole')
       s.beginStroke()
       expect(s.paintCell(2, 2)).toBe(true)
       s.commitStroke()

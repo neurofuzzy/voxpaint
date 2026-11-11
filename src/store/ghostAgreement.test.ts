@@ -47,6 +47,7 @@ function ghostFor(target: Coord, axis: Axis = 'z', orientation: Orientation = 1)
     activeTool: s.activeTool,
     directEdit: false,
     gridExtent: s.meta.gridExtent,
+    pendingSplit: s.pendingSplit,
   })
 }
 
@@ -375,24 +376,28 @@ describe('half-step ghost suppression', () => {
     const target: Coord = [4, 4, 0]
     expect(ghostFor(target)?.kind).toBe('cube') // control: whole mode still ghosts
     useAppStore.getState().setPlaneHalf(1)
-    expect(ghostFor(target)).toBeNull()
+    const s = useAppStore.getState()
+    const input = {
+      model: s.model, plane: s.plane, hoverCell: target, hoveredFace: null, activeVoxelKind: s.activeVoxelKind,
+      brushRotation: s.brushRotation, activeTool: s.activeTool, directEdit: false, gridExtent: s.meta.gridExtent,
+    }
+    // A slab with no grid cut behind it refuses plain cells (a whole cube would straddle it)...
+    expect(resolveGhostPlacement(input)).toBeNull()
+    // ...but when the grid cuts the axis a tap splits the cell, so it ghosts.
+    expect(resolveGhostPlacement({ ...input, pendingSplit: ['z'] })?.kind).toBe('cube')
   })
 
-  it('keeps the subdivide ghost on subdivided cells, hides it on plain ones', () => {
+  it('hides the paint ghost on occupied voxels, keeps it on empty ones', () => {
     const s = useAppStore.getState()
-    s.setActiveTool('subdivide')
+    // Armed grid splits the painted voxel just-in-time.
+    s.setPendingSplit(['x', 'y', 'z'])
     s.beginStroke()
     expect(s.paintCellAtCoord([0, 0, 0], 'z', 1)).toBe(true)
     s.commitStroke()
-    s.beginStroke()
-    expect(s.toggleSubdivideAtCoord([0, 0, 0])).toBe(true)
-    s.commitStroke()
-    // Whole mode: parent-volume ghost on both.
-    expect(ghostFor([0, 0, 0])?.kind).toBe('cube')
+    // No ghost on the subdivided voxel (detail paints the hovered child, not the
+    // parent volume — the octant blink carries the feedback), parent-volume ghost
+    // on empty cells (paint scaffolds and paints them).
+    expect(ghostFor([0, 0, 0])).toBeNull()
     expect(ghostFor([4, 4, 0])?.kind).toBe('cube')
-    useAppStore.getState().setPlaneHalf(1)
-    // Half-step: subdivided keeps its preview, plain cells go dark.
-    expect(ghostFor([0, 0, 0])?.kind).toBe('cube')
-    expect(ghostFor([4, 4, 0])).toBeNull()
   })
 })

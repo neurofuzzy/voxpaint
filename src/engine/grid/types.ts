@@ -65,6 +65,13 @@ export type BBox = {
  */
 export type SplitAxis = 'x' | 'y' | 'z'
 
+/**
+ * Global edit grid: the toolbar's 4-way picker. Whole paints unit voxels; half, quarter,
+ * and octal arm a world-axis division that paint/fill writes split to just-in-time.
+ * The armed division lives in the store's pendingSplit; this names which button owns it.
+ */
+export type GridFamily = 'whole' | 'half' | 'quarter' | 'octal'
+
 export type DetailChild = {
   slot: PaletteSlotRef
   /** Frozen explicit shape, scaled to fill the subcell's bounding box. Absent = plain cube. */

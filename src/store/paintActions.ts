@@ -1,7 +1,7 @@
 import type { StateCreator } from 'zustand'
 import { decodeKey, encodeKey, expandBounds, withinWorkingBounds } from '@/engine/grid/GridStore'
-import { childInSlab, coarsenCell, eraseSubCell, frontSlabBit, getSubdivCell, isSubdivided, isValidSubCellIndex, paintSubCell, quadrantSubcells, remapChildren, advanceSplit, describeSplitUVW, sampleDetailNeighborhood, scaffoldCell, subdivideCell, writeSubCell } from '@/engine/grid/subdiv'
-import type { Axis, CellKey, Coord, Orientation, Rotation, SplitAxis } from '@/engine/grid/types'
+import { childInSlab, ensureSplitForPaint, eraseSubCell, frontSlabBit, getSubdivCell, isSubdivided, isValidSubCellIndex, paintSubCell, quadrantSubcells, sampleDetailNeighborhood, writeSubCell } from '@/engine/grid/subdiv'
+import type { Axis, CellKey, Coord, Orientation, Rotation } from '@/engine/grid/types'
 import type { PaletteSlotRef } from '@/engine/palette/types'
 import type { ConstructionPlane } from '@/engine/plane/types'
 import { classify, resolveDetailChamferCellsOnPlane, sampleNeighbors } from '@/engine/chamfer/chamferResolver'
@@ -79,6 +79,40 @@ function nextBevelTurn(shape: BevelFamilyKind, rotation: Rotation, brush: Rotati
   const next = ((rotation + 1) % 4) as Rotation
   if (next === brush) return { shapeKind: BEVEL_FAMILY[(BEVEL_FAMILY.indexOf(shape) + 1) % BEVEL_FAMILY.length], rotation: brush }
   return { shapeKind: shape, rotation: next }
+}
+
+/**
+ * Grid-aware paint write: when a grid division is armed and the cell isn't subdivided
+ * yet, it splits just-in-time (plain → subdivide, empty → scaffold, chamfered bevel
+ * cleared first) and the write lands on detail; otherwise the write goes through the
+ * unchanged whole-voxel path. Callers run this inside their own set() producer so
+ * split+paint share one undo stroke. Returns false only when the JIT split fails.
+ */
+function paintWithGridSplit(
+  state: AppState,
+  plane: ConstructionPlane,
+  coord: Coord,
+  u: number,
+  v: number,
+  qu: number | undefined,
+  qv: number | undefined,
+  kind: VoxelKind,
+  slot: PaletteSlotRef,
+  stamp: boolean,
+): boolean {
+  const key = encodeKey(...coord)
+  const gridSplit = state.pendingSplit
+  if (gridSplit && !state.model.subdiv.has(key)) {
+    if (!ensureSplitForPaint(state.model, coord, gridSplit, slot)) return false
+  }
+  if (state.model.subdiv.has(key)) {
+    const brush = (state.brushRotation ?? 0) as Rotation
+    return kind === 'cube'
+      ? paintDetailQuadrants(state, plane, coord, qu, qv, slot)
+      : stampDetailShape(state, plane, coord, qu, qv, slot, kind, brush)
+  }
+  applyPaintCell(state, coord, u, v, plane, kind, slot, stamp)
+  return true
 }
 
 /**
@@ -809,49 +843,30 @@ export const createPaintActionsSlice: Slice = (set, get) => ({
       get().flashSelectionBlocked()
       return false
     }
-    // Detail is quadrant-addressed: paint stamps the hovered set (a depth pair for 8-splits,
-    // fewer for partial splits), or the whole entry when the gesture carries no continuous
-    // position (shift-lines, synthetic events). Ramp/wedge kinds auto-bevel from the subcell
-    // neighborhood; every other chamfer kind writes frozen explicit shapes (scaled to fill
-    // at render/export).
-    if (isSubdivided(get().model, coord)) {
-        const brush = (get().brushRotation ?? 0) as Rotation
-      const kind = activeVoxelKind
-      let ok = false
-      set((state) => {
-        ok = kind === 'cube'
-          ? paintDetailQuadrants(state, plane, coord, qu, qv, activePaletteSlot)
-          : stampDetailShape(state, plane, coord, qu, qv, activePaletteSlot, kind, brush)
-      })
-      return ok
-    }
-
+    // Grid-aware write: an armed grid division splits fresh cells just-in-time and the
+    // paint lands on detail (quadrant-addressed for subdivided parents, front slab for
+    // fresh splits); whole grid paints unit voxels as before. Detail is quadrant-addressed:
+    // paint stamps the hovered set (a depth pair for 8-splits, fewer for partial splits),
+    // or the whole entry when the gesture carries no continuous position (shift-lines,
+    // synthetic events). Ramp/wedge kinds auto-bevel from the subcell neighborhood; every
+    // other chamfer kind writes frozen explicit shapes (scaled to fill at render/export).
+    const kind = activeVoxelKind
+    let ok = false
     set((state) => {
-      applyPaintCell(state, coord, u, v, plane, activeVoxelKind, activePaletteSlot)
+      ok = paintWithGridSplit(state, plane, coord, u, v, qu, qv, kind, activePaletteSlot, false)
     })
-    return true
-  },
-
-  toggleSubdivideCell: (u: number, v: number, alt = false) => {
-    get().bakeFloatIfAny()
-    const { plane, selection, meta } = get()
-    const coord = gridCoordFromPixel(plane, u, v)
-    if (!withinWorkingBounds(coord, meta.gridExtent)) return false
-    if (selection && !isCellSelected(selection, u, v)) {
-      get().flashSelectionBlocked()
-      return false
-    }
-    return get().toggleSubdivideAtCoord(coord, alt)
+    return ok
   },
 
   paintCellAtCoord: (coord: Coord, faceAxis: Axis, faceOrientation: Orientation) => {
     get().bakeFloatIfAny()
     const { activeVoxelKind, activePaletteSlot, meta } = get()
     if (!withinWorkingBounds(coord, meta.gridExtent)) return false
-    // Subdivided parents never take the full-cell path (see applyPaintCell): taps route
-    // per-octant through paintSubCellAtCoord in Viewport3D, and chamfer kinds can't address
-    // half-cells. Silent — touch drags pass through here per move, so no toast (discrete
-    // taps toast at the call site instead).
+    // Already-subdivided parents never take the full-cell path: taps route per-octant
+    // through paintSubCellAtCoord in Viewport3D (which ensures the split first for fresh
+    // cells, preserving hovered-child precision). Fresh cells split just-in-time here and
+    // paint the front slab. Chamfer kinds can't address half-cells — silent, since touch
+    // drags pass through here per move.
     if (isSubdivided(get().model, coord)) return false
     // The caller-supplied axis/orientation (3D taps pass the active construction plane, so
     // orientation always matches the brush preview — never the raycast face) on the target
@@ -860,15 +875,17 @@ export const createPaintActionsSlice: Slice = (set, get) => ({
     // and can't meaningfully clip a different face's slice.)
     const facePlane: ConstructionPlane = { axis: faceAxis, orientation: faceOrientation, offset: coord[axisIndex(faceAxis)], half: null }
     const { u, v } = pixelFromGridCoord(facePlane, coord)
+    const kind = activeVoxelKind
+    let ok = false
     set((state) => {
-      applyPaintCell(state, coord, u, v, facePlane, activeVoxelKind, activePaletteSlot)
+      ok = paintWithGridSplit(state, facePlane, coord, u, v, undefined, undefined, kind, activePaletteSlot, false)
     })
-    return true
+    return ok
   },
 
   paintLineAtCoord: (coord: Coord, extend: boolean) => {
     get().bakeFloatIfAny()
-    const { plane, activeVoxelKind, activePaletteSlot, meta, paintLineAnchor } = get()
+    const { plane, meta, paintLineAnchor } = get()
     // Every tap re-establishes the anchor — chaining for the next shift-click.
     get().setPaintLineAnchor({ coord, axis: plane.axis, orientation: plane.orientation })
     // Without a usable anchor (none yet, or the plane frame changed since) — or when the
@@ -884,12 +901,15 @@ export const createPaintActionsSlice: Slice = (set, get) => ({
     if (paintLineAnchor && anchorUsable && onSlice) {
       const a = pixelFromGridCoord(plane, paintLineAnchor.coord)
       const b = pixelFromGridCoord(plane, coord)
+      const kind = get().activeVoxelKind
+      const slot = get().activePaletteSlot
       set((state) => {
         for (const [lu, lv] of dominantAxisLine(a.u, a.v, b.u, b.v)) {
           const c = gridCoordFromPixel(plane, lu, lv)
           if (!withinWorkingBounds(c, meta.gridExtent)) continue
-          // Replace-only (2D parity): every line cell overwrites, like single taps.
-          applyPaintCell(state, c, lu, lv, plane, activeVoxelKind, activePaletteSlot)
+          // Replace-only (2D parity): every line cell overwrites, like single taps —
+          // splitting just-in-time to the armed grid like they do.
+          if (!paintWithGridSplit(state, plane, c, lu, lv, undefined, undefined, kind, slot, false)) ok = false
         }
       })
     } else {
@@ -928,126 +948,22 @@ export const createPaintActionsSlice: Slice = (set, get) => ({
     })
   },
 
-  toggleSubdivideAtCoord: (coord: Coord, alt = false) => {
+  ensureSubdividedAt: (coord: Coord) => {
     get().bakeFloatIfAny()
-    const { meta, plane } = get()
-    if (!withinWorkingBounds(coord, meta.gridExtent)) return false
-    const sub = getSubdivCell(get().model, coord)
-    const FULL: SplitAxis[] = ['x', 'y', 'z']
-    // Half-step admits subdivided voxels only — splitting or scaffolding would straddle
-    // the slab. Re-splitting an existing subdivision stays allowed (it only repartitions).
-    if (plane.half !== null && !sub) {
-      showToast('Half-step: only subdivided voxels can be split')
-      return false
-    }
-    // Plain cube: split with the toolbar's pending division (Alt forces full 2×2×2),
-    // adopting it so the toolbar tracks the last split applied. Empty space scaffolds —
-    // an all-null detail parent with the active slot as its placeholder, ready to paint.
-    if (!sub) {
-      const pending = get().pendingSplit
-      if (!alt && !pending) {
-        showToast('Pick a division first: 2, 4, or 8 cells')
-        return false
-      }
-      const norm = alt ? FULL : pending!
-      const slot = get().activePaletteSlot
-      let ok = false
-      set((state) => {
-        const key = encodeKey(...coord)
-        if (state.model.chamfer.has(key)) return
-        ok = state.model.color.has(key)
-          ? subdivideCell(state.model, coord, norm)
-          : scaffoldCell(state.model, coord, norm, slot)
-        if (ok) {
-          state.meta.modifiedAt = new Date().toISOString()
-          state.dirty = true
-        }
-      })
-      if (!ok) {
-        showToast('Only plain cubes split — chamfered cells stay whole')
-        return false
-      }
-      // The toolbar owns the mode: plain taps adopt it, Alt is a momentary override.
-      if (!alt) get().setPendingSplit([...norm])
-      return true
-    }
-    // Subdivided cell: taps cycle within the voxel's own family (same child count) in
-    // the active plane's U → V → W order, coarsening back to whole past the end. A
-    // different toolbar family jumps instead of cycling. The tool keeps no axis state —
-    // plain taps always re-split with the toolbar division, so the cycle restarts at U.
-    // Alt forces the full 8-way split as a momentary override without adopting it.
-    if (alt) {
-      if (sub.split.join(',') === FULL.join(',')) return true
-      let ok = false
-      set((state) => {
-        const live = getSubdivCell(state.model, coord)
-        if (!live) return
-        live.split = [...FULL]
-        live.children = remapChildren(sub.split, sub.children, FULL)
-        ok = true
-        if (ok) {
-          state.meta.modifiedAt = new Date().toISOString()
-          state.dirty = true
-        }
-      })
-      if (!ok) return false
-      get().setStatusMessage('Detail: full 2×2×2 split (Alt override — toolbar division unchanged)')
-      return true
-    }
-    const pending = get().pendingSplit
-    if (!pending) {
-      // Whole mode: merge back (scaffolds delete via coarsenCell).
-      let ok = false
-      set((state) => {
-        ok = coarsenCell(state.model, coord)
-        if (ok) {
-          state.meta.modifiedAt = new Date().toISOString()
-          state.dirty = true
-        }
-      })
-      if (!ok) return false
-      get().setStatusMessage(sub.scaffold ? 'Scaffold cleared' : 'Detail merged back to a whole voxel')
-      return true
-    }
-    // The tap cycles the voxel's own family — the toolbar only picks the family fresh
-    // plain voxels split into, so mismatched toolbar selections are ignored here.
-    const next = advanceSplit(sub.split, plane.axis)
-    if (next === null) {
-      // Past the end of the family: merge back (scaffolds delete via coarsenCell).
-      let ok = false
-      set((state) => {
-        ok = coarsenCell(state.model, coord)
-        if (ok) {
-          state.meta.modifiedAt = new Date().toISOString()
-          state.dirty = true
-        }
-      })
-      if (!ok) return false
-      get().setStatusMessage(sub.scaffold ? 'Scaffold cleared' : 'Detail merged back to a whole voxel')
-      return true
-    }
-    if (next.join(',') === sub.split.join(',')) {
-      // Unknown division (shouldn't happen) — hold instead of destroying.
-      get().setStatusMessage(`Detail: ${describeSplitUVW(sub.split, plane.axis)}`)
-      return true
-    }
+    const { pendingSplit, activePaletteSlot, meta } = get()
+    // No grid armed (whole mode) or out of bounds: nothing to ensure.
+    if (!pendingSplit || !withinWorkingBounds(coord, meta.gridExtent)) return false
     let ok = false
     set((state) => {
-      const live = getSubdivCell(state.model, coord)
-      if (!live) return
-      live.split = [...next]
-      live.children = remapChildren(sub.split, sub.children, next)
-      ok = true
+      // Joins the caller's open stroke (no bracketing here) — Viewport3D brackets the
+      // ensure together with the per-child paint that follows, so split+paint undo as one.
+      ok = ensureSplitForPaint(state.model, coord, pendingSplit, activePaletteSlot)
       if (ok) {
         state.meta.modifiedAt = new Date().toISOString()
         state.dirty = true
       }
     })
-    if (!ok) return false
-    // Deliberately not adopted: the toolbar keeps no axis state, so plain taps always
-    // re-split with its division and the family cycle restarts at U after merging.
-    get().setStatusMessage(`Detail: ${describeSplitUVW(sub.split, plane.axis)} → ${describeSplitUVW(next, plane.axis)}`)
-    return true
+    return ok
   },
 
   paintSubCellAtCoord: (parent: Coord, index: number) => {
@@ -1169,8 +1085,16 @@ export const createPaintActionsSlice: Slice = (set, get) => ({
     } else return
     if (coords.length === 0) return
     get().beginStroke()
+    // Fills arm the grid too: every target splits to the armed division just-in-time
+    // (bulk — one division for the whole fill, never per-cell cycling), then stamps
+    // kind-aware detail (cube fills every child) instead of skipping subdivided cells.
+    const kind = activeVoxelKind
+    const slot = activePaletteSlot
     set((state) => {
-      for (const coord of coords) applyFillCell(state, coord, plane, activeVoxelKind, activePaletteSlot)
+      for (const coord of coords) {
+        const { u, v } = pixelFromGridCoord(plane, coord)
+        paintWithGridSplit(state, plane, coord, u, v, undefined, undefined, kind, slot, true)
+      }
     })
     get().commitStroke()
   },

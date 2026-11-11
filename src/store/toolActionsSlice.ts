@@ -1,7 +1,8 @@
 import type { StateCreator } from 'zustand'
 import { showToast } from '@/components/ui/toastBus'
-import { encodeKey, expandBounds } from '@/engine/grid/GridStore'
-import type { CellKey } from '@/engine/grid/types'
+import { decodeKey, encodeKey, expandBounds } from '@/engine/grid/GridStore'
+import type { CellKey, Coord } from '@/engine/grid/types'
+import type { PaletteSlotRef } from '@/engine/palette/types'
 import { gridCoordFromPixel, pixelFromGridCoord } from '@/engine/plane/constructionPlane'
 import { rebaseChamferCell } from '@/engine/chamfer/faceBasis'
 import { fillLeaksToEdges, floodFillOccupied3D, floodFillRegion, floodFillRegion3D } from '@/engine/tools/floodFill'
@@ -10,9 +11,33 @@ import { copyCellsToClipboard, isCoplanarWithPlane, rotateCellsInPlane, selectio
 import { placedFloatCoords } from '@/engine/instancing/ghostBatches'
 import { mirrorClipboard, rotateClipboard90 } from '@/engine/tools/transform'
 import { forEachSelectedCell, isCellSelected, mirrorRegion, rotateRegion90 } from '@/engine/tools/selectionMask'
+import { childInSlab, ensureSplitForPaint, frontSlabBit, paintSubCell } from '@/engine/grid/subdiv'
 import type { AppState, SelectionTransformKind, ToolActionsSlice } from './types'
 
 type Slice = StateCreator<AppState, [['zustand/immer', never]], [], ToolActionsSlice>
+
+/**
+ * Color-only flood write with just-in-time grid splits: when a grid division is armed,
+ * fresh cells split first and the fill lands on every child of the editable slab (cube
+ * semantics — floods never autotile or freeze shapes, matching the whole-voxel path);
+ * whole grid writes unit voxels exactly as before. Runs inside the caller's producer.
+ */
+function floodFillCell(state: AppState, coord: Coord, slot: PaletteSlotRef) {
+  const key = encodeKey(...coord)
+  const gridSplit = state.pendingSplit
+  if (gridSplit && !state.model.subdiv.has(key)) {
+    if (!ensureSplitForPaint(state.model, coord, gridSplit, slot)) return
+  }
+  const sub = state.model.subdiv.get(key)
+  if (sub) {
+    const half = state.plane.half ?? frontSlabBit(state.plane.orientation)
+    sub.children.forEach((_, i) => {
+      if (childInSlab(sub.split, state.plane.axis, half, i)) paintSubCell(state.model, coord, i, slot)
+    })
+  } else {
+    state.model.color.set(key, { paletteSlot: slot })
+  }
+}
 
 // Invariant: every model-mutating action in this store must call `get().bakeFloatIfAny()` as its
 // first line (before its own beginStroke()), so a pending float never gets silently dropped or
@@ -51,7 +76,7 @@ export const createToolActionsSlice: Slice = (set, get) => ({
     set((state) => {
       for (const [cu, cv] of cells) {
         const coord = gridCoordFromPixel(state.plane, cu, cv)
-        state.model.color.set(encodeKey(...coord), { paletteSlot: activePaletteSlot })
+        floodFillCell(state, coord, activePaletteSlot)
         state.model.bounds = expandBounds(state.model.bounds, coord)
       }
       state.meta.modifiedAt = new Date().toISOString()
@@ -64,7 +89,7 @@ export const createToolActionsSlice: Slice = (set, get) => ({
     get().bakeFloatIfAny()
     const { model, plane, activePaletteSlot, meta } = get()
     // Half-step fills whole cubes — refused (subdivided voxels keep their flood via paint).
-    if (plane.half !== null) {
+    if (plane.half !== null && !get().pendingSplit) {
       showToast('Half-step: only subdivided voxels are editable')
       return
     }
@@ -75,7 +100,7 @@ export const createToolActionsSlice: Slice = (set, get) => ({
     get().beginStroke()
     set((state) => {
       for (const key of keys) {
-        state.model.color.set(key, { paletteSlot: activePaletteSlot })
+        floodFillCell(state, decodeKey(key), activePaletteSlot)
       }
       state.meta.modifiedAt = new Date().toISOString()
       state.dirty = true
@@ -87,7 +112,7 @@ export const createToolActionsSlice: Slice = (set, get) => ({
     get().bakeFloatIfAny()
     const { model, activePaletteSlot, selectedCells, meta } = get()
     // Half-step fills whole cubes — refused (subdivided voxels keep their per-child edits).
-    if (get().plane.half !== null) {
+    if (get().plane.half !== null && !get().pendingSplit) {
       showToast('Half-step: only subdivided voxels are editable')
       return
     }
@@ -110,7 +135,7 @@ export const createToolActionsSlice: Slice = (set, get) => ({
       get().beginStroke()
       set((state) => {
         for (const key of keys) {
-          state.model.color.set(key, { paletteSlot: activePaletteSlot })
+          floodFillCell(state, decodeKey(key), activePaletteSlot)
         }
         state.meta.modifiedAt = new Date().toISOString()
         state.dirty = true
@@ -151,7 +176,7 @@ export const createToolActionsSlice: Slice = (set, get) => ({
     set((state) => {
       for (const [cu, cv] of cells) {
         const c = gridCoordFromPixel(state.plane, cu, cv)
-        state.model.color.set(encodeKey(...c), { paletteSlot: activePaletteSlot })
+        floodFillCell(state, c, activePaletteSlot)
         state.model.bounds = expandBounds(state.model.bounds, c)
       }
       state.meta.modifiedAt = new Date().toISOString()

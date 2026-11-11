@@ -418,6 +418,9 @@ export const createProjectSlice: Slice = (set, get) => ({
       state.selectedMarkerId = null
       state.rigBoxes = []
       state.selectedRigBoxId = null
+      // A new project starts on the whole grid (no division armed).
+      state.gridFamily = 'whole'
+      state.pendingSplit = null
       // Pose state is per-project too — keyframe clips, selection, and drag latch.
       state.clips = []
       state.activeClipId = null

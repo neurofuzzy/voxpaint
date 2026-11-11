@@ -1,33 +1,38 @@
 import type { StateCreator } from 'zustand'
 import { clampPlaneOffset, decodeKey, effectiveExtent } from '@/engine/grid/GridStore'
-import type { CellKey, Orientation } from '@/engine/grid/types'
+import type { Axis, CellKey, Orientation, SplitAxis } from '@/engine/grid/types'
 import { savePlanePref } from '@/engine/persistence/uiPrefs'
 import { rigIdForCoord } from '@/engine/rigging/types'
 import type { AppState, PlaneSlice } from './types'
 
 type Slice = StateCreator<AppState, [['zustand/immer', never]], [], PlaneSlice>
 
+const AXES: Axis[] = ['x', 'y', 'z']
+
+/** True when the armed grid division cuts along `axis` — the only case where the plane has
+ * half-voxel stops. Every plane step follows the grid: no cut on the plane's axis, whole voxels. */
+export function gridSplitsAxis(split: SplitAxis[] | null, axis: Axis): boolean {
+  return split !== null && split.includes(axis)
+}
+
 /**
- * One half-voxel stop along the plane axis: whole layer → viewer-side (front) slab →
- * back slab → next whole layer (reversed for -1). Pure so the edge dragger can walk it
- * from an anchor without dispatching per stop.
+ * One stop along the plane axis, per the grid — the ONLY rule: grid cuts the plane's axis →
+ * half-voxel stops always (low slab → high slab → next voxel's low slab; there is no
+ * whole-voxel stop in between); otherwise whole voxels. Monotonic along the world axis in both
+ * directions. Pure so the edge dragger can walk it from an anchor without dispatching per stop.
+ * `orientation` only picks which slab a whole-voxel plane enters on (the viewer-side one).
  */
 export function stepHalfStop(
   offset: number,
   half: 0 | 1 | null,
   direction: 1 | -1,
   orientation: Orientation,
+  splitsAxis = true,
 ): { offset: number; half: 0 | 1 | null } {
-  const front = orientation === 1 ? 1 : 0
-  const back = (1 - front) as 0 | 1
-  if (direction === 1) {
-    if (half === null) return { offset, half: front }
-    if (half === front) return { offset, half: back }
-    return { offset: offset + 1, half: null }
-  }
-  if (half === null) return { offset: offset - 1, half: back }
-  if (half === back) return { offset, half: front }
-  return { offset, half: null }
+  if (!splitsAxis) return { offset: offset + direction, half: null }
+  const at = half ?? (orientation === 1 ? 1 : 0)
+  if (direction === 1) return at === 0 ? { offset, half: 1 } : { offset: offset + 1, half: 0 }
+  return at === 1 ? { offset, half: 0 } : { offset: offset - 1, half: 1 }
 }
 
 export const createPlaneSlice: Slice = (set, get) => ({
@@ -59,6 +64,7 @@ export const createPlaneSlice: Slice = (set, get) => ({
         state.selectedCells = new Set<CellKey>()
       }
     })
+    get().snapPlaneToGrid() // the new axis may be one the grid cuts (or no longer cuts)
     // The pose persists across refreshes (project switches reset it instead — see
     // resetPlaneToGround), so the current slice survives a page reload.
     savePlanePref(get().plane)
@@ -89,6 +95,7 @@ export const createPlaneSlice: Slice = (set, get) => ({
       state.plane.half = null
       state.objectModeTarget = null
     })
+    get().snapPlaneToGrid()
     savePlanePref(get().plane)
   },
 
@@ -107,14 +114,33 @@ export const createPlaneSlice: Slice = (set, get) => ({
     let offset = st.plane.offset
     let half = st.plane.half
     const n = Math.max(0, Math.floor(count))
-    for (let i = 0; i < n; i++) ({ offset, half } = stepHalfStop(offset, half, direction, st.plane.orientation))
-    const clamped = clampPlaneOffset(offset, st.meta.gridExtent)
-    // A clamped overshoot lands on the whole-layer stop (never strand half a slab out of range).
-    if (clamped !== offset) half = null
+    const splits = gridSplitsAxis(st.pendingSplit, st.plane.axis)
+    for (let i = 0; i < n; i++) {
+      const next = stepHalfStop(offset, half, direction, st.plane.orientation, splits)
+      // Pin at the bounds: a step that would leave the project stays where it is.
+      if (clampPlaneOffset(next.offset, st.meta.gridExtent) !== next.offset) break
+      ;({ offset, half } = next)
+    }
     set((state) => {
-      state.plane.offset = clamped
+      state.plane.offset = offset
       state.plane.half = half
       state.objectModeTarget = null
+    })
+    savePlanePref(get().plane)
+  },
+
+  // The grid decides which stops exist. When a grid change leaves the plane on a slab the grid no
+  // longer cuts, move it to the nearest whole voxel (the slab's own voxel), inside the bounds.
+  snapPlaneToGrid: () => {
+    const st = get()
+    const splits = gridSplitsAxis(st.pendingSplit, st.plane.axis)
+    // Cut axis: always on a half-voxel stop (enter on the viewer-side slab). Uncut: whole voxel.
+    const half = splits ? (st.plane.half ?? (st.plane.orientation === 1 ? 1 : 0)) : null
+    const offset = clampPlaneOffset(st.plane.offset, st.meta.gridExtent)
+    if (half === st.plane.half && offset === st.plane.offset) return
+    set((state) => {
+      state.plane.offset = offset
+      state.plane.half = half
     })
     savePlanePref(get().plane)
   },
@@ -140,11 +166,23 @@ export const createPlaneSlice: Slice = (set, get) => ({
       // half-step mode — dwelling was for the slab just left, stepping moves on.
       get().setPlaneOffset(current.offset + current.orientation)
       get().setPlaneHalf(null)
+      get().snapPlaneToGrid()
       return
+    }
+    // Clicking a subdivided voxel adopts ITS division as the grid, so the plane's stops and the
+    // next paint match the voxel just clicked. A plain voxel leaves the grid alone.
+    const sub = get().model.subdiv.get(cellKey)
+    if (sub) {
+      const split = AXES.filter((a) => sub.split.includes(a))
+      set((state) => {
+        state.pendingSplit = split
+        state.gridFamily = split.length === 1 ? 'half' : split.length === 2 ? 'quarter' : 'octal'
+      })
     }
     get().setPlaneAxisOrientation(axis, orientation)
     get().setPlaneOffset(offset)
     get().setPlaneHalf(half)
+    get().snapPlaneToGrid()
     set((state) => {
       state.objectModeTarget = { cellKey, axis, orientation, offset }
     })

@@ -56,6 +56,8 @@ export function restoreAutosave(): void {
         state.plane.half = savedPlane.half === 0 || savedPlane.half === 1 ? savedPlane.half : null
         state.objectModeTarget = null
       })
+      // The grid division isn't persisted: a saved slab is meaningless under a whole grid.
+      useAppStore.getState().snapPlaneToGrid()
     }
   } catch (err) {
     console.error('Failed to restore autosave', err)

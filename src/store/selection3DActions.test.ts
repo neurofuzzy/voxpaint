@@ -170,9 +170,10 @@ describe('3D selection store + exact-set actions', () => {
   it('rotateCells3D turns subdivided detail with the parent: split, children, and bevels', () => {
     paintAt([0, 0, 0])
     const s = useAppStore.getState()
+    // The armed grid splits the cube just-in-time on paint (no separate split step).
     s.setPendingSplit(['x'])
     s.beginStroke()
-    expect(s.toggleSubdivideAtCoord([0, 0, 0])).toBe(true)
+    expect(s.paintCellAtCoord([0, 0, 0], 'z', 1)).toBe(true)
     s.commitStroke()
     s.setActivePaletteSlot(SLOT_B)
     s.beginStroke()

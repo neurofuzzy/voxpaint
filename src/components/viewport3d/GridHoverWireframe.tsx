@@ -5,16 +5,16 @@ import { voxelWireframeSegments } from '@/engine/grid/subdiv'
 import { useAppStore } from '@/store/useAppStore'
 
 /**
- * Hover wireframe for the subdivide tool: the hovered voxel's 12 box edges plus the
- * mid-plane squares describing its division — the current split for an already
- * subdivided voxel, the toolbar's pending division (the coming cut) for a plain one.
- * Always on while the tool is selected, independent of the `wireframe` toggle, so the
- * cut target reads in 3D exactly like the 2D gold hover fill. On half-step only
- * subdivided voxels preview (plain taps refuse) — matching the ghost suppression.
- * Grid-native coordinates (mounted inside the Y-scale group); raycast-disabled so
+ * Hover wireframe for the paint tool's edit grid: the hovered voxel's 12 box edges plus
+ * the mid-plane squares describing its division — the current split for an already
+ * subdivided voxel, the toolbar's armed grid division (the coming just-in-time cut)
+ * for a plain one. Always on while paint is selected, independent of the `wireframe`
+ * toggle, so the cut target reads in 3D exactly like the 2D gold hover fill. On
+ * half-step only subdivided voxels preview (plain taps refuse) — matching the ghost
+ * suppression. Grid-native coordinates (mounted inside the Y-scale group); raycast-disabled so
  * picking is unaffected.
  */
-export function SubdivideHoverWireframe() {
+export function GridHoverWireframe() {
   const activeTool = useAppStore((s) => s.activeTool)
   const hoveredFace = useAppStore((s) => s.hoveredFace)
   const model = useAppStore((s) => s.model)
@@ -22,7 +22,7 @@ export function SubdivideHoverWireframe() {
   const half = useAppStore((s) => s.plane.half)
 
   const geometry = useMemo(() => {
-    if (activeTool !== 'subdivide' || !hoveredFace) return null
+    if (activeTool !== 'paint' || !hoveredFace) return null
     const cell = decodeKey(hoveredFace.cellKey)
     const sub = model.subdiv.get(hoveredFace.cellKey)
     if (half !== null && !sub) return null

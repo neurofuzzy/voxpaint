@@ -88,9 +88,10 @@ export function usePixelCanvasTools(canvasRef: React.RefObject<HTMLCanvasElement
   /**
    * Re-resolves hover state for a display cell: the hovered coord (deduped like the 3D
    * side), the detail quadrant (null unless hovering subdivided), and the 3D cut-target
-   * mirror for the subdivide tool. Runs on every mousemove — and after taps, since a tap
-   * can change what lives under the cursor (e.g. scaffolding empty space), which would
-   * otherwise leave the 2D outline and 3D wireframe stale until the next mousemove.
+   * mirror for the paint tool's grid preview. Runs on every mousemove — and after taps,
+   * since a tap can change what lives under the cursor (e.g. scaffolding empty space),
+   * which would otherwise leave the 2D outline and 3D wireframe stale until the next
+   * mousemove.
    */
   const refreshHover = useCallback(
     (cell: [number, number], hcu: number, hcv: number) => {
@@ -101,9 +102,13 @@ export function usePixelCanvasTools(canvasRef: React.RefObject<HTMLCanvasElement
       }
       const hoverCoord = gridCoordFromPixel(ctxRef.current.plane, cell[0], cell[1])
       const hoverSub = useAppStore.getState().model.subdiv.has(encodeKey(...hoverCoord))
-      setHoverQuad(hoverSub ? displayQuadrantFromFractions(hcu, hcv) : null)
       const store = useAppStore.getState()
-      if (activeToolRef.current === 'subdivide' && store.mode !== 'animate') {
+      // The edit grid previews on plain voxels too: with a division armed under the
+      // paint tool, the hover tracks quadrants everywhere (driving the gold footprint),
+      // not just on already-subdivided cells.
+      const gridArmed = store.mode === 'model' && activeToolRef.current === 'paint' && store.pendingSplit !== null
+      setHoverQuad(hoverSub || gridArmed ? displayQuadrantFromFractions(hcu, hcv) : null)
+      if (activeToolRef.current === 'paint' && store.mode !== 'animate') {
         const key = encodeKey(...hoverCoord)
         const hasVoxel = hoverSub || store.model.color.has(key) || store.model.chamfer.has(key)
         const faceKey = hasVoxel ? `${key}|${ctxRef.current.plane.axis}|${ctxRef.current.plane.orientation}` : null
@@ -324,8 +329,6 @@ export function usePixelCanvasTools(canvasRef: React.RefObject<HTMLCanvasElement
     },
     selectMarker: (id) => useAppStore.getState().selectMarker(id),
     paintCell: store.paintCell,
-    toggleSubdivide: (u, v, alt) => store.toggleSubdivideCell(u, v, alt),
-    pendingSplit: useAppStore((s) => s.pendingSplit),
     eraseCell: store.eraseCell,
     paintMaterialCell: store.paintMaterialCell,
     rebaseRampCell: store.rebaseRampCell,

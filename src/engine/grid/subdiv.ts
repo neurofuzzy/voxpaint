@@ -53,62 +53,62 @@ export function describeSplit(split: SplitAxis[]): string {
 }
 
 /**
- * View-relative axes for a construction plane: U/V span the 2D canvas, W is the plane
- * normal. Subdivision choices are presented and cycled in these terms (U → V → W), mapped
- * back to world axes for storage — so "halves along U" always splits along the canvas
- * horizontal no matter which face you're looking through.
+ * Global grid families: the toolbar's 4-way grid picker arms one world-axis division
+ * that every paint/fill write splits to just-in-time — no plane-relative UVW, no
+ * per-voxel cycling. Halves cycle X → Y → Z; quarters cycle which world axis stays
+ * whole (leave-X → leave-Y → leave-Z); octal is the single full 2×2×2; whole arms
+ * null (no subdivision — plain voxels paint whole).
  */
-export function planeUVW(axis: Axis): { u: SplitAxis; v: SplitAxis; w: SplitAxis } {
-  const { uDir, vDir } = planeLogicalBasis(axis)
-  return {
-    u: (uDir[0] !== 0 ? 'x' : uDir[1] !== 0 ? 'y' : 'z') as SplitAxis,
-    v: (vDir[0] !== 0 ? 'x' : vDir[1] !== 0 ? 'y' : 'z') as SplitAxis,
-    w: axis,
+export const GRID_HALF_SPLITS = [['x'], ['y'], ['z']] as SplitAxis[][]
+export const GRID_QUARTER_SPLITS = [
+  ['y', 'z'],
+  ['x', 'z'],
+  ['x', 'y'],
+] as SplitAxis[][]
+export const GRID_FULL_SPLIT = ['x', 'y', 'z'] as SplitAxis[]
+
+/** Next division in a grid family's fixed world order, wrapping within the family
+ * (never merges — the whole button owns merging). Unknown divisions restart the family. */
+export function advanceGridSplit(family: 'half' | 'quarter' | 'octal', current: SplitAxis[] | null): SplitAxis[] {
+  const order = family === 'half' ? GRID_HALF_SPLITS : family === 'quarter' ? GRID_QUARTER_SPLITS : [GRID_FULL_SPLIT]
+  const key = current ? [...current].sort().join(',') : ''
+  const at = order.findIndex((s) => [...s].sort().join(',') === key)
+  return [...(at === -1 ? order[0] : order[(at + 1) % order.length])]
+}
+
+/** Human label for an armed grid division in world terms, for toolbar/toast copy. */
+export function describeGridSplit(split: SplitAxis[] | null): string {
+  if (!split) return 'whole voxels'
+  if (split.length === 3) return 'full 2×2×2'
+  if (split.length === 2) {
+    const world = [...split].sort().join('').toUpperCase()
+    const left = (['x', 'y', 'z'] as SplitAxis[]).find((a) => !split.includes(a))!.toUpperCase()
+    return `quarters in ${world} (${left} stays whole)`
   }
+  return `halves along ${[...split].sort().join('').toUpperCase()}`
 }
 
 /**
- * Division families per plane, in tap-cycle order: single-axis halves (U → V → W), then
- * the three quarter-planes (each named by the view axis it leaves whole), then the full
- * split. The single source of truth for the toolbar picker and tap-to-advance, so both
- * cycle the same orders.
+ * Just-in-time split for a paint/fill write: plain cubes subdivide (inheriting the
+ * slot), empty space scaffolds (all-null children, active slot as placeholder), and
+ * chamfered cells have their bevel cleared first and then split — detail always wins
+ * over the old bevel. Idempotent (an existing entry is kept as-is) and synchronous so
+ * callers can run it inside the same Immer producer as the paint that follows, keeping
+ * split+paint in one undo stroke. Returns false only for an invalid split.
  */
-export function subdivFamiliesForPlane(axis: Axis): { two: SplitAxis[][]; four: SplitAxis[][]; eight: SplitAxis[][] } {
-  const { u, v, w } = planeUVW(axis)
-  const norm = (s: SplitAxis[]): SplitAxis[] => [...s].sort() as SplitAxis[]
-  return {
-    two: [[u], [v], [w]],
-    four: [norm([v, w]), norm([u, w]), norm([u, v])],
-    eight: [norm([u, v, w])],
-  }
-}
-
-/** Human label for a split in view terms ("halves along U (X)"), for toolbar/toast copy. */
-export function describeSplitUVW(split: SplitAxis[], axis: Axis): string {
-  const { u, v } = planeUVW(axis)
-  const toUVW = (a: SplitAxis): string => (a === u ? 'U' : a === v ? 'V' : 'W')
-  const letters = [...split].sort().map(toUVW).join('')
-  const world = [...split].sort().join('').toUpperCase()
-  if (split.length === 3) return '2×2×2'
-  if (split.length === 2) return `quarters in ${letters} (${world})`
-  return `halves along ${letters} (${world})`
-}
-
-/**
- * Next division in the split's own family cycle on the given plane (U → V → W, then the
- * quarter-planes in leave-U/V/W order, then full) — or null when it should coarsen back
- * to whole past the end. Never changes the child count; only the final merge back to a
- * whole voxel does. Unknown splits hold instead of destroying.
- */
-export function advanceSplit(split: SplitAxis[], axis: Axis): SplitAxis[] | null {
-  const { two, four, eight } = subdivFamiliesForPlane(axis)
-  const key = [...split].sort().join(',')
-  for (const family of [two, four, eight]) {
-    const at = family.findIndex((s) => [...s].sort().join(',') === key)
-    if (at === -1) continue
-    return at + 1 < family.length ? [...family[at + 1]] : null
-  }
-  return [...split]
+export function ensureSplitForPaint(
+  model: VoxelModel,
+  coord: Coord,
+  split: SplitAxis[],
+  slot: PaletteSlotRef,
+): boolean {
+  const key = encodeKey(...coord)
+  if (model.subdiv.has(key)) return true
+  const norm = normalizeSplit(split)
+  if (!norm) return false
+  if (model.chamfer.has(key)) model.chamfer.delete(key)
+  if (model.color.has(key)) return subdivideCell(model, coord, norm)
+  return scaffoldCell(model, coord, norm, slot)
 }
 
 /**

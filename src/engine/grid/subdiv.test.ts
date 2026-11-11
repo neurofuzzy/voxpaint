@@ -5,13 +5,16 @@ import { planeLogicalBasis } from '@/engine/plane/constructionPlane'
 import { axisIndex } from '@/engine/plane/planeGeometry'
 import type { ConstructionPlane } from '@/engine/plane/types'
 import {
-  advanceSplit,
+  advanceGridSplit,
   childInSlab,
   childOrigin,
   canScaffold,
+  canSubdivide,
   cloneSubdiv,
   coarsenCell,
   countSubdivChildren,
+  describeGridSplit,
+  ensureSplitForPaint,
   eraseSubCell,
   frontSlabBit,
   isSubdivided,
@@ -94,35 +97,76 @@ describe('split math', () => {
     expect(splitChildOrigin([1, 2, 3], ['x', 'z'], 1)).toEqual([1.5, 2, 3])
   })
 
-  it('advanceSplit cycles within each family, then coarsens past the end', () => {
-    // Halves on the z-plane: x → y → z → whole (U → V → W).
-    expect(advanceSplit(['x'], 'z')).toEqual(['y'])
-    expect(advanceSplit(['y'], 'z')).toEqual(['z'])
-    expect(advanceSplit(['z'], 'z')).toBeNull()
-    // Quarters: YZ → XZ → XY → whole (order-insensitive input).
-    expect(advanceSplit(['z', 'y'], 'z')).toEqual(['x', 'z'])
-    expect(advanceSplit(['x', 'z'], 'z')).toEqual(['x', 'y'])
-    expect(advanceSplit(['x', 'y'], 'z')).toBeNull()
-    // Full: straight to whole.
-    expect(advanceSplit(['x', 'y', 'z'], 'z')).toBeNull()
-    // Unknown splits hold instead of destroying.
-    expect(advanceSplit([] as unknown as SplitAxis[], 'z')).toEqual([])
+  it('advanceGridSplit cycles halves X → Y → Z with wraparound', () => {
+    expect(advanceGridSplit('half', ['x'])).toEqual(['y'])
+    expect(advanceGridSplit('half', ['y'])).toEqual(['z'])
+    // Wraps within the family (never merges — the whole button owns merging).
+    expect(advanceGridSplit('half', ['z'])).toEqual(['x'])
+    // Unknown divisions restart the family.
+    expect(advanceGridSplit('half', null)).toEqual(['x'])
+    expect(advanceGridSplit('half', ['x', 'y'])).toEqual(['x'])
   })
 
-  it('advanceSplit follows the active plane (U → V → W on any face)', () => {
-    // x-plane: U=z, V=y, W=x.
-    expect(advanceSplit(['z'], 'x')).toEqual(['y'])
-    expect(advanceSplit(['y'], 'x')).toEqual(['x'])
-    expect(advanceSplit(['x'], 'x')).toBeNull()
-    // y-plane: U=x, V=z, W=y.
-    expect(advanceSplit(['x'], 'y')).toEqual(['z'])
-    expect(advanceSplit(['z'], 'y')).toEqual(['y'])
-    expect(advanceSplit(['y'], 'y')).toBeNull()
-    // Quarters leave out U, then V, then W.
-    expect(advanceSplit(['x', 'y'], 'x')).toEqual(['x', 'z'])
-    expect(advanceSplit(['x', 'z'], 'x')).toEqual(['y', 'z'])
-    expect(advanceSplit(['y', 'z'], 'x')).toBeNull()
-    expect(advanceSplit(['z', 'y'], 'y')).toEqual(['x', 'y'])
+  it('advanceGridSplit cycles quarters leave-X → leave-Y → leave-Z with wraparound', () => {
+    expect(advanceGridSplit('quarter', ['y', 'z'])).toEqual(['x', 'z'])
+    expect(advanceGridSplit('quarter', ['x', 'z'])).toEqual(['x', 'y'])
+    expect(advanceGridSplit('quarter', ['x', 'y'])).toEqual(['y', 'z'])
+    expect(advanceGridSplit('quarter', null)).toEqual(['y', 'z'])
+  })
+
+  it('advanceGridSplit holds octal on full', () => {
+    expect(advanceGridSplit('octal', ['x', 'y', 'z'])).toEqual(['x', 'y', 'z'])
+    expect(advanceGridSplit('octal', null)).toEqual(['x', 'y', 'z'])
+  })
+
+  it('describeGridSplit labels divisions in world terms', () => {
+    expect(describeGridSplit(null)).toBe('whole voxels')
+    expect(describeGridSplit(['x'])).toBe('halves along X')
+    expect(describeGridSplit(['y', 'z'])).toBe('quarters in YZ (X stays whole)')
+    expect(describeGridSplit(['x', 'y', 'z'])).toBe('full 2×2×2')
+  })
+
+  it('ensureSplitForPaint splits plain cubes, scaffolds empties, and clears bevels', () => {
+    const slot = { kind: 'base', index: 0 } as PaletteSlotRef
+    // Plain cube subdivides, inheriting the slot.
+    const solid = emptyModel()
+    solid.color.set(encodeKey(0, 0, 0), { paletteSlot: slot })
+    expect(ensureSplitForPaint(solid, [0, 0, 0], ['x'], slot)).toBe(true)
+    expect(solid.subdiv.get(encodeKey(0, 0, 0))?.split).toEqual(['x'])
+    // Empty space scaffolds.
+    const empty = emptyModel()
+    expect(ensureSplitForPaint(empty, [1, 1, 1], ['x', 'y'], slot)).toBe(true)
+    const scaffold = empty.subdiv.get(encodeKey(1, 1, 1))
+    expect(scaffold?.scaffold).toBe(true)
+    expect(scaffold?.children).toEqual([null, null, null, null])
+    // Chamfered cells have their bevel cleared first, then split (detail wins).
+    const beveled = emptyModel()
+    beveled.color.set(encodeKey(2, 2, 2), { paletteSlot: slot })
+    beveled.chamfer.set(encodeKey(2, 2, 2), {
+      planeAxis: 'z',
+      planeOrientation: 1,
+      resolvedTo: { shapeKind: 'ramp', rotation: 0 },
+    })
+    expect(ensureSplitForPaint(beveled, [2, 2, 2], ['z'], slot)).toBe(true)
+    expect(beveled.chamfer.has(encodeKey(2, 2, 2))).toBe(false)
+    expect(beveled.subdiv.get(encodeKey(2, 2, 2))?.split).toEqual(['z'])
+    // Existing entries are kept as-is (never re-split or wiped).
+    expect(ensureSplitForPaint(solid, [0, 0, 0], ['y'], slot)).toBe(true)
+    expect(solid.subdiv.get(encodeKey(0, 0, 0))?.split).toEqual(['x'])
+    // Invalid splits refuse.
+    expect(ensureSplitForPaint(emptyModel(), [0, 0, 0], [] as unknown as SplitAxis[], slot)).toBe(false)
+  })
+
+  it('canSubdivide admits only plain cubes (chamfered cells auto-clear at paint time)', () => {
+    const model = emptyModel()
+    model.color.set(encodeKey(0, 0, 0), { paletteSlot: base0 })
+    expect(canSubdivide(model, [0, 0, 0])).toBe(true)
+    model.chamfer.set(encodeKey(0, 0, 0), {
+      planeAxis: 'z',
+      planeOrientation: 1,
+      resolvedTo: { shapeKind: 'ramp', rotation: 0 },
+    })
+    expect(canSubdivide(model, [0, 0, 0])).toBe(false)
   })
 })
 
