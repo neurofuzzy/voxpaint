@@ -429,7 +429,7 @@ describe('applySliceWandAt', () => {
 
     const after = useAppStore.getState()
     expect(after.selectedCells).toEqual(new Set([encodeKey(0, 0, 2), encodeKey(1, 0, 2)]))
-    expect(after.plane).toEqual({ axis: 'z', orientation: 1, offset: 0 })
+    expect(after.plane).toEqual({ axis: 'z', orientation: 1, offset: 0, half: null })
   })
 
   it('select-tap order (reorient then select) survives the setter clear', () => {
@@ -445,7 +445,7 @@ describe('applySliceWandAt', () => {
     useAppStore.getState().setSelectedCells(new Set([encodeKey(0, 0, 0)]))
 
     const after = useAppStore.getState()
-    expect(after.plane).toEqual({ axis: 'x', orientation: 1, offset: 0 })
+    expect(after.plane).toEqual({ axis: 'x', orientation: 1, offset: 0, half: null })
     expect(after.selectedCells).toEqual(new Set([encodeKey(0, 0, 0)]))
   })
 })

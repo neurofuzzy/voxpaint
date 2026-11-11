@@ -1,11 +1,12 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { encodeKey } from '@/engine/grid/GridStore'
 import { gridCoordFromPixel } from '@/engine/plane/constructionPlane'
+import type { ConstructionPlane } from '@/engine/plane/types'
 import { rectRegion } from '@/engine/tools/selectionMask'
 import { SELECTION_BLOCKED_MESSAGE } from './viewSlice'
 import { useAppStore } from './useAppStore'
 
-const PLANE = { axis: 'z' as const, orientation: 1 as const, offset: 0 }
+const PLANE: ConstructionPlane = { axis: 'z', orientation: 1, offset: 0, half: null }
 const keyFor = (u: number, v: number) => encodeKey(...gridCoordFromPixel(PLANE, u, v))
 
 /** Drives the real store to verify the footer selection-blocked alert: every 2D edit rejected

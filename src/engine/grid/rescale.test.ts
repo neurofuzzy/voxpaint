@@ -4,6 +4,7 @@ import type { Axis, ChamferShapeKind, Coord, Orientation, Rotation, VoxelModel }
 import { planeLogicalBasis } from '@/engine/plane/constructionPlane'
 import { outwardNormal } from '@/engine/plane/planeGeometry'
 import { rescaleCoord, rescaleTargetExtent, rescaleVoxelModel } from './rescale'
+import { eraseSubCell, paintSubCell, subdivideCell, writeSubCell } from '@/engine/grid/subdiv'
 
 const SLOT = { kind: 'base', index: 0 } as const
 
@@ -374,5 +375,73 @@ describe('rescaleVoxelModel', () => {
         expect(sum, `${kind} r=${rotation}`).toBeCloseTo(8 * volume[kind], 10)
       }
     }
+  })
+
+  it('dissolves subdivided parents into plain doubled-lattice cubes', () => {
+    // A subdiv parent's 8 half-cells land exactly on doubled-lattice unit cells, so rescale
+    // turns detail into ordinary cubes: erased children stay empty, live children keep slots.
+    const model = emptyModel()
+    model.color.set(encodeKey(1, 0, -1), { paletteSlot: { ...SLOT } })
+    model.color.set(encodeKey(0, 0, 0), { paletteSlot: { ...SLOT } })
+    subdivideCell(model, [0, 0, 0])
+    paintSubCell(model, [0, 0, 0], 7, { kind: 'base', index: 3 })
+    eraseSubCell(model, [0, 0, 0], 0)
+    const next = rescaleVoxelModel(model)
+    expect(next.subdiv.size).toBe(0)
+    // Plain cube at (1,0,-1) still doubles normally: 8 cubes.
+    expect(next.color.size).toBe(8 + 7)
+    // Subdiv children land at (2x+dx, 2y+dy, 2z+dz) = (dx, dy, dz) here.
+    for (let i = 0; i < 8; i++) {
+      const key = encodeKey(i & 1, (i >> 1) & 1, (i >> 2) & 1)
+      if (i === 0) {
+        expect(next.color.has(key)).toBe(false)
+      } else if (i === 7) {
+        expect(next.color.get(key)).toEqual({ paletteSlot: { kind: 'base', index: 3 } })
+      } else {
+        expect(next.color.get(key)).toEqual({ paletteSlot: { kind: 'base', index: 0 } })
+      }
+    }
+    expect(next.chamfer.size).toBe(0)
+  })
+})
+
+describe('rescale with partial splits', () => {
+  it('expands partial-split children over their doubled footprint as plain cubes', () => {
+    // u-split children are 0.5×1×1: doubled, each fills 1×2×2 plain cubes.
+    const model = emptyModel()
+    model.color.set(encodeKey(0, 0, 0), { paletteSlot: { ...SLOT } })
+    subdivideCell(model, [0, 0, 0], ['x'])
+    paintSubCell(model, [0, 0, 0], 1, { kind: 'base', index: 3 })
+    eraseSubCell(model, [0, 0, 0], 0)
+    const next = rescaleVoxelModel(model)
+    expect(next.subdiv.size).toBe(0)
+    // Child 1 (x-high half) fills doubled cells x=1, y,z ∈ {0,1} with its slot.
+    for (const y of [0, 1]) {
+      for (const z of [0, 1]) {
+        expect(next.color.get(encodeKey(1, y, z)), `1,${y},${z}`).toEqual({ paletteSlot: { kind: 'base', index: 3 } })
+      }
+    }
+    // Erased child 0's footprint stays empty.
+    for (const y of [0, 1]) {
+      for (const z of [0, 1]) {
+        expect(next.color.has(encodeKey(0, y, z)), `0,${y},${z}`).toBe(false)
+      }
+    }
+    expect(next.chamfer.size).toBe(0)
+  })
+
+  it('blockifies bevel detail into plain cubes (documented approximation)', () => {
+    const model = emptyModel()
+    model.color.set(encodeKey(0, 0, 0), { paletteSlot: { ...SLOT } })
+    subdivideCell(model, [0, 0, 0])
+    writeSubCell(model, [0, 0, 0], 0, {
+      slot: { kind: 'base', index: 0 },
+      chamfer: { planeAxis: 'y', planeOrientation: 1, resolvedTo: { shapeKind: 'ramp', rotation: 0 } },
+    })
+    const next = rescaleVoxelModel(model)
+    expect(next.subdiv.size).toBe(0)
+    // The beveled child's footprint fills with plain cubes — no chamfer entries survive.
+    expect(next.color.size).toBe(8)
+    expect(next.chamfer.size).toBe(0)
   })
 })

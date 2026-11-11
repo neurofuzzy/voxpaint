@@ -6,7 +6,7 @@ import { gridCoordFromPixel } from '@/engine/plane/constructionPlane'
 import { classify, resolveChamferCellsOnPlane, sampleNeighbors } from './chamferResolver'
 import type { NeighborSample } from './types'
 
-const PLANE: ConstructionPlane = { axis: 'z', orientation: 1, offset: 0 }
+const PLANE: ConstructionPlane = { axis: 'z', orientation: 1, offset: 0, half: null }
 const SLOT = { kind: 'base', index: 0 } as const
 
 function paintColor(model: VoxelModel, plane: ConstructionPlane, u: number, v: number) {
@@ -259,7 +259,7 @@ describe('resolveChamferCellsOnPlane — BEHAVIOR: bootstrapping and plane-scope
   it('only re-resolves chamfer cells baked on the same axis, never a different axis at the same offset', () => {
     const model = emptyModel()
     paintChamfer(model, PLANE, 0, 0) // baked with PLANE.axis ('z')
-    const otherAxisPlane: ConstructionPlane = { axis: 'x', orientation: 1, offset: PLANE.offset }
+    const otherAxisPlane: ConstructionPlane = { axis: 'x', orientation: 1, offset: PLANE.offset, half: null }
 
     resolveChamferCellsOnPlane(model, otherAxisPlane)
 
@@ -407,8 +407,8 @@ describe('resolveChamferCellsOnPlane — bulk resolution of the steady-state gri
 })
 
 describe('multi-plane resolution — cells on different construction planes resolve independently', () => {
-  const PLANE_YZ: ConstructionPlane = { axis: 'x', orientation: 1, offset: 0 }
-  const PLANE_XY: ConstructionPlane = { axis: 'z', orientation: 1, offset: 0 }
+  const PLANE_YZ: ConstructionPlane = { axis: 'x', orientation: 1, offset: 0, half: null }
+  const PLANE_XY: ConstructionPlane = { axis: 'z', orientation: 1, offset: 0, half: null }
 
   it('a chamfer cell on the x-plane does not get resolved by a resolve pass for the z-plane', () => {
     const model = emptyModel()
@@ -451,7 +451,7 @@ describe('multi-plane resolution — cells on different construction planes reso
     const model = emptyModel()
 
     // Z-plane cells: an L-shape at (0,0), (1,0), (0,1) so (0,0) resolves to convex.
-    const zPlane0: ConstructionPlane = { axis: 'z', orientation: 1, offset: 0 }
+    const zPlane0: ConstructionPlane = { axis: 'z', orientation: 1, offset: 0, half: null }
     paintColor(model, zPlane0, 0, 0)
     paintColor(model, zPlane0, 1, 0)
     paintColor(model, zPlane0, 0, 1)
@@ -461,7 +461,7 @@ describe('multi-plane resolution — cells on different construction planes reso
     model.chamfer.set(encodeKey(...gridCoordFromPixel(zPlane0, 0, 1)), { planeAxis: 'z', planeOrientation: 1, resolvedTo: null })
 
     // X-plane cells: a separate L-shape at (-10,-10) on the x-plane.
-    const xPlane0: ConstructionPlane = { axis: 'x', orientation: 1, offset: 0 }
+    const xPlane0: ConstructionPlane = { axis: 'x', orientation: 1, offset: 0, half: null }
     paintColor(model, xPlane0, -10, -10)
     paintColor(model, xPlane0, -9, -10)
     paintColor(model, xPlane0, -10, -9)

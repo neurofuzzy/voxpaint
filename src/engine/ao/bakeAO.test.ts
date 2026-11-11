@@ -1,11 +1,12 @@
 import { describe, expect, it } from 'vitest'
 import * as THREE from 'three'
 import { emptyModel, encodeKey, recomputeBounds } from '@/engine/grid/GridStore'
+import { subdivideCell } from '@/engine/grid/subdiv'
 import type { ChamferShapeKind, Rotation, VoxelModel } from '@/engine/grid/types'
 import { DEFAULT_PALETTE } from '@/engine/palette/defaultPalette'
 import { buildOptimizedVoxelGroups } from '@/engine/instancing/voxelMeshBuilder'
 import { unwrapGeometries, type UnwrappedAtlas } from './uvUnwrap'
-import { bakeAOToAtlas, bakeOccupancyField, makeSpecularNoiseTexture } from './bakeAO'
+import { bakeAOToAtlas, bakeOccupancyField, buildOccGrid, makeSpecularNoiseTexture } from './bakeAO'
 
 function bakeForModel(model: VoxelModel): { data: Uint8ClampedArray; width: number; height: number } {
   const { groups } = buildOptimizedVoxelGroups(model, DEFAULT_PALETTE)
@@ -58,6 +59,33 @@ describe('bakeAOToAtlas', () => {
       expect(data[i]).toBeGreaterThanOrEqual(0)
       expect(data[i]).toBeLessThanOrEqual(255)
     }
+  })
+
+  it('bakes identical occlusion for a subdivided cell as for the plain cube it replaced', () => {
+    // The 8 half-cubes occupy exactly the plain cube's volume (half-unit blocks at exact-half
+    // origins tile the full-unit block), so the marched occupancy field is byte-identical and
+    // every surface texel computes the same occlusion. Compared at the grid level rather than
+    // the baked atlas: the CSG union splits neighbor faces at half-lines, which defeats the
+    // coplanar weld and packs the atlas into more rects (same area, more padding) — the
+    // occlusion values match, but the texel multisets legitimately differ in size.
+    const plain = modelFrom([[0, 0, 0], [1, 0, 0], [1, 0, 1]])
+    const detailed = modelFrom([[0, 0, 0], [1, 0, 0], [1, 0, 1]])
+    expect(subdivideCell(detailed, [0, 0, 0])).toBe(true)
+    detailed.bounds = recomputeBounds(detailed)
+    const plainOcc = buildOccGrid(plain)!
+    const detailedOcc = buildOccGrid(detailed)!
+    expect(detailedOcc.gx).toBe(plainOcc.gx)
+    expect(detailedOcc.gy).toBe(plainOcc.gy)
+    expect(detailedOcc.gz).toBe(plainOcc.gz)
+    expect(detailedOcc.min).toEqual(plainOcc.min)
+    expect(detailedOcc.grid).toEqual(plainOcc.grid)
+    // And the full pipeline still casts the contact shadow through the detail.
+    const { data } = bakeForModel(detailed)
+    let min = 255
+    for (let i = 0; i < data.length; i += 4) {
+      if (data[i] < min) min = data[i]
+    }
+    expect(min).toBeLessThan(255)
   })
 })
 

@@ -2,11 +2,12 @@ import { beforeEach, describe, expect, it } from 'vitest'
 import { encodeKey } from '@/engine/grid/GridStore'
 import type { Coord } from '@/engine/grid/types'
 import type { PaletteSlotRef } from '@/engine/palette/types'
+import type { ConstructionPlane } from '@/engine/plane/types'
 import { gridCoordFromPixel } from '@/engine/plane/constructionPlane'
 import { rectRegion } from '@/engine/tools/selectionMask'
 import { useAppStore } from './useAppStore'
 
-const PLANE = { axis: 'z' as const, orientation: 1 as const, offset: 0 }
+const PLANE: ConstructionPlane = { axis: 'z', orientation: 1, offset: 0, half: null }
 const keyFor = (u: number, v: number) => encodeKey(...gridCoordFromPixel(PLANE, u, v))
 const SLOT_A = { kind: 'base', index: 0 } as const
 const SLOT_B = { kind: 'base', index: 1 } as const
@@ -395,7 +396,7 @@ describe('floodFillCellsAt (3D viewport fill, 3D-selection aware)', () => {
     expect(after.model.color.get(encodeKey(0, 0, 2))?.paletteSlot).toEqual(SLOT_B)
     expect(after.model.color.get(encodeKey(1, 0, 2))?.paletteSlot).toEqual(SLOT_B)
     // And the fill itself never moves the plane.
-    expect(after.plane).toEqual({ axis: 'x', orientation: 1, offset: -8 })
+    expect(after.plane).toEqual({ axis: 'x', orientation: 1, offset: -8, half: null })
   })
 
   it('Alt-tap recolors the whole touching component across colors', () => {
