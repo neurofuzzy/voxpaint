@@ -1,11 +1,9 @@
 import { encodeKey, expandBounds, withinWorkingBounds } from '@/engine/grid/GridStore'
-import type { Coord, DetailChild, GridExtent, SplitAxis, VoxelModel } from '@/engine/grid/types'
-import {
-  normalizeSplit, remapChildren, scaffoldCell, splitChildOrigin, splitChildSize, subdivideCell,
-} from '@/engine/grid/subdiv'
-import { clearFineRegion, tidyCell } from '@/engine/grid/fineOps'
+import type { Coord, DetailChild, GridExtent, VoxelModel } from '@/engine/grid/types'
+import { splitChildOrigin, splitChildSize } from '@/engine/grid/subdiv'
+import { boxFromOriginSize, frontSlabBit, writeBox } from '@/engine/grid/cellBox'
+import { clearFineRegion } from '@/engine/grid/fineOps'
 import type { PaletteSlotRef } from '@/engine/palette/types'
-import { frontSlabBit } from '@/engine/grid/subdiv'
 import { pixelFromGridCoord, planeLogicalBasis } from '@/engine/plane/constructionPlane'
 import { toDisplayU, toDisplayV } from '@/engine/plane/planeDisplay'
 import { axisIndex } from '@/engine/plane/planeGeometry'
@@ -43,9 +41,8 @@ export type FloatPiece = {
   size: [number, number, number]
   slot: PaletteSlotRef
   /**
-   * Frozen shape of the source child, carried so beveled detail survives the drop. Only
-   * restored when the piece covers its target child exactly (see `writePiece`) — a cut
-   * chamfer is unrepresentable, so partial covers land as plain slots.
+   * Frozen shape of the source child, carried so beveled detail survives the drop (as one
+   * child of its target; when the target is cut finer it lands as a plain block — `writeBox`).
    */
   chamfer?: DetailChild['chamfer']
 }
@@ -118,7 +115,7 @@ export function floatPieces(
               size: [x1 - x0, y1 - y0, z1 - z0],
               slot: piece.slot,
               // Voxel-boundary cuts never split a 0.5-aligned child, so a chamfered piece
-              // still covers its whole child here; `writePiece` re-checks before restoring.
+              // still covers its whole child here.
               ...(piece.chamfer ? { chamfer: piece.chamfer } : {}),
             })
           }
@@ -173,45 +170,11 @@ export function floatFootprintRegion(
   return { originU: ou, originV: ov, width, height, mask, fine: { su: f.su, sv: f.sv, slab, mask: fmask } }
 }
 
+/** Lands one piece: a box write (a bevel survives when the target can hold it as one child,
+ * else it lands as a plain block — see `writeBox`). */
 function writePiece(model: VoxelModel, piece: FloatPiece): void {
-  const key = encodeKey(...piece.cell)
-  const need: SplitAxis[] = (['x', 'y', 'z'] as const).filter((_, a) => piece.size[a] < 1 - EPS)
-  if (need.length === 0) {
-    model.subdiv.delete(key)
-    model.chamfer.delete(key)
-    model.color.set(key, { paletteSlot: piece.slot })
-    model.bounds = expandBounds(model.bounds, piece.cell)
-    return
-  }
-  let sub = model.subdiv.get(key)
-  if (!sub) {
-    const split = normalizeSplit(need)!
-    if (model.color.has(key)) subdivideCell(model, piece.cell, split)
-    else scaffoldCell(model, piece.cell, split, piece.slot)
-    sub = model.subdiv.get(key)!
-  } else {
-    const merged = normalizeSplit([...new Set<SplitAxis>([...sub.split, ...need])])!
-    if (merged.join('') !== sub.split.join('')) {
-      sub.children = remapChildren(sub.split, sub.children, merged)
-      sub.split = merged
-    }
-  }
-  const csize = splitChildSize(sub.split)
-  sub.children.forEach((_, o) => {
-    const co = splitChildOrigin([0, 0, 0], sub!.split, o)
-    for (let a = 0; a < 3; a++) {
-      if (co[a] < piece.origin[a] - EPS || co[a] + csize[a] > piece.origin[a] + piece.size[a] + EPS) return
-    }
-    // Restore the frozen shape only when the piece IS the whole child — a chamfered piece
-    // landing on an over-split target (or a partial cover) lands as a plain slot instead.
-    const exact = [0, 1, 2].every(
-      (a) => Math.abs(co[a] - piece.origin[a]) < EPS && Math.abs(csize[a] - piece.size[a]) < EPS,
-    )
-    sub!.children[o] = exact && piece.chamfer ? { slot: piece.slot, chamfer: cloneChamfer(piece.chamfer) } : { slot: piece.slot }
-  })
-  sub.scaffold = false
-  model.bounds = expandBounds(model.bounds, piece.cell)
-  tidyCell(model, key)
+  const box = boxFromOriginSize(piece.origin, piece.size)
+  writeBox(model, piece.cell, box, piece.chamfer ? { slot: piece.slot, chamfer: cloneChamfer(piece.chamfer) } : { slot: piece.slot })
 }
 
 /**

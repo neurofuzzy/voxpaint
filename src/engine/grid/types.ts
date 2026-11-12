@@ -56,41 +56,35 @@ export type BBox = {
 }
 
 /**
- * One subdivided voxel: a plain cube replaced by 2, 4, or 8 half-scale children along the
- * split world axes (one subdivision level only — children never subdivide further). Stored
- * as one `SubdivCell` under the parent's CellKey; the parent's `color`/`chamfer` cells are
- * removed while subdivided. Detail children hold any voxel content, scaled to fill their
- * subcell's bounding box at render/export — chamfer shapes are frozen explicit kinds, never
- * autotiled or re-resolved (the resolver stays unit-scale).
+ * A split world axis of a subdivided voxel. A voxel is cut in half along 1–3 of them (one
+ * level only — children never subdivide further), giving 2, 4, or 8 children. Stored as one
+ * `SubdivCell` under the voxel's CellKey; the voxel's `color`/`chamfer` cells are absent while
+ * subdivided. Children hold any voxel content, scaled to fill their box at render/export —
+ * chamfer shapes are frozen explicit kinds. All writes go through `engine/grid/cellBox.ts`.
  */
 export type SplitAxis = 'x' | 'y' | 'z'
 
 /**
- * Global edit grid: the toolbar's 4-way picker. Whole paints unit voxels; half, quarter,
- * and octal arm a world-axis division that paint/fill writes split to just-in-time.
- * The armed division lives in the store's pendingSplit; this names which button owns it.
+ * Global edit grid family, derived from the armed split's axis count (see `gridFamilyOf`):
+ * whole paints unit voxels; half, quarter, and octal arm a world-axis division every edit
+ * writes at.
  */
 export type GridFamily = 'whole' | 'half' | 'quarter' | 'octal'
 
 export type DetailChild = {
   slot: PaletteSlotRef
-  /** Frozen explicit shape, scaled to fill the subcell's bounding box. Absent = plain cube. */
+  /** Frozen explicit shape, scaled to fill the child's box. Absent = plain cube. */
   chamfer?: ChamferCell
 }
 
 export type SubdivCell = {
-  /** The parent's original slot, stored so coarsening restores it exactly. */
-  slot: PaletteSlotRef
   /** Split world axes, 1–3 distinct, in x,y,z order. Children = 2^split.length. */
   split: SplitAxis[]
-  /** Per-child slots in split-bit order (see `splitChildIndex`) — `null` = erased. */
-  children: (DetailChild | null)[]
   /**
-   * True when the entry was split from empty space (a paint scaffold, not a real voxel).
-   * All children start null; coarsening deletes the entry instead of restoring a cube.
-   * An all-null non-scaffold is impossible — erasing the last child deletes the entry.
+   * Per-child content in split-bit order (see `childIndex` in cellBox.ts) — `null` = empty.
+   * Always normalized: never all-empty, never uniform plain (those fold to a plain voxel).
    */
-  scaffold?: boolean
+  children: (DetailChild | null)[]
 }
 
 export type VoxelModel = {

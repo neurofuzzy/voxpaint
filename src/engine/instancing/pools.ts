@@ -1,7 +1,7 @@
 import * as THREE from 'three'
-import type { ChamferCell } from '@/engine/grid/types'
+import type { ChamferCell, DetailChild } from '@/engine/grid/types'
 import { concaveCornerGeometry, convexCornerGeometry, flatGeometry, flatWedgeGeometry, halfGeometry, mirrorVGeometry, postGeometry, quarterGeometry, rampGeometry, thinGeometry, unitCubeGeometry, wedgeGeometry } from '@/engine/chamfer/chamferGeometry'
-import { chamferBasisIsReflected } from './basis'
+import { chamferBasisIsReflected, scaledChamferInstanceMatrix, subCubeInstanceMatrix } from './basis'
 
 /**
  * The instancing pools every voxel render path draws from — the live `InstancingManager` and the
@@ -21,6 +21,26 @@ export function poolIdFor(chamfer: ChamferCell | undefined): PoolId {
   if (!chamfer?.resolvedTo) return 'cube'
   const kind = chamfer.resolvedTo.shapeKind
   return chamferBasisIsReflected(chamfer.planeAxis, chamfer.planeOrientation) ? (`${kind}M` as PoolId) : kind
+}
+
+/**
+ * The pool and instance matrix of one detail child (a scaled bevel, or a scaled box for plain and
+ * unresolved children) at its world box — the single mapping every instanced detail renderer
+ * (InstancingManager, float ghost, selection highlight) shares. Writes into `out`.
+ */
+export function detailInstance(
+  origin: [number, number, number],
+  size: [number, number, number],
+  child: Pick<DetailChild, 'chamfer'>,
+  out = new THREE.Matrix4(),
+): { poolId: PoolId; matrix: THREE.Matrix4 } {
+  const chamfer = child.chamfer
+  if (chamfer?.resolvedTo) {
+    scaledChamferInstanceMatrix(origin, size, chamfer.planeAxis, chamfer.planeOrientation, chamfer.resolvedTo.rotation, out)
+    return { poolId: poolIdFor(chamfer), matrix: out }
+  }
+  subCubeInstanceMatrix(origin, size, out)
+  return { poolId: 'cube', matrix: out }
 }
 
 /**

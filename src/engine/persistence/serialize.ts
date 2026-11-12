@@ -7,6 +7,7 @@ import { normalizeFps, sanitizeRigClip, sanitizeRigTween } from '@/engine/riggin
 import { MARKER_COLORS } from '@/engine/markers/types'
 import { DEFAULT_PALETTE } from '@/engine/palette/defaultPalette'
 import { isValidSlotRef } from '@/engine/palette/palette'
+import { normalizeCell } from '@/engine/grid/cellBox'
 import type { PaletteState } from '@/engine/palette/types'
 import type { BoxFace, TextureModel } from '@/engine/texture/types'
 import { BOX_FACES, faceSizeFor, TEXEL_SCALE } from '@/engine/texture/types'
@@ -286,9 +287,7 @@ export function serializeProject(model: VoxelModel, palette: PaletteState, meta:
     const [x, y, z] = decodeKey(key)
     return {
       x, y, z,
-      slot: cell.slot,
       split: [...cell.split],
-      ...(cell.scaffold ? { scaffold: true as const } : {}),
       children: cell.children.map((c) => c ? {
         slot: c.slot,
         ...(c.chamfer ? { chamfer: { planeAxis: c.chamfer.planeAxis, planeOrientation: c.chamfer.planeOrientation, resolvedTo: c.chamfer.resolvedTo ? { ...c.chamfer.resolvedTo } : null } } : {}),
@@ -337,10 +336,12 @@ export function deserializeProject(file: VoxPaintProjectFile): { model: VoxelMod
   // meta must exist before the texture (whose face size derives from gridExtent + texelScale).
   const meta: ProjectMeta = { ...file.meta, noiseSeed: file.meta.noiseSeed ?? 0, voxelScaleY: file.meta.voxelScaleY ?? 1, texelScale: normalizeTexelScale(file.meta.texelScale ?? TEXEL_SCALE), animationMode: file.meta.animationMode === 'poses' ? 'poses' : 'tweens', fps: normalizeFps(file.meta.fps) }
   // Detail voxels (v19+): validate parent coords like any grid cell; the split must be 1–3
-  // distinct world axes and children must number exactly 2^split. Slots sanitize to erased
+  // distinct world axes and children must number exactly 2^split. Slots sanitize to empty
   // on invalid; chamfers validate shape/rotation or degrade to plain. A subdiv parent is
   // mutually exclusive with color/chamfer cells — on overlap the subdivision wins (it was
   // written from a state where the parent had neither; overlap means hand-edit corruption).
+  // Early v19 files also carried a parent `slot` and a `scaffold` flag; both are ignored, and
+  // every entry is normalized on load (uniform → plain voxel, all-empty → dropped).
   const SHAPE_KINDS = ['ramp', 'convex', 'concave', 'wedge', 'thin', 'half', 'post', 'quarter', 'flat', 'flatwedge'] as const
   for (const cell of file.model.subdivCells ?? []) {
     if (!cell || !Number.isInteger(cell.x) || !Number.isInteger(cell.y) || !Number.isInteger(cell.z)) continue
@@ -348,14 +349,11 @@ export function deserializeProject(file: VoxPaintProjectFile): { model: VoxelMod
     const split = cell.split
     if (!Array.isArray(split) || split.length < 1 || split.length > 3 || new Set(split).size !== split.length || !split.every((a) => a === 'x' || a === 'y' || a === 'z')) continue
     if (!Array.isArray(cell.children) || cell.children.length !== 2 ** split.length) continue
-    if (!cell.slot || !isValidSlotRef(cell.slot)) continue
     const key = encodeKey(cell.x, cell.y, cell.z)
     built.color.delete(key)
     built.chamfer.delete(key)
     built.subdiv.set(key, {
-      slot: cell.slot,
       split: [...split].sort() as SplitAxis[],
-      ...(cell.scaffold === true ? { scaffold: true as const } : {}),
       children: cell.children.map((c) => {
         if (!c || !isValidSlotRef(c.slot)) return null
         const r = c.chamfer?.resolvedTo
@@ -371,6 +369,7 @@ export function deserializeProject(file: VoxPaintProjectFile): { model: VoxelMod
         return chamfer ? { slot: c.slot, chamfer } : { slot: c.slot }
       }),
     })
+    normalizeCell(built, [cell.x, cell.y, cell.z])
   }
   const texture = file.texture
     ? deserializeTexture(file.texture, meta.gridExtent, meta.texelScale!)

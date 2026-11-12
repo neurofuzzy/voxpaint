@@ -5,8 +5,8 @@ import { countSubdivChildren, forEachSubdivChild } from '@/engine/grid/subdiv'
 import { unitCubeGeometry } from '@/engine/chamfer/chamferGeometry'
 import { resolveSlotColor } from '@/engine/palette/palette'
 import type { PaletteState } from '@/engine/palette/types'
-import { chamferInstanceMatrix, cubeInstanceMatrix, scaledChamferInstanceMatrix, subCubeInstanceMatrix } from './basis'
-import { buildPoolGeometries, POOL_IDS, poolIdFor, type PoolId } from './pools'
+import { chamferInstanceMatrix, cubeInstanceMatrix, subCubeInstanceMatrix } from './basis'
+import { buildPoolGeometries, detailInstance, POOL_IDS, poolIdFor, type PoolId } from './pools'
 
 export type { PoolId }
 
@@ -217,7 +217,7 @@ export class InstancingManager {
     type DetailInstance = { parentKey: CellKey; index: number; child: DetailChild; origin: [number, number, number]; size: [number, number, number] }
     const detailByPool: Record<PoolId, DetailInstance[]> = emptyPools<DetailInstance>()
     forEachSubdivChild(model, (parentKey, index, origin, size, child) => {
-      detailByPool[child.chamfer?.resolvedTo ? poolIdFor(child.chamfer) : 'cube'].push({ parentKey, index, child, origin, size })
+      detailByPool[poolIdFor(child.chamfer)].push({ parentKey, index, child, origin, size })
     })
     for (const id of POOL_IDS) {
       const keys = byPool[id]
@@ -247,14 +247,7 @@ export class InstancingManager {
       })
       let count = keys.length
       for (const d of detail) {
-        const resolved = d.child.chamfer?.resolvedTo
-        if (resolved) {
-          const chamfer = d.child.chamfer!
-          scaledChamferInstanceMatrix(d.origin, d.size, chamfer.planeAxis, chamfer.planeOrientation, resolved.rotation, matrix)
-        } else {
-          subCubeInstanceMatrix(d.origin, d.size, matrix)
-        }
-        mesh.setMatrixAt(count, matrix)
+        mesh.setMatrixAt(count, detailInstance(d.origin, d.size, d.child, matrix).matrix)
         const color = new THREE.Color(resolveSlotColor(palette, d.child.slot))
         baseColors.push(color)
         mesh.setColorAt(count, color)

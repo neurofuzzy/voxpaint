@@ -64,7 +64,7 @@ function rotationPlaneFor(clipboard: ClipboardData, cell: ClipboardCell): Axis {
  * `rotateSubdivChildren`) and every beveled child's frozen shape renumbers through the
  * same rigid motion unit voxels use (`rotateChamferCell`), so the detail turns with its
  * parent instead of bevelling the old way. Returns a fresh entry (slot refs shared —
- * slots are immutable values); the scaffold flag rides along.
+ * slots are immutable values).
  */
 export function rotateSubdivEntry(
   sub: SubdivCell,
@@ -73,9 +73,7 @@ export function rotateSubdivEntry(
 ): SubdivCell {
   const rotated = rotateSubdivChildren(sub.children, sub.split, planeAxis, direction)
   return {
-    slot: sub.slot,
     split: rotated.split,
-    ...(sub.scaffold ? { scaffold: true as const } : {}),
     children: rotated.children.map((child) =>
       child?.chamfer ? { slot: child.slot, chamfer: rotateChamferCell(child.chamfer, planeAxis, direction) } : child,
     ),
@@ -85,7 +83,7 @@ export function rotateSubdivEntry(
 /**
  * Mirrors one subdivided entry in the given plane's logical (u,v) frame — the same
  * contract as `rotateSubdivEntry`: children permute via `mirrorSubdivChildren`, beveled
- * children renumber via `mirrorChamferCell`, slot and scaffold preserved.
+ * children renumber via `mirrorChamferCell`.
  */
 export function mirrorSubdivEntry(
   sub: SubdivCell,
@@ -94,9 +92,7 @@ export function mirrorSubdivEntry(
   mirrorV: boolean,
 ): SubdivCell {
   return {
-    slot: sub.slot,
     split: [...sub.split],
-    ...(sub.scaffold ? { scaffold: true as const } : {}),
     children: mirrorSubdivChildren(sub.children, sub.split, planeAxis, mirrorU, mirrorV).map((child) =>
       child?.chamfer ? { slot: child.slot, chamfer: mirrorChamferCell(child.chamfer, planeAxis, mirrorU, mirrorV) } : child,
     ),

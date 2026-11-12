@@ -18,14 +18,14 @@ const AXES: SplitAxis[] = ['x', 'y', 'z']
 /**
  * Subdivision refinement lines on the active plane — the 3D twin of the 2D canvas's per-cell
  * pass: every cell in the slice gets a mid-cell line along each split axis lying in the plane,
- * from its own `subdiv` split, else the armed `pendingSplit` (so the grid reads before paint).
+ * from its own `subdiv` split plus the armed `gridSplit` (so the edit grid reads before an edit).
  * Built in WORLD space (a cell `c` spans `[c, c+1]` on each axis; the plane's own depth is
  * `offset + 0.5`), colored like the plane's fine grid so a subdivided grid is the same grid, finer.
  */
 function SubdivisionLines({ n, shift, color }: { n: number; shift: number; color: string }) {
   const plane = useAppStore((s) => s.plane)
   const subdiv = useAppStore((s) => s.model.subdiv)
-  const pendingSplit = useAppStore((s) => s.pendingSplit)
+  const gridSplit = useAppStore((s) => s.gridSplit)
   const model = useAppStore((s) => s.mode === 'model')
 
   const geometry = useMemo(() => {
@@ -40,8 +40,10 @@ function SubdivisionLines({ n, shift, color }: { n: number; shift: number; color
         c[ai] = plane.offset
         c[ia] = a
         c[ib] = b
-        const split = subdiv.get(encodeKey(...c))?.split ?? (model ? pendingSplit : null)
-        if (!split) continue
+        const own = subdiv.get(encodeKey(...c))?.split
+        const armed = model ? gridSplit : null
+        if (!own && !armed) continue
+        const split = [...new Set([...(own ?? []), ...(armed ?? [])])]
         for (const ax of split) {
           const k = AXES.indexOf(ax)
           if (k === ai) continue
@@ -60,7 +62,7 @@ function SubdivisionLines({ n, shift, color }: { n: number; shift: number; color
     const g = new THREE.BufferGeometry()
     g.setAttribute('position', new THREE.Float32BufferAttribute(pts, 3))
     return g
-  }, [plane.axis, plane.offset, plane.half, subdiv, pendingSplit, model, n, shift])
+  }, [plane.axis, plane.offset, plane.half, subdiv, gridSplit, model, n, shift])
 
   return (
     <lineSegments geometry={geometry} raycast={() => null}>

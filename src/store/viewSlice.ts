@@ -28,9 +28,6 @@ export const createViewSlice: Slice = (set, get) => ({
   hoverBits: null,
   chamferHoverValid: null,
   hoveredFace: null,
-  /** Hovered 2×2 quadrant of a subdivided cell (display-space [qu,qv]), for the quadrant
-   * hover outline in the 2D canvas. Null when not hovering detail. */
-  hoverQuad: null,
   wireframe: false,
   // Animate-mode model visibility (full/ghost/hidden), remembered across refreshes like the
   // layout prefs. Pure view chrome — never dirties the project.
@@ -102,7 +99,6 @@ export const createViewSlice: Slice = (set, get) => ({
     }),
   setHoverBits: (bits) => set((state) => { state.hoverBits = bits }),
   setHoveredFace: (face) => set((state) => { state.hoveredFace = face }),
-  setHoverQuad: (quad) => set((state) => { state.hoverQuad = quad }),
   setStatusMessage: (msg) => set((state) => { state.statusMessage = msg }),
   flashSelectionBlocked: () => {
     if (alertTimer) clearTimeout(alertTimer)

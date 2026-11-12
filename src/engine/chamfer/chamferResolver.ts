@@ -1,6 +1,5 @@
 import type { ChamferClassification, VoxelModel } from '@/engine/grid/types'
 import { decodeKey, encodeKey } from '@/engine/grid/GridStore'
-import { sampleDetailNeighborhood } from '@/engine/grid/subdiv'
 import type { ConstructionPlane } from '@/engine/plane/types'
 import { gridCoordFromPixel, pixelFromGridCoord } from '@/engine/plane/constructionPlane'
 import { axisIndex } from '@/engine/plane/planeGeometry'
@@ -81,33 +80,6 @@ export function classify(n: NeighborSample): ChamferClassification | null {
 
   return null // 0 or 1 orthogonal neighbors — not a defined shape (e.g. the very first chamfer
   // cell painted in an area — stays unresolved until enough neighbors join it)
-}
-
-/**
- * Detail-scale analogue of `resolveChamferCellsOnPlane`: resolves still-unresolved
- * (`resolvedTo: null`) detail chamfers on the plane's slice, now that neighbors painted
- * later — possibly in adjacent subdivided parents — may complete their configuration.
- * Only ever fills nulls, never re-resolves a frozen shape, and never applies the stroke's
- * brush offset (that promise belongs to the stroke that made each paint). Returns whether
- * anything changed. Called from `correctChamferStroke` so every stroke settles its slice.
- */
-export function resolveDetailChamferCellsOnPlane(model: VoxelModel, plane: ConstructionPlane): boolean {
-  const ai = axisIndex(plane.axis)
-  let changed = false
-  for (const [key, sub] of model.subdiv) {
-    const parent = decodeKey(key)
-    if (parent[ai] !== plane.offset) continue
-    for (let i = 0; i < sub.children.length; i++) {
-      const child = sub.children[i]
-      if (!child?.chamfer || child.chamfer.resolvedTo) continue
-      const rt = classify(sampleDetailNeighborhood(model, plane, parent, i))
-      if (rt) {
-        child.chamfer.resolvedTo = rt
-        changed = true
-      }
-    }
-  }
-  return changed
 }
 
 /**

@@ -1,7 +1,14 @@
 import { describe, expect, it } from 'vitest'
 import type { SplitAxis } from '@/engine/grid/types'
 import type { ConstructionPlane } from '@/engine/plane/types'
-import { quadrantFromFractions, subdivDisplayFootprint } from './quadrant'
+import { gridBox, worldBitsFromQuad } from '@/engine/grid/cellBox'
+import { boxDisplayFootprint, logicalQuadrant, quadrantFromFractions } from './quadrant'
+
+/** The 2D pipeline end to end: display quadrant → logical → world bits → grid box → display footprint. */
+function hoverFootprint(p: ConstructionPlane, split: SplitAxis[], dqu: number, dqv: number) {
+  const [qu, qv] = logicalQuadrant(p, [dqu, dqv])
+  return boxDisplayFootprint(p, gridBox(p, split, worldBitsFromQuad(p, qu, qv)))
+}
 
 const plane = (axis: 'x' | 'y' | 'z', orientation: 1 | -1): ConstructionPlane => ({ axis, orientation, offset: 0, half: null })
 
@@ -45,7 +52,7 @@ describe('quadrantFromFractions', () => {
   })
 })
 
-describe('subdivDisplayFootprint', () => {
+describe('grid-box display footprint', () => {
   it('covers the hovered display quadrant on every plane, orientation, and split', () => {
     // The 2D hover fill must agree with what a tap paints: the footprint it returns (in
     // display space, where the canvas draws it) always contains the hovered display
@@ -58,7 +65,7 @@ describe('subdivDisplayFootprint', () => {
           for (const dqu of [0, 1]) {
             for (const dqv of [0, 1]) {
               const tag = `${axis}${orientation} [${split}] (${dqu},${dqv})`
-              const [u0, v0, u1, v1] = subdivDisplayFootprint(p, split, dqu, dqv)
+              const [u0, v0, u1, v1] = hoverFootprint(p, split, dqu, dqv)
               expect(dqu * 0.5 + 0.25, `${tag} u`).toBeGreaterThanOrEqual(u0)
               expect(dqu * 0.5 + 0.25, `${tag} u`).toBeLessThan(u1)
               expect(dqv * 0.5 + 0.25, `${tag} v`).toBeGreaterThanOrEqual(v0)
@@ -80,7 +87,7 @@ describe('subdivDisplayFootprint', () => {
       for (const dqu of [0, 1]) {
         for (const dqv of [0, 1]) {
           expect(
-            subdivDisplayFootprint(p, ['x', 'z'], dqu, dqv),
+            hoverFootprint(p, ['x', 'z'], dqu, dqv),
             `y${orientation} (${dqu},${dqv})`,
           ).toEqual([dqu * 0.5, dqv * 0.5, dqu * 0.5 + 0.5, dqv * 0.5 + 0.5])
         }

@@ -1,18 +1,18 @@
 import type { StateCreator } from 'zustand'
 import { decodeKey, encodeKey, expandBounds, withinWorkingBounds } from '@/engine/grid/GridStore'
-import { childInSlab, ensureSplitForPaint, eraseSubCell, frontSlabBit, getSubdivCell, isSubdivided, isValidSubCellIndex, paintSubCell, quadrantSubcells, sampleDetailNeighborhood, writeSubCell } from '@/engine/grid/subdiv'
+import { getSubdivCell, sampleBoxNeighborhood } from '@/engine/grid/subdiv'
+import { childBox, exactChildIndex, gridBox, gridBoxAtBits, isWholeBox, recolorBox, worldBitsFromQuad, writeBox, WHOLE_BOX, type CellBox } from '@/engine/grid/cellBox'
 import type { Axis, CellKey, Coord, Orientation, Rotation } from '@/engine/grid/types'
 import type { PaletteSlotRef } from '@/engine/palette/types'
 import type { ConstructionPlane } from '@/engine/plane/types'
-import { classify, resolveDetailChamferCellsOnPlane, sampleNeighbors } from '@/engine/chamfer/chamferResolver'
+import { classify, sampleNeighbors } from '@/engine/chamfer/chamferResolver'
 import { spinSlabAboutLocalY } from '@/engine/chamfer/chamferTransform'
 import { findDualRampRotation, findWedgeRampDual } from '@/engine/chamfer/rampDual'
 import { gridCoordFromPixel, pixelFromGridCoord } from '@/engine/plane/constructionPlane'
-import { showToast } from '@/components/ui/toastBus'
 import { dominantAxisLine } from '@/engine/tools/lineUtils'
 import { axisIndex } from '@/engine/plane/planeGeometry'
 import { isCellSelected, forEachSelectedCell } from '@/engine/tools/selectionMask'
-import { isSelectedAt } from '@/engine/tools/fineSelection'
+import { fineCellBox, forEachFineCell, isSelectedAt } from '@/engine/tools/fineSelection'
 import { paintFineRegion } from '@/engine/grid/fineOps'
 import { liveFineSelection3D } from './selection3DSlice'
 import type { AppState, PaintActionsSlice, VoxelKind } from './types'
@@ -28,9 +28,6 @@ let pendingWedgeKeys: Set<string> | null = null
 // Bresenham interpolation re-applies cells already visited this stroke — without this guard
 // the stroke's own anchor cell would spin on the first move event. Mirrors pendingWedgeKeys.
 let strokeSlabKeys: Set<string> | null = null
-// Chamfer cells touched this stroke (any bevel kind). Discrete re-clicks cycle the bevel
-// (rotate, then advance the family past a full turn); drag revisits keep the current
-// per-kind behavior instead, so sweeps never spin what they just painted.
 // Chamfer cells touched this stroke (any bevel kind). Discrete re-clicks cycle the bevel
 // (rotate, then advance the family past a full turn); drag revisits keep the current
 // per-kind behavior instead, so sweeps never spin what they just painted.
@@ -85,37 +82,44 @@ function nextBevelTurn(shape: BevelFamilyKind, rotation: Rotation, brush: Rotati
 }
 
 /**
- * Grid-aware paint write: when a grid division is armed and the cell isn't subdivided
- * yet, it splits just-in-time (plain → subdivide, empty → scaffold, chamfered bevel
- * cleared first) and the write lands on detail; otherwise the write goes through the
- * unchanged whole-voxel path. Callers run this inside their own set() producer so
- * split+paint share one undo stroke. Returns false only when the JIT split fails.
+ * The box a plane-targeted edit at logical quadrant (qu, qv) addresses under the armed grid
+ * (whole voxel when the grid is whole; the quadrant's half on cut in-plane axes, full extent
+ * when the gesture has no continuous position; the plane's slab on a cut plane axis).
  */
-function paintWithGridSplit(
+function editBox(state: AppState, plane: ConstructionPlane, qu?: number, qv?: number): CellBox {
+  const bits = qu === undefined || qv === undefined ? null : worldBitsFromQuad(plane, qu, qv)
+  return gridBox(plane, state.gridSplit, bits)
+}
+
+function markDirty(state: AppState) {
+  state.meta.modifiedAt = new Date().toISOString()
+  state.dirty = true
+}
+
+/**
+ * THE paint write, for every view and gesture: a whole box runs the unit paint path (replacing
+ * any detail with one voxel — the whole grid writes whole voxels); a sub-voxel box writes
+ * detail through `writeBox` (cubes) or `paintDetailBevel` (shape kinds). Callers run this
+ * inside their own set() producer so the stroke stays one undo step.
+ */
+function paintBox(
   state: AppState,
   plane: ConstructionPlane,
   coord: Coord,
   u: number,
   v: number,
-  qu: number | undefined,
-  qv: number | undefined,
+  box: CellBox,
   kind: VoxelKind,
   slot: PaletteSlotRef,
   stamp: boolean,
-): boolean {
-  const key = encodeKey(...coord)
-  const gridSplit = state.pendingSplit
-  if (gridSplit && !state.model.subdiv.has(key)) {
-    if (!ensureSplitForPaint(state.model, coord, gridSplit, slot)) return false
+) {
+  if (isWholeBox(box)) {
+    applyPaintCell(state, coord, u, v, plane, kind, slot, stamp)
+    return
   }
-  if (state.model.subdiv.has(key)) {
-    const brush = (state.brushRotation ?? 0) as Rotation
-    return kind === 'cube'
-      ? paintDetailQuadrants(state, plane, coord, qu, qv, slot)
-      : stampDetailShape(state, plane, coord, qu, qv, slot, kind, brush)
-  }
-  applyPaintCell(state, coord, u, v, plane, kind, slot, stamp)
-  return true
+  if (kind === 'cube') writeBox(state.model, coord, box, { slot })
+  else paintDetailBevel(state, plane, coord, box, slot, kind, stamp)
+  markDirty(state)
 }
 
 /**
@@ -141,14 +145,8 @@ function applyPaintCell(
   stamp = false,
 ) {
   const key = encodeKey(...coord)
-  // Half-step planes only admit subdivided voxels (per-child path): a whole cube would
-  // straddle the slab. Fail closed like the subdivided-parent guard below; call sites
-  // toast as appropriate (discrete taps) or stay silent (drag sweeps).
-  if (state.plane.half !== null) return
-  // Fail closed on subdivided parents: detail cells are painted per-octant through
-  // paintSubCellAtCoord, never through the full-cell path (which would leave a color cell
-  // and a subdiv entry fighting over the same footprint). Callers toast as appropriate.
-  if (state.model.subdiv.has(key)) return
+  // Whole-voxel writes own the footprint: any detail underneath is replaced (see paintBox).
+  state.model.subdiv.delete(key)
   state.model.color.set(key, { paletteSlot: slot })
   state.model.bounds = expandBounds(state.model.bounds, coord)
   // Manual brush rotation (R key / preview button): an additive quarter-turn offset applied to
@@ -409,144 +407,93 @@ export function applyFillCell(
   applyPaintCell(state, coord, u, v, plane, kind, slot, true)
 }
 
-/** Shared erase write (both layers, no selection concept) — `eraseCell` clips first, 3D skips it. Also clears a subdiv entry outright. */
+/** Whole-voxel erase write (all layers, no selection concept) — `eraseCell` clips first, 3D skips it. */
 function applyEraseCell(state: AppState, coord: Coord) {
-  // Half-step planes never clear whole footprints (a subdiv entry spans both slabs).
-  // Detail erases route per-child through eraseDetailQuadrants/eraseSubCellAtCoord instead.
-  if (state.plane.half !== null) return
   const key = encodeKey(...coord)
   state.model.color.delete(key)
   state.model.chamfer.delete(key)
   state.model.subdiv.delete(key)
-  state.meta.modifiedAt = new Date().toISOString()
-  state.dirty = true
+  markDirty(state)
 }
 
-/**
- * Stamps one 2D quadrant of a subdivided parent: the viewer-side (front) child of the
- * quadrant's set (see subdiv.ts's `quadrantSubcells` — a tap never edits two subvoxels at
- * once; the back half is reachable by half-stepping the plane). A null quadrant stamps the
- * front slab of the whole entry — the shift-line/synthetic-event path, which carries no
- * continuous pointer position.
- */
-function paintDetailQuadrants(
-  state: AppState,
-  plane: ConstructionPlane,
-  parent: Coord,
-  qu: number | undefined,
-  qv: number | undefined,
-  slot: PaletteSlotRef,
-): boolean {
-  const sub = getSubdivCell(state.model, parent)
-  if (!sub) return false
-  const indices = (qu === undefined || qv === undefined
-    ? sub.children.map((_, i) => i)
-    : quadrantSubcells(plane.axis, plane.orientation, sub.split, qu, qv)
-  // Paint lands on one editable slab: the explicit half-step slab, else the viewer-side
-  // (front) slab in whole-voxel mode — a tap never edits two subvoxels at once.
-  ).filter((o) => childInSlab(sub.split, plane.axis, plane.half ?? frontSlabBit(plane.orientation), o))
-  let changed = false
-  for (const o of indices) {
-    // Nulls fill in place (holes repaint, scaffolds take paint) — paintSubCell creates.
-    paintSubCell(state.model, parent, o, slot)
-    changed = true
+/** Erase write at one box: the whole voxel, or exactly the sub-voxel box (the rest is kept). */
+function eraseBox(state: AppState, coord: Coord, box: CellBox) {
+  if (isWholeBox(box)) {
+    applyEraseCell(state, coord)
+    return
   }
-  if (!changed) return false
-  state.meta.modifiedAt = new Date().toISOString()
-  state.dirty = true
+  writeBox(state.model, coord, box, null)
+  markDirty(state)
+}
+
+/** Recolor write at one box (never adds, deletes, or reshapes). Returns whether anything changed. */
+function recolorAt(state: AppState, coord: Coord, box: CellBox, slot: PaletteSlotRef): boolean {
+  if (!recolorBox(state.model, coord, box, slot)) return false
+  markDirty(state)
   return true
 }
 
 /**
- * Re-click cycle for one detail child, shared by the 2D stamp and 3D tap paths: when the
- * armed kind and the child's existing shape are both in the bevel family, rotate (advancing
- * the family once a full turn completes) instead of re-resolving — no neighbor sampling.
- * Drag revisits (touched this stroke) fall through to fresh writes so sweeps never advance
- * what they just painted. Returns true when it cycled (caller skips its normal write).
+ * Shape-kind paint into a sub-voxel box — the detail analogue of `applyPaintCell`'s shape
+ * branches. A re-click on a family bevel that exactly occupies the box cycles it (rotate, then
+ * advance the family once a full turn completes); otherwise ramp/wedge classify the box's own
+ * subcell neighborhood (`sampleBoxNeighborhood`, which reads children in adjacent voxels) and
+ * every other kind freezes verbatim at the brush rotation. `writeBox` places the bevel — or a
+ * plain block when the voxel is cut finer than the box. Unclassifiable ramps (null shape) and
+ * wedge fallbacks register for the in-stroke retry, exactly like unit scale.
  */
-function cycleDetailChamfer(
+function paintDetailBevel(
   state: AppState,
   plane: ConstructionPlane,
-  parent: Coord,
-  index: number,
-  kind: VoxelKind,
-  brush: Rotation,
-): boolean {
-  if (kind !== 'ramp' && kind !== 'convex' && kind !== 'concave' && kind !== 'wedge') return false
-  const sub = getSubdivCell(state.model, parent)
-  if (!sub || !isValidSubCellIndex(sub, index)) return false
-  const key = `${encodeKey(...parent)}/${index}`
-  if (strokeDetailKeys?.has(key)) return false
-  const entry = sub.children[index]
-  const existing = entry?.chamfer?.resolvedTo
-  if (!entry || !existing || !isBevelFamilyKind(existing.shapeKind)) return false
-  const turned = nextBevelTurn(existing.shapeKind, existing.rotation, brush)
-  writeSubCell(state.model, parent, index, {
-    slot: entry.slot,
-    chamfer: { planeAxis: plane.axis, planeOrientation: plane.orientation, resolvedTo: { shapeKind: turned.shapeKind, rotation: turned.rotation } },
-  })
-  freshDetailKeys?.delete(key)
-  pendingDetailWedgeKeys?.delete(key)
-  strokeDetailKeys?.add(key)
-  return true
-}
-
-/**
- * Auto-bevel write for one detail child — the detail analogue of `applyPaintCell`'s
- * ramp/wedge branches. Classifies the child's own subcell neighborhood (which reads live
- * children in adjacent subdivided parents, not just unit voxels) and stores a frozen
- * shape: ramp takes whatever the neighbors say (ramp/convex/concave) plus the brush
- * offset, wedge locks its shape with a convex-derived rotation or the rotation-0 fallback.
- * Unclassifiable ramps store a null `resolvedTo` (rendered as a cube until neighbors
- * complete them) and register for stroke retry; wedge fallbacks register for the corner
- * upgrade. Returns false for non-autotile kinds — callers freeze those verbatim.
- * Operates on the immer draft, like the other apply/write helpers.
- */
-function autoDetailChamfer(
-  state: AppState,
-  plane: ConstructionPlane,
-  parent: Coord,
-  index: number,
+  coord: Coord,
+  box: CellBox,
   slot: PaletteSlotRef,
-  kind: 'ramp' | 'wedge',
-  brush: Rotation,
-): boolean {
-  const sub = getSubdivCell(state.model, parent)
-  if (!sub || !isValidSubCellIndex(sub, index)) return false
-  const auto = classify(sampleDetailNeighborhood(state.model, plane, parent, index))
-  const key = `${encodeKey(...parent)}/${index}`
-  if (kind === 'ramp') {
-    // A fresh ramp verdict ends any wedge-pending lifecycle on this child (the retry
-    // paths write unconditionally on a convex find, so stale keys would corrupt).
-    pendingDetailWedgeKeys?.delete(key)
-    const resolvedTo = auto && brush ? { ...auto, rotation: ((auto.rotation + brush) % 4) as Rotation } : auto
-    writeSubCell(state.model, parent, index, {
-      slot,
-      chamfer: { planeAxis: plane.axis, planeOrientation: plane.orientation, resolvedTo },
-    })
-    if (!resolvedTo && freshDetailKeys) freshDetailKeys.add(key)
-  } else {
-    // Symmetrically, a wedge verdict ends ramp-pending (the fresh retry writes ramps
-    // unconditionally on classify).
+  kind: Exclude<VoxelKind, 'cube'>,
+  stamp: boolean,
+) {
+  const brush = (state.brushRotation ?? 0) as Rotation
+  const parentKey = encodeKey(...coord)
+  const at = exactChildIndex(state.model, coord, box)
+  if (!stamp && at !== null && isBevelFamilyKind(kind) && !strokeDetailKeys?.has(`${parentKey}/${at}`)) {
+    const entry = getSubdivCell(state.model, coord)!.children[at]
+    const existing = entry?.chamfer?.resolvedTo
+    if (entry && existing && isBevelFamilyKind(existing.shapeKind)) {
+      const turned = nextBevelTurn(existing.shapeKind, existing.rotation, brush)
+      writeBox(state.model, coord, box, {
+        slot: entry.slot,
+        chamfer: { planeAxis: plane.axis, planeOrientation: plane.orientation, resolvedTo: { shapeKind: turned.shapeKind, rotation: turned.rotation } },
+      })
+      const key = `${parentKey}/${at}`
+      freshDetailKeys?.delete(key)
+      pendingDetailWedgeKeys?.delete(key)
+      strokeDetailKeys?.add(key)
+      return
+    }
+  }
+  const auto = kind === 'ramp' || kind === 'wedge' ? classify(sampleBoxNeighborhood(state.model, plane, coord, box)) : null
+  const resolvedTo = kind === 'ramp'
+    ? (auto && brush ? { ...auto, rotation: ((auto.rotation + brush) % 4) as Rotation } : auto)
+    : kind === 'wedge'
+      ? { shapeKind: 'wedge' as const, rotation: (((auto?.shapeKind === 'convex' ? auto.rotation : 0) + brush) % 4) as Rotation }
+      : { shapeKind: kind, rotation: brush }
+  writeBox(state.model, coord, box, { slot, chamfer: { planeAxis: plane.axis, planeOrientation: plane.orientation, resolvedTo } })
+  const placed = exactChildIndex(state.model, coord, box)
+  if (placed !== null) {
+    const key = `${parentKey}/${placed}`
     freshDetailKeys?.delete(key)
-    const rotation = (((auto?.shapeKind === 'convex' ? auto.rotation : 0) + brush) % 4) as Rotation
-    writeSubCell(state.model, parent, index, {
-      slot,
-      chamfer: { planeAxis: plane.axis, planeOrientation: plane.orientation, resolvedTo: { shapeKind: 'wedge', rotation } },
-    })
-    if (auto?.shapeKind === 'convex') pendingDetailWedgeKeys?.delete(key)
-    else if (pendingDetailWedgeKeys) pendingDetailWedgeKeys.add(key)
+    pendingDetailWedgeKeys?.delete(key)
+    if (!stamp && kind === 'ramp' && !resolvedTo) freshDetailKeys?.add(key)
+    if (!stamp && kind === 'wedge' && auto?.shapeKind !== 'convex') pendingDetailWedgeKeys?.add(key)
+    strokeDetailKeys?.add(key)
   }
-  strokeDetailKeys?.add(key)
-  return true
+  if (!stamp && (kind === 'ramp' || kind === 'wedge')) retryDetailChamfers(state)
 }
 
 /**
  * In-stroke retry for detail autotile nulls and wedge fallbacks — mirrors the unit-scale
- * fresh/pending loops. Re-classifies each tracked child against the current model (later
- * paints in the same stroke are visible) on its authoring basis, applying the stroke brush
- * so the promised rotation survives. Operates on the immer draft. Returns whether anything
- * resolved.
+ * fresh/pending loops. Only children this stroke painted are ever re-classified (a chamfer
+ * resolves only on its own edit). Keys stay valid across the stroke: a bevel's child index only
+ * changes when a split cuts it, and a cut bevel becomes a plain block (dropped below).
  */
 function retryDetailChamfers(state: AppState): boolean {
   const brush = (state.brushRotation ?? 0) as Rotation
@@ -559,31 +506,14 @@ function retryDetailChamfers(state: AppState): boolean {
       const index = Number(key.slice(slash + 1))
       const sub = getSubdivCell(state.model, parent)
       const child = sub?.children[index]
-      if (!child?.chamfer) {
-        // Erased (or the entry coarsened away) — nothing left to retry.
+      // Erased, cut to a plain block, or folded away — nothing left to retry.
+      if (!sub || !child?.chamfer || (!upgradeWedge && child.chamfer.resolvedTo)) {
         keys.delete(key)
         continue
       }
-      // Pending keys always hold unresolved autotile paints by construction (every
-      // resolving write — ramp, wedge-lock, or verbatim — removes its key), so a set
-      // resolvedTo here is a wedge fallback awaiting its corner, never a finished shape.
-      if (!upgradeWedge && child.chamfer.resolvedTo) {
-        keys.delete(key)
-        continue
-      }
-      // Pending keys always hold null-resolvedTo autotile paints by construction (every
-      // resolving write — ramp, wedge-lock, or verbatim — removes its key), so the
-      // wedge branch below needs no shape guard.
-      const cellPlane: ConstructionPlane = {
-        axis: child.chamfer.planeAxis,
-        orientation: child.chamfer.planeOrientation,
-        offset: parent[axisIndex(child.chamfer.planeAxis)],
-        half: null,
-      }
-      const rt = classify(sampleDetailNeighborhood(state.model, cellPlane, parent, index))
+      const rt = classify(sampleBoxNeighborhood(state.model, { axis: child.chamfer.planeAxis }, parent, childBox(sub.split, index)))
       if (upgradeWedge) {
-        // Wedges only upgrade: take the true corner once the stroke completes it, never
-        // flip a locked-in wedge (freeze intact — same as unit-scale).
+        // Wedges only upgrade: take the true corner once the stroke completes it.
         if (rt?.shapeKind === 'convex') {
           child.chamfer.resolvedTo = { shapeKind: 'wedge', rotation: ((rt.rotation + brush) % 4) as Rotation }
           keys.delete(key)
@@ -599,167 +529,6 @@ function retryDetailChamfers(state: AppState): boolean {
   retry(freshDetailKeys, false)
   retry(pendingDetailWedgeKeys, true)
   return changed
-}
-
-/**
- * Stamps one 2D quadrant of a subdivided parent: the viewer-side (front) children of the
- * quadrant's set, each auto-beveled from its own subcell neighborhood for the ramp/wedge
- * kinds (frozen verbatim kind + brush rotation for every other kind). A null quadrant
- * stamps the front slab of the whole entry — the shift-line/synthetic-event path, which
- * carries no continuous pointer position.
- */
-function stampDetailShape(
-  state: AppState,
-  plane: ConstructionPlane,
-  parent: Coord,
-  qu: number | undefined,
-  qv: number | undefined,
-  slot: PaletteSlotRef,
-  kind: Exclude<VoxelKind, 'cube'>,
-  brush: Rotation,
-): boolean {
-  const sub = getSubdivCell(state.model, parent)
-  if (!sub) return false
-  const indices = (qu === undefined || qv === undefined
-    ? sub.children.map((_, i) => i)
-    : quadrantSubcells(plane.axis, plane.orientation, sub.split, qu, qv)
-  // Paint lands on one editable slab: the explicit half-step slab, else the viewer-side
-  // (front) slab in whole-voxel mode — a tap never edits two subvoxels at once.
-  ).filter((o) => childInSlab(sub.split, plane.axis, plane.half ?? frontSlabBit(plane.orientation), o))
-  let changed = false
-  for (const o of indices) {
-    // Re-clicks on family bevels cycle (rotate, then advance the family) instead of
-    // re-resolving; every other stamp writes through (drag revisits re-stamp idempotently).
-    if (cycleDetailChamfer(state, plane, parent, o, kind, brush)) {
-      changed = true
-      continue
-    }
-    if (kind === 'ramp' || kind === 'wedge') {
-      // Nulls fill in place (holes take new shapes, scaffolds take paint).
-      if (!autoDetailChamfer(state, plane, parent, o, slot, kind, brush)) continue
-    } else {
-      // Verbatim explicit shapes end any autotile-pending lifecycle on these children.
-      const key = `${encodeKey(...parent)}/${o}`
-      freshDetailKeys?.delete(key)
-      pendingDetailWedgeKeys?.delete(key)
-      // Nulls fill in place (holes take new shapes, scaffolds take paint).
-      writeSubCell(state.model, parent, o, {
-        slot,
-        chamfer: {
-          planeAxis: plane.axis,
-          planeOrientation: plane.orientation,
-          resolvedTo: { shapeKind: kind, rotation: brush },
-        },
-      })
-    }
-    changed = true
-  }
-  if (kind === 'ramp' || kind === 'wedge') retryDetailChamfers(state)
-  if (!changed) return false
-  state.meta.modifiedAt = new Date().toISOString()
-  state.dirty = true
-  return true
-}
-
-/** Quadrant erase: nulls the set's (or whole entry's) children; all-null deletes the entry. */
-function eraseDetailQuadrants(
-  state: AppState,
-  plane: ConstructionPlane,
-  parent: Coord,
-  qu: number | undefined,
-  qv: number | undefined,
-): boolean {
-  const sub = getSubdivCell(state.model, parent)
-  if (!sub) return false
-  const indices = (qu === undefined || qv === undefined
-    ? sub.children.map((_, i) => i)
-    : quadrantSubcells(plane.axis, plane.orientation, sub.split, qu, qv)
-  // Erase keeps the full depth set (front and back clear together); half-step clips to
-  // the active slab — the rest of the footprint isn't editable.
-  ).filter((o) => childInSlab(sub.split, plane.axis, plane.half, o))
-  // Content-only erase: the subdivision survives losing its children so it can be
-  // repainted (scaffolds work the same way). Only an already-empty voxel clears.
-  const wasEmpty = sub.children.every((c) => c === null)
-  let changed = false
-  for (const o of indices) {
-    if (sub.children[o] === null) continue
-    sub.children[o] = null
-    changed = true
-  }
-  if (wasEmpty) {
-    state.model.subdiv.delete(encodeKey(...parent))
-    changed = true
-  }
-  if (!changed) return false
-  state.meta.modifiedAt = new Date().toISOString()
-  state.dirty = true
-  return true
-}
-
-/** Quadrant recolor: rewrites the set's live children, skipping matches (chamfers preserved). */
-function recolorDetailQuadrants(
-  state: AppState,
-  plane: ConstructionPlane,
-  parent: Coord,
-  qu: number | undefined,
-  qv: number | undefined,
-  slot: PaletteSlotRef,
-): boolean {
-  const sub = getSubdivCell(state.model, parent)
-  if (!sub) return false
-  const indices = (qu === undefined || qv === undefined
-    ? sub.children.map((_, i) => i)
-    : quadrantSubcells(plane.axis, plane.orientation, sub.split, qu, qv)
-  // Paint lands on one editable slab: the explicit half-step slab, else the viewer-side
-  // Material keeps the full depth set (front and back recolor together); half-step clips
-  // to the active slab — the rest of the footprint isn't editable.
-  ).filter((o) => childInSlab(sub.split, plane.axis, plane.half, o))
-  let changed = false
-  for (const o of indices) {
-    const child = sub.children[o]
-    if (child === null || (child.slot.kind === slot.kind && child.slot.index === slot.index)) continue
-    sub.children[o] = { ...child, slot }
-    changed = true
-  }
-  if (!changed) return false
-  state.meta.modifiedAt = new Date().toISOString()
-  state.dirty = true
-  return true
-}
-
-/**
- * Recolor write: swaps the palette slot on an existing voxel, nothing else. Returns false (and
- * writes nothing, so the enclosing stroke stays a no-op) on empty cells and same-slot repaints.
- * On a subdivided parent, recolors every live child instead (the material tool addresses
- * whole parents in 2D; per-child recolor lives in the 3D tap path). Child chamfers are preserved.
- */
-function applyMaterialCell(state: AppState, coord: Coord, slot: PaletteSlotRef): boolean {
-  const key = encodeKey(...coord)
-  const sub = getSubdivCell(state.model, coord)
-  if (sub) {
-    let changed = false
-    for (let i = 0; i < sub.children.length; i++) {
-      // Half-step recolors only the active slab (the rest is out of the edit target).
-      if (!childInSlab(sub.split, state.plane.axis, state.plane.half, i)) continue
-      const child = sub.children[i]
-      if (child === null || (child.slot.kind === slot.kind && child.slot.index === slot.index)) continue
-      sub.children[i] = { ...child, slot }
-      changed = true
-    }
-    if (!changed) return false
-    state.meta.modifiedAt = new Date().toISOString()
-    state.dirty = true
-    return true
-  }
-  // Whole-cell recolor would straddle the slab — half-step admits subdivided only.
-  if (state.plane.half !== null) return false
-  const existing = state.model.color.get(key)
-  if (!existing) return false
-  if (existing.paletteSlot.kind === slot.kind && existing.paletteSlot.index === slot.index) return false
-  state.model.color.set(key, { paletteSlot: slot })
-  state.meta.modifiedAt = new Date().toISOString()
-  state.dirty = true
-  return true
 }
 
 export const createPaintActionsSlice: Slice = (set, get) => ({
@@ -823,12 +592,9 @@ export const createPaintActionsSlice: Slice = (set, get) => ({
           }
         }
       }
-      // Detail autotile settles the same way: stroke-local nulls/fallbacks retry with the
-      // brush, then the slice pass fills whatever the stroke completed (brush-less — that
-      // promise belonged to the stroke that made each paint). Covers ramps stamped before
-      // their neighbors existed, in this stroke or an earlier one.
+      // Detail autotile settles the same way — only the children this stroke painted (a
+      // chamfer resolves only on its own edit; no slice-wide propagation).
       if (retryDetailChamfers(state)) changed = true
-      if (resolveDetailChamferCellsOnPlane(state.model, get().plane)) changed = true
       if (changed) {
         state.meta.modifiedAt = new Date().toISOString()
         state.dirty = true
@@ -846,47 +612,37 @@ export const createPaintActionsSlice: Slice = (set, get) => ({
       get().flashSelectionBlocked()
       return false
     }
-    // Grid-aware write: an armed grid division splits fresh cells just-in-time and the
-    // paint lands on detail (quadrant-addressed for subdivided parents, front slab for
-    // fresh splits); whole grid paints unit voxels as before. Detail is quadrant-addressed:
-    // paint stamps the hovered set (a depth pair for 8-splits, fewer for partial splits),
-    // or the whole entry when the gesture carries no continuous position (shift-lines,
-    // synthetic events). Ramp/wedge kinds auto-bevel from the subcell neighborhood; every
-    // other chamfer kind writes frozen explicit shapes (scaled to fill at render/export).
-    const kind = activeVoxelKind
-    let ok = false
+    // The grid decides the box: the hovered grid cell (quadrant-addressed in-plane, the plane's
+    // slab in depth), or the whole voxel under the whole grid.
     set((state) => {
-      ok = paintWithGridSplit(state, plane, coord, u, v, qu, qv, kind, activePaletteSlot, false)
+      paintBox(state, plane, coord, u, v, editBox(state, plane, qu, qv), activeVoxelKind, activePaletteSlot, false)
     })
-    return ok
+    return true
   },
 
-  paintCellAtCoord: (coord: Coord, faceAxis: Axis, faceOrientation: Orientation) => {
+  paintCellAtCoord: (coord: Coord, faceAxis: Axis, faceOrientation: Orientation, bits?: Coord | null) => {
     get().bakeFloatIfAny()
-    const { activeVoxelKind, activePaletteSlot, meta } = get()
+    const { activeVoxelKind, activePaletteSlot, meta, plane } = get()
     if (!withinWorkingBounds(coord, meta.gridExtent)) return false
-    // Already-subdivided parents never take the full-cell path: taps route per-octant
-    // through paintSubCellAtCoord in Viewport3D (which ensures the split first for fresh
-    // cells, preserving hovered-child precision). Fresh cells split just-in-time here and
-    // paint the front slab. Chamfer kinds can't address half-cells — silent, since touch
-    // drags pass through here per move.
-    if (isSubdivided(get().model, coord)) return false
     // The caller-supplied axis/orientation (3D taps pass the active construction plane, so
     // orientation always matches the brush preview — never the raycast face) on the target
-    // cell's slice.
+    // cell's slice; the depth slab is the active plane's when the axes agree.
     // (Deliberately no selection clip — the 2D selection mask lives in the active plane's frame
     // and can't meaningfully clip a different face's slice.)
-    const facePlane: ConstructionPlane = { axis: faceAxis, orientation: faceOrientation, offset: coord[axisIndex(faceAxis)], half: null }
+    const facePlane: ConstructionPlane = {
+      axis: faceAxis,
+      orientation: faceOrientation,
+      offset: coord[axisIndex(faceAxis)],
+      half: faceAxis === plane.axis ? plane.half : null,
+    }
     const { u, v } = pixelFromGridCoord(facePlane, coord)
-    const kind = activeVoxelKind
-    let ok = false
     set((state) => {
-      ok = paintWithGridSplit(state, facePlane, coord, u, v, undefined, undefined, kind, activePaletteSlot, false)
+      paintBox(state, facePlane, coord, u, v, gridBox(facePlane, state.gridSplit, bits ?? null), activeVoxelKind, activePaletteSlot, false)
     })
-    return ok
+    return true
   },
 
-  paintLineAtCoord: (coord: Coord, extend: boolean) => {
+  paintLineAtCoord: (coord: Coord, extend: boolean, bits?: Coord | null) => {
     get().bakeFloatIfAny()
     const { plane, meta, paintLineAnchor } = get()
     // Every tap re-establishes the anchor — chaining for the next shift-click.
@@ -907,16 +663,17 @@ export const createPaintActionsSlice: Slice = (set, get) => ({
       const kind = get().activeVoxelKind
       const slot = get().activePaletteSlot
       set((state) => {
+        // Replace-only (2D parity): every line cell overwrites, like single taps. Line cells
+        // carry no pointer half, so they span the in-plane extent at the plane's slab.
+        const box = gridBox(plane, state.gridSplit, null)
         for (const [lu, lv] of dominantAxisLine(a.u, a.v, b.u, b.v)) {
           const c = gridCoordFromPixel(plane, lu, lv)
           if (!withinWorkingBounds(c, meta.gridExtent)) continue
-          // Replace-only (2D parity): every line cell overwrites, like single taps —
-          // splitting just-in-time to the armed grid like they do.
-          if (!paintWithGridSplit(state, plane, c, lu, lv, undefined, undefined, kind, slot, false)) ok = false
+          paintBox(state, plane, c, lu, lv, box, kind, slot, false)
         }
       })
     } else {
-      ok = get().paintCellAtCoord(coord, plane.axis, plane.orientation)
+      ok = get().paintCellAtCoord(coord, plane.axis, plane.orientation, bits)
     }
     get().commitStroke()
     return ok
@@ -932,158 +689,47 @@ export const createPaintActionsSlice: Slice = (set, get) => ({
         return
       }
     }
-    // Detail erases per quadrant set, or the whole entry with no quadrant.
-    if (isSubdivided(get().model, coord)) {
-        set((state) => {
-        eraseDetailQuadrants(state, plane, coord, qu, qv)
-      })
-      return
-    }
+    // The grid decides the box, exactly like paint: erase carves one grid cell.
     set((state) => {
-      applyEraseCell(state, coord)
+      eraseBox(state, coord, editBox(state, plane, qu, qv))
     })
   },
 
-  eraseCellAtCoord: (coord: Coord) => {
+  eraseCellAtCoord: (coord: Coord, bits?: Coord | null) => {
     get().bakeFloatIfAny()
+    // 3D taps hand the half-bits of the clicked point: the grid cell under it is carved
+    // (the whole voxel under the whole grid, or when no point is known).
     set((state) => {
-      applyEraseCell(state, coord)
+      eraseBox(state, coord, bits ? gridBoxAtBits(state.gridSplit, bits) : WHOLE_BOX)
     })
-  },
-
-  ensureSubdividedAt: (coord: Coord) => {
-    get().bakeFloatIfAny()
-    const { pendingSplit, activePaletteSlot, meta } = get()
-    // No grid armed (whole mode) or out of bounds: nothing to ensure.
-    if (!pendingSplit || !withinWorkingBounds(coord, meta.gridExtent)) return false
-    let ok = false
-    set((state) => {
-      // Joins the caller's open stroke (no bracketing here) — Viewport3D brackets the
-      // ensure together with the per-child paint that follows, so split+paint undo as one.
-      ok = ensureSplitForPaint(state.model, coord, pendingSplit, activePaletteSlot)
-      if (ok) {
-        state.meta.modifiedAt = new Date().toISOString()
-        state.dirty = true
-      }
-    })
-    return ok
-  },
-
-  paintSubCellAtCoord: (parent: Coord, index: number) => {
-    get().bakeFloatIfAny()
-    const { activeVoxelKind, activePaletteSlot, meta, plane } = get()
-    if (!withinWorkingBounds(parent, meta.gridExtent)) return false
-    const sub = getSubdivCell(get().model, parent)
-    if (!sub || !isValidSubCellIndex(sub, index)) return false
-    // Half-step dwells on one slab of the active slice: off-slice parents and out-of-slab
-    // children refuse. The 2D quadrant paths clip the same way via childInSlab filtering.
-    if (plane.half !== null) {
-      if (parent[axisIndex(plane.axis)] !== plane.offset) return false
-      if (!childInSlab(sub.split, plane.axis, plane.half, index)) return false
-    }
-    const brush = (get().brushRotation ?? 0) as Rotation
-    const kind = activeVoxelKind
-    let ok = false
-    set((state) => {
-      // Chamfer autotile kinds resolve from the child's own subcell neighborhood (which
-      // reads adjacent subdivided voxels); re-clicks on family bevels cycle instead
-      // (rotate, then advance the family). Every other kind writes frozen verbatim.
-      if (kind === 'cube') {
-        ok = paintSubCell(state.model, parent, index, activePaletteSlot)
-      } else if (cycleDetailChamfer(state, state.plane, parent, index, kind, brush)) {
-        ok = true
-      } else if (kind === 'ramp' || kind === 'wedge') {
-        ok = autoDetailChamfer(state, state.plane, parent, index, activePaletteSlot, kind, brush)
-        if (ok) retryDetailChamfers(state)
-      } else {
-        ok = writeSubCell(state.model, parent, index, {
-          slot: activePaletteSlot,
-          chamfer: {
-            planeAxis: state.plane.axis,
-            planeOrientation: state.plane.orientation,
-            resolvedTo: { shapeKind: kind, rotation: brush },
-          },
-        })
-      }
-      if (ok) {
-        state.meta.modifiedAt = new Date().toISOString()
-        state.dirty = true
-      }
-    })
-    return ok
-  },
-
-  eraseSubCellAtCoord: (parent: Coord, index: number) => {
-    get().bakeFloatIfAny()
-    if (!withinWorkingBounds(parent, get().meta.gridExtent)) return
-    const { plane } = get()
-    if (plane.half !== null) {
-      if (parent[axisIndex(plane.axis)] !== plane.offset) return
-      const sub = getSubdivCell(get().model, parent)
-      if (!sub || !childInSlab(sub.split, plane.axis, plane.half, index)) return
-    }
-    set((state) => {
-      const sub = getSubdivCell(state.model, parent)
-      if (!sub || !isValidSubCellIndex(sub, index)) return
-      if (sub.children.every((c) => c === null)) {
-        // Erasing an already-empty voxel clears the subdivision (content erases keep it).
-        state.model.subdiv.delete(encodeKey(...parent))
-        state.meta.modifiedAt = new Date().toISOString()
-        state.dirty = true
-        return
-      }
-      if (eraseSubCell(state.model, parent, index)) {
-        state.meta.modifiedAt = new Date().toISOString()
-        state.dirty = true
-      }
-    })
-  },
-
-  paintMaterialSubCellAtCoord: (parent: Coord, index: number) => {
-    get().bakeFloatIfAny()
-    const { activePaletteSlot, meta, plane } = get()
-    if (!withinWorkingBounds(parent, meta.gridExtent)) return false
-    const sub = getSubdivCell(get().model, parent)
-    if (!sub || !isValidSubCellIndex(sub, index)) return false
-    if (plane.half !== null) {
-      if (parent[axisIndex(plane.axis)] !== plane.offset) return false
-      if (!childInSlab(sub.split, plane.axis, plane.half, index)) return false
-    }
-    let changed = false
-    set((state) => {
-      const sub = getSubdivCell(state.model, parent)
-      const child = sub?.children[index]
-      if (!child) return
-      if (child.slot.kind === activePaletteSlot.kind && child.slot.index === activePaletteSlot.index) return
-      sub!.children[index] = { ...child, slot: activePaletteSlot }
-      state.meta.modifiedAt = new Date().toISOString()
-      state.dirty = true
-      changed = true
-    })
-    return changed
   },
 
   fillSelection: () => {
     get().bakeFloatIfAny()
     const { plane, activeVoxelKind, activePaletteSlot, selectedCells, selection, meta } = get()
+    const kind = activeVoxelKind
+    const slot = activePaletteSlot
+    // Sub-voxel selections fill exactly their fine cells: cubes through the selection's own
+    // write (whole chamfer cells recolor atomically), shapes stamp each fine cell's box.
     const fine3D = liveFineSelection3D(get())
-    if (fine3D && activeVoxelKind === 'cube') {
+    const fineRegion = fine3D ? fine3D : selection?.fine && selectedCells.size === 0 ? { region: selection, plane } : null
+    if (fineRegion) {
       get().beginStroke()
-      set((state) => { paintFineRegion(state.model, fine3D.plane, fine3D.region, activePaletteSlot) })
+      set((state) => {
+        if (kind === 'cube') {
+          paintFineRegion(state.model, fineRegion.plane, fineRegion.region, slot)
+          return
+        }
+        forEachFineCell(fineRegion.region, (fu, fv) => {
+          const { coord, box } = fineCellBox(fineRegion.plane, fineRegion.region, fu, fv)
+          if (!withinWorkingBounds(coord, meta.gridExtent)) return
+          // Whole chamfer cells are atomic in a selection: a touched one restamps whole.
+          const atomic = state.model.chamfer.has(encodeKey(...coord))
+          const { u, v } = pixelFromGridCoord(fineRegion.plane, coord)
+          paintBox(state, fineRegion.plane, coord, u, v, atomic ? WHOLE_BOX : box, kind, slot, true)
+        })
+      })
       get().commitStroke()
-      return
-    }
-    // A sub-voxel selection fills exactly its fine cells (cube semantics), whatever the slab.
-    if (selection?.fine && selectedCells.size === 0 && activeVoxelKind === 'cube') {
-      get().beginStroke()
-      set((state) => { paintFineRegion(state.model, state.plane, selection, activePaletteSlot) })
-      get().commitStroke()
-      return
-    }
-    // Selection fill stamps whole cubes — refused on half-step unless the grid is cutting the
-    // plane's axis (then it splits and fills like any grid paint).
-    if (plane.half !== null && !get().pendingSplit) {
-      showToast('Half-step: only subdivided voxels are editable')
       return
     }
     const coords: Coord[] = []
@@ -1102,15 +748,13 @@ export const createPaintActionsSlice: Slice = (set, get) => ({
     } else return
     if (coords.length === 0) return
     get().beginStroke()
-    // Fills arm the grid too: every target splits to the armed division just-in-time
-    // (bulk — one division for the whole fill, never per-cell cycling), then stamps
-    // kind-aware detail (cube fills every child) instead of skipping subdivided cells.
-    const kind = activeVoxelKind
-    const slot = activePaletteSlot
+    // Whole-cell selections fill at the grid's depth: every cell's full in-plane extent, at the
+    // plane's slab when the grid cuts the plane axis (whole voxels under the whole grid).
     set((state) => {
+      const box = gridBox(plane, state.gridSplit, null)
       for (const coord of coords) {
         const { u, v } = pixelFromGridCoord(plane, coord)
-        paintWithGridSplit(state, plane, coord, u, v, undefined, undefined, kind, slot, true)
+        paintBox(state, plane, coord, u, v, box, kind, slot, true)
       }
     })
     get().commitStroke()
@@ -1125,28 +769,20 @@ export const createPaintActionsSlice: Slice = (set, get) => ({
       get().flashSelectionBlocked()
       return false
     }
-    // Detail recolors per quadrant set, or the whole entry with no quadrant.
-    if (isSubdivided(get().model, coord)) {
-        let changed = false
-      set((state) => {
-        changed = recolorDetailQuadrants(state, plane, coord, qu, qv, activePaletteSlot)
-      })
-      return changed
-    }
     let changed = false
     set((state) => {
-      changed = applyMaterialCell(state, coord, activePaletteSlot)
+      changed = recolorAt(state, coord, editBox(state, plane, qu, qv), activePaletteSlot)
     })
     return changed
   },
 
-  paintMaterialAtCoord: (coord: Coord) => {
+  paintMaterialAtCoord: (coord: Coord, bits?: Coord | null) => {
     get().bakeFloatIfAny()
     const { activePaletteSlot, meta } = get()
     if (!withinWorkingBounds(coord, meta.gridExtent)) return false
     let changed = false
     set((state) => {
-      changed = applyMaterialCell(state, coord, activePaletteSlot)
+      changed = recolorAt(state, coord, bits ? gridBoxAtBits(state.gridSplit, bits) : WHOLE_BOX, activePaletteSlot)
     })
     return changed
   },

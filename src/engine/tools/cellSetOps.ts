@@ -6,7 +6,7 @@ import { axisIndex } from '@/engine/plane/planeGeometry'
 import type { ConstructionPlane } from '@/engine/plane/types'
 import { mirrorChamferCell, rotateChamferCell } from '@/engine/chamfer/chamferTransform'
 import { cloneChamfer } from './clipboard'
-import { cloneSubdiv } from '@/engine/grid/subdiv'
+import { cloneSubdiv, subdivDisplaySlot } from '@/engine/grid/subdiv'
 import { mirrorSubdivEntry, rotateSubdivEntry } from './transform'
 import type { ClipboardCell, ClipboardData, SelectionRegion, SelectionTransformKind } from '@/store/types'
 
@@ -85,8 +85,9 @@ export function snapshotCells(model: VoxelModel, keys: Iterable<CellKey>): CellS
   const out: CellSnapshot[] = []
   for (const key of keys) {
     const subdiv = model.subdiv.get(key)
-    if (subdiv) {
-      out.push({ coord: decodeKey(key), paletteSlot: subdiv.slot, chamfer: undefined, subdiv: cloneSubdiv(subdiv) })
+    const repSlot = subdiv && subdivDisplaySlot(subdiv)
+    if (subdiv && repSlot) {
+      out.push({ coord: decodeKey(key), paletteSlot: repSlot, chamfer: undefined, subdiv: cloneSubdiv(subdiv) })
       continue
     }
     const color = model.color.get(key)

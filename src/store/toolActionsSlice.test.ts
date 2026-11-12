@@ -299,14 +299,15 @@ describe('transformFloat on subdivided voxels', () => {
     const s = useAppStore.getState()
     s.setActiveVoxelKind('cube')
     s.setActivePaletteSlot(SLOT_A)
-    // The armed grid splits the cube just-in-time on paint (no separate split step).
-    s.setPendingSplit(['x'])
+    // A whole-voxel paint first (no pointer half spans the cut axis), then one grid cell.
+    s.setGridSplit(['x'])
     s.beginStroke()
     expect(s.paintCell(0, -1)).toBe(true)
     s.commitStroke()
     s.setActivePaletteSlot(SLOT_B)
     s.beginStroke()
-    expect(s.paintSubCellAtCoord([0, 0, 0], 1)).toBe(true)
+    // The pointer over the x-high half picks that grid cell.
+    expect(s.paintCellAtCoord([0, 0, 0], 'z', 1, [1, 0, 0])).toBe(true)
     s.commitStroke()
     // A frozen bevel on the far half: the rotation must carry and renumber it.
     useAppStore.setState((st) => {

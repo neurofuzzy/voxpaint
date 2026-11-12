@@ -1,8 +1,9 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { decodeKey, encodeKey } from '@/engine/grid/GridStore'
 import type { SubdivCell } from '@/engine/grid/types'
-import { childInSlab, quadrantSubcells } from '@/engine/grid/subdiv'
-import { subdivDisplayFootprint } from '@/engine/tools/quadrant'
+import { subdivDisplaySlot, visibleChildAt } from '@/engine/grid/subdiv'
+import { gridBox, isWholeBox } from '@/engine/grid/cellBox'
+import { boxDisplayFootprint, logicalQuadrant } from '@/engine/tools/quadrant'
 import { gridCoordFromPixel, pixelFromGridCoord, planeLogicalBasis } from '@/engine/plane/constructionPlane'
 import type { ConstructionPlane } from '@/engine/plane/types'
 import type { PaletteState } from '@/engine/palette/types'
@@ -85,11 +86,11 @@ function fillDiagonalStripes(ctx: CanvasRenderingContext2D, sx: number, sy: numb
 }
 
 /**
- * Paints one subdivided cell as 2×2 mini-cells, each tinted by its quadrant's front
- * (viewer-side) live child — falling back to the next child in the quadrant, then the
- * parent slot. Erased quadrants show the parent slot dimmed, so holes read as holes.
- * Display quadrants unmirror into the logical frame the same way `pixelToCell` does.
- * (Separators come from the grid refinement pass in the cell loop, not from here.)
+ * Paints one subdivided cell as 2×2 mini-cells, each showing the child the slice shows there
+ * (`visibleChildAt`: the viewer-side live child, or only the plane's slab on a half-voxel stop
+ * — a cutaway). Empty parts draw nothing, exactly like empty cells; detail bevels get the
+ * chamfer stripes. On a half stop the live parts get a gold wash, the 2D echo of the 3D
+ * plane's slab. (Separators come from the grid refinement pass in the cell loop.)
  */
 function drawDetailQuadrants(
   ctx: CanvasRenderingContext2D,
@@ -98,29 +99,26 @@ function drawDetailQuadrants(
   palette: PaletteState,
   sx: number, sy: number, cellPx: number, cellH: number,
 ) {
-  const mirrorsU = toDisplayU(plane, 0) !== 0
-  const mirrorsV = toDisplayV(plane, 0) !== 0
   for (const dqu of [0, 1]) {
     for (const dqv of [0, 1]) {
-      const qu = mirrorsU ? 1 - dqu : dqu
-      const qv = mirrorsV ? 1 - dqv : dqv
-      const set = quadrantSubcells(plane.axis, plane.orientation, sub.split, qu, qv)
-      const liveIndex = set.find((o) => sub.children[o] !== null)
-      const live = liveIndex === undefined ? undefined : sub.children[liveIndex]
-      // Half-step shows only the active slab: out-of-slab children read as absent
-      // (parent slot, dimmed), so the editable half is unambiguous at a glance. The live
-      // half gets a gold wash — the 2D echo of the 3D grid's half-step tint.
-      const inSlab = liveIndex !== undefined && childInSlab(sub.split, plane.axis, plane.half, liveIndex)
-      const slot = live && inSlab ? live.slot : sub.slot
-      const color = resolveSlotColor(palette, slot)
-      // Live glass reads translucent like full-size glass; erased holes dim to read as holes.
-      ctx.globalAlpha = live && inSlab ? (slot.kind === 'glass' ? 0.5 : 1) : 0.35
-      ctx.fillStyle = color
-      ctx.fillRect(sx + dqu * cellPx / 2, sy + dqv * cellH / 2, cellPx / 2, cellH / 2)
-      if (live && inSlab && plane.half !== null) {
+      const [qu, qv] = logicalQuadrant(plane, [dqu, dqv])
+      const at = visibleChildAt(plane, sub, qu, qv)
+      const live = at === null ? null : sub.children[at]
+      if (!live) continue
+      const x = sx + dqu * cellPx / 2
+      const y = sy + dqv * cellH / 2
+      const color = resolveSlotColor(palette, live.slot)
+      ctx.globalAlpha = live.slot.kind === 'glass' ? 0.5 : 1
+      if (live.chamfer) {
+        fillDiagonalStripes(ctx, x, y, cellPx / 2, color, cellH / 2)
+      } else {
+        ctx.fillStyle = color
+        ctx.fillRect(x, y, cellPx / 2, cellH / 2)
+      }
+      if (plane.half !== null) {
         ctx.globalAlpha = 1
         ctx.fillStyle = 'rgba(242, 201, 76, 0.25)'
-        ctx.fillRect(sx + dqu * cellPx / 2, sy + dqv * cellH / 2, cellPx / 2, cellH / 2)
+        ctx.fillRect(x, y, cellPx / 2, cellH / 2)
       }
     }
   }
@@ -133,9 +131,9 @@ export function PixelCanvas() {
   const model = useAppStore((s) => s.model)
   const palette = useAppStore((s) => s.palette)
   const plane = useAppStore((s) => s.plane)
-  const pendingSplit = useAppStore((s) => s.pendingSplit)
+  const gridSplit = useAppStore((s) => s.gridSplit)
   const hoverCell = useAppStore((s) => s.hoverCell)
-  const hoverQuad = useAppStore((s) => s.hoverQuad)
+  const hoverBits = useAppStore((s) => s.hoverBits)
   const selection = useAppStore((s) => s.selection)
   const floatContent = useAppStore((s) => s.floatContent)
   const floatOrigin = useAppStore((s) => s.floatOrigin)
@@ -322,9 +320,10 @@ export function PixelCanvas() {
         const behindCell = model.color.get(encodeKey(...gridCoordFromPixel(behindPlane, u, v)))
         // Subdivided parents show like plain cubes here (the behind layer never shows markers).
         const behindSub = behindCell ? undefined : model.subdiv.get(encodeKey(...gridCoordFromPixel(behindPlane, u, v)))
-        if (!behindCell && !behindSub) continue
+        const behindSlot = behindCell ? behindCell.paletteSlot : behindSub && subdivDisplaySlot(behindSub)
+        if (!behindSlot) continue
         const [sx, sy] = worldToScreen(du, dv, size, pan, zoom, vScale)
-        const color = resolveSlotColor(palette, behindCell ? behindCell.paletteSlot : behindSub!.slot)
+        const color = resolveSlotColor(palette, behindSlot)
         fillDither(ctx, sx, sy, cellPx, color, cellH)
         ctx.strokeStyle = color
         ctx.strokeRect(sx + 0.5, sy + 0.5, cellPx - 1, cellH - 1)
@@ -339,33 +338,33 @@ export function PixelCanvas() {
         const key = encodeKey(...coord)
         const colorCell = model.color.get(key)
         const sub = colorCell ? undefined : model.subdiv.get(key)
-        // The armed grid previews everywhere in model mode: plain and empty cells show
-        // the coming just-in-time cut's refinement lines, so the grid reads before paint.
-        const armed = !sub && mode === 'model' && pendingSplit ? pendingSplit : null
+        // The armed grid previews everywhere in model mode: every cell shows the edit
+        // resolution's refinement lines, so the grid reads before an edit.
+        const armed = mode === 'model' && gridSplit ? gridSplit : null
         if (!colorCell && !sub && !armed) continue
         const [sx, sy] = worldToScreen(du, dv, size, pan, zoom, vScale)
-        if (colorCell || sub) {
-          const color = resolveSlotColor(palette, colorCell ? colorCell.paletteSlot : sub!.slot)
+        if (sub) {
+          // Subdivided parents render per-quadrant (see drawDetailQuadrants); the on-top grid
+          // (below) subdivides the footprint.
+          drawDetailQuadrants(ctx, sub, plane, palette, sx, sy, cellPx, cellH)
+        } else if (colorCell) {
+          const color = resolveSlotColor(palette, colorCell.paletteSlot)
           // Glass reads as 50% transparent here too, echoing the 3D view's transmissive material —
           // otherwise a glass cell looks identical to a solid one on the flat 2D canvas.
           ctx.globalAlpha = colorCell?.paletteSlot.kind === 'glass' ? 0.5 : 1
           // Any chamfer cell shows the diagonal-stripe marker (whether or not its shape has resolved
           // yet), so it's always distinguishable from a plain cube; plain cubes get a flat fill.
-          // Subdivided parents render per-quadrant (front-half tinted minis) so detail reads at
-          // a glance; erased holes dim out. The on-top grid (below) subdivides the footprint.
-          if (sub) {
-            drawDetailQuadrants(ctx, sub, plane, palette, sx, sy, cellPx, cellH)
-          } else if (model.chamfer.has(key)) {
+          if (model.chamfer.has(key)) {
             fillDiagonalStripes(ctx, sx, sy, cellPx, color, cellH)
           } else {
             ctx.fillStyle = color
             ctx.fillRect(sx, sy, cellPx, cellH)
           }
         }
-        // Grid refinement: a mid-cell line along each split in-plane axis, in the
-        // normal fine-grid color (so a subdivided grid reads as the same grid, just finer). Subdivided parents signify their own division; plain and
-        // empty cells signify the armed grid (the coming cut) instead.
-        const refineSplit = sub ? sub.split : armed
+        // Grid refinement: a mid-cell line along each in-plane axis the voxel is split on or the
+        // armed grid cuts, in the normal fine-grid color (a subdivided grid reads as the same
+        // grid, just finer).
+        const refineSplit = sub || armed ? [...new Set([...(sub?.split ?? []), ...(armed ?? [])])] : null
         if (refineSplit) {
           const { uDir } = planeLogicalBasis(plane.axis)
           for (const a of refineSplit) {
@@ -617,27 +616,21 @@ export function PixelCanvas() {
       ctx.stroke()
     }
 
-    // Hovered voxel target — a semi-opaque gold fill over exactly the footprint a tap
-    // would hit. Subdivided cells resolve through subdivDisplayFootprint (unmirror →
-    // quadrantSubcells → mirror back, like the paint path does) — a half for
-    // single-axis splits, the full cell for depth-only splits, a quarter for 8-splits.
-    // With a grid division armed, plain voxels preview the coming cut the same way.
-    // Whole-grid plain voxels highlight the whole cell, except on half-step (not editable
-    // there — the missing fill is the editable signal). Same color/opacity as the 3D
-    // view's face highlight (#f2c94c at 0.45). Drawn last so it sits on top of everything
-    // — fills, grid, rig boxes, selection, and markers. Modeling mode only: in animate
-    // mode taps pose rigs, so a paint-target cursor would mislead.
+    // Hovered edit target — a semi-opaque gold fill over exactly the box a tap writes (the same
+    // `gridBox` paint/erase/recolor use): the hovered grid cell with a division armed, else the
+    // whole voxel (occupied cells only — empty space previews in the 3D ghost). Same
+    // color/opacity as the 3D face highlight (#f2c94c at 0.45). Drawn last so it sits on top of
+    // everything. Modeling mode only: in animate mode taps pose rigs.
     if (hoverCell && mode !== 'animate') {
       const key = encodeKey(...hoverCell)
-      const sub = model.subdiv.get(key)
       const { u: hu, v: hv } = pixelFromGridCoord(plane, hoverCell)
       const [hx, hy] = worldToScreen(toDisplayU(plane, hu), toDisplayV(plane, hv), size, pan, zoom, vScale)
+      const box = gridBox(plane, gridSplit, hoverBits)
       let rect: [number, number, number, number] | null = null
-      const gridArmed = !sub && pendingSplit ? pendingSplit : null
-      if ((sub || gridArmed) && hoverQuad) {
-        const [u0, v0, u1, v1] = subdivDisplayFootprint(plane, sub ? sub.split : gridArmed!, hoverQuad[0], hoverQuad[1])
+      if (!isWholeBox(box)) {
+        const [u0, v0, u1, v1] = boxDisplayFootprint(plane, box)
         rect = [hx + u0 * cellPx, hy + v0 * cellH, (u1 - u0) * cellPx, (v1 - v0) * cellH]
-      } else if (!sub && !gridArmed && plane.half === null && (model.color.has(key) || model.chamfer.has(key))) {
+      } else if (model.color.has(key) || model.subdiv.has(key)) {
         rect = [hx, hy, cellPx, cellH]
       }
       if (rect) {
@@ -645,7 +638,7 @@ export function PixelCanvas() {
         ctx.fillRect(...rect)
       }
     }
-  }, [model, palette, plane, pendingSplit, linePreview, selection, selectPreview, floatContent, floatOrigin, antPhase, altHeld, size, pan, zoom, vScale, mode, slicePivots, rigBoxes, selectedRigBoxId, keyOffsets, gridExtent, markers, selectedMarkerId, hoverCell, hoverQuad])
+  }, [model, palette, plane, gridSplit, linePreview, selection, selectPreview, floatContent, floatOrigin, antPhase, altHeld, size, pan, zoom, vScale, mode, slicePivots, rigBoxes, selectedRigBoxId, keyOffsets, gridExtent, markers, selectedMarkerId, hoverCell, hoverBits])
 
   useEffect(() => {
     draw()

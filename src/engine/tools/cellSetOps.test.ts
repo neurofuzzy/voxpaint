@@ -5,7 +5,8 @@ import type { PaletteSlotRef } from '@/engine/palette/types'
 import type { ConstructionPlane } from '@/engine/plane/types'
 import { gridCoordFromPixel } from '@/engine/plane/constructionPlane'
 import { axisIndex } from '@/engine/plane/planeGeometry'
-import { scaffoldCell, subdivideCell, writeSubCell } from '@/engine/grid/subdiv'
+import { subdivideCell } from '@/engine/grid/subdiv'
+import { emptyDetailAt, setDetailChild } from '@/engine/grid/subdivFixtures'
 import {
   bboxOfCoords,
   copyCellsToClipboard,
@@ -191,7 +192,7 @@ describe('rotateCellsInPlane', () => {
     paintBox(model, 0, 0, 0, 0, 0, 0)
     expect(subdivideCell(model, [0, 0, 0], ['x'])).toBe(true)
     expect(
-      writeSubCell(model, [0, 0, 0], 1, {
+      setDetailChild(model, [0, 0, 0], 1, {
         slot: { kind: 'base', index: 3 },
         chamfer: { planeAxis: 'z', planeOrientation: 1, resolvedTo: { shapeKind: 'ramp', rotation: 0 } },
       }),
@@ -204,15 +205,15 @@ describe('rotateCellsInPlane', () => {
     expect(only.subdiv?.children[0]?.chamfer?.resolvedTo).toEqual({ shapeKind: 'ramp', rotation: 1 })
   })
 
-  it('mirrors subdivided detail and keeps the scaffold flag', () => {
+  it('mirrors subdivided detail across the split axis', () => {
     const model = emptyModel()
-    expect(scaffoldCell(model, [1, 0, 0], ['x'], { ...SLOT })).toBe(true)
+    emptyDetailAt(model, [1, 0, 0], ['x'])
+    setDetailChild(model, [1, 0, 0], 1, { slot: { ...SLOT } })
     const [only] = rotateCellsInPlane(snapshotCells(model, [encodeKey(1, 0, 0)]), PLANE, 'mirror-h', 16)
-    // Single cell mirrors onto itself; the empty scaffold survives as a scaffold.
+    // Single cell mirrors onto itself; the live half moves to the other side.
     expect(only.coord).toEqual([1, 0, 0])
     expect(only.subdiv?.split).toEqual(['x'])
-    expect(only.subdiv?.scaffold).toBe(true)
-    expect(only.subdiv?.children).toEqual([null, null])
+    expect(only.subdiv?.children).toEqual([{ slot: SLOT }, null])
   })
 
   it('drops results landing outside the grid', () => {

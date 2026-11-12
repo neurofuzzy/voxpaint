@@ -2,7 +2,8 @@ import { beforeEach, describe, expect, it } from 'vitest'
 import { encodeKey } from '@/engine/grid/GridStore'
 import type { Axis, Coord, Orientation, Rotation } from '@/engine/grid/types'
 import { poolIdFor } from '@/engine/instancing/pools'
-import { subdivDisplayFootprint } from '@/engine/tools/quadrant'
+import { boxDisplayFootprint, logicalQuadrant } from '@/engine/tools/quadrant'
+import { gridBox, worldBitsFromQuad } from '@/engine/grid/cellBox'
 import { useAppStore } from './useAppStore'
 import { resolveDirectPaintTarget, resolveGhostPlacement } from './ghostPlacement'
 import type { ToolId, VoxelKind } from './types'
@@ -48,7 +49,7 @@ function ghostFor(target: Coord, axis: Axis = 'z', orientation: Orientation = 1)
     activeTool: s.activeTool,
     directEdit: false,
     gridExtent: s.meta.gridExtent,
-    pendingSplit: s.pendingSplit,
+    gridSplit: s.gridSplit,
   })
 }
 
@@ -368,50 +369,42 @@ describe('3d replace-only paint', () => {
   })
 })
 
-describe('half-step ghost suppression', () => {
+describe('half-voxel stops', () => {
   beforeEach(() => {
     setup('cube', 0, 'paint')
   })
 
-  it('hides the place-here ghost over plain and empty cells on half-step', () => {
+  it('ghosts the plane slab over plain and empty cells alike (no editability gate)', () => {
     const target: Coord = [4, 4, 0]
-    expect(ghostFor(target)?.kind).toBe('cube') // control: whole mode still ghosts
-    useAppStore.getState().setPlaneHalf(1)
-    const s = useAppStore.getState()
-    const input = {
-      model: s.model, plane: s.plane, hoverCell: target, hoveredFace: null, activeVoxelKind: s.activeVoxelKind,
-      brushRotation: s.brushRotation, activeTool: s.activeTool, directEdit: false, gridExtent: s.meta.gridExtent,
-    }
-    // A slab with no grid cut behind it refuses plain cells (a whole cube would straddle it)...
-    expect(resolveGhostPlacement(input)).toBeNull()
-    // ...but when the grid cuts the axis a tap splits the cell, so it ghosts.
-    expect(resolveGhostPlacement({ ...input, pendingSplit: ['z'] })?.kind).toBe('cube')
+    expect(ghostFor(target)?.kind).toBe('cube') // control: whole grid ghosts the whole voxel
+    useAppStore.getState().setGridSplit(['z'])
+    useAppStore.getState().setPlaneHalf(0)
+    expect(ghostFor(target)).toMatchObject({ kind: 'cube', box: { origin: [4, 4, 0], size: [1, 1, 0.5] } })
   })
 
-  it('ghosts the child of a subdivided voxel like any other cell, and empty ones too', () => {
+  it('ghosts a subdivided voxel and an empty one the same way', () => {
     const s = useAppStore.getState()
-    // Armed grid splits the painted voxel just-in-time.
-    s.setPendingSplit(['x', 'y', 'z'])
+    s.setGridSplit(['x', 'y', 'z'])
     s.beginStroke()
-    expect(s.paintCellAtCoord([0, 0, 0], 'z', 1)).toBe(true)
+    expect(s.paintCellAtCoord([0, 0, 0], 'z', 1)).toBe(true) // no pointer half: the slab
     s.commitStroke()
-    // A subdivided voxel ghosts the child a tap paints (same ghost as a plain cell — no scaffold).
-    expect(ghostFor([0, 0, 0])).toMatchObject({ kind: 'cube', box: { size: [1, 1, 0.5] } }) // no pointer half known: the plane's slab
-    expect(ghostFor([4, 4, 0])?.kind).toBe('cube')
+    expect(useAppStore.getState().model.subdiv.get('0,0,0')?.split).toEqual(['z'])
+    expect(ghostFor([0, 0, 0])).toMatchObject({ kind: 'cube', box: { size: [1, 1, 0.5] } })
+    expect(ghostFor([4, 4, 0])).toMatchObject({ kind: 'cube', box: { size: [1, 1, 0.5] } })
   })
 })
 
-describe('armed-grid ghost is the child a tap would paint', () => {
+describe('armed-grid ghost is the box a tap writes', () => {
   beforeEach(() => {
     setup('cube', 0, 'paint')
   })
 
-  function ghostWith(split: Array<'x' | 'y' | 'z'> | null, hoverBits: Coord | null) {
+  function ghostWith(split: Array<'x' | 'y' | 'z'> | null, hoverBits: Coord | null, hoverCell: Coord = [4, 4, 0]) {
     const s = useAppStore.getState()
     return resolveGhostPlacement({
-      model: s.model, plane: s.plane, hoverCell: [4, 4, 0], hoveredFace: null, activeVoxelKind: s.activeVoxelKind,
+      model: s.model, plane: s.plane, hoverCell, hoveredFace: null, activeVoxelKind: s.activeVoxelKind,
       brushRotation: s.brushRotation, activeTool: s.activeTool, directEdit: false, gridExtent: s.meta.gridExtent,
-      pendingSplit: split, hoverBits,
+      gridSplit: split, hoverBits,
     })
   }
 
@@ -420,34 +413,30 @@ describe('armed-grid ghost is the child a tap would paint', () => {
   })
 
   it('halves along the plane axis: the slab, half a voxel thick', () => {
-    useAppStore.getState().setPendingSplit(['z']) // plane z, offset 0 -> viewer-side slab (high)
+    useAppStore.getState().setGridSplit(['z']) // plane z, offset 0 -> viewer-side slab (high)
     const g = ghostWith(['z'], null)
     expect(g).toMatchObject({ kind: 'cube', box: { origin: [4, 4, 0.5], size: [1, 1, 0.5] } })
   })
 
   it('quarters: one quadrant under the pointer, in the plane slab', () => {
-    useAppStore.getState().setPendingSplit(['x', 'z'])
+    useAppStore.getState().setGridSplit(['x', 'z'])
     const g = ghostWith(['x', 'z'], [1, 0, 0])
     expect(g).toMatchObject({ kind: 'cube', box: { origin: [4.5, 4, 0.5], size: [0.5, 1, 0.5] } })
   })
 
   it('a cut that leaves the plane axis alone does not slab the ghost', () => {
-    useAppStore.getState().setPendingSplit(['x'])
+    useAppStore.getState().setGridSplit(['x'])
     expect(ghostWith(['x'], [0, 0, 0])).toMatchObject({ box: { origin: [4, 4, 0], size: [0.5, 1, 1] } })
   })
 
   it('the 2D hover quadrant carries over to 3D: the ghost sits where the 2D gold footprint does', () => {
-    const st = useAppStore.getState()
-    st.setPendingSplit(['x', 'y'])
+    useAppStore.getState().setGridSplit(['x', 'y'])
     const plane = useAppStore.getState().plane // z plane: display u = x, display v = -y
     for (const quad of [[0, 0], [1, 0], [0, 1], [1, 1]] as Array<[number, number]>) {
-      const s = useAppStore.getState()
-      const g = resolveGhostPlacement({
-        model: s.model, plane: s.plane, hoverCell: [4, 4, 0], hoveredFace: null, activeVoxelKind: s.activeVoxelKind,
-        brushRotation: s.brushRotation, activeTool: s.activeTool, directEdit: false, gridExtent: s.meta.gridExtent,
-        pendingSplit: ['x', 'y'], hoverQuad: quad,
-      })
-      const [u0, v0] = subdivDisplayFootprint(plane, ['x', 'y'], quad[0], quad[1])
+      const [qu, qv] = logicalQuadrant(plane, quad)
+      const bits = worldBitsFromQuad(plane, qu, qv)
+      const g = ghostWith(['x', 'y'], bits)
+      const [u0, v0] = boxDisplayFootprint(plane, gridBox(plane, ['x', 'y'], bits))
       expect(g).toMatchObject({ kind: 'cube' })
       if (g?.kind !== 'cube' || !g.box) throw new Error('no box')
       expect(g.box.origin[0]).toBeCloseTo(4 + u0)
@@ -456,20 +445,52 @@ describe('armed-grid ghost is the child a tap would paint', () => {
     }
   })
 
-  it('a subdivided voxel ghosts the child under the pointer, same as a plain one (no scaffold)', () => {
+  it('the ghost box is exactly what the paint writes, on a fresh and on a subdivided voxel', () => {
     const st = useAppStore.getState()
-    st.setPendingSplit(['x', 'y'])
+    st.setGridSplit(['x', 'y'])
+    for (const bits of [[1, 0, 0], [0, 1, 0]] as Coord[]) {
+      const g = ghostWith(['x', 'y'], bits)
+      if (g?.kind !== 'cube' || !g.box) throw new Error('no box')
+      const s = useAppStore.getState()
+      s.beginStroke()
+      expect(s.paintCellAtCoord([4, 4, 0], 'z', 1, bits)).toBe(true)
+      s.commitStroke()
+      const sub = useAppStore.getState().model.subdiv.get('4,4,0')!
+      const idx = (g.box.origin[0] - 4) * 2 + (g.box.origin[1] - 4) * 4
+      expect(sub.children[idx]).not.toBeNull()
+    }
+  })
+
+  it('the whole grid ghosts (and writes) the whole voxel over existing detail', () => {
+    const st = useAppStore.getState()
+    st.setGridSplit(['x', 'y'])
     st.beginStroke()
-    expect(st.paintCellAtCoord([4, 4, 0], 'z', 1)).toBe(true)
+    expect(st.paintCellAtCoord([4, 4, 0], 'z', 1, [1, 0, 0])).toBe(true)
     st.commitStroke()
-    st.setGridDivision('whole') // the voxel keeps ITS split; the ghost follows it, not the grid
+    useAppStore.getState().setGridDivision('whole')
+    expect(ghostWith(null, [1, 0, 0])).toEqual({ kind: 'cube', target: [4, 4, 0] })
     const s = useAppStore.getState()
-    expect(s.model.subdiv.has('4,4,0')).toBe(true)
-    const g = resolveGhostPlacement({
-      model: s.model, plane: s.plane, hoverCell: [4, 4, 0], hoveredFace: null, activeVoxelKind: s.activeVoxelKind,
-      brushRotation: s.brushRotation, activeTool: s.activeTool, directEdit: false, gridExtent: s.meta.gridExtent,
-      pendingSplit: s.pendingSplit, hoverBits: [1, 0, 0],
-    })
-    expect(g).toMatchObject({ kind: 'cube', box: { size: [0.5, 0.5, 1] } })
+    s.beginStroke()
+    s.paintCellAtCoord([4, 4, 0], 'z', 1, [1, 0, 0])
+    s.commitStroke()
+    expect(useAppStore.getState().model.subdiv.has('4,4,0')).toBe(false)
+    expect(useAppStore.getState().model.color.has('4,4,0')).toBe(true)
+  })
+
+  it('shape kinds ghost a scaled bevel when the box can hold one, else the plain box', () => {
+    useAppStore.getState().setActiveVoxelKind('convex')
+    useAppStore.getState().setGridSplit(['x'])
+    expect(ghostWith(['x'], [1, 0, 0])?.kind).toBe('chamfer')
+    // Put one quarter of detail in the x-low half: an x-high bevel can no longer be a single
+    // child (x-low is cut along y and can't merge), so it would land — and ghosts — as a block.
+    const s = useAppStore.getState()
+    s.setActiveVoxelKind('cube')
+    s.setGridSplit(['x', 'y'])
+    s.beginStroke()
+    s.paintCellAtCoord([4, 4, 0], 'z', 1, [0, 0, 0])
+    s.commitStroke()
+    useAppStore.getState().setActiveVoxelKind('convex')
+    useAppStore.getState().setGridSplit(['x'])
+    expect(ghostWith(['x'], [1, 0, 0])).toMatchObject({ kind: 'cube', box: { size: [0.5, 1, 1] } })
   })
 })

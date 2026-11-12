@@ -52,7 +52,7 @@ export function BrushPreview() {
   const brushRotation = useAppStore((s) => s.brushRotation)
   const activeTool = useAppStore((s) => s.activeTool)
   const gridExtent = useAppStore((s) => s.meta.gridExtent)
-  const pendingSplit = useAppStore((s) => s.pendingSplit)
+  const gridSplit = useAppStore((s) => s.gridSplit)
   const rotateBrush = useAppStore((s) => s.rotateBrush)
   const setStatusMessage = useAppStore((s) => s.setStatusMessage)
   const palette = useAppStore((s) => s.palette)
@@ -63,7 +63,7 @@ export function BrushPreview() {
   }, [pools])
 
   const preview = useMemo(() => {
-    const placement = resolveGhostPlacement({ model, plane, hoverCell, hoveredFace, activeVoxelKind, brushRotation, activeTool, directEdit: layoutMode === '3d-only', gridExtent, pendingSplit })
+    const placement = resolveGhostPlacement({ model, plane, hoverCell, hoveredFace, activeVoxelKind, brushRotation, activeTool, directEdit: layoutMode === '3d-only', gridExtent, gridSplit })
     if (placement?.kind === 'chamfer') {
       const matrix = placement.matrix.clone().setPosition(0, 0, 0)
       return { pool: placement.pool, matrix, flat: placement.flat }
@@ -81,7 +81,7 @@ export function BrushPreview() {
       : shape.shapeKind
     const matrix = chamferInstanceMatrix(ORIGIN_CELL, plane.axis, plane.orientation, shape.rotation).setPosition(0, 0, 0)
     return { pool, matrix, flat: shape.shapeKind === 'flat' || shape.shapeKind === 'flatwedge' }
-  }, [model, plane, hoverCell, hoveredFace, activeVoxelKind, brushRotation, activeTool, gridExtent, layoutMode, pendingSplit])
+  }, [model, plane, hoverCell, hoveredFace, activeVoxelKind, brushRotation, activeTool, gridExtent, layoutMode, gridSplit])
 
   if (layoutMode !== '3d-only' || mode !== 'model') return null
 

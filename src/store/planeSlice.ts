@@ -7,8 +7,6 @@ import type { AppState, PlaneSlice } from './types'
 
 type Slice = StateCreator<AppState, [['zustand/immer', never]], [], PlaneSlice>
 
-const AXES: Axis[] = ['x', 'y', 'z']
-
 /** True when the armed grid division cuts along `axis` — the only case where the plane has
  * half-voxel stops. Every plane step follows the grid: no cut on the plane's axis, whole voxels. */
 export function gridSplitsAxis(split: SplitAxis[] | null, axis: Axis): boolean {
@@ -57,7 +55,7 @@ export const createPlaneSlice: Slice = (set, get) => ({
       // Any plane change not driven by handleVoxelFaceClick's own logic invalidates the
       // same-voxel-click-again target (the highlighted face no longer corresponds to it).
       state.objectModeTarget = null
-      // A new axis re-frames depth: the half-step slab belongs to the old frame.
+      // A new axis re-frames depth: the half-voxel stop belongs to the old frame (snapped below).
       if (axisChanged) state.plane.half = null
       if (reoriented) {
         state.selection = null
@@ -114,7 +112,7 @@ export const createPlaneSlice: Slice = (set, get) => ({
     let offset = st.plane.offset
     let half = st.plane.half
     const n = Math.max(0, Math.floor(count))
-    const splits = gridSplitsAxis(st.pendingSplit, st.plane.axis)
+    const splits = gridSplitsAxis(st.gridSplit, st.plane.axis)
     for (let i = 0; i < n; i++) {
       const next = stepHalfStop(offset, half, direction, st.plane.orientation, splits)
       // Pin at the bounds: a step that would leave the project stays where it is.
@@ -133,7 +131,7 @@ export const createPlaneSlice: Slice = (set, get) => ({
   // longer cuts, move it to the nearest whole voxel (the slab's own voxel), inside the bounds.
   snapPlaneToGrid: () => {
     const st = get()
-    const splits = gridSplitsAxis(st.pendingSplit, st.plane.axis)
+    const splits = gridSplitsAxis(st.gridSplit, st.plane.axis)
     // Cut axis: always on a half-voxel stop (enter on the viewer-side slab). Uncut: whole voxel.
     const half = splits ? (st.plane.half ?? (st.plane.orientation === 1 ? 1 : 0)) : null
     const offset = clampPlaneOffset(st.plane.offset, st.meta.gridExtent)
@@ -162,22 +160,12 @@ export const createPlaneSlice: Slice = (set, get) => ({
           return
         }
       }
-      // Second click on the same face: advance one step forward through it, leaving
-      // half-step mode — dwelling was for the slab just left, stepping moves on.
+      // Second click on the same face: advance one layer forward through it (landing on the
+      // viewer-side slab when the grid cuts this axis).
       get().setPlaneOffset(current.offset + current.orientation)
       get().setPlaneHalf(null)
       get().snapPlaneToGrid()
       return
-    }
-    // Clicking a subdivided voxel adopts ITS division as the grid, so the plane's stops and the
-    // next paint match the voxel just clicked. A plain voxel leaves the grid alone.
-    const sub = get().model.subdiv.get(cellKey)
-    if (sub) {
-      const split = AXES.filter((a) => sub.split.includes(a))
-      set((state) => {
-        state.pendingSplit = split
-        state.gridFamily = split.length === 1 ? 'half' : split.length === 2 ? 'quarter' : 'octal'
-      })
     }
     get().setPlaneAxisOrientation(axis, orientation)
     get().setPlaneOffset(offset)

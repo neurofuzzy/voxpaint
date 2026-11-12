@@ -3,7 +3,8 @@ import type { Axis, ChamferClassification, Orientation, Rotation, VoxelModel } f
 import type { PaletteSlotRef } from '@/engine/palette/types'
 import type { ConstructionPlane } from '@/engine/plane/types'
 import { decodeKey, emptyModel, encodeKey, recomputeBounds } from '@/engine/grid/GridStore'
-import { paintSubCell, subdivideCell } from '@/engine/grid/subdiv'
+import { subdivideCell } from '@/engine/grid/subdiv'
+import { setDetailChild } from '@/engine/grid/subdivFixtures'
 import { toDisplayU, toDisplayV } from '@/engine/plane/planeDisplay'
 import type { ClipboardData, SelectionRegion } from '@/store/types'
 import { copyCellsToClipboard } from './cellSetOps'
@@ -138,7 +139,6 @@ describe('rotateClipboard90 / mirrorClipboard', () => {
         dv: 0,
         dw: 0,
         subdiv: {
-          slot: slotA,
           split: ['x'],
           children: [
             { slot: slotA },
@@ -393,7 +393,7 @@ describe('subdivided detail in clipboard flow', () => {
     const m = emptyModel()
     m.color.set(encodeKey(0, 0, 0), { paletteSlot: { kind: 'base', index: 0 } })
     subdivideCell(m, [0, 0, 0])
-    paintSubCell(m, [0, 0, 0], 7, slotM)
+    setDetailChild(m, [0, 0, 0], 7, { slot: slotM })
     m.color.set(encodeKey(1, 0, 0), { paletteSlot: { kind: 'base', index: 1 } })
     m.bounds = recomputeBounds(m)
     return m
@@ -415,7 +415,6 @@ describe('subdivided detail in clipboard flow', () => {
     const dest = emptyModel()
     applyClipboardAt(dest, z0, clipboard, 3, -1, EXT)
     const sub = dest.subdiv.get(encodeKey(3, 0, 0))
-    expect(sub?.slot).toEqual({ kind: 'base', index: 0 })
     expect(sub?.split).toEqual(['x', 'y', 'z'])
     expect(sub?.children[7]).toEqual({ slot: slotM })
     // The parent footprint holds no color/chamfer cell of its own.

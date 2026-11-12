@@ -14,32 +14,21 @@ import { forEachSelectedCell, isCellSelected, mirrorRegion, rotateRegion90 } fro
 import { clearFineRegion } from '@/engine/grid/fineOps'
 import { liveFineSelection3D } from './selection3DSlice'
 import { applyFineClipboardAt, fineFloatAtomic, floatFootprintRegion } from '@/engine/tools/fineFloat'
-import { childInSlab, ensureSplitForPaint, frontSlabBit, paintSubCell } from '@/engine/grid/subdiv'
+import { gridBox, recolorBox, WHOLE_BOX, writeBox } from '@/engine/grid/cellBox'
 import type { AppState, SelectionTransformKind, ToolActionsSlice } from './types'
 
 type Slice = StateCreator<AppState, [['zustand/immer', never]], [], ToolActionsSlice>
 
 /**
- * Color-only flood write with just-in-time grid splits: when a grid division is armed,
- * fresh cells split first and the fill lands on every child of the editable slab (cube
- * semantics — floods never autotile or freeze shapes, matching the whole-voxel path);
- * whole grid writes unit voxels exactly as before. Runs inside the caller's producer.
+ * Planar flood write: the flooded region is either all empty (paint it) or all one color
+ * (recolor it). Writes the grid's depth — each cell's full in-plane extent, at the plane's slab
+ * when the grid cuts the plane axis (whole voxels under the whole grid). Recolors never reshape.
  */
-function floodFillCell(state: AppState, coord: Coord, slot: PaletteSlotRef) {
+function planarFloodCell(state: AppState, coord: Coord, slot: PaletteSlotRef) {
   const key = encodeKey(...coord)
-  const gridSplit = state.pendingSplit
-  if (gridSplit && !state.model.subdiv.has(key)) {
-    if (!ensureSplitForPaint(state.model, coord, gridSplit, slot)) return
-  }
-  const sub = state.model.subdiv.get(key)
-  if (sub) {
-    const half = state.plane.half ?? frontSlabBit(state.plane.orientation)
-    sub.children.forEach((_, i) => {
-      if (childInSlab(sub.split, state.plane.axis, half, i)) paintSubCell(state.model, coord, i, slot)
-    })
-  } else {
-    state.model.color.set(key, { paletteSlot: slot })
-  }
+  const box = gridBox(state.plane, state.gridSplit, null)
+  if (state.model.color.has(key) || state.model.subdiv.has(key)) recolorBox(state.model, coord, box, slot)
+  else writeBox(state.model, coord, box, { slot })
 }
 
 // Invariant: every model-mutating action in this store must call `get().bakeFloatIfAny()` as its
@@ -78,9 +67,7 @@ export const createToolActionsSlice: Slice = (set, get) => ({
     get().beginStroke()
     set((state) => {
       for (const [cu, cv] of cells) {
-        const coord = gridCoordFromPixel(state.plane, cu, cv)
-        floodFillCell(state, coord, activePaletteSlot)
-        state.model.bounds = expandBounds(state.model.bounds, coord)
+        planarFloodCell(state, gridCoordFromPixel(state.plane, cu, cv), activePaletteSlot)
       }
       state.meta.modifiedAt = new Date().toISOString()
       state.dirty = true
@@ -91,20 +78,14 @@ export const createToolActionsSlice: Slice = (set, get) => ({
   floodFill3D: (u, v) => {
     get().bakeFloatIfAny()
     const { model, plane, activePaletteSlot, meta } = get()
-    // Half-step fills whole cubes — refused (subdivided voxels keep their flood via paint).
-    if (plane.half !== null && !get().pendingSplit) {
-      showToast('Half-step: only subdivided voxels are editable')
-      return
-    }
     const startCoord = gridCoordFromPixel(plane, u, v)
     if (!model.color.has(encodeKey(...startCoord))) return // only fills from an existing voxel
     const keys = floodFillRegion3D(model, startCoord, meta.gridExtent)
     if (keys.length === 0) return
     get().beginStroke()
     set((state) => {
-      for (const key of keys) {
-        floodFillCell(state, decodeKey(key), activePaletteSlot)
-      }
+      // Volume fills are material-only and grid-independent: recolor whole voxels in place.
+      for (const key of keys) recolorBox(state.model, decodeKey(key), WHOLE_BOX, activePaletteSlot)
       state.meta.modifiedAt = new Date().toISOString()
       state.dirty = true
     })
@@ -114,15 +95,26 @@ export const createToolActionsSlice: Slice = (set, get) => ({
   floodFillCellsAt: (coord, alt) => {
     get().bakeFloatIfAny()
     const { model, activePaletteSlot, selectedCells, meta } = get()
-    // Half-step fills whole cubes — refused (subdivided voxels keep their per-child edits).
-    if (get().plane.half !== null && !get().pendingSplit) {
-      showToast('Half-step: only subdivided voxels are editable')
-      return
-    }
     // Voxel tap: material-only volume fill — recolors, never touches geometry (chamfer) and
     // never moves the plane (the 3D tap path returns before plane-setting). Plain floods the
     // color-connected volume; Alt takes the whole touching component regardless of color,
-    // mirroring the wand's two stages.
+    // mirroring the wand's two stages. A subdivided voxel (which the volume flood never
+    // traverses) recolors on its own.
+    if (model.subdiv.has(encodeKey(...coord))) {
+      if (selectedCells.size > 0 && !selectedCells.has(encodeKey(...coord))) {
+        get().flashSelectionBlocked()
+        return
+      }
+      get().beginStroke()
+      set((state) => {
+        if (recolorBox(state.model, coord, WHOLE_BOX, activePaletteSlot)) {
+          state.meta.modifiedAt = new Date().toISOString()
+          state.dirty = true
+        }
+      })
+      get().commitStroke()
+      return
+    }
     if (model.color.has(encodeKey(...coord))) {
       let keys = alt
         ? floodFillOccupied3D(model, coord, meta.gridExtent)
@@ -137,9 +129,7 @@ export const createToolActionsSlice: Slice = (set, get) => ({
       if (keys.length === 0) return
       get().beginStroke()
       set((state) => {
-        for (const key of keys) {
-          floodFillCell(state, decodeKey(key), activePaletteSlot)
-        }
+        for (const key of keys) recolorBox(state.model, decodeKey(key), WHOLE_BOX, activePaletteSlot)
         state.meta.modifiedAt = new Date().toISOString()
         state.dirty = true
       })
@@ -178,9 +168,7 @@ export const createToolActionsSlice: Slice = (set, get) => ({
     get().beginStroke()
     set((state) => {
       for (const [cu, cv] of cells) {
-        const c = gridCoordFromPixel(state.plane, cu, cv)
-        floodFillCell(state, c, activePaletteSlot)
-        state.model.bounds = expandBounds(state.model.bounds, c)
+        planarFloodCell(state, gridCoordFromPixel(state.plane, cu, cv), activePaletteSlot)
       }
       state.meta.modifiedAt = new Date().toISOString()
       state.dirty = true

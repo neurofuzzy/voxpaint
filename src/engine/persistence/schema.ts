@@ -99,9 +99,8 @@ export type SerializedChamferCell = {
    * unresolved (rendered as a plain cube) until enough neighbors are painted around it. */
   resolvedTo: ChamferClassification | null
 }
-/** One subdivided voxel: the parent's integer coords, its original slot, the split world
- * axes, and the per-child entries (`null` = erased). Child chamfers are frozen explicit
- * shapes (never autotiled); `rotation` is the brush rotation at paint time. */
+/** One subdivided voxel: the parent's integer coords, the split world axes, and the per-child
+ * entries (`null` = empty). Child chamfers are frozen shapes, restored verbatim. */
 export type SerializedSubdivChild = {
   slot: PaletteSlotRef
   chamfer?: Omit<SerializedChamferCell, 'x' | 'y' | 'z'>
@@ -110,10 +109,11 @@ export type SerializedSubdivCell = {
   x: number
   y: number
   z: number
-  slot: PaletteSlotRef
   split: SplitAxis[]
   children: (SerializedSubdivChild | null)[]
-  /** Present only when true: the entry was split from empty space (a paint scaffold). */
+  /** Legacy (early v19, never written now): the parent's original slot. Ignored on load. */
+  slot?: PaletteSlotRef
+  /** Legacy (early v19, never written now): the empty-space scaffold flag. Ignored on load. */
   scaffold?: boolean
 }
 

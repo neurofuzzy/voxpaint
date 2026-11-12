@@ -31,7 +31,7 @@ describe('sub-voxel wand', () => {
     s.beginStroke()
     s.paintCellAtCoord([1, 0, 0], 'z', 1)
     s.commitStroke()
-    s.setPendingSplit(['x'])
+    s.setGridSplit(['x'])
     ;({ u: u0, v: v0 } = pixelFromGridCoord(useAppStore.getState().plane, [0, 0, 0]))
   })
 

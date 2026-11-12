@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it } from 'vitest'
 import { encodeKey } from '@/engine/grid/GridStore'
-import type { Coord, SplitAxis } from '@/engine/grid/types'
+import type { Coord } from '@/engine/grid/types'
 import type { ConstructionPlane } from '@/engine/plane/types'
 import { gridCoordFromPixel, pixelFromGridCoord } from '@/engine/plane/constructionPlane'
 import { paintTool } from '@/engine/tools/paintTool'
@@ -1172,612 +1172,372 @@ describe('3D shift-paint lines', () => {
  * voxels, halves/quarters/octal split fresh cells on first paint). z-plane
  * orientation 1 throughout, so display quadrant (0,0) is the (x-lo, y-hi) quarter:
  * front octant 6, back octant 2. */
-describe('detail quadrants in 2D', () => {
+/**
+ * Sub-voxel editing through the grid. On the z/1 plane at offset 0: pixel (0,-1) is voxel
+ * (0,0,0), logical u runs +x and v runs -y, so logical quadrant (qu, qv) is world x = qu,
+ * y = 1 - qv. With the grid cutting z the plane sits on a half stop — the viewer-side high-z
+ * slab — and child indices are x + 2y + 4z on a full split (quadrant (0,0) front = child 6).
+ */
+describe('grid-resolution editing (writeBox)', () => {
   const SLOT_M = { kind: 'metal', index: 1 } as const
   const SLOT_B = { kind: 'base', index: 0 } as const
+  const sub0 = () => useAppStore.getState().model.subdiv.get(encodeKey(0, 0, 0))
+  const stroke = (fn: (s: ReturnType<typeof useAppStore.getState>) => void) => {
+    const s = useAppStore.getState()
+    s.beginStroke()
+    fn(s)
+    s.commitStroke()
+  }
   beforeEach(() => {
     useAppStore.getState().newProject('Test', 16)
     useAppStore.getState().setActiveVoxelKind('cube')
     useAppStore.getState().setActivePaletteSlot(SLOT_B)
     useAppStore.getState().setPlaneAxisOrientation('z', 1)
     useAppStore.getState().setPlaneOffset(0)
-    // The tests below subdivide without an explicit division — pin the default full
-    // split instead of inheriting whatever a previous test left in the toolbar.
-    useAppStore.getState().setPendingSplit(['x', 'y', 'z'])
+    useAppStore.getState().setGridSplit(['x', 'y', 'z'])
   })
 
-  function subdividedAt(u: number, v: number) {
-    // The pinned full grid splits fresh cells just-in-time on first paint.
-    const s = useAppStore.getState()
-    s.beginStroke()
-    expect(s.paintCell(u, v)).toBe(true)
-    s.commitStroke()
-    return gridCoordFromPixel(PLANE, u, v)
+  /** Paints the front slab of (0,0,0) with the full grid armed (no pointer half: full in-plane). */
+  function frontSlab() {
+    stroke((s) => expect(s.paintCell(0, -1)).toBe(true))
   }
 
-  it('paints whole voxels with whole grid, splits just-in-time with a grid armed', () => {
-    const s = useAppStore.getState()
-    useAppStore.getState().setGridDivision('whole')
-    s.beginStroke()
-    expect(s.paintCell(0, -1)).toBe(true)
-    s.commitStroke()
-    let after = useAppStore.getState()
-    expect(after.model.color.has(encodeKey(0, 0, 0))).toBe(true)
-    expect(after.model.subdiv.has(encodeKey(0, 0, 0))).toBe(false)
-    // Armed halves split the next fresh voxel on paint (no separate split step).
-    useAppStore.getState().setGridDivision('half') // arms ['x']
-    s.beginStroke()
-    expect(s.paintCell(2, -1)).toBe(true)
-    s.commitStroke()
-    after = useAppStore.getState()
-    const sub = after.model.subdiv.get(encodeKey(2, 0, 0))!
-    expect(sub.split).toEqual(['x'])
-    expect(sub.children).toHaveLength(2)
-  })
-
-  it('paints exactly the hovered front child, leaving the rest empty', () => {
-    subdividedAt(0, -1)
-    const s = useAppStore.getState()
-    useAppStore.getState().setActivePaletteSlot(SLOT_M)
-    s.beginStroke()
-    expect(s.paintCell(0, -1, 0, 0)).toBe(true)
-    s.commitStroke()
-    const sub = useAppStore.getState().model.subdiv.get(encodeKey(0, 0, 0))!
-    // Quadrant (0,0) addresses [6, 2] front-sorted; whole-voxel mode paints the front one.
-    // Just-in-time splits start from empty scaffolds — unpainted children stay null.
-    expect(sub.children[6]).toEqual({ slot: SLOT_M })
-    expect(sub.children[2]).toBeNull()
-    for (const i of [4, 5, 7]) expect(sub.children[i]).toEqual({ slot: SLOT_B })
-    for (const i of [0, 1, 3]) expect(sub.children[i]).toBeNull()
-  })
-
-  it('paints the front slab without a quadrant (shift-lines, synthetic events)', () => {
-    subdividedAt(0, -1)
-    const s = useAppStore.getState()
-    useAppStore.getState().setActivePaletteSlot(SLOT_M)
-    s.beginStroke()
-    expect(s.paintCell(0, -1)).toBe(true)
-    s.commitStroke()
-    const sub = useAppStore.getState().model.subdiv.get(encodeKey(0, 0, 0))!
-    // The viewer-side depth half (dz=1: children 4-7); the back half stays empty.
-    for (const o of [4, 5, 6, 7]) expect(sub.children[o]).toEqual({ slot: SLOT_M })
-    for (const o of [0, 1, 2, 3]) expect(sub.children[o]).toBeNull()
-  })
-
-  it('erases content only, clearing the subdivision only when already empty', () => {
-    subdividedAt(0, -1)
-    const s = useAppStore.getState()
-    s.beginStroke()
-    s.eraseCell([0, 0, 0], 0, 0)
-    s.commitStroke()
-    let sub = useAppStore.getState().model.subdiv.get(encodeKey(0, 0, 0))!
-    // JIT splits start half-empty: erasing (0,0) nulls the painted front child 6
-    // (back child 2 was already null), leaving the other front pair live.
-    expect(sub.children[6]).toBeNull()
-    expect(sub.children[2]).toBeNull()
-    expect(sub.children.filter(Boolean)).toHaveLength(3)
-    // Erase the other three quadrants: content gone, structure kept for repainting.
-    s.beginStroke()
-    s.eraseCell([0, 0, 0], 1, 0)
-    s.eraseCell([0, 0, 0], 0, 1)
-    s.eraseCell([0, 0, 0], 1, 1)
-    s.commitStroke()
-    const after = useAppStore.getState()
-    expect(after.model.subdiv.has(encodeKey(0, 0, 0))).toBe(true)
-    expect(after.model.subdiv.get(encodeKey(0, 0, 0))!.children.every((c) => c === null)).toBe(true)
-    expect(after.model.color.has(encodeKey(0, 0, 0))).toBe(false)
-    // Erasing the already-empty voxel clears the subdivision.
-    s.beginStroke()
-    s.eraseCell([0, 0, 0], 0, 0)
-    s.commitStroke()
-    expect(useAppStore.getState().model.subdiv.has(encodeKey(0, 0, 0))).toBe(false)
-  })
-
-  it('recolors the hovered live child only', () => {
-    subdividedAt(0, -1)
-    const s = useAppStore.getState()
-    useAppStore.getState().setActivePaletteSlot(SLOT_M)
-    s.beginStroke()
-    expect(s.paintMaterialCell(0, -1, 1, 1)).toBe(true)
-    s.commitStroke()
-    const sub = useAppStore.getState().model.subdiv.get(encodeKey(0, 0, 0))!
-    // Quadrant (1,1) addresses [5, 1] front-sorted, but only the live front child 5
-    // recolors — JIT back children are empty holes, not inherited cubes.
-    const changed = sub.children.map((c, i) => (c?.slot.kind === 'metal' ? i : -1)).filter((i) => i >= 0)
-    expect(changed).toEqual([5])
-    // Same-slot recolor is a no-op.
-    s.beginStroke()
-    expect(s.paintMaterialCell(0, -1, 1, 1)).toBe(false)
-    s.commitStroke()
-  })
-
-  it('writes explicit kinds as frozen verbatim shapes, scaled at render', () => {
-    subdividedAt(0, -1)
-    useAppStore.getState().setActiveVoxelKind('convex')
-    const s = useAppStore.getState()
-    s.beginStroke()
-    expect(s.paintCell(0, -1, 0, 0)).toBe(true)
-    s.commitStroke()
-    const sub = useAppStore.getState().model.subdiv.get(encodeKey(0, 0, 0))!
-    // The hovered quadrant's front child takes the frozen convex (verbatim kind + brush
-    // rotation); the back child and the rest stay plain.
-    expect(sub.children[6]).toEqual({
-      slot: SLOT_B,
-      chamfer: { planeAxis: 'z', planeOrientation: 1, resolvedTo: { shapeKind: 'convex', rotation: 0 } },
+  describe('the grid is the control', () => {
+    it('whole grid paints whole voxels; an armed grid paints one grid cell', () => {
+      useAppStore.getState().setGridDivision('whole')
+      stroke((s) => expect(s.paintCell(0, -1, 0, 0)).toBe(true))
+      expect(useAppStore.getState().model.color.has(encodeKey(0, 0, 0))).toBe(true)
+      expect(useAppStore.getState().model.subdiv.size).toBe(0)
+      useAppStore.getState().setGridDivision('half') // ['x'], doesn't cut z: no half stop
+      expect(useAppStore.getState().plane.half).toBeNull()
+      stroke((s) => expect(s.paintCell(2, -1, 1, 0)).toBe(true))
+      expect(useAppStore.getState().model.subdiv.get(encodeKey(2, 0, 0))).toEqual({ split: ['x'], children: [null, { slot: SLOT_B }] })
     })
-    expect(sub.children.filter((c) => c?.chamfer)).toHaveLength(1)
-  })
 
-  it('auto-bevels ramps from the subcell neighborhood (adjacent subdivided voxels included)', () => {
-    subdividedAt(0, -1) // full split at (0,0,0), all base
-    const s = useAppStore.getState()
-    // North neighbor cube: child 6 (front-top-left) then sees N filled (the cube),
-    // S filled (sibling child 4), E filled (sibling child 7), W open → ramp, open W.
-    s.beginStroke()
-    expect(s.paintCell(0, -2)).toBe(true) // (0,1,0): north of the parent
-    s.commitStroke()
-    useAppStore.getState().setActiveVoxelKind('ramp')
-    s.beginStroke()
-    expect(s.paintCell(0, -1, 0, 0)).toBe(true)
-    s.commitStroke()
-    const sub = useAppStore.getState().model.subdiv.get(encodeKey(0, 0, 0))!
-    // Open W (index 3) → rotation (3+3)%4 = 2, on the front child only.
-    expect(sub.children[6]).toEqual({
-      slot: SLOT_B,
-      chamfer: { planeAxis: 'z', planeOrientation: 1, resolvedTo: { shapeKind: 'ramp', rotation: 2 } },
+    it('paints exactly the hovered grid cell on the plane slab', () => {
+      useAppStore.getState().setActivePaletteSlot(SLOT_M)
+      stroke((s) => expect(s.paintCell(0, -1, 0, 0)).toBe(true))
+      const sub = sub0()!
+      expect(sub.split).toEqual(['x', 'y', 'z'])
+      expect(sub.children[6]).toEqual({ slot: SLOT_M })
+      expect(sub.children.filter((c) => c !== null)).toHaveLength(1)
     })
-    expect(sub.children[2]).toBeNull()
-  })
 
-  it('leaves ramps unresolved without neighbors, then resolves them on a later stroke', () => {
-    subdividedAt(0, -1)
-    const s = useAppStore.getState()
-    s.beginStroke()
-    // Drop the east-half siblings so the stamped child sees a single filled neighbor.
-    s.eraseCell([0, 0, 0], 1, 0) // quadrant (1,0) → children [7, 3]
-    s.eraseCell([0, 0, 0], 1, 1) // quadrant (1,1) → children [5, 1]
-    s.commitStroke()
-    useAppStore.getState().setActiveVoxelKind('ramp')
-    s.beginStroke()
-    expect(s.paintCell(0, -1, 0, 0)).toBe(true)
-    s.commitStroke()
-    // One filled neighbor (S sibling) is not a bevel: null (renders as a cube).
-    expect(useAppStore.getState().model.subdiv.get(encodeKey(0, 0, 0))!.children[6]).toEqual({
-      slot: SLOT_B,
-      chamfer: { planeAxis: 'z', planeOrientation: 1, resolvedTo: null },
+    it('without a pointer half the write spans the in-plane extent at the plane slab', () => {
+      frontSlab()
+      expect(sub0()).toEqual({ split: ['z'], children: [null, { slot: SLOT_B }] })
     })
-    // A later stroke paints the N+W cubes; the stroke-end pass completes the ramp
-    // (N+S+W filled, E open → rotation (1+3)%4 = 0).
-    useAppStore.getState().setActiveVoxelKind('cube')
-    s.beginStroke()
-    expect(s.paintCell(0, -2)).toBe(true) // (0,1,0): north
-    expect(s.paintCell(-1, -1)).toBe(true) // (-1,0,0): west
-    s.correctChamferStroke()
-    s.commitStroke()
-    const sub = useAppStore.getState().model.subdiv.get(encodeKey(0, 0, 0))!
-    expect(sub.children[6]?.chamfer?.resolvedTo).toEqual({ shapeKind: 'ramp', rotation: 0 })
-  })
 
-  it('auto-bevels wedges from convex corners, falling back to rotation 0', () => {
-    subdividedAt(0, -1)
-    // Clear the S/E sibling support so only N (painted below) and E read filled.
-    const s = useAppStore.getState()
-    s.beginStroke()
-    s.eraseCell([0, 0, 0], 0, 1) // quadrant (0,1) → children [4, 0]
-    expect(s.paintCell(0, -2)).toBe(true) // north cube
-    s.commitStroke()
-    useAppStore.getState().setActiveVoxelKind('wedge')
-    s.beginStroke()
-    expect(s.paintCell(0, -1, 0, 0)).toBe(true)
-    s.commitStroke()
-    const sub = useAppStore.getState().model.subdiv.get(encodeKey(0, 0, 0))!
-    // N+E filled = the [0,1] adjacent pair → corner 2.
-    expect(sub.children[6]).toEqual({
-      slot: SLOT_B,
-      chamfer: { planeAxis: 'z', planeOrientation: 1, resolvedTo: { shapeKind: 'wedge', rotation: 2 } },
+    it('the whole grid replaces detail with one voxel', () => {
+      stroke((s) => s.paintCell(0, -1, 0, 0))
+      useAppStore.getState().setGridDivision('whole')
+      useAppStore.getState().setActivePaletteSlot(SLOT_M)
+      stroke((s) => s.paintCell(0, -1, 1, 1))
+      expect(sub0()).toBeUndefined()
+      expect(useAppStore.getState().model.color.get(encodeKey(0, 0, 0))).toEqual({ paletteSlot: SLOT_M })
+    })
+
+    it('the armed grid wins over a voxel’s existing split (it re-splits, keeping detail)', () => {
+      useAppStore.getState().setGridSplit(['y'])
+      stroke((s) => s.paintCell(0, -1, 0, 0)) // y-high half
+      expect(sub0()!.split).toEqual(['y'])
+      useAppStore.getState().setGridSplit(['x'])
+      useAppStore.getState().setActivePaletteSlot(SLOT_M)
+      stroke((s) => s.paintCell(0, -1, 1, 0)) // x-high half
+      const sub = sub0()!
+      expect(sub.split).toEqual(['x', 'y'])
+      // x-high is all M; x-low keeps its y-high B and y-low hole.
+      expect(sub.children).toEqual([null, { slot: SLOT_M }, { slot: SLOT_B }, { slot: SLOT_M }])
+    })
+
+    it('uniform paint folds back to a plain voxel (no redundant subdivision)', () => {
+      useAppStore.getState().setGridSplit(null)
+      stroke((s) => s.paintCell(0, -1))
+      useAppStore.getState().setGridSplit(['x'])
+      stroke((s) => {
+        s.paintCell(0, -1, 0, 0)
+        s.paintCell(0, -1, 1, 0)
+      })
+      expect(sub0()).toBeUndefined()
+      expect(useAppStore.getState().model.color.get(encodeKey(0, 0, 0))).toEqual({ paletteSlot: SLOT_B })
+    })
+
+    it('painting both slabs of a voxel folds it whole', () => {
+      frontSlab()
+      useAppStore.getState().stepPlaneHalf(-1) // high slab → low slab of the same layer
+      expect(useAppStore.getState().plane).toMatchObject({ offset: 0, half: 0 })
+      frontSlab()
+      expect(sub0()).toBeUndefined()
+      expect(useAppStore.getState().model.color.has(encodeKey(0, 0, 0))).toBe(true)
+    })
+
+    it('setGridDivision arms families and re-clicks cycle them globally', () => {
+      const after = () => useAppStore.getState()
+      after().setGridDivision('whole')
+      after().setGridDivision('half')
+      expect(after().gridSplit).toEqual(['x'])
+      after().setGridDivision('half')
+      expect(after().gridSplit).toEqual(['y'])
+      after().setGridDivision('half')
+      expect(after().gridSplit).toEqual(['z'])
+      after().setGridDivision('half')
+      expect(after().gridSplit).toEqual(['x'])
+      after().setGridDivision('quarter')
+      expect(after().gridSplit).toEqual(['y', 'z'])
+      after().setGridDivision('quarter')
+      expect(after().gridSplit).toEqual(['x', 'z'])
+      after().setGridDivision('quarter')
+      expect(after().gridSplit).toEqual(['x', 'y'])
+      after().setGridDivision('octal')
+      expect(after().gridSplit).toEqual(['x', 'y', 'z'])
+      after().setGridDivision('octal')
+      expect(after().gridSplit).toEqual(['x', 'y', 'z'])
+      after().setGridDivision('whole')
+      expect(after().gridSplit).toBeNull()
     })
   })
 
-  it('wedges wait at rotation 0 until the stroke completes their corner', () => {
-    subdividedAt(0, -1)
-    const s = useAppStore.getState()
-    s.beginStroke()
-    s.eraseCell([0, 0, 0], 0, 1) // drop S support: N/E/S/W read empty
-    s.commitStroke()
-    useAppStore.getState().setActiveVoxelKind('wedge')
-    s.beginStroke()
-    expect(s.paintCell(0, -1, 0, 0)).toBe(true)
-    // Fallback: no convex corner yet.
-    expect(useAppStore.getState().model.subdiv.get(encodeKey(0, 0, 0))!.children[6]).toEqual({
-      slot: SLOT_B,
-      chamfer: { planeAxis: 'z', planeOrientation: 1, resolvedTo: { shapeKind: 'wedge', rotation: 0 } },
+  describe('erase and recolor use the same box', () => {
+    it('erases half of a plain voxel when the grid cuts the plane axis', () => {
+      useAppStore.getState().setGridSplit(null)
+      stroke((s) => s.paintCell(0, -1))
+      useAppStore.getState().setGridSplit(['z'])
+      expect(useAppStore.getState().plane.half).toBe(1)
+      stroke((s) => s.eraseCell([0, 0, 0]))
+      expect(sub0()).toEqual({ split: ['z'], children: [{ slot: SLOT_B }, null] })
+      // Erasing the other half deletes the voxel outright.
+      useAppStore.getState().setPlaneHalf(0)
+      stroke((s) => s.eraseCell([0, 0, 0]))
+      expect(sub0()).toBeUndefined()
+      expect(useAppStore.getState().model.color.has(encodeKey(0, 0, 0))).toBe(false)
     })
-    // Completing the corner in the same stroke upgrades it at stroke end.
-    useAppStore.getState().setActiveVoxelKind('cube')
-    expect(s.paintCell(0, -2)).toBe(true) // north cube → N+E convex
-    s.correctChamferStroke()
-    s.commitStroke()
-    expect(useAppStore.getState().model.subdiv.get(encodeKey(0, 0, 0))!.children[6]).toEqual({
-      slot: SLOT_B,
-      chamfer: { planeAxis: 'z', planeOrientation: 1, resolvedTo: { shapeKind: 'wedge', rotation: 2 } },
+
+    it('erases one grid cell under the quadrant; the whole grid erases the whole voxel', () => {
+      useAppStore.getState().setGridSplit(['x'])
+      stroke((s) => s.paintCell(0, -1))
+      stroke((s) => s.eraseCell([0, 0, 0], 1, 0))
+      expect(sub0()).toEqual({ split: ['x'], children: [{ slot: SLOT_B }, null] })
+      useAppStore.getState().setGridSplit(null)
+      stroke((s) => s.eraseCell([0, 0, 0], 0, 0))
+      expect(sub0()).toBeUndefined()
+      expect(useAppStore.getState().model.color.size).toBe(0)
+    })
+
+    it('3D erase carves the grid cell under the clicked point', () => {
+      useAppStore.getState().setGridSplit(null)
+      stroke((s) => s.paintCell(0, -1))
+      useAppStore.getState().setGridSplit(['y'])
+      stroke((s) => s.eraseCellAtCoord([0, 0, 0], [0, 1, 0]))
+      expect(sub0()).toEqual({ split: ['y'], children: [{ slot: SLOT_B }, null] })
+    })
+
+    it('recolors only the hovered grid cell, never adding volume', () => {
+      useAppStore.getState().setGridSplit(null)
+      stroke((s) => s.paintCell(0, -1))
+      useAppStore.getState().setGridSplit(['x'])
+      useAppStore.getState().setActivePaletteSlot(SLOT_M)
+      let changed = false
+      stroke((s) => {
+        changed = s.paintMaterialCell(0, -1, 1, 0)
+        expect(s.paintMaterialCell(5, 5, 0, 0)).toBe(false) // empty: nothing to recolor
+      })
+      expect(changed).toBe(true)
+      expect(sub0()).toEqual({ split: ['x'], children: [{ slot: SLOT_B }, { slot: SLOT_M }] })
+      expect(useAppStore.getState().model.color.has(keyFor(5, 5))).toBe(false)
+    })
+
+    it('recolor never cuts a bevel: a chamfer voxel recolors whole', () => {
+      useAppStore.getState().setGridSplit(null)
+      useAppStore.getState().setActiveVoxelKind('convex')
+      stroke((s) => s.paintCell(0, -1))
+      useAppStore.getState().setGridSplit(['x'])
+      useAppStore.getState().setActivePaletteSlot(SLOT_M)
+      stroke((s) => expect(s.paintMaterialCell(0, -1, 1, 0)).toBe(true))
+      const m = useAppStore.getState().model
+      expect(m.subdiv.size).toBe(0)
+      expect(m.color.get(encodeKey(0, 0, 0))).toEqual({ paletteSlot: SLOT_M })
+      expect(m.chamfer.get(encodeKey(0, 0, 0))?.resolvedTo?.shapeKind).toBe('convex')
     })
   })
 
-  it('3D per-child taps auto-bevel from the subcell neighborhood', () => {
-    subdividedAt(0, -1)
-    const s = useAppStore.getState()
-    s.beginStroke()
-    expect(s.paintCell(0, -2)).toBe(true) // north cube
-    s.commitStroke()
-    useAppStore.getState().setActiveVoxelKind('ramp')
-    s.beginStroke()
-    expect(s.paintSubCellAtCoord([0, 0, 0], 6)).toBe(true)
-    s.commitStroke()
-    expect(useAppStore.getState().model.subdiv.get(encodeKey(0, 0, 0))!.children[6]).toEqual({
-      slot: SLOT_B,
-      chamfer: { planeAxis: 'z', planeOrientation: 1, resolvedTo: { shapeKind: 'ramp', rotation: 2 } },
+  describe('fills', () => {
+    it('3D volume fill is material-only: bevels survive, nothing subdivides', () => {
+      useAppStore.getState().setGridSplit(null)
+      useAppStore.getState().setActiveVoxelKind('convex')
+      stroke((s) => s.paintCell(0, -1))
+      useAppStore.getState().setGridSplit(['x', 'y', 'z'])
+      useAppStore.getState().setActivePaletteSlot(SLOT_M)
+      useAppStore.getState().floodFillCellsAt([0, 0, 0], false)
+      const m = useAppStore.getState().model
+      expect(m.subdiv.size).toBe(0)
+      expect(m.chamfer.get(encodeKey(0, 0, 0))?.resolvedTo?.shapeKind).toBe('convex')
+      expect(m.color.get(encodeKey(0, 0, 0))).toEqual({ paletteSlot: SLOT_M })
+    })
+
+    it('3D fill on a subdivided voxel recolors it (it is occupied, not empty space)', () => {
+      stroke((s) => s.paintCell(0, -1, 0, 0))
+      useAppStore.getState().setActivePaletteSlot(SLOT_M)
+      useAppStore.getState().floodFillCellsAt([0, 0, 0], false)
+      expect(sub0()!.children[6]).toEqual({ slot: SLOT_M })
+      expect(useAppStore.getState().model.color.size).toBe(0)
+    })
+
+    it('selection fill writes the grid depth: the plane slab under a depth cut, whole otherwise', () => {
+      useAppStore.getState().setSelection({ originU: 0, originV: -1, width: 1, height: 1, mask: new Uint8Array([1]) })
+      useAppStore.getState().fillSelection()
+      expect(sub0()).toEqual({ split: ['z'], children: [null, { slot: SLOT_B }] })
+      useAppStore.getState().setGridSplit(['x'])
+      useAppStore.getState().setSelection({ originU: 0, originV: -1, width: 1, height: 1, mask: new Uint8Array([1]) })
+      useAppStore.getState().fillSelection()
+      expect(sub0()).toBeUndefined()
+      expect(useAppStore.getState().model.color.has(encodeKey(0, 0, 0))).toBe(true)
+    })
+
+    it('flood fill treats subdivided cells as occupied boundaries', () => {
+      useAppStore.getState().setGridSplit(null)
+      stroke((s) => {
+        for (const [u, v] of [[-1, -1], [0, -1], [1, -1], [-1, 0], [1, 0], [-1, 1], [0, 1], [1, 1]]) s.paintCell(u, v)
+      })
+      const mid = gridCoordFromPixel(PLANE, 0, 0)
+      useAppStore.getState().setGridSplit(['x'])
+      stroke((s) => s.paintCell(0, 0, 1, 0)) // x-high half of the middle
+      useAppStore.getState().setActivePaletteSlot(SLOT_M)
+      stroke((s) => s.floodFill(0, 0))
+      expect(useAppStore.getState().model.subdiv.get(encodeKey(...mid))!.children).toEqual([null, { slot: SLOT_B }])
     })
   })
 
-  it('2D re-clicks rotate detail bevels, then advance the family past a full turn', () => {
-    subdividedAt(0, -1)
-    const s = useAppStore.getState()
-    s.beginStroke()
-    expect(s.paintCell(0, -2)).toBe(true) // north cube → child 6 sees N+S+E filled
-    s.commitStroke()
-    useAppStore.getState().setActiveVoxelKind('ramp')
-    const stamp = () => {
+  describe('bevels in grid cells', () => {
+    it('writes explicit kinds as frozen verbatim shapes in exactly the box', () => {
+      frontSlab()
+      useAppStore.getState().setActiveVoxelKind('convex')
+      stroke((s) => expect(s.paintCell(0, -1, 0, 0)).toBe(true))
+      const sub = sub0()!
+      expect(sub.children[6]).toEqual({
+        slot: SLOT_B,
+        chamfer: { planeAxis: 'z', planeOrientation: 1, resolvedTo: { shapeKind: 'convex', rotation: 0 } },
+      })
+      expect(sub.children.filter((c) => c?.chamfer)).toHaveLength(1)
+    })
+
+    it('auto-bevels ramps from the subcell neighborhood', () => {
+      frontSlab()
+      useAppStore.getState().setGridSplit(null)
+      stroke((s) => expect(s.paintCell(0, -2)).toBe(true)) // north cube (0,1,0)
+      useAppStore.getState().setGridSplit(['x', 'y', 'z'])
+      useAppStore.getState().setActiveVoxelKind('ramp')
+      stroke((s) => expect(s.paintCell(0, -1, 0, 0)).toBe(true))
+      const sub = sub0()!
+      // N (cube) + S, E (front siblings) filled, W open → rotation 2, on the front child only.
+      expect(sub.children[6]).toEqual({
+        slot: SLOT_B,
+        chamfer: { planeAxis: 'z', planeOrientation: 1, resolvedTo: { shapeKind: 'ramp', rotation: 2 } },
+      })
+      expect(sub.children[2]).toBeNull()
+    })
+
+    it('an unresolved detail ramp resolves only on its own edit, never from later neighbors', () => {
+      frontSlab()
+      stroke((s) => {
+        s.eraseCell([0, 0, 0], 1, 0) // child 7
+        s.eraseCell([0, 0, 0], 1, 1) // child 5
+      })
+      useAppStore.getState().setActiveVoxelKind('ramp')
+      stroke((s) => expect(s.paintCell(0, -1, 0, 0)).toBe(true))
+      expect(sub0()!.children[6]?.chamfer?.resolvedTo).toBeNull()
+      // A later stroke paints N + W: the ramp is not touched (no neighbor propagation).
+      useAppStore.getState().setGridSplit(null)
+      useAppStore.getState().setActiveVoxelKind('cube')
+      stroke((s) => {
+        s.paintCell(0, -2)
+        s.paintCell(-1, -1)
+        s.correctChamferStroke()
+      })
+      expect(sub0()!.children[6]?.chamfer?.resolvedTo).toBeNull()
+      // Editing it resolves it: N + S + W filled, E open → rotation 0.
+      useAppStore.getState().setGridSplit(['x', 'y', 'z'])
+      useAppStore.getState().setActiveVoxelKind('ramp')
+      stroke((s) => s.paintCell(0, -1, 0, 0))
+      expect(sub0()!.children[6]?.chamfer?.resolvedTo).toEqual({ shapeKind: 'ramp', rotation: 0 })
+    })
+
+    it('wedges wait at rotation 0 until the same stroke completes their corner', () => {
+      frontSlab()
+      stroke((s) => s.eraseCell([0, 0, 0], 0, 1)) // child 4: drop S support
+      useAppStore.getState().setActiveVoxelKind('wedge')
+      const s = useAppStore.getState()
       s.beginStroke()
       expect(s.paintCell(0, -1, 0, 0)).toBe(true)
+      expect(sub0()!.children[6]?.chamfer?.resolvedTo).toEqual({ shapeKind: 'wedge', rotation: 0 })
+      useAppStore.getState().setGridSplit(null)
+      useAppStore.getState().setActiveVoxelKind('cube')
+      expect(s.paintCell(0, -2)).toBe(true) // north cube → N+E convex
+      s.correctChamferStroke()
       s.commitStroke()
-    }
-    stamp() // fresh auto-bevel: ramp, open W → rotation 2
-    expect(useAppStore.getState().model.subdiv.get(encodeKey(0, 0, 0))!.children[6]!.chamfer!.resolvedTo).toEqual({ shapeKind: 'ramp', rotation: 2 })
-    stamp() // re-click: rotate to 3
-    expect(useAppStore.getState().model.subdiv.get(encodeKey(0, 0, 0))!.children[6]!.chamfer!.resolvedTo).toEqual({ shapeKind: 'ramp', rotation: 3 })
-    stamp() // completing the turn advances to convex instead of wrapping to 0
-    expect(useAppStore.getState().model.subdiv.get(encodeKey(0, 0, 0))!.children[6]!.chamfer!.resolvedTo).toEqual({ shapeKind: 'convex', rotation: 0 })
-  })
-
-  it('drag revisits do not advance detail bevels mid-stroke', () => {
-    subdividedAt(0, -1)
-    const s = useAppStore.getState()
-    s.beginStroke()
-    expect(s.paintCell(0, -2)).toBe(true) // north cube
-    s.commitStroke()
-    useAppStore.getState().setActiveVoxelKind('ramp')
-    s.beginStroke()
-    expect(s.paintCell(0, -1, 0, 0)).toBe(true) // fresh: ramp@2
-    expect(s.paintCell(0, -1, 0, 0)).toBe(true) // same-stroke revisit: untouched
-    s.commitStroke()
-    expect(useAppStore.getState().model.subdiv.get(encodeKey(0, 0, 0))!.children[6]!.chamfer!.resolvedTo).toEqual({ shapeKind: 'ramp', rotation: 2 })
-  })
-
-  it('3D re-clicks cycle detail bevels like 2D taps', () => {
-    subdividedAt(0, -1)
-    const s = useAppStore.getState()
-    s.beginStroke()
-    expect(s.paintCell(0, -2)).toBe(true) // north cube
-    s.commitStroke()
-    useAppStore.getState().setActiveVoxelKind('ramp')
-    s.beginStroke()
-    expect(s.paintSubCellAtCoord([0, 0, 0], 6)).toBe(true)
-    s.commitStroke()
-    expect(useAppStore.getState().model.subdiv.get(encodeKey(0, 0, 0))!.children[6]!.chamfer!.resolvedTo).toEqual({ shapeKind: 'ramp', rotation: 2 })
-    s.beginStroke()
-    expect(s.paintSubCellAtCoord([0, 0, 0], 6)).toBe(true)
-    s.commitStroke()
-    expect(useAppStore.getState().model.subdiv.get(encodeKey(0, 0, 0))!.children[6]!.chamfer!.resolvedTo).toEqual({ shapeKind: 'ramp', rotation: 3 })
-  })
-
-  it('splits with the armed grid division directly (half → 2 children)', () => {
-    const s = useAppStore.getState()
-    useAppStore.getState().setGridDivision('half') // arms ['x']
-    s.beginStroke()
-    expect(s.paintCell(0, -1)).toBe(true)
-    s.commitStroke()
-    const sub = useAppStore.getState().model.subdiv.get(encodeKey(0, 0, 0))!
-    expect(sub.split).toEqual(['x'])
-    expect(sub.children).toHaveLength(2)
-    // Painting one quadrant of an x-split addresses the matching half (both qv map to it).
-    useAppStore.getState().setActivePaletteSlot(SLOT_M)
-    s.beginStroke()
-    expect(s.paintCell(0, -1, 1, 0)).toBe(true)
-    s.commitStroke()
-    const after = useAppStore.getState().model.subdiv.get(encodeKey(0, 0, 0))!
-    expect(after.children[1]).toEqual({ slot: SLOT_M })
-    // An x-split has no depth axis, so the whole entry (both halves) takes the paint.
-    expect(after.children[0]).toEqual({ slot: SLOT_B })
-  })
-
-  it('flood fill treats subdivided cells as occupied boundaries (never paints them)', () => {
-    // Enclosed 3x3 ring at z=0 with a subdivided cell inside the empty middle.
-    const s = useAppStore.getState()
-    s.beginStroke()
-    for (const [u, v] of [[-1, -1], [0, -1], [1, -1], [-1, 0], [1, 0], [-1, 1], [0, 1], [1, 1]]) {
-      s.paintCell(u, v)
-    }
-    s.commitStroke()
-    const mid = gridCoordFromPixel(PLANE, 0, 0)
-    // Scaffold the middle (empty entry, no paint) — the flood stops at it.
-    s.beginStroke()
-    expect(s.ensureSubdividedAt(mid)).toBe(true)
-    s.commitStroke()
-    // Filling from inside the ring: the flood stops at the subdivided cell (no color there
-    // to match, and it blocks traversal), so nothing paints.
-    s.beginStroke()
-    s.floodFill(0, 0)
-    s.commitStroke()
-    const sub = useAppStore.getState().model.subdiv.get(encodeKey(...mid))!
-    expect(sub.children.every((c) => c === null)).toBe(true)
-  })
-})
-
-describe('grid just-in-time splits', () => {
-  const SLOT_M = { kind: 'metal', index: 1 } as const
-  const SLOT_B = { kind: 'base', index: 0 } as const
-  beforeEach(() => {
-    useAppStore.getState().newProject('Test', 16)
-    useAppStore.getState().setActiveVoxelKind('cube')
-    useAppStore.getState().setActivePaletteSlot(SLOT_B)
-    useAppStore.getState().setPlaneAxisOrientation('z', 1)
-    useAppStore.getState().setPlaneOffset(0)
-    useAppStore.getState().setPendingSplit(['x', 'y', 'z'])
-  })
-
-  function subdividedAt(u: number, v: number, pending?: SplitAxis[] | null) {
-    if (pending !== undefined) useAppStore.getState().setPendingSplit(pending)
-    // The armed grid splits fresh cells on first paint — no separate split step.
-    const s = useAppStore.getState()
-    s.beginStroke()
-    expect(s.paintCell(u, v)).toBe(true)
-    s.commitStroke()
-    return gridCoordFromPixel(PLANE, u, v)
-  }
-
-  it('splits fresh voxels with the armed division on paint, leaving the grid alone', () => {
-    useAppStore.getState().setPendingSplit(['z'])
-    subdividedAt(0, -1)
-    expect(useAppStore.getState().model.subdiv.get(encodeKey(0, 0, 0))!.split).toEqual(['z'])
-    expect(useAppStore.getState().pendingSplit).toEqual(['z'])
-  })
-
-  it('whole grid paints whole voxels and empty space, splitting nothing', () => {
-    useAppStore.getState().setPendingSplit(null)
-    const s = useAppStore.getState()
-    s.beginStroke()
-    expect(s.paintCell(0, -1)).toBe(true)
-    s.commitStroke()
-    s.beginStroke()
-    expect(s.paintCell(2, 2)).toBe(true)
-    s.commitStroke()
-    const after = useAppStore.getState()
-    expect(after.model.subdiv.size).toBe(0)
-    expect(after.model.color.has(encodeKey(0, 0, 0))).toBe(true)
-    expect(after.model.color.has(keyFor(2, 2))).toBe(true)
-  })
-
-  it('painting empty space scaffolds, then paints the hovered set in place', () => {
-    useAppStore.getState().setPendingSplit(['x', 'y'])
-    useAppStore.getState().setActivePaletteSlot(SLOT_M)
-    const coord = gridCoordFromPixel(PLANE, 2, 2)
-    const s = useAppStore.getState()
-    s.beginStroke()
-    expect(s.paintCell(2, 2)).toBe(true)
-    s.commitStroke()
-    const after = useAppStore.getState()
-    const sub = after.model.subdiv.get(encodeKey(...coord))!
-    expect(sub.scaffold).toBe(true)
-    expect(sub.split).toEqual(['x', 'y'])
-    expect(sub.slot).toEqual(SLOT_M)
-    expect(after.model.color.has(encodeKey(...coord))).toBe(false)
-  })
-
-  it('repainting a subdivided voxel paints detail in place, never re-splits', () => {
-    subdividedAt(0, -1, ['x'])
-    // A different armed grid does NOT divert the entry — detail paints onto the
-    // voxel's own split.
-    useAppStore.getState().setPendingSplit(['y'])
-    useAppStore.getState().setActivePaletteSlot(SLOT_M)
-    const s = useAppStore.getState()
-    s.beginStroke()
-    expect(s.paintCell(0, -1, 1, 0)).toBe(true)
-    s.commitStroke()
-    const sub = useAppStore.getState().model.subdiv.get(encodeKey(0, 0, 0))!
-    expect(sub.split).toEqual(['x'])
-    expect(sub.children[1]).toEqual({ slot: SLOT_M })
-    expect(useAppStore.getState().pendingSplit).toEqual(['y'])
-  })
-
-  it('splitting a chamfered voxel clears its bevel first, then splits', () => {
-    // Bevel a cube with whole grid armed (no split on paint).
-    useAppStore.getState().setPendingSplit(null)
-    useAppStore.getState().setActiveVoxelKind('ramp')
-    const s = useAppStore.getState()
-    s.beginStroke()
-    expect(s.paintCell(0, -1)).toBe(true)
-    s.commitStroke()
-    expect(useAppStore.getState().model.chamfer.has(encodeKey(0, 0, 0))).toBe(true)
-    // Painting detail onto it clears the bevel and splits — detail wins.
-    useAppStore.getState().setActiveVoxelKind('cube')
-    useAppStore.getState().setPendingSplit(['z'])
-    useAppStore.getState().setActivePaletteSlot(SLOT_M)
-    s.beginStroke()
-    expect(s.paintCell(0, -1)).toBe(true)
-    s.commitStroke()
-    const after = useAppStore.getState()
-    expect(after.model.chamfer.has(encodeKey(0, 0, 0))).toBe(false)
-    expect(after.model.subdiv.get(encodeKey(0, 0, 0))!.split).toEqual(['z'])
-  })
-
-  it('setGridDivision arms families and re-clicks cycle them globally', () => {
-    const after = () => useAppStore.getState()
-    after().setGridDivision('half')
-    expect(after().pendingSplit).toEqual(['x'])
-    expect(after().gridFamily).toBe('half')
-    // Re-click cycles the family globally (no voxel involved).
-    after().setGridDivision('half')
-    expect(after().pendingSplit).toEqual(['y'])
-    after().setGridDivision('half')
-    expect(after().pendingSplit).toEqual(['z'])
-    after().setGridDivision('half')
-    expect(after().pendingSplit).toEqual(['x'])
-    // Quarters cycle their leave-order; octal is singular; whole clears.
-    after().setGridDivision('quarter')
-    expect(after().pendingSplit).toEqual(['y', 'z'])
-    after().setGridDivision('quarter')
-    expect(after().pendingSplit).toEqual(['x', 'z'])
-    after().setGridDivision('quarter')
-    expect(after().pendingSplit).toEqual(['x', 'y'])
-    after().setGridDivision('quarter')
-    expect(after().pendingSplit).toEqual(['y', 'z'])
-    after().setGridDivision('octal')
-    expect(after().pendingSplit).toEqual(['x', 'y', 'z'])
-    after().setGridDivision('octal')
-    expect(after().pendingSplit).toEqual(['x', 'y', 'z'])
-    after().setGridDivision('whole')
-    expect(after().pendingSplit).toBeNull()
-    expect(after().gridFamily).toBe('whole')
-  })
-
-  it('switching grids mid-stream only affects fresh voxels', () => {
-    subdividedAt(0, -1, ['x'])
-    useAppStore.getState().setPendingSplit(['y'])
-    const s = useAppStore.getState()
-    s.beginStroke()
-    expect(s.paintCell(2, -1)).toBe(true)
-    s.commitStroke()
-    const after = useAppStore.getState()
-    expect(after.model.subdiv.get(encodeKey(0, 0, 0))!.split).toEqual(['x'])
-    expect(after.model.subdiv.get(encodeKey(2, 0, 0))!.split).toEqual(['y'])
-  })
-
-  it('3D per-child edits always work (no scope gates)', () => {
-    subdividedAt(0, -1)
-    const s = useAppStore.getState()
-    useAppStore.getState().setActivePaletteSlot(SLOT_M)
-    s.beginStroke()
-    expect(s.paintSubCellAtCoord([0, 0, 0], 6)).toBe(true)
-    s.commitStroke()
-    expect(useAppStore.getState().model.subdiv.get(encodeKey(0, 0, 0))!.children[6]).toEqual({ slot: SLOT_M })
-  })
-
-  describe('half-step slab editing', () => {
-    beforeEach(() => {
-      useAppStore.getState().setPlaneHalf(null)
+      expect(sub0()!.children[6]?.chamfer?.resolvedTo).toEqual({ shapeKind: 'wedge', rotation: 2 })
     })
 
-    it('paints only the active slab, splitting plain cubes just-in-time', () => {
-      subdividedAt(0, -1) // full 8-way split at (0,0,0), base slots
-      useAppStore.getState().setPlaneHalf(1)
+    it('3D taps place detail bevels in the pointer’s grid cell', () => {
+      frontSlab()
+      useAppStore.getState().setGridSplit(null)
+      stroke((s) => s.paintCell(0, -2))
+      useAppStore.getState().setGridSplit(['x', 'y', 'z'])
+      useAppStore.getState().setActiveVoxelKind('ramp')
+      stroke((s) => expect(s.paintCellAtCoord([0, 0, 0], 'z', 1, [0, 1, 0])).toBe(true))
+      expect(sub0()!.children[6]?.chamfer?.resolvedTo).toEqual({ shapeKind: 'ramp', rotation: 2 })
+    })
+
+    it('re-clicks rotate detail bevels, then advance the family past a full turn', () => {
+      frontSlab()
+      useAppStore.getState().setGridSplit(null)
+      stroke((s) => s.paintCell(0, -2))
+      useAppStore.getState().setGridSplit(['x', 'y', 'z'])
+      useAppStore.getState().setActiveVoxelKind('ramp')
+      const shape = () => sub0()!.children[6]!.chamfer!.resolvedTo
+      stroke((s) => s.paintCell(0, -1, 0, 0))
+      expect(shape()).toEqual({ shapeKind: 'ramp', rotation: 2 })
+      stroke((s) => s.paintCell(0, -1, 0, 0))
+      expect(shape()).toEqual({ shapeKind: 'ramp', rotation: 3 })
+      stroke((s) => s.paintCellAtCoord([0, 0, 0], 'z', 1, [0, 1, 0])) // 3D re-click cycles too
+      expect(shape()).toEqual({ shapeKind: 'convex', rotation: 0 })
+    })
+
+    it('drag revisits do not advance detail bevels mid-stroke', () => {
+      frontSlab()
+      useAppStore.getState().setGridSplit(null)
+      stroke((s) => s.paintCell(0, -2))
+      useAppStore.getState().setGridSplit(['x', 'y', 'z'])
+      useAppStore.getState().setActiveVoxelKind('ramp')
+      stroke((s) => {
+        s.paintCell(0, -1, 0, 0)
+        s.paintCell(0, -1, 0, 0)
+      })
+      expect(sub0()!.children[6]!.chamfer!.resolvedTo).toEqual({ shapeKind: 'ramp', rotation: 2 })
+    })
+
+    it('painting part of a whole chamfer voxel cuts the bevel to a plain block', () => {
+      useAppStore.getState().setGridSplit(null)
+      useAppStore.getState().setActiveVoxelKind('convex')
+      stroke((s) => s.paintCell(0, -1))
+      useAppStore.getState().setGridSplit(['z'])
+      useAppStore.getState().setActiveVoxelKind('cube')
       useAppStore.getState().setActivePaletteSlot(SLOT_M)
-      const s = useAppStore.getState()
-      s.beginStroke()
-      // Plain cubes split on paint even on half-step, clipped to the active slab.
-      expect(s.paintCell(2, 2)).toBe(true)
-      // Quadrant (0,0) addresses children [6, 2] (front-sorted); slab 1 keeps only 6.
-      expect(s.paintCell(0, -1, 0, 0)).toBe(true)
-      s.commitStroke()
-      const after = useAppStore.getState()
-      const fresh = after.model.subdiv.get(keyFor(2, 2))!
-      expect(fresh.split).toEqual(['x', 'y', 'z'])
-      for (const o of [4, 5, 6, 7]) expect(fresh.children[o]).toEqual({ slot: SLOT_M })
-      for (const o of [0, 1, 2, 3]) expect(fresh.children[o]).toBeNull()
-      const sub = after.model.subdiv.get(encodeKey(0, 0, 0))!
-      expect(sub.children[6]).toEqual({ slot: SLOT_M })
-      expect(sub.children[2]).toBeNull()
+      stroke((s) => s.paintCell(0, -1))
+      const m = useAppStore.getState().model
+      expect(m.chamfer.has(encodeKey(0, 0, 0))).toBe(false)
+      expect(sub0()).toEqual({ split: ['z'], children: [{ slot: SLOT_B }, { slot: SLOT_M }] })
     })
 
-    it('erases only the active slab, refusing plain cubes', () => {
-      subdividedAt(0, -1)
-      // Seed a plain cube elsewhere in whole-voxel mode first (the grid would split it).
-      useAppStore.getState().setGridDivision('whole')
-      const s = useAppStore.getState()
-      s.beginStroke()
-      expect(s.paintCell(2, 2)).toBe(true)
-      s.commitStroke()
-      useAppStore.getState().setPlaneHalf(1)
-      s.beginStroke()
-      s.eraseCell(gridCoordFromPixel(PLANE, 2, 2)) // plain — refused
-      s.eraseCell([0, 0, 0], 0, 0) // quadrant (0,0) → children [6, 2], slab 1 erases 6 only
-      s.commitStroke()
-      const after = useAppStore.getState()
-      expect(after.model.color.has(keyFor(2, 2))).toBe(true)
-      const sub = after.model.subdiv.get(encodeKey(0, 0, 0))!
-      expect(sub.children[6]).toBeNull()
-      // JIT back children start empty — nothing to erase there.
-      expect(sub.children[2]).toBeNull()
-    })
-
-    it('recolors only the active slab, refusing plain cubes', () => {
-      subdividedAt(0, -1)
-      // Seed a plain cube elsewhere in whole-voxel mode first (the grid would split it).
-      useAppStore.getState().setGridDivision('whole')
-      const s = useAppStore.getState()
-      s.beginStroke()
-      expect(s.paintCell(2, 2)).toBe(true)
-      s.commitStroke()
-      useAppStore.getState().setPlaneHalf(1)
+    it('a bevel lands as a plain block where the voxel is cut finer than the grid cell', () => {
+      useAppStore.getState().setGridSplit(['x', 'y'])
       useAppStore.getState().setActivePaletteSlot(SLOT_M)
-      s.beginStroke()
-      expect(s.paintMaterialCell(2, 2)).toBe(false)
-      // Quadrant (0,0) addresses [6, 2]; slab 1 recolors the live front child 6 only
-      // (the JIT back child is an empty hole — recolor never paints into holes).
-      expect(s.paintMaterialCell(0, -1, 0, 0)).toBe(true)
-      s.commitStroke()
-      const after = useAppStore.getState()
-      expect(after.model.color.get(keyFor(2, 2))).toEqual({ paletteSlot: SLOT_B })
-      const sub = after.model.subdiv.get(encodeKey(0, 0, 0))!
-      expect(sub.children[6]).toEqual({ slot: SLOT_M })
-      expect(sub.children[2]).toBeNull()
-    })
-
-    it('half-step paint splits plain cubes to the armed grid, clipped to the slab', () => {
-      subdividedAt(0, -1)
-      useAppStore.getState().setPlaneHalf(1)
-      // Plain paint on half-step splits just-in-time instead of refusing.
-      useAppStore.getState().setActivePaletteSlot(SLOT_M)
-      const s = useAppStore.getState()
-      s.beginStroke()
-      expect(s.paintCell(2, 2)).toBe(true)
-      s.commitStroke()
-      const after = useAppStore.getState()
-      expect(after.model.subdiv.get(keyFor(2, 2))?.split).toEqual(['x', 'y', 'z'])
-      expect(after.model.color.has(keyFor(2, 2))).toBe(false)
-    })
-
-    it('3D per-child writes clip to the slab and the slice', () => {
-      subdividedAt(0, -1) // full split at (0,0,0)
-      useAppStore.getState().setPlaneHalf(1)
-      useAppStore.getState().setActivePaletteSlot(SLOT_M)
-      const s = useAppStore.getState()
-      s.beginStroke()
-      expect(s.paintSubCellAtCoord([0, 0, 0], 2)).toBe(false) // depth-back child
-      expect(s.paintSubCellAtCoord([0, 0, 0], 6)).toBe(true) // depth-front child
-      s.commitStroke()
-      // Off-slice parents refuse even in-slab children (dwell on the active slice).
-      useAppStore.getState().setPlaneOffset(5)
-      s.beginStroke()
-      expect(s.paintSubCellAtCoord([0, 0, 0], 6)).toBe(false)
-      s.commitStroke()
-      const sub = useAppStore.getState().model.subdiv.get(encodeKey(0, 0, 0))!
-      expect(sub.children[6]).toEqual({ slot: SLOT_M })
-      // JIT back children start empty — the depth-back child stays null.
-      expect(sub.children[2]).toBeNull()
-    })
-
-    it('fillSelection refuses on half-step', () => {
-      const s = useAppStore.getState()
-      // Seed a plain cube in whole-voxel mode (the grid would split it).
-      useAppStore.getState().setGridDivision('whole')
-      s.beginStroke()
-      expect(s.paintCell(2, 2)).toBe(true)
-      s.commitStroke()
-      s.setSelectedCells(new Set([keyFor(2, 2)]))
-      useAppStore.getState().setPlaneHalf(1)
-      useAppStore.getState().setActivePaletteSlot(SLOT_M)
-      s.fillSelection()
-      expect(useAppStore.getState().model.color.get(keyFor(2, 2))).toEqual({ paletteSlot: SLOT_B })
+      stroke((s) => s.paintCell(0, -1, 0, 0)) // one x-low quarter
+      useAppStore.getState().setGridSplit(['x'])
+      useAppStore.getState().setActiveVoxelKind('convex')
+      useAppStore.getState().setActivePaletteSlot(SLOT_B)
+      // x-low is cut along y (one quarter), so an x-high bevel can't be a single child: plain block.
+      stroke((s) => s.paintCell(0, -1, 1, 0))
+      expect(sub0()!.children.some((c) => c?.chamfer)).toBe(false)
     })
   })
 })

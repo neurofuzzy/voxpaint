@@ -65,9 +65,9 @@ export const createSelection3DSlice: Slice = (set, get) => ({
   },
 
   applyWandAt: (start, fineStart) => {
-    const { model, plane, meta, layoutMode, pendingSplit } = get()
+    const { model, plane, meta, layoutMode, gridSplit } = get()
     // Grid not whole: the wand works at the grid's resolution, flooding fine cells on the plane slice.
-    const div = fineDivisionFor(plane, pendingSplit)
+    const div = fineDivisionFor(plane, gridSplit)
     if (!isWholeDivision(div)) {
       const { u, v } = pixelFromGridCoord(plane, start)
       const f: [number, number] = fineStart ?? [u * div.su, v * div.sv]

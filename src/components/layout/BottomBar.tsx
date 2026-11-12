@@ -3,13 +3,13 @@ import { useAppStore } from '@/store/useAppStore'
 import type { ToolId } from '@/store/types'
 
 const TOOL_HINTS: Record<ToolId, string> = {
-  paint: 'click or drag to paint · shift+drag: straight line · right-click: quick erase · arms the grid: fresh voxels split as you paint',
+  paint: 'click or drag to paint · shift+drag: straight line · right-click: quick erase',
   erase: 'click or drag to erase · shift+drag: straight line',
   eyedropper: 'click to pick a color and voxel type',
   material: 'click or drag to repaint occupied voxels · never adds or deletes',
   select: 'drag to select · alt+drag: lasso · drag inside to move (alt: full depth)',
   wand: 'click a component for its color · re-tap it quickly for the whole component · drag inside to move · delete removes it at every depth',
-  fill: 'click to flood-fill connected cells in 2d, ALT-click to flood fill in 3d · arms the grid: fresh voxels split as you fill',
+  fill: 'click to flood-fill connected cells in 2d, ALT-click to flood fill in 3d',
   move: 'drag to shift every pixel on this slice',
   marker: 'click empty space to place a marker · tap a marker to recolor it, tap again to delete · drag to move',
   pivot: 'click: place pivot on the half-grid · rotate the plane for depth · right-click: reset to center',
@@ -21,7 +21,7 @@ const TOOL_HINTS: Record<ToolId, string> = {
 
 /** Appended to the tool hint in 3D-only layout (model mode), where the viewport edits directly. */
 const LAYOUT_3D_HINTS: Partial<Record<ToolId, string>> = {
-  paint: '3D: click faces to block · arms the grid: fresh voxels split as you paint',
+  paint: '3D: click faces to block',
   erase: '3D: click voxels to erase',
   eyedropper: '3D: click a voxel to pick its color and type',
   material: '3D: drag across faces',

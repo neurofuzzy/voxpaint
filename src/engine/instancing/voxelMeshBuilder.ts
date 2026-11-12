@@ -1,6 +1,6 @@
 import * as THREE from 'three'
 import { decodeKey, encodeKey } from '@/engine/grid/GridStore'
-import type { CellKey, ChamferCell, Coord, VoxelModel } from '@/engine/grid/types'
+import type { CellKey, ChamferCell, Coord, DetailChild, VoxelModel } from '@/engine/grid/types'
 import { forEachSubdivChild } from '@/engine/grid/subdiv'
 import { concaveCornerGeometry, convexCornerGeometry, flatGeometry, flatWedgeGeometry, halfGeometry, mirrorVGeometry, postGeometry, quarterGeometry, rampGeometry, thinGeometry, wedgeGeometry } from '@/engine/chamfer/chamferGeometry'
 import { materialClassFor, resolveSlotColor, type MaterialClass } from '@/engine/palette/palette'
@@ -432,6 +432,26 @@ export interface ColorGroupGeometry {
   rigId?: string
 }
 
+/** World-space solid for one detail child: its frozen bevel prefab scaled into the child box,
+ * or the box itself (plain and unresolved children). Shared by the CSG builders. */
+function detailChildGeometry(
+  origin: [number, number, number],
+  size: [number, number, number],
+  child: DetailChild,
+  matrix: THREE.Matrix4,
+): THREE.BufferGeometry {
+  const resolved = child.chamfer?.resolvedTo
+  if (resolved) {
+    const chamfer = child.chamfer!
+    const variant = chamferBasisIsReflected(chamfer.planeAxis, chamfer.planeOrientation) ? 'M' : ''
+    const geom = CHAMFER_BASE[`${resolved.shapeKind}${variant}`].clone()
+    scaledChamferInstanceMatrix(origin, size, chamfer.planeAxis, chamfer.planeOrientation, resolved.rotation, matrix)
+    return geom.applyMatrix4(matrix)
+  }
+  const geom = new THREE.BoxGeometry(size[0], size[1], size[2])
+  return geom.translate(origin[0] + size[0] / 2, origin[1] + size[1] / 2, origin[2] + size[2] / 2)
+}
+
 /**
  * "Occupied" for the glass occlusion cull (see `meshOptimizer.ts`'s `removeOccludedGlassFaces`):
  * a resolved chamfer cell doesn't fully fill its cube — a wedge or ramp leaves part of the
@@ -518,19 +538,7 @@ export function buildOptimizedVoxelGroups(model: VoxelModel, palette: PaletteSta
       group = { colorKey, materialClass, geometries: [], rigId }
       byGroup.set(groupKey, group)
     }
-    let geom: THREE.BufferGeometry
-    const resolved = child.chamfer?.resolvedTo
-    if (resolved) {
-      const chamfer = child.chamfer!
-      const variant = chamferBasisIsReflected(chamfer.planeAxis, chamfer.planeOrientation) ? 'M' : ''
-      const base = CHAMFER_BASE[`${resolved.shapeKind}${variant}`]
-      geom = base.clone()
-      scaledChamferInstanceMatrix(origin, size, chamfer.planeAxis, chamfer.planeOrientation, resolved.rotation, matrix)
-      geom.applyMatrix4(matrix)
-    } else {
-      geom = new THREE.BoxGeometry(size[0], size[1], size[2])
-      geom.translate(origin[0] + size[0] / 2, origin[1] + size[1] / 2, origin[2] + size[2] / 2)
-    }
+    const geom = detailChildGeometry(origin, size, child, matrix)
     rawTriangles += triangleCount(geom) + pushCellGeometry(group, geom, child.chamfer)
   })
 
@@ -684,19 +692,7 @@ export function buildOptimizedVoxelGroupsBySlice(
       group = { colorKey, materialClass, geometries: [], sliceKey, rigId }
       byGroup.set(groupKey, group)
     }
-    let geom: THREE.BufferGeometry
-    const resolved = child.chamfer?.resolvedTo
-    if (resolved) {
-      const chamfer = child.chamfer!
-      const variant = chamferBasisIsReflected(chamfer.planeAxis, chamfer.planeOrientation) ? 'M' : ''
-      const base = CHAMFER_BASE[`${resolved.shapeKind}${variant}`]
-      geom = base.clone()
-      scaledChamferInstanceMatrix(origin, size, chamfer.planeAxis, chamfer.planeOrientation, resolved.rotation, matrix)
-      geom.applyMatrix4(matrix)
-    } else {
-      geom = new THREE.BoxGeometry(size[0], size[1], size[2])
-      geom.translate(origin[0] + size[0] / 2, origin[1] + size[1] / 2, origin[2] + size[2] / 2)
-    }
+    const geom = detailChildGeometry(origin, size, child, matrix)
     rawTriangles += triangleCount(geom) + pushCellGeometry(group, geom, child.chamfer)
   })
 

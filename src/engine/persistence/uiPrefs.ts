@@ -12,7 +12,7 @@ export type SavedPlane = {
   axis: Axis
   orientation: Orientation
   offset: number
-  /** Half-step slab selector. Optional so pre-half-step saves still parse; absent reads as null. */
+  /** Half-voxel plane stop (see `ConstructionPlane.half`). Optional so older saves still parse; absent reads as null. */
   half?: 0 | 1 | null
 }
 
@@ -53,7 +53,7 @@ export function loadUiPrefs(): UiPrefs {
       delete prefs.animateModelView
     }
     // Sanitize the plane the same way: known axes, ±1 orientations, integer offsets only.
-    // The half-step slab rides along when valid, else resets to whole-voxel mode.
+    // The half-voxel stop rides along when valid, else resets to a whole stop (snapped to the grid on restore).
     const p = parsed.plane
     if (
       p &&

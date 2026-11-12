@@ -31,9 +31,8 @@ export function VoxelGhostPreview() {
   const activeTool = useAppStore((s) => s.activeTool)
   const plane = useAppStore((s) => s.plane)
   const gridExtent = useAppStore((s) => s.meta.gridExtent)
-  const pendingSplit = useAppStore((s) => s.pendingSplit)
+  const gridSplit = useAppStore((s) => s.gridSplit)
   const hoverBits = useAppStore((s) => s.hoverBits)
-  const hoverQuad = useAppStore((s) => s.hoverQuad)
   const layoutMode = useAppStore((s) => s.layoutMode)
 
   // One geometry set for the component's lifetime (callers own disposal).
@@ -43,8 +42,8 @@ export function VoxelGhostPreview() {
   }, [pools])
 
   const ghost = useMemo(
-    () => resolveGhostPlacement({ model, plane, hoverCell, hoveredFace, activeVoxelKind, brushRotation, activeTool, directEdit: layoutMode === '3d-only', gridExtent, pendingSplit, hoverBits, hoverQuad }),
-    [model, plane, hoverCell, hoveredFace, activeVoxelKind, brushRotation, activeTool, gridExtent, layoutMode, pendingSplit, hoverBits, hoverQuad],
+    () => resolveGhostPlacement({ model, plane, hoverCell, hoveredFace, activeVoxelKind, brushRotation, activeTool, directEdit: layoutMode === '3d-only', gridExtent, gridSplit, hoverBits }),
+    [model, plane, hoverCell, hoveredFace, activeVoxelKind, brushRotation, activeTool, gridExtent, layoutMode, gridSplit, hoverBits],
   )
 
   if (!ghost) return null

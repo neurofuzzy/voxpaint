@@ -20,7 +20,7 @@ describe('sub-voxel 3D selection', () => {
 
   function selectHalfAcross() {
     const s = useAppStore.getState()
-    s.setPendingSplit(['x']) // halves along u (x) on the z plane
+    s.setGridSplit(['x']) // halves along u (x) on the z plane
     const plane = { ...useAppStore.getState().plane }
     const div = fineDivisionFor(plane, ['x'])
     // fine u 1..2: x-high half of cell 0 + x-low half of cell 1.

@@ -4,7 +4,8 @@ import type { Axis, ChamferShapeKind, Coord, Orientation, Rotation, VoxelModel }
 import { planeLogicalBasis } from '@/engine/plane/constructionPlane'
 import { outwardNormal } from '@/engine/plane/planeGeometry'
 import { rescaleCoord, rescaleTargetExtent, rescaleVoxelModel } from './rescale'
-import { eraseSubCell, paintSubCell, subdivideCell, writeSubCell } from '@/engine/grid/subdiv'
+import { subdivideCell } from '@/engine/grid/subdiv'
+import { setDetailChild } from '@/engine/grid/subdivFixtures'
 
 const SLOT = { kind: 'base', index: 0 } as const
 
@@ -384,8 +385,8 @@ describe('rescaleVoxelModel', () => {
     model.color.set(encodeKey(1, 0, -1), { paletteSlot: { ...SLOT } })
     model.color.set(encodeKey(0, 0, 0), { paletteSlot: { ...SLOT } })
     subdivideCell(model, [0, 0, 0])
-    paintSubCell(model, [0, 0, 0], 7, { kind: 'base', index: 3 })
-    eraseSubCell(model, [0, 0, 0], 0)
+    setDetailChild(model, [0, 0, 0], 7, { slot: { kind: 'base', index: 3 } })
+    setDetailChild(model, [0, 0, 0], 0, null)
     const next = rescaleVoxelModel(model)
     expect(next.subdiv.size).toBe(0)
     // Plain cube at (1,0,-1) still doubles normally: 8 cubes.
@@ -411,8 +412,8 @@ describe('rescale with partial splits', () => {
     const model = emptyModel()
     model.color.set(encodeKey(0, 0, 0), { paletteSlot: { ...SLOT } })
     subdivideCell(model, [0, 0, 0], ['x'])
-    paintSubCell(model, [0, 0, 0], 1, { kind: 'base', index: 3 })
-    eraseSubCell(model, [0, 0, 0], 0)
+    setDetailChild(model, [0, 0, 0], 1, { slot: { kind: 'base', index: 3 } })
+    setDetailChild(model, [0, 0, 0], 0, null)
     const next = rescaleVoxelModel(model)
     expect(next.subdiv.size).toBe(0)
     // Child 1 (x-high half) fills doubled cells x=1, y,z ∈ {0,1} with its slot.
@@ -434,7 +435,7 @@ describe('rescale with partial splits', () => {
     const model = emptyModel()
     model.color.set(encodeKey(0, 0, 0), { paletteSlot: { ...SLOT } })
     subdivideCell(model, [0, 0, 0])
-    writeSubCell(model, [0, 0, 0], 0, {
+    setDetailChild(model, [0, 0, 0], 0, {
       slot: { kind: 'base', index: 0 },
       chamfer: { planeAxis: 'y', planeOrientation: 1, resolvedTo: { shapeKind: 'ramp', rotation: 0 } },
     })

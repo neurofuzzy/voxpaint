@@ -6,55 +6,46 @@ import { axisIndex } from '@/engine/plane/planeGeometry'
 import type { ConstructionPlane } from '@/engine/plane/types'
 import {
   advanceGridSplit,
-  childInSlab,
-  childOrigin,
-  canScaffold,
-  canSubdivide,
   cloneSubdiv,
-  coarsenCell,
   countSubdivChildren,
   describeGridSplit,
-  ensureSplitForPaint,
-  eraseSubCell,
-  frontSlabBit,
+  gridFamilyOf,
   isSubdivided,
   isValidSplit,
   mirrorSubdivChildren,
-  octantIndex,
   octantOffset,
-  paintSubCell,
   quadrantSubcells,
   rotateSubdivChildren,
-  sampleDetailNeighborhood,
-  scaffoldCell,
+  sampleBoxNeighborhood,
   splitChildBits,
   splitChildCount,
   splitChildIndex,
   splitChildOrigin,
   splitChildSize,
-  subdivChildFootprint,
   subdivideCell,
-  voxelWireframeSegments,
-  writeSubCell,
+  visibleChildAt,
 } from './subdiv'
+import { childBox, frontSlabBit } from './cellBox'
 import { emptyModel, encodeKey, recomputeBounds } from './GridStore'
 
 const base0: PaletteSlotRef = { kind: 'base', index: 0 }
 const base1: PaletteSlotRef = { kind: 'base', index: 1 }
 
+/** Neighborhood of one existing child (the box it occupies). */
+function sampleChild(model: ReturnType<typeof emptyModel>, plane: ConstructionPlane, parent: [number, number, number], index: number) {
+  return sampleBoxNeighborhood(model, plane, parent, childBox(model.subdiv.get(encodeKey(...parent))!.split, index))
+}
+
+/** An all-empty subdivision (only reachable by hand — writes normalize these away). */
+function emptySplit(model: ReturnType<typeof emptyModel>, at: [number, number, number], split: SplitAxis[]) {
+  model.subdiv.set(encodeKey(...at), { split, children: Array.from({ length: 2 ** split.length }, () => null) })
+}
+
 describe('octant math (8-split compatibility)', () => {
-  it('octantOffset/octantIndex round-trip all 8 octants', () => {
-    for (let i = 0; i < 8; i++) {
-      const [dx, dy, dz] = octantOffset(i)
-      expect(octantIndex(dx, dy, dz)).toBe(i)
-    }
+  it('octantOffset matches splitChildBits on the full split', () => {
+    for (let i = 0; i < 8; i++) expect(octantOffset(i)).toEqual(splitChildBits(['x', 'y', 'z'], i))
   })
 
-  it('childOrigin lands on exact halves', () => {
-    expect(childOrigin([2, -3, 0], 0)).toEqual([2, -3, 0])
-    expect(childOrigin([2, -3, 0], 7)).toEqual([2.5, -2.5, 0.5])
-    expect(childOrigin([2, -3, 0], 3)).toEqual([2.5, -2.5, 0])
-  })
 })
 
 describe('split math', () => {
@@ -126,47 +117,39 @@ describe('split math', () => {
     expect(describeGridSplit(['x', 'y', 'z'])).toBe('full 2×2×2')
   })
 
-  it('ensureSplitForPaint splits plain cubes, scaffolds empties, and clears bevels', () => {
-    const slot = { kind: 'base', index: 0 } as PaletteSlotRef
-    // Plain cube subdivides, inheriting the slot.
-    const solid = emptyModel()
-    solid.color.set(encodeKey(0, 0, 0), { paletteSlot: slot })
-    expect(ensureSplitForPaint(solid, [0, 0, 0], ['x'], slot)).toBe(true)
-    expect(solid.subdiv.get(encodeKey(0, 0, 0))?.split).toEqual(['x'])
-    // Empty space scaffolds.
-    const empty = emptyModel()
-    expect(ensureSplitForPaint(empty, [1, 1, 1], ['x', 'y'], slot)).toBe(true)
-    const scaffold = empty.subdiv.get(encodeKey(1, 1, 1))
-    expect(scaffold?.scaffold).toBe(true)
-    expect(scaffold?.children).toEqual([null, null, null, null])
-    // Chamfered cells have their bevel cleared first, then split (detail wins).
-    const beveled = emptyModel()
-    beveled.color.set(encodeKey(2, 2, 2), { paletteSlot: slot })
-    beveled.chamfer.set(encodeKey(2, 2, 2), {
-      planeAxis: 'z',
-      planeOrientation: 1,
-      resolvedTo: { shapeKind: 'ramp', rotation: 0 },
-    })
-    expect(ensureSplitForPaint(beveled, [2, 2, 2], ['z'], slot)).toBe(true)
-    expect(beveled.chamfer.has(encodeKey(2, 2, 2))).toBe(false)
-    expect(beveled.subdiv.get(encodeKey(2, 2, 2))?.split).toEqual(['z'])
-    // Existing entries are kept as-is (never re-split or wiped).
-    expect(ensureSplitForPaint(solid, [0, 0, 0], ['y'], slot)).toBe(true)
-    expect(solid.subdiv.get(encodeKey(0, 0, 0))?.split).toEqual(['x'])
-    // Invalid splits refuse.
-    expect(ensureSplitForPaint(emptyModel(), [0, 0, 0], [] as unknown as SplitAxis[], slot)).toBe(false)
+})
+
+describe('read helpers', () => {
+  it('gridFamilyOf derives the picker family from the split', () => {
+    expect(gridFamilyOf(null)).toBe('whole')
+    expect(gridFamilyOf(['y'])).toBe('half')
+    expect(gridFamilyOf(['x', 'z'])).toBe('quarter')
+    expect(gridFamilyOf(['x', 'y', 'z'])).toBe('octal')
   })
 
-  it('canSubdivide admits only plain cubes (chamfered cells auto-clear at paint time)', () => {
+  it('counts live children and reports subdivided parents', () => {
     const model = emptyModel()
     model.color.set(encodeKey(0, 0, 0), { paletteSlot: base0 })
-    expect(canSubdivide(model, [0, 0, 0])).toBe(true)
-    model.chamfer.set(encodeKey(0, 0, 0), {
-      planeAxis: 'z',
-      planeOrientation: 1,
-      resolvedTo: { shapeKind: 'ramp', rotation: 0 },
-    })
-    expect(canSubdivide(model, [0, 0, 0])).toBe(false)
+    subdivideCell(model, [0, 0, 0], ['x', 'y', 'z'])
+    model.subdiv.get(encodeKey(0, 0, 0))!.children[3] = null
+    expect(countSubdivChildren(model)).toBe(7)
+    expect(isSubdivided(model, [0, 0, 0])).toBe(true)
+    expect(isSubdivided(model, [1, 0, 0])).toBe(false)
+  })
+
+  it('visibleChildAt shows the viewer-side live child, or only the plane slab on a half stop', () => {
+    const model = emptyModel()
+    model.color.set(encodeKey(0, 0, 0), { paletteSlot: base0 })
+    subdivideCell(model, [0, 0, 0], ['z'])
+    const sub = model.subdiv.get(encodeKey(0, 0, 0))!
+    const whole: ConstructionPlane = { axis: 'z', orientation: 1, offset: 0, half: null }
+    // Orientation +1 views from +z: the high-z child (index 1) is in front.
+    expect(visibleChildAt(whole, sub, 0, 0)).toBe(1)
+    sub.children[1] = null
+    expect(visibleChildAt(whole, sub, 0, 0)).toBe(0)
+    // A half stop is a cutaway: only its own slab shows, empty or not.
+    expect(visibleChildAt({ ...whole, half: 1 }, sub, 0, 0)).toBeNull()
+    expect(visibleChildAt({ ...whole, half: 0 }, sub, 0, 0)).toBe(0)
   })
 })
 
@@ -180,7 +163,6 @@ describe('subdivideCell', () => {
       const sub = model.subdiv.get(encodeKey(1, 2, 3))
       expect(sub).toBeDefined()
       expect(sub!.split).toEqual([...split].sort())
-      expect(sub!.slot).toEqual(base0)
       expect(sub!.children).toHaveLength(2 ** split.length)
       // Distinct objects (no aliasing), inheriting the slot.
       const [first, ...rest] = sub!.children
@@ -217,142 +199,15 @@ describe('subdivideCell', () => {
   })
 })
 
-describe('coarsenCell', () => {
-  it('restores the original slot even after children are repainted', () => {
-    const model = emptyModel()
-    model.color.set(encodeKey(0, 0, 0), { paletteSlot: base0 })
-    subdivideCell(model, [0, 0, 0], ['x', 'y'])
-    paintSubCell(model, [0, 0, 0], 0, base1)
-    paintSubCell(model, [0, 0, 0], 3, base1)
-    expect(coarsenCell(model, [0, 0, 0])).toBe(true)
-    expect(isSubdivided(model, [0, 0, 0])).toBe(false)
-    expect(model.color.get(encodeKey(0, 0, 0))).toEqual({ paletteSlot: base0 })
-  })
-
-  it('deletes a scaffold instead of restoring a cube that was never there', () => {
-    const model = emptyModel()
-    expect(scaffoldCell(model, [0, 0, 0], ['x', 'y'], base0)).toBe(true)
-    paintSubCell(model, [0, 0, 0], 0, base1)
-    expect(coarsenCell(model, [0, 0, 0])).toBe(true)
-    expect(isSubdivided(model, [0, 0, 0])).toBe(false)
-    expect(model.color.has(encodeKey(0, 0, 0))).toBe(false)
-  })
-
-  it('is a no-op on non-subdivided cells', () => {
-    const model = emptyModel()
-    model.color.set(encodeKey(0, 0, 0), { paletteSlot: base0 })
-    expect(coarsenCell(model, [0, 0, 0])).toBe(false)
-    expect(coarsenCell(model, [9, 9, 9])).toBe(false)
-  })
-})
-
-describe('scaffoldCell/canScaffold', () => {
-  it('splits empty space into an all-null detail parent with the given slot', () => {
-    const model = emptyModel()
-    expect(scaffoldCell(model, [1, 2, 3], ['z', 'x'], base1)).toBe(true)
-    const sub = model.subdiv.get(encodeKey(1, 2, 3))
-    expect(sub).toBeDefined()
-    expect(sub!.scaffold).toBe(true)
-    expect(sub!.split).toEqual(['x', 'z'])
-    expect(sub!.slot).toEqual(base1)
-    expect(sub!.children).toHaveLength(4)
-    expect(sub!.children.every((c) => c === null)).toBe(true)
-    expect(model.color.has(encodeKey(1, 2, 3))).toBe(false)
-  })
-
-  it('refuses occupied cells and invalid splits, and never clobbers', () => {
-    const model = emptyModel()
-    model.color.set(encodeKey(0, 0, 0), { paletteSlot: base0 })
-    model.chamfer.set(encodeKey(1, 0, 0), { planeAxis: 'y', planeOrientation: 1, resolvedTo: null })
-    model.color.set(encodeKey(1, 0, 0), { paletteSlot: base0 })
-    expect(scaffoldCell(model, [0, 0, 0], ['x'], base1)).toBe(false)
-    expect(scaffoldCell(model, [1, 0, 0], ['x'], base1)).toBe(false)
-    expect(scaffoldCell(model, [2, 0, 0], [], base1)).toBe(false)
-    expect(scaffoldCell(model, [2, 0, 0], ['x', 'x'], base1)).toBe(false)
-    expect(model.subdiv.size).toBe(0)
-    expect(scaffoldCell(model, [3, 0, 0], ['x'], base1)).toBe(true)
-    expect(scaffoldCell(model, [3, 0, 0], ['y'], base1)).toBe(false)
-  })
-
-  it('canScaffold is true only for genuinely empty cells', () => {
-    const model = emptyModel()
-    expect(canScaffold(model, [0, 0, 0])).toBe(true)
-    model.color.set(encodeKey(1, 0, 0), { paletteSlot: base0 })
-    expect(canScaffold(model, [1, 0, 0])).toBe(false)
-    model.chamfer.set(encodeKey(2, 0, 0), { planeAxis: 'y', planeOrientation: 1, resolvedTo: null })
-    expect(canScaffold(model, [2, 0, 0])).toBe(false)
-    scaffoldCell(model, [3, 0, 0], ['x'], base0)
-    expect(canScaffold(model, [3, 0, 0])).toBe(false)
-  })
-})
-
-describe('paintSubCell/eraseSubCell/writeSubCell', () => {
-  it('paints a single child preserving chamfers, and rejects bad targets', () => {
-    const model = emptyModel()
-    expect(paintSubCell(model, [0, 0, 0], 0, base1)).toBe(false)
-    model.color.set(encodeKey(0, 0, 0), { paletteSlot: base0 })
-    subdivideCell(model, [0, 0, 0], ['x'])
-    expect(paintSubCell(model, [0, 0, 0], 2, base1)).toBe(false)
-    expect(paintSubCell(model, [0, 0, 0], 1, base1)).toBe(true)
-    const sub = model.subdiv.get(encodeKey(0, 0, 0))!
-    expect(sub.children[1]).toEqual({ slot: base1 })
-    expect(sub.children[0]).toEqual({ slot: base0 })
-  })
-
-  it('writeSubCell stores frozen chamfer shapes', () => {
-    const model = emptyModel()
-    model.color.set(encodeKey(0, 0, 0), { paletteSlot: base0 })
-    subdivideCell(model, [0, 0, 0], ['x', 'y', 'z'])
-    const chamfer = { planeAxis: 'y' as const, planeOrientation: 1 as const, resolvedTo: { shapeKind: 'ramp' as const, rotation: 0 as const } }
-    expect(writeSubCell(model, [0, 0, 0], 3, { slot: base1, chamfer })).toBe(true)
-    expect(model.subdiv.get(encodeKey(0, 0, 0))!.children[3]).toEqual({ slot: base1, chamfer })
-    // Recoloring preserves the chamfer.
-    expect(paintSubCell(model, [0, 0, 0], 3, base0)).toBe(true)
-    expect(model.subdiv.get(encodeKey(0, 0, 0))!.children[3]).toEqual({ slot: base0, chamfer })
-    expect(writeSubCell(model, [0, 0, 0], 9, { slot: base1 })).toBe(false)
-  })
-
-  it('erases content only — the entry survives until explicitly cleared', () => {
-    const model = emptyModel()
-    model.color.set(encodeKey(0, 0, 0), { paletteSlot: base0 })
-    subdivideCell(model, [0, 0, 0], ['z'])
-    expect(eraseSubCell(model, [0, 0, 0], 5)).toBe(false)
-    expect(eraseSubCell(model, [0, 0, 0], 0)).toBe(true)
-    expect(isSubdivided(model, [0, 0, 0])).toBe(true)
-    expect(eraseSubCell(model, [0, 0, 0], 1)).toBe(true)
-    // All-null, but the subdivision stays (repaintable scaffold); nothing restored.
-    expect(isSubdivided(model, [0, 0, 0])).toBe(true)
-    expect(model.color.has(encodeKey(0, 0, 0))).toBe(false)
-    // Erasing an already-null child is a no-op.
-    expect(eraseSubCell(model, [0, 0, 0], 0)).toBe(false)
-    expect(isSubdivided(model, [0, 0, 0])).toBe(true)
-  })
-
-  it('counts live children', () => {
-    const model = emptyModel()
-    model.color.set(encodeKey(0, 0, 0), { paletteSlot: base0 })
-    model.color.set(encodeKey(1, 0, 0), { paletteSlot: base0 })
-    subdivideCell(model, [0, 0, 0], ['x', 'y', 'z'])
-    subdivideCell(model, [1, 0, 0], ['y'])
-    eraseSubCell(model, [0, 0, 0], 0)
-    expect(countSubdivChildren(model)).toBe(7 + 2)
-  })
-})
-
 describe('bounds with subdivisions', () => {
-  it('subdiv parents count toward bounds; only entry deletion shrinks them', () => {
+  it('subdiv parents count toward bounds; deleting the entry shrinks them', () => {
     const model = emptyModel()
     model.color.set(encodeKey(0, 0, 0), { paletteSlot: base0 })
     model.color.set(encodeKey(5, 0, 0), { paletteSlot: base0 })
     subdivideCell(model, [5, 0, 0], ['x'])
     model.bounds = recomputeBounds(model)
     expect(model.bounds).toEqual({ min: [0, 0, 0], max: [5, 0, 0] })
-    // Content-only erase keeps the structure (and its bounds footprint).
-    eraseSubCell(model, [5, 0, 0], 0)
-    eraseSubCell(model, [5, 0, 0], 1)
-    model.bounds = recomputeBounds(model)
-    expect(model.bounds).toEqual({ min: [0, 0, 0], max: [5, 0, 0] })
-    // Clearing the (already-empty) entry shrinks back.
+    // Deleting the entry shrinks back.
     model.subdiv.delete(encodeKey(5, 0, 0))
     model.bounds = recomputeBounds(model)
     expect(model.bounds).toEqual({ min: [0, 0, 0], max: [0, 0, 0] })
@@ -364,11 +219,11 @@ describe('clone + rotate/mirror with splits', () => {
     const model = emptyModel()
     model.color.set(encodeKey(0, 0, 0), { paletteSlot: base0 })
     subdivideCell(model, [0, 0, 0], ['x', 'y'])
-    writeSubCell(model, [0, 0, 0], 1, {
+    const sub = model.subdiv.get(encodeKey(0, 0, 0))!
+    sub.children[1] = {
       slot: base1,
       chamfer: { planeAxis: 'y', planeOrientation: 1, resolvedTo: { shapeKind: 'ramp', rotation: 2 } },
-    })
-    const sub = model.subdiv.get(encodeKey(0, 0, 0))!
+    }
     const clone = cloneSubdiv(sub)
     expect(clone).toEqual(sub)
     expect(clone).not.toBe(sub)
@@ -497,79 +352,6 @@ describe('quadrantSubcells', () => {
   })
 })
 
-describe('subdivChildFootprint', () => {
-  it('every quadrant set shares one footprint containing the hovered quadrant', () => {
-    // The invariant the 2D hover outline relies on: all children a quadrant addresses
-    // differ only on depth/unsplit axes, so they share one display footprint — and the
-    // hovered quadrant's center is inside it.
-    for (const axis of ['x', 'y', 'z'] as const) {
-      for (const split of [['x'], ['y'], ['z'], ['x', 'y'], ['x', 'z'], ['y', 'z'], ['x', 'y', 'z']] as SplitAxis[][]) {
-        for (const qu of [0, 1]) {
-          for (const qv of [0, 1]) {
-            const tag = `${axis} [${split}] (${qu},${qv})`
-            const set = quadrantSubcells(axis, 1, split, qu, qv)
-            expect(set.length, tag).toBeGreaterThan(0)
-            const feet = set.map((i) => subdivChildFootprint(axis, split, i))
-            for (const f of feet) expect(f, tag).toEqual(feet[0])
-            const [u0, v0, u1, v1] = feet[0]
-            expect(qu * 0.5 + 0.25, `${tag} u`).toBeGreaterThanOrEqual(u0)
-            expect(qu * 0.5 + 0.25, `${tag} u`).toBeLessThan(u1)
-            expect(qv * 0.5 + 0.25, `${tag} v`).toBeGreaterThanOrEqual(v0)
-            expect(qv * 0.5 + 0.25, `${tag} v`).toBeLessThan(v1)
-          }
-        }
-      }
-    }
-  })
-
-  it('halves for single-axis splits, full cell for depth-only, quarters below', () => {
-    // z-plane (u=x, v=y): an x-split reads as two tall halves.
-    expect(subdivChildFootprint('z', ['x'], 0)).toEqual([0, 0, 0.5, 1])
-    expect(subdivChildFootprint('z', ['x'], 1)).toEqual([0.5, 0, 1, 1])
-    // Depth-only split on its own plane: every quadrant addresses the full face.
-    expect(subdivChildFootprint('z', ['z'], 0)).toEqual([0, 0, 1, 1])
-    expect(subdivChildFootprint('z', ['z'], 1)).toEqual([0, 0, 1, 1])
-    // uv-split and full split: quarters.
-    expect(subdivChildFootprint('z', ['x', 'y'], 2)).toEqual([0, 0, 0.5, 0.5])
-    expect(subdivChildFootprint('z', ['x', 'y', 'z'], 0)).toEqual([0, 0.5, 0.5, 1])
-  })
-})
-
-describe('childInSlab', () => {
-  it('keeps everything in whole-voxel mode', () => {
-    for (let i = 0; i < 8; i++) {
-      expect(childInSlab(['x', 'y', 'z'], 'z', null, i)).toBe(true)
-    }
-  })
-  it('keeps depth-spanning children of splits that exclude the plane axis', () => {
-    // A uv-split on its own plane: every child spans the full depth.
-    for (let i = 0; i < 4; i++) {
-      expect(childInSlab(['x', 'y'], 'z', 0, i)).toBe(true)
-      expect(childInSlab(['x', 'y'], 'z', 1, i)).toBe(true)
-    }
-  })
-
-  it('keeps only the matching depth bit on depth splits', () => {
-    // z-plane, full split: child index bit layout is x+2y+4z.
-    expect(childInSlab(['x', 'y', 'z'], 'z', 0, 2)).toBe(true) // dz=0
-    expect(childInSlab(['x', 'y', 'z'], 'z', 0, 6)).toBe(false) // dz=1
-    expect(childInSlab(['x', 'y', 'z'], 'z', 1, 6)).toBe(true)
-    expect(childInSlab(['x', 'y', 'z'], 'z', 1, 2)).toBe(false)
-    // Single-axis depth split: the bit is the whole ballgame.
-    expect(childInSlab(['z'], 'z', 0, 0)).toBe(true)
-    expect(childInSlab(['z'], 'z', 1, 0)).toBe(false)
-    expect(childInSlab(['z'], 'z', 1, 1)).toBe(true)
-  })
-
-  it('judges against the plane axis, not the split order', () => {
-    // x-plane, xz-split: children with dx=0 belong to slab 0 whatever the split order.
-    expect(childInSlab(['x', 'z'], 'x', 0, 0)).toBe(true) // dx=0,dz=0
-    expect(childInSlab(['x', 'z'], 'x', 0, 2)).toBe(true) // dx=0,dz=1
-    expect(childInSlab(['x', 'z'], 'x', 0, 1)).toBe(false) // dx=1,dz=0
-    expect(childInSlab(['x', 'z'], 'x', 1, 3)).toBe(true) // dx=1,dz=1
-  })
-})
-
 describe('frontSlabBit', () => {
   it('is the viewer-side depth bit', () => {
     expect(frontSlabBit(1)).toBe(1)
@@ -577,52 +359,7 @@ describe('frontSlabBit', () => {
   })
 })
 
-describe('voxelWireframeSegments', () => {
-  it('yields the 12 box edges with no split', () => {
-    const segs = voxelWireframeSegments([2, 3, 4], null)
-    expect(segs).toHaveLength(12)
-    // Every segment spans exactly one unit along exactly one axis, within the cell.
-    for (const [a, b] of segs) {
-      const d = [Math.abs(a[0] - b[0]), Math.abs(a[1] - b[1]), Math.abs(a[2] - b[2])].sort()
-      expect(d).toEqual([0, 0, 1])
-      for (const p of [a, b]) {
-        expect(p[0]).toBeGreaterThanOrEqual(2)
-        expect(p[0]).toBeLessThanOrEqual(3)
-        expect(p[1]).toBeGreaterThanOrEqual(3)
-        expect(p[1]).toBeLessThanOrEqual(4)
-        expect(p[2]).toBeGreaterThanOrEqual(4)
-        expect(p[2]).toBeLessThanOrEqual(5)
-      }
-    }
-    // 8 distinct corners, each touched by 3 edges.
-    const key = (p: readonly number[]): string => p.join(',')
-    const counts = new Map<string, number>()
-    for (const [a, b] of segs) {
-      for (const p of [a, b]) counts.set(key(p), (counts.get(key(p)) ?? 0) + 1)
-    }
-    expect(counts.size).toBe(8)
-    for (const n of counts.values()) expect(n).toBe(3)
-  })
-
-  it('adds one mid-plane square per split axis', () => {
-    const segs = voxelWireframeSegments([0, 0, 0], ['x'])
-    expect(segs).toHaveLength(16)
-    const mid = segs.slice(12)
-    // All four mid segments sit on the x=0.5 plane and form a unit square.
-    for (const [a, b] of mid) {
-      expect(a[0]).toBe(0.5)
-      expect(b[0]).toBe(0.5)
-    }
-    expect(mid).toContainEqual([[0.5, 0, 0], [0.5, 1, 0]])
-    expect(mid).toContainEqual([[0.5, 1, 0], [0.5, 1, 1]])
-    expect(mid).toContainEqual([[0.5, 1, 1], [0.5, 0, 1]])
-    expect(mid).toContainEqual([[0.5, 0, 1], [0.5, 0, 0]])
-    // Full split: box + three squares.
-    expect(voxelWireframeSegments([0, 0, 0], ['x', 'y', 'z'])).toHaveLength(24)
-  })
-})
-
-describe('sampleDetailNeighborhood', () => {
+describe('sampleBoxNeighborhood', () => {
   const PLANE: ConstructionPlane = { axis: 'z', orientation: 1, offset: 0, half: null }
 
   it('reads siblings, plain neighbors, and empty space around one child', () => {
@@ -634,21 +371,21 @@ describe('sampleDetailNeighborhood', () => {
     model.color.set(encodeKey(6, 5, 0), { paletteSlot: base0 })
     // Child 5 (x-hi, y-lo, z-hi): E looks at the plain cube, N/W/NW at live
     // siblings, everything else at empty space.
-    expect(sampleDetailNeighborhood(model, PLANE, [5, 5, 0], 5)).toEqual({
+    expect(sampleChild(model, PLANE, [5, 5, 0], 5)).toEqual({
       N: true, S: false, E: true, W: true, NE: true, NW: true, SE: false, SW: false,
     })
   })
 
   it('reads live children in adjacent subdivided parents (no color cell needed)', () => {
     const model = emptyModel()
-    expect(scaffoldCell(model, [0, 0, 0], ['x', 'y', 'z'], base0)).toBe(true)
-    expect(scaffoldCell(model, [1, 0, 0], ['x', 'y', 'z'], base0)).toBe(true)
+    emptySplit(model, [0, 0, 0], ['x', 'y', 'z'])
+    emptySplit(model, [1, 0, 0], ['x', 'y', 'z'])
     // Only the neighbor's x-lo/depth-lo child lives.
-    expect(paintSubCell(model, [1, 0, 0], 0, base1)).toBe(true)
+    model.subdiv.get(encodeKey(1, 0, 0))!.children[0] = { slot: base1 }
     // Child 1 (x-hi) of (0,0,0): its E probe lands in the neighbor's child 0.
-    expect(sampleDetailNeighborhood(model, PLANE, [0, 0, 0], 1).E).toBe(true)
+    expect(sampleChild(model, PLANE, [0, 0, 0], 1).E).toBe(true)
     // Everything else reads empty (siblings erased, surroundings empty).
-    const { E: _e, ...rest } = sampleDetailNeighborhood(model, PLANE, [0, 0, 0], 1)
+    const { E: _e, ...rest } = sampleChild(model, PLANE, [0, 0, 0], 1)
     expect(Object.values(rest).every((v) => v === false)).toBe(true)
   })
 
@@ -657,11 +394,11 @@ describe('sampleDetailNeighborhood', () => {
     model.color.set(encodeKey(0, 0, 0), { paletteSlot: base0 })
     expect(subdivideCell(model, [0, 0, 0], ['x', 'y', 'z'])).toBe(true)
     // Erase the whole front slab (dz=1: children 4-7); back stays live.
-    for (const o of [4, 5, 6, 7]) expect(eraseSubCell(model, [0, 0, 0], o)).toBe(true)
+    for (const o of [4, 5, 6, 7]) model.subdiv.get(encodeKey(0, 0, 0))!.children[o] = null
     // Front child 6: its S probe lands in erased front child 4.
-    expect(sampleDetailNeighborhood(model, PLANE, [0, 0, 0], 6).S).toBe(false)
+    expect(sampleChild(model, PLANE, [0, 0, 0], 6).S).toBe(false)
     // Back child 2: its S probe lands in live back child 0.
-    expect(sampleDetailNeighborhood(model, PLANE, [0, 0, 0], 2).S).toBe(true)
+    expect(sampleChild(model, PLANE, [0, 0, 0], 2).S).toBe(true)
   })
 
   it('reads both halves of a wide edge on spanning children', () => {
@@ -670,17 +407,17 @@ describe('sampleDetailNeighborhood', () => {
     expect(subdivideCell(model, [0, 0, 0], ['x'])).toBe(true)
     // u-split child 0 spans the full height: its E edge reads sibling child 1
     // through both halves (OR), everything else is empty space.
-    expect(sampleDetailNeighborhood(model, PLANE, [0, 0, 0], 0)).toEqual({
+    expect(sampleChild(model, PLANE, [0, 0, 0], 0)).toEqual({
       N: false, S: false, E: true, W: false, NE: false, NW: false, SE: false, SW: false,
     })
   })
 
-  it('returns all-false for erased scaffolds', () => {
+  it('returns all-false around an empty subdivision', () => {
     const model = emptyModel()
-    expect(scaffoldCell(model, [3, 3, 0], ['x', 'y'], base0)).toBe(true)
+    emptySplit(model, [3, 3, 0], ['x', 'y'])
     const empty = { N: false, S: false, E: false, W: false, NE: false, NW: false, SE: false, SW: false }
     for (let i = 0; i < 4; i++) {
-      expect(sampleDetailNeighborhood(model, PLANE, [3, 3, 0], i)).toEqual(empty)
+      expect(sampleChild(model, PLANE, [3, 3, 0], i)).toEqual(empty)
     }
   })
 })

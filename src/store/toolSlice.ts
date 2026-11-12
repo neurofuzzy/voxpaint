@@ -1,5 +1,5 @@
 import type { StateCreator } from 'zustand'
-import { GRID_FULL_SPLIT, GRID_HALF_SPLITS, GRID_QUARTER_SPLITS, advanceGridSplit } from '@/engine/grid/subdiv'
+import { GRID_FULL_SPLIT, GRID_HALF_SPLITS, GRID_QUARTER_SPLITS, advanceGridSplit, gridFamilyOf, normalizeSplit } from '@/engine/grid/subdiv'
 import { showToast } from '@/components/ui/toastBus'
 import type { AppState, ToolSlice } from './types'
 
@@ -11,8 +11,7 @@ export const createToolSlice: Slice = (set, get) => ({
   activeVoxelKind: 'cube',
   activePaletteSlot: { kind: 'base', index: 0 },
   brushRotation: 0,
-  gridFamily: 'whole',
-  pendingSplit: null,
+  gridSplit: null,
   paintLineAnchor: null,
 
   setAnimateTab: (tab) => {
@@ -39,36 +38,18 @@ export const createToolSlice: Slice = (set, get) => ({
       showToast('Model view switched to Ghost — posing needs the model visible')
     }
   },
-  setPendingSplit: (split) => {
-    set((state) => { state.pendingSplit = split })
+  setGridSplit: (split) => {
+    set((state) => { state.gridSplit = split ? normalizeSplit([...split]) : null })
     get().snapPlaneToGrid()
   },
   setGridDivision: (family) => {
-    const cur = get().gridFamily
-    if (family === 'whole') {
-      set((state) => {
-        state.gridFamily = 'whole'
-        state.pendingSplit = null
-      })
-      get().snapPlaneToGrid()
-      return
-    }
-    if (family === cur) {
-      // Re-click cycles the family's divisions globally (X → Y → Z; leave-orders wrap).
-      const next = advanceGridSplit(family, get().pendingSplit)
-      set((state) => {
-        state.pendingSplit = next
-      })
-      get().snapPlaneToGrid()
-      return
-    }
-    const first =
-      family === 'half' ? [...GRID_HALF_SPLITS[0]] : family === 'quarter' ? [...GRID_QUARTER_SPLITS[0]] : [...GRID_FULL_SPLIT]
-    set((state) => {
-      state.gridFamily = family
-      state.pendingSplit = first
-    })
-    get().snapPlaneToGrid()
+    const cur = gridFamilyOf(get().gridSplit)
+    let next: typeof GRID_FULL_SPLIT | null
+    if (family === 'whole') next = null
+    // Re-click cycles the family's divisions globally (X → Y → Z; leave-orders wrap).
+    else if (family === cur) next = advanceGridSplit(family, get().gridSplit)
+    else next = family === 'half' ? [...GRID_HALF_SPLITS[0]] : family === 'quarter' ? [...GRID_QUARTER_SPLITS[0]] : [...GRID_FULL_SPLIT]
+    get().setGridSplit(next)
   },
   setActiveVoxelKind: (kind) => set((state) => { state.activeVoxelKind = kind }),
   setActivePaletteSlot: (slot) => set((state) => { state.activePaletteSlot = slot }),

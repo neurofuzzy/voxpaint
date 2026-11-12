@@ -1,16 +1,15 @@
 import { Box, Boxes, Columns2, Grid2x2 } from 'lucide-react'
-import { describeGridSplit } from '@/engine/grid/subdiv'
+import { describeGridSplit, gridFamilyOf } from '@/engine/grid/subdiv'
 import type { GridFamily } from '@/engine/grid/types'
 import type { SplitAxis } from '@/engine/grid/types'
 import { useAppStore } from '@/store/useAppStore'
 
 /**
  * Global edit-grid picker, always visible in model mode next to the voxel-kind toggle.
- * Four buttons — whole (default, plain voxels paint whole), halves, quarters, octal —
- * arm a world-axis division that paint/fill writes split to just-in-time. Clicking the
- * active half/quarter button advances its division globally (X → Y → Z; leave-X →
- * leave-Y → leave-Z); voxels never cycle on tap. Subdivided voxels keep whatever split
- * they already have — the grid only governs fresh splits.
+ * Four buttons — whole (default), halves, quarters, octal — set the resolution every edit
+ * writes at: paint, erase, recolor, fill, select, and wand all address one grid cell, and
+ * "whole" writes whole voxels (folding any detail under them). Clicking the active
+ * half/quarter button advances its division globally (X → Y → Z; leave-X → leave-Y → leave-Z).
  */
 function captionFor(family: GridFamily, split: SplitAxis[] | null): string {
   if (family === 'whole' || !split) return ''
@@ -19,8 +18,8 @@ function captionFor(family: GridFamily, split: SplitAxis[] | null): string {
 }
 
 export function GridToggle() {
-  const gridFamily = useAppStore((s) => s.gridFamily)
-  const pendingSplit = useAppStore((s) => s.pendingSplit)
+  const gridSplit = useAppStore((s) => s.gridSplit)
+  const gridFamily = gridFamilyOf(gridSplit)
   const setGridDivision = useAppStore((s) => s.setGridDivision)
   const setStatusMessage = useAppStore((s) => s.setStatusMessage)
   const disabled = useAppStore((s) => s.mode === 'texture' || s.mode === 'animate')
@@ -33,14 +32,12 @@ export function GridToggle() {
   ]
 
   const hintFor = (id: GridFamily): string => {
-    if (id === 'whole') return 'Paint whole voxels — no subdivision · tapping detail paints it in place'
-    if (id === 'octal') {
-      return 'Split fresh voxels into 8 half-cells as you paint · Alt-free: one grid for every tool'
-    }
+    if (id === 'whole') return 'Edit whole voxels — painting over detail replaces it with one voxel'
+    if (id === 'octal') return 'Edit in half-voxel cells (2×2×2) — every tool works at this resolution'
     const order = id === 'half' ? 'X → Y → Z' : 'leave-X → leave-Y → leave-Z'
-    const armed = gridFamily === id ? describeGridSplit(pendingSplit) : null
+    const armed = gridFamily === id ? describeGridSplit(gridSplit) : null
     return (
-      `Split fresh voxels as you paint (${id === 'half' ? 'halves' : 'quarters'}) · ` +
+      `Edit in ${id === 'half' ? 'half' : 'quarter'}-voxel cells — every tool works at this resolution · ` +
       `click again to cycle ${order}${armed ? ` — now: ${armed}` : ''}`
     )
   }
@@ -49,7 +46,7 @@ export function GridToggle() {
     <>
       {buttons.map(({ id, label, Icon }) => {
         const active = gridFamily === id
-        const caption = active ? captionFor(id, pendingSplit) : ''
+        const caption = active ? captionFor(id, gridSplit) : ''
         return (
           <button
             key={id}
@@ -64,7 +61,7 @@ export function GridToggle() {
               setGridDivision(id)
               // Status reflects the post-click division — read fresh after the set.
               const s = useAppStore.getState()
-              setStatusMessage(`Grid: ${describeGridSplit(s.pendingSplit)}`)
+              setStatusMessage(`Grid: ${describeGridSplit(s.gridSplit)}`)
             }}
             className={
               'relative flex h-8 w-8 items-center justify-center rounded-md text-neutral-400 hover:bg-neutral-800 hover:text-neutral-100 ' +

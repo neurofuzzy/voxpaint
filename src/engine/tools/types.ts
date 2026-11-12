@@ -21,7 +21,7 @@ export interface ToolContext {
   activeVoxelKind: VoxelKind
   activePaletteSlot: PaletteSlotRef
   selection: SelectionRegion | null
-  /** The armed grid division (`pendingSplit`): sets the resolution of new selections. */
+  /** The armed grid division (`gridSplit`): sets the resolution of new selections. */
   gridSplit: SplitAxis[] | null
   floatContent: ClipboardData | null
   floatOrigin: FloatOrigin | null

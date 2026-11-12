@@ -1,6 +1,6 @@
 import type { CellKey, Coord, SplitAxis } from '@/engine/grid/types'
 import { encodeKey } from '@/engine/grid/GridStore'
-import { frontSlabBit } from '@/engine/grid/subdiv'
+import { boxFromOriginSize, frontSlabBit, type CellBox } from '@/engine/grid/cellBox'
 import { gridCoordFromPixel, planeLogicalBasis } from '@/engine/plane/constructionPlane'
 import { axisIndex } from '@/engine/plane/planeGeometry'
 import { toDisplayU, toDisplayV } from '@/engine/plane/planeDisplay'
@@ -199,6 +199,13 @@ export function fineCellWorldBox(
     origin[wA] += f.slab * 0.5
   }
   return { origin, size }
+}
+
+/** The voxel and in-voxel box one fine cell of a region made on `plane` covers (the write target). */
+export function fineCellBox(plane: ConstructionPlane, region: SelectionRegion, fu: number, fv: number): { coord: Coord; box: CellBox } {
+  const { origin, size } = fineCellWorldBox(plane, region, fu, fv)
+  const coord: Coord = [Math.floor(origin[0]), Math.floor(origin[1]), Math.floor(origin[2])]
+  return { coord, box: boxFromOriginSize([origin[0] - coord[0], origin[1] - coord[1], origin[2] - coord[2]], size) }
 }
 
 /** Grid-space bounds (lower / upper corner) of everything a region selects, or null when empty. */

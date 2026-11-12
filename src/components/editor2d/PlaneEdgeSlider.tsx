@@ -7,7 +7,7 @@ import { useAppStore } from '@/store/useAppStore'
 
 /** Finger travel per construction-plane layer — ~40 layers fit in a full-height iPad drag.
  * Dragging walks the grid's stops: whole layers, or with the grid cutting the plane's axis
- * half-voxel stops (whole → front slab → back slab → next layer), each half this travel. */
+ * half-voxel stops (low slab → high slab → next layer's low slab), each half this travel. */
 const PX_PER_LAYER = 20
 
 const AXES: Axis[] = ['x', 'y', 'z']
@@ -38,7 +38,7 @@ export function PlaneEdgeSlider() {
   const offset = useAppStore((s) => s.plane.offset)
   const planeAxis = useAppStore((s) => s.plane.axis)
   const planeOrientation = useAppStore((s) => s.plane.orientation)
-  const splitsAxis = useAppStore((s) => gridSplitsAxis(s.pendingSplit, s.plane.axis))
+  const splitsAxis = useAppStore((s) => gridSplitsAxis(s.gridSplit, s.plane.axis))
   const gridExtent = useAppStore((s) => s.meta.gridExtent)
   const mode = useAppStore((s) => s.mode)
   const layoutMode = useAppStore((s) => s.layoutMode)
@@ -65,8 +65,8 @@ export function PlaneEdgeSlider() {
     const anchor = dragRef.current
     if (!anchor) return
     const steps = Math.round((anchor.startY - clientY) / (splitsAxis ? PX_PER_LAYER / 2 : PX_PER_LAYER))
-    const { plane, pendingSplit, setPlaneOffset, setPlaneHalf } = useAppStore.getState()
-    const splits = gridSplitsAxis(pendingSplit, plane.axis)
+    const { plane, gridSplit, setPlaneOffset, setPlaneHalf } = useAppStore.getState()
+    const splits = gridSplitsAxis(gridSplit, plane.axis)
     // Walk the grid's stops from the anchor (absolute, not incremental).
     let offset = anchor.startOffset
     let half: 0 | 1 | null = anchor.startHalf

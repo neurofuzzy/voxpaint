@@ -124,7 +124,7 @@ describe('eyedropperTool', () => {
     expect(calls.kinds).toEqual(['convex'])
   })
 
-  it('falls back to the back child, then the parent slot', () => {
+  it('falls back to the back child; an empty part samples nothing', () => {
     const { ctx, calls } = makeCtx()
     const coord = gridCoordFromPixel(PLANE, 0, 0)
     ctx.model.color.set(encodeKey(...coord), { paletteSlot: { kind: 'base', index: 0 } })
@@ -135,9 +135,9 @@ describe('eyedropperTool', () => {
     sub.children[2] = { slot: glass }
     eyedropperTool.onDown!(ctx, { ...evt(0, 0), cu: 0.25, cv: 0.25 })
     expect(calls.slots).toEqual([glass])
-    // No continuous position: samples the stored parent slot.
+    // Nothing live under the pointer: nothing to pick (empty space reads as empty).
     sub.children[2] = null
-    eyedropperTool.onDown!(ctx, evt(0, 0))
-    expect(calls.slots).toEqual([glass, { kind: 'base', index: 0 }])
+    eyedropperTool.onDown!(ctx, { ...evt(0, 0), cu: 0.25, cv: 0.25 })
+    expect(calls.slots).toEqual([glass])
   })
 })

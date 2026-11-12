@@ -30,7 +30,7 @@ describe('sub-voxel floats (2D)', () => {
     s.beginStroke()
     s.paintCellAtCoord([1, 0, 0], 'z', 1)
     s.commitStroke()
-    s.setPendingSplit(['x']) // halves along u (x) on the z plane
+    s.setGridSplit(['x']) // halves along u (x) on the z plane
     v = pixelFromGridCoord(useAppStore.getState().plane, [0, 0, 0]).v
     const plane = useAppStore.getState().plane
     // fine u 1..2: x-high half of the A voxel + x-low half of the B voxel
@@ -151,7 +151,7 @@ describe('sub-voxel floats holding a whole chamfer cell', () => {
     s.paintCellAtCoord([0, 0, 0], 'z', 1)
     s.commitStroke()
     expect(useAppStore.getState().model.chamfer.has('0,0,0')).toBe(true)
-    s.setPendingSplit(['x'])
+    s.setGridSplit(['x'])
     const plane = useAppStore.getState().plane
     const v = pixelFromGridCoord(plane, [0, 0, 0]).v
     useAppStore.getState().setSelection(fineRectRegion(fineDivisionFor(plane, ['x']), 0, v, 1, v))

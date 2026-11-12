@@ -1,155 +1,42 @@
-import { emptyModel, expandBounds, encodeKey } from '@/engine/grid/GridStore'
-import type { Coord, SplitAxis, VoxelModel } from '@/engine/grid/types'
-import {
-  cloneSubdiv, normalizeSplit, remapChildren, scaffoldCell, splitChildBits, subdivideCell,
-} from '@/engine/grid/subdiv'
+import { emptyModel, encodeKey } from '@/engine/grid/GridStore'
+import type { VoxelModel } from '@/engine/grid/types'
+import { cloneSubdiv } from '@/engine/grid/subdiv'
+import { writeBox } from '@/engine/grid/cellBox'
 import type { PaletteSlotRef } from '@/engine/palette/types'
-import { gridCoordFromPixel, planeLogicalBasis } from '@/engine/plane/constructionPlane'
-import { axisIndex } from '@/engine/plane/planeGeometry'
+import { gridCoordFromPixel } from '@/engine/plane/constructionPlane'
 import type { ConstructionPlane } from '@/engine/plane/types'
-import { forEachFineCell, isFineSelected, worldAxisOf } from '@/engine/tools/fineSelection'
+import { fineCellBox, forEachFineCell } from '@/engine/tools/fineSelection'
 import { forEachSelectedCell } from '@/engine/tools/selectionMask'
 import type { SelectionRegion } from '@/store/types'
 
 /**
- * Writes at sub-voxel resolution: the model-side half of the fine selection. A voxel is edited
- * through its children — a plain cube is split just far enough (along only the axes the selection
- * actually cuts), an existing subdivision is re-split by volume overlap when the selection needs a
- * finer cut than it has, and a voxel the selection covers entirely is edited whole. Chamfer
- * cells are atomic: any selected part of one selects all of it.
+ * Writes at sub-voxel resolution: the model-side half of the fine selection. Every selected fine
+ * cell is one `writeBox` (which splits just far enough, re-splits finer subdivisions, and folds
+ * the result back to whole voxels where it can). Chamfer cells are atomic: any selected part of
+ * one edits all of it.
  */
 export type FineEdit = { kind: 'clear' } | { kind: 'paint'; slot: PaletteSlotRef }
 
-const AXES: SplitAxis[] = ['x', 'y', 'z']
-
-/** One voxel's selected fine cells: `sel[iu][iv]` over logical halves (1 entry on an uncut axis). */
-type CellSel = boolean[][]
-
-function editCell(
-  model: VoxelModel,
-  coord: Coord,
-  sel: CellSel,
-  slab: 0 | 1 | null,
-  uAxis: SplitAxis,
-  vAxis: SplitAxis,
-  uPos: boolean,
-  vPos: boolean,
-  wAxis: SplitAxis,
-  edit: FineEdit,
-): void {
-  const su = sel.length
-  const sv = sel[0].length
-  const any = sel.some((col) => col.some(Boolean))
-  if (!any) return
-  const all = sel.every((col) => col.every(Boolean)) && slab === null
-  const key = encodeKey(...coord)
-  const plain = model.color.has(key)
-  const atomic = model.chamfer.has(key)
-
-  if (all || atomic) {
-    // Whole voxel: delete it, or recolor it in place (a chamfer keeps its shape).
-    if (edit.kind === 'clear') {
-      model.color.delete(key)
-      model.chamfer.delete(key)
-      model.subdiv.delete(key)
-    } else if (atomic) {
-      model.color.set(key, { paletteSlot: edit.slot })
-    } else {
-      const sub = model.subdiv.get(key)
-      if (sub) {
-        sub.children = sub.children.map(() => ({ slot: edit.slot }))
-        sub.scaffold = false
-      } else {
-        model.color.set(key, { paletteSlot: edit.slot })
-        model.bounds = expandBounds(model.bounds, coord)
-      }
-    }
-    return
-  }
-
-  // Which axes does this selection cut through the voxel?
-  const need = new Set<SplitAxis>()
-  if (su === 2 && [0, 1].some((iv) => iv < sv && sel[0][iv] !== sel[1][iv])) need.add(uAxis)
-  if (sv === 2 && [0, 1].some((iu) => iu < su && sel[iu][0] !== sel[iu][1])) need.add(vAxis)
-  if (slab !== null) need.add(wAxis)
-
-  let sub = model.subdiv.get(key)
-  if (!sub) {
-    if (!plain && edit.kind === 'clear') return // nothing there to clear
-    const split = normalizeSplit([...need])
-    if (!split) return
-    if (plain) subdivideCell(model, coord, split)
-    else if (!scaffoldCell(model, coord, split, (edit as { slot: PaletteSlotRef }).slot)) return
-    sub = model.subdiv.get(key)!
-  } else {
-    const merged = normalizeSplit([...new Set<SplitAxis>([...sub.split, ...need])])
-    if (merged && merged.join('') !== sub.split.join('')) {
-      sub.children = remapChildren(sub.split, sub.children, merged)
-      sub.split = merged
-    }
-  }
-
-  sub.children.forEach((_, idx) => {
-    const bits = splitChildBits(sub!.split, idx)
-    const bit = { x: bits[0], y: bits[1], z: bits[2] }
-    if (slab !== null && bit[wAxis] !== slab) return
-    // The logical halves this child covers (both along an axis the voxel is not cut on).
-    const ius = sub!.split.includes(uAxis) ? [uPos ? bit[uAxis] : 1 - bit[uAxis]] : [0, 1].slice(0, su)
-    const ivs = sub!.split.includes(vAxis) ? [vPos ? bit[vAxis] : 1 - bit[vAxis]] : [0, 1].slice(0, sv)
-    if (!ius.every((iu) => ivs.every((iv) => sel[Math.min(iu, su - 1)][Math.min(iv, sv - 1)]))) return
-    sub!.children[idx] = edit.kind === 'clear' ? null : { slot: edit.slot }
-  })
-
-  if (edit.kind === 'paint') sub.scaffold = false
-  if (sub.children.every((c) => c === null)) model.subdiv.delete(key)
-  else {
-    model.bounds = expandBounds(model.bounds, coord)
-    tidyCell(model, key)
-  }
-}
-
-/**
- * Folds a subdivision whose children are all the same plain slot back into one cube — a split that
- * no longer carries any detail is just bookkeeping (and costs a draw). Detail with holes, bevels or
- * differing slots is kept.
- */
-export function tidyCell(model: VoxelModel, key: string): void {
-  const sub = model.subdiv.get(key)
-  if (!sub || sub.children.length === 0) return
-  const first = sub.children[0]
-  if (!first || first.chamfer) return
-  const same = sub.children.every((c) => c && !c.chamfer && c.slot.kind === first.slot.kind && c.slot.index === first.slot.index)
-  if (!same) return
-  model.subdiv.delete(key)
-  model.color.set(key, { paletteSlot: first.slot })
-}
-
 /** Applies `edit` to exactly the fine cells a (possibly sub-voxel) region selects, on `plane`'s slice. */
 export function editFineRegion(model: VoxelModel, plane: ConstructionPlane, region: SelectionRegion, edit: FineEdit): void {
-  const f = region.fine
-  const su = f?.su ?? 1
-  const sv = f?.sv ?? 1
-  const slab = f?.slab ?? null
-  const { uDir, vDir } = planeLogicalBasis(plane.axis)
-  const uAxis = worldAxisOf(uDir)
-  const vAxis = worldAxisOf(vDir)
-  const wAxis = AXES[axisIndex(plane.axis)]
-  const uPos = uDir[AXES.indexOf(uAxis)] > 0
-  const vPos = vDir[AXES.indexOf(vAxis)] > 0
-
-  // Group fine cells by their voxel.
-  const cells = new Map<string, { u: number; v: number }>()
+  const atomicDone = new Set<string>()
   forEachFineCell(region, (fu, fv) => {
-    const u = Math.floor(fu / su)
-    const v = Math.floor(fv / sv)
-    cells.set(`${u},${v}`, { u, v })
+    const { coord, box } = fineCellBox(plane, region, fu, fv)
+    const key = encodeKey(...coord)
+    if (model.chamfer.has(key)) {
+      // Whole chamfer cell: delete it, or recolor it in place (it keeps its shape).
+      if (atomicDone.has(key)) return
+      atomicDone.add(key)
+      if (edit.kind === 'clear') {
+        model.color.delete(key)
+        model.chamfer.delete(key)
+      } else {
+        model.color.set(key, { paletteSlot: edit.slot })
+      }
+      return
+    }
+    writeBox(model, coord, box, edit.kind === 'clear' ? null : { slot: edit.slot })
   })
-  for (const { u, v } of cells.values()) {
-    const sel: CellSel = Array.from({ length: su }, (_, iu) =>
-      Array.from({ length: sv }, (_, iv) => isFineSelected(region, u * su + iu, v * sv + iv)),
-    )
-    editCell(model, gridCoordFromPixel(plane, u, v), sel, slab, uAxis, vAxis, uPos, vPos, wAxis, edit)
-  }
 }
 
 export function clearFineRegion(model: VoxelModel, plane: ConstructionPlane, region: SelectionRegion): void {

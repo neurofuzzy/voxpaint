@@ -1,6 +1,6 @@
 import * as THREE from 'three'
 import { decodeKey, encodeKey, withinWorkingBounds } from '@/engine/grid/GridStore'
-import type { CellKey, ChamferCell, Coord, GridExtent, VoxelModel } from '@/engine/grid/types'
+import type { CellKey, ChamferCell, Coord, DetailChild, GridExtent, VoxelModel } from '@/engine/grid/types'
 import { splitChildOrigin, splitChildSize } from '@/engine/grid/subdiv'
 import type { ConstructionPlane } from '@/engine/plane/types'
 import { gridCoordFromPixel } from '@/engine/plane/constructionPlane'
@@ -11,8 +11,8 @@ import { resolveSlotColor } from '@/engine/palette/palette'
 import type { PaletteState } from '@/engine/palette/types'
 import { forEachSelectedCell } from '@/engine/tools/selectionMask'
 import type { ClipboardData, FloatOrigin, SelectionRegion } from '@/store/types'
-import { chamferInstanceMatrix, cubeInstanceMatrix, scaledChamferInstanceMatrix, subCubeInstanceMatrix } from './basis'
-import { poolIdFor, type PoolId } from './pools'
+import { chamferInstanceMatrix, cubeInstanceMatrix, subCubeInstanceMatrix } from './basis'
+import { detailInstance, poolIdFor, type PoolId } from './pools'
 
 /**
  * One instanced draw's worth of overlay cells: everything sharing a pool, and so a geometry.
@@ -40,6 +40,12 @@ function pushInto(byPool: Map<PoolId, GhostBatch>, coord: Coord, chamfer: Chamfe
   }
   batch.matrices.push(instanceMatrixFor(coord, chamfer))
   if (color) batch.colors!.push(color)
+}
+
+/** Pushes one detail child / float piece (scaled bevel or box) into its pool batch. */
+function pushDetail(byPool: Map<PoolId, GhostBatch>, origin: [number, number, number], size: [number, number, number], child: Pick<DetailChild, 'chamfer'>, color?: THREE.Color): void {
+  const { poolId, matrix } = detailInstance(origin, size, child)
+  pushMatrixInto(byPool, poolId, matrix, color)
 }
 
 /** Pushes a precomputed matrix (detail half-cubes) into a pool batch. */
@@ -77,13 +83,7 @@ export function buildFloatGhostBatches(
     for (const piece of floatPieces(plane, floatContent, floatOrigin.originU, floatOrigin.originV, floatOrigin.subU ?? 0, floatOrigin.subV ?? 0)) {
       if (!withinWorkingBounds(piece.cell, gridExtent)) continue
       const origin: [number, number, number] = [piece.cell[0] + piece.origin[0], piece.cell[1] + piece.origin[1], piece.cell[2] + piece.origin[2]]
-      const resolved = piece.chamfer?.resolvedTo
-      if (resolved) {
-        const chamfer = piece.chamfer!
-        pushMatrixInto(byPool, poolIdFor(piece.chamfer), scaledChamferInstanceMatrix(origin, piece.size, chamfer.planeAxis, chamfer.planeOrientation, resolved.rotation), new THREE.Color(resolveSlotColor(palette, piece.slot)))
-      } else {
-        pushMatrixInto(byPool, 'cube', subCubeInstanceMatrix(origin, piece.size), new THREE.Color(resolveSlotColor(palette, piece.slot)))
-      }
+      pushDetail(byPool, origin, piece.size, piece, new THREE.Color(resolveSlotColor(palette, piece.slot)))
     }
   }
 
@@ -98,22 +98,7 @@ export function buildFloatGhostBatches(
       for (let o = 0; o < cell.subdiv.children.length; o++) {
         const child = cell.subdiv.children[o]
         if (!child) continue
-        const origin = splitChildOrigin(coord, cell.subdiv.split, o)
-        const size = splitChildSize(cell.subdiv.split)
-        const resolved = child.chamfer?.resolvedTo
-        if (resolved) {
-          const chamfer = child.chamfer!
-          const poolId = poolIdFor(child.chamfer)
-          const matrix = scaledChamferInstanceMatrix(origin, size, chamfer.planeAxis, chamfer.planeOrientation, resolved.rotation)
-          pushMatrixInto(byPool, poolId, matrix, new THREE.Color(resolveSlotColor(palette, child.slot)))
-        } else {
-          pushMatrixInto(
-            byPool,
-            'cube',
-            subCubeInstanceMatrix(origin, size),
-            new THREE.Color(resolveSlotColor(palette, child.slot)),
-          )
-        }
+        pushDetail(byPool, splitChildOrigin(coord, cell.subdiv.split, o), splitChildSize(cell.subdiv.split), child, new THREE.Color(resolveSlotColor(palette, child.slot)))
       }
       continue
     }
@@ -194,19 +179,7 @@ export function buildSelectionHighlightBatches(
       for (let o = 0; o < sub.children.length; o++) {
         const child = sub.children[o]
         if (!child) continue
-        const origin = splitChildOrigin(coord, sub.split, o)
-        const size = splitChildSize(sub.split)
-        const resolved = child.chamfer?.resolvedTo
-        if (resolved) {
-          const chamfer = child.chamfer!
-          pushMatrixInto(
-            byPool,
-            poolIdFor(child.chamfer),
-            scaledChamferInstanceMatrix(origin, size, chamfer.planeAxis, chamfer.planeOrientation, resolved.rotation),
-          )
-        } else {
-          pushMatrixInto(byPool, 'cube', subCubeInstanceMatrix(origin, size))
-        }
+        pushDetail(byPool, splitChildOrigin(coord, sub.split, o), splitChildSize(sub.split), child)
       }
       return
     }
@@ -244,13 +217,7 @@ export function buildSelectionHighlightBatches(
           }
           if (!overlaps) continue
           lit.add(tag)
-          const resolved = child.chamfer?.resolvedTo
-          if (resolved) {
-            const chamfer = child.chamfer!
-            pushMatrixInto(byPool, poolIdFor(child.chamfer), scaledChamferInstanceMatrix(co, csize, chamfer.planeAxis, chamfer.planeOrientation, resolved.rotation))
-          } else {
-            pushMatrixInto(byPool, 'cube', subCubeInstanceMatrix(co, csize))
-          }
+          pushDetail(byPool, co, csize, child)
         }
         return
       }
