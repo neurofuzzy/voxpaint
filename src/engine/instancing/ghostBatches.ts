@@ -5,7 +5,7 @@ import { splitChildOrigin, splitChildSize } from '@/engine/grid/subdiv'
 import type { ConstructionPlane } from '@/engine/plane/types'
 import { gridCoordFromPixel } from '@/engine/plane/constructionPlane'
 import { fineCellWorldBox, forEachFineCell } from '@/engine/tools/fineSelection'
-import { floatPieces } from '@/engine/tools/fineFloat'
+import { floatIsPieced, floatPieces } from '@/engine/tools/fineFloat'
 import { placeClipboardCell } from '@/engine/tools/clipboard'
 import { resolveSlotColor } from '@/engine/palette/palette'
 import type { PaletteState } from '@/engine/palette/types'
@@ -77,10 +77,11 @@ export function buildFloatGhostBatches(
   if (!floatContent || !floatOrigin) return []
   const byPool = new Map<PoolId, GhostBatch>()
 
-  if (floatContent.fine) {
-    // Sub-voxel float: one box per piece, at its exact (half-voxel) place — beveled pieces
-    // ghost in their shape's pool, like floating detail children do below.
-    for (const piece of floatPieces(plane, floatContent, floatOrigin.originU, floatOrigin.originV, floatOrigin.subU ?? 0, floatOrigin.subV ?? 0)) {
+  const pieced = floatIsPieced(floatContent, floatOrigin)
+  if (pieced) {
+    // Off-grid float (sub-voxel content or a half-voxel depth shift): one box per piece, at its
+    // exact place — beveled pieces ghost in their shape's pool, like floating detail children do below.
+    for (const piece of floatPieces(plane, floatContent, floatOrigin)) {
       if (!withinWorkingBounds(piece.cell, gridExtent)) continue
       const origin: [number, number, number] = [piece.cell[0] + piece.origin[0], piece.cell[1] + piece.origin[1], piece.cell[2] + piece.origin[2]]
       pushDetail(byPool, origin, piece.size, piece, new THREE.Color(resolveSlotColor(palette, piece.slot)))
@@ -88,7 +89,7 @@ export function buildFloatGhostBatches(
   }
 
   for (const cell of floatContent.cells) {
-    if (floatContent.fine && !cell.chamfer) continue // pieces above
+    if (pieced && !cell.chamfer) continue // pieces above
     const coord = placeClipboardCell(plane, floatContent, floatOrigin.originU, floatOrigin.originV, cell)
     // Cells dragged off-grid are dropped by `applyClipboardAt` on bake — don't promise them here.
     if (!withinWorkingBounds(coord, gridExtent)) continue
@@ -129,13 +130,14 @@ export function placedFloatCoords(
 ): Coord[] {
   if (!floatContent || !floatOrigin) return []
   const out: Coord[] = []
-  if (floatContent.fine) {
-    for (const piece of floatPieces(plane, floatContent, floatOrigin.originU, floatOrigin.originV, floatOrigin.subU ?? 0, floatOrigin.subV ?? 0)) {
+  const pieced = floatIsPieced(floatContent, floatOrigin)
+  if (pieced) {
+    for (const piece of floatPieces(plane, floatContent, floatOrigin)) {
       if (withinWorkingBounds(piece.cell, gridExtent)) out.push(piece.cell)
     }
   }
   for (const cell of floatContent.cells) {
-    if (floatContent.fine && !cell.chamfer) continue
+    if (pieced && !cell.chamfer) continue
     if (!cell.color && !cell.subdiv) continue
     const coord = placeClipboardCell(plane, floatContent, floatOrigin.originU, floatOrigin.originV, cell)
     if (!withinWorkingBounds(coord, gridExtent)) continue

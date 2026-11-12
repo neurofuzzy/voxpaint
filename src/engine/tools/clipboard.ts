@@ -66,7 +66,7 @@ export function copyRegionToClipboard(
     }
     for (let w = -half; w < half; w++) push(u, v, w)
   })
-  return { width: region.width, height: region.height, originU: region.originU, originV: region.originV, cells, copyPlaneAxis: plane.axis, copyPlaneOrientation: plane.orientation, copyPlaneOffset: plane.offset, ...(fineFootprint ? { fine: fineFootprint } : {}) }
+  return { width: region.width, height: region.height, originU: region.originU, originV: region.originV, cells, copyPlaneAxis: plane.axis, copyPlaneOrientation: plane.orientation, copyPlaneOffset: plane.offset, copyPlaneHalf: plane.half, ...(fineFootprint ? { fine: fineFootprint } : {}) }
 }
 
 /** Erases both layers under a selection mask (used by cut/move). With `deep` (Alt-drag lift) the
@@ -109,6 +109,22 @@ export function clipboardDepthBase(plane: ConstructionPlane, clipboard: Clipboar
   const samePlane = clipboard.copyPlaneAxis === plane.axis && clipboard.copyPlaneOrientation === plane.orientation
   if (samePlane && clipboard.depthAnchor === 'bbox') return clipboard.copyPlaneOffset ?? plane.offset
   return plane.offset
+}
+
+/**
+ * Half-voxel depth shift (−1, 0, +1 half voxels along the world plane axis) that keeps pasted
+ * content at the same depth relative to the construction plane's stop as when it was copied.
+ * Depth is measured from the low edge of the plane's stop (a whole stop and its low half share
+ * one), so stepping the plane by half voxels between copy and paste moves the paste by exactly
+ * that much; the whole-voxel part rides `clipboardDepthBase`. Bbox-anchored content keeps its
+ * absolute depth on same-plane drops (0). Copies off another axis anchor at that layer's low edge.
+ * Compute it from the clipboard as copied — `transformClipboardToPlane` resets the source stop.
+ */
+export function clipboardHalfShift(plane: ConstructionPlane, clipboard: ClipboardData): -1 | 0 | 1 {
+  const samePlane = clipboard.copyPlaneAxis === plane.axis && clipboard.copyPlaneOrientation === plane.orientation
+  if (samePlane && clipboard.depthAnchor === 'bbox') return 0
+  const src = clipboard.copyPlaneAxis === plane.axis ? (clipboard.copyPlaneHalf ?? 0) : 0
+  return ((plane.half ?? 0) - src) as -1 | 0 | 1
 }
 
 /**
@@ -272,6 +288,7 @@ export function transformClipboardToPlane(clipboard: ClipboardData, toPlane: Con
     copyPlaneAxis: toPlane.axis,
     copyPlaneOrientation: toPlane.orientation,
     copyPlaneOffset: undefined,
+    copyPlaneHalf: undefined,
     depthAnchor: undefined,
     cells: clipboard.cells.map((cell) => ({
       ...cell,

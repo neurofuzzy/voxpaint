@@ -78,3 +78,32 @@ describe('selectTool sub-voxel float drag', () => {
     expect(moveFloatTo).toHaveBeenCalledWith(1, 0, 0, 0)
   })
 })
+
+describe('selectTool float drags step at the grid, whatever the content', () => {
+  it('a whole-cell selection drags in half voxels with a grid armed', () => {
+    const selection = { originU: 1, originV: 0, width: 1, height: 1, mask: new Uint8Array([1]) }
+    const dragState = { current: { kind: 'idle' } as ToolDragState }
+    const moveFloatTo = vi.fn()
+    const ctx = mockCtx({ dragState, selection, moveFloatTo, gridSplit: ['x'] })
+    selectTool.onDown!(ctx, evt(1, 0, 1.25, 0.5))
+    selectTool.onMove!(ctx, evt(1, 0, 1.75, 0.5))
+    expect(moveFloatTo).toHaveBeenLastCalledWith(1, 0, 1, 0)
+    selectTool.onMove!(ctx, evt(2, 0, 2.25, 0.5))
+    expect(moveFloatTo).toHaveBeenLastCalledWith(2, 0, 0, 0)
+  })
+
+  it('a whole grid drags whole voxels and keeps the float’s half-voxel offset', () => {
+    const selection = { originU: 1, originV: 0, width: 1, height: 1, mask: new Uint8Array([1]) }
+    const dragState = { current: { kind: 'idle' } as ToolDragState }
+    const moveFloatTo = vi.fn()
+    const ctx = mockCtx({
+      dragState, selection, moveFloatTo, gridSplit: null,
+      floatContent: { width: 1, height: 1, cells: [{ du: 0, dv: 0, dw: 0, color: { paletteSlot: { kind: 'base', index: 0 } } }] },
+      floatOrigin: { originU: 1, originV: 0, subU: 1 },
+    })
+    selectTool.onDown!(ctx, evt(1, 0, 1.5, 0.5))
+    selectTool.onMove!(ctx, evt(3, 0, 3.5, 0.5))
+    expect(moveFloatTo).toHaveBeenLastCalledWith(3, 0, 1, undefined)
+  })
+})
+

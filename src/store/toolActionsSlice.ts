@@ -6,16 +6,16 @@ import type { PaletteSlotRef } from '@/engine/palette/types'
 import { gridCoordFromPixel, pixelFromGridCoord } from '@/engine/plane/constructionPlane'
 import { rebaseChamferCell } from '@/engine/chamfer/faceBasis'
 import { fillLeaksToEdges, floodFillOccupied3D, floodFillRegion, floodFillRegion3D } from '@/engine/tools/floodFill'
-import { applyClipboardAt, clipboardDepthBase, clearRegion, copyRegionToClipboard, transformClipboardToPlane } from '@/engine/tools/clipboard'
+import { applyClipboardAt, clipboardDepthBase, clipboardHalfShift, clearRegion, copyRegionToClipboard, transformClipboardToPlane } from '@/engine/tools/clipboard'
 import { copyCellsToClipboard, isCoplanarWithPlane, rotateCellsInPlane, selectionMatchesClipboard, selectionRegionFromCoplanarCells, snapshotCells } from '@/engine/tools/cellSetOps'
 import { placedFloatCoords } from '@/engine/instancing/ghostBatches'
 import { mirrorClipboard, rotateClipboard90 } from '@/engine/tools/transform'
 import { forEachSelectedCell, isCellSelected, mirrorRegion, rotateRegion90 } from '@/engine/tools/selectionMask'
 import { clearFineRegion } from '@/engine/grid/fineOps'
 import { liveFineSelection3D } from './selection3DSlice'
-import { applyFineClipboardAt, fineFloatAtomic, floatFootprintRegion } from '@/engine/tools/fineFloat'
+import { applyFloatAt, fineFloatAtomic, floatFootprintRegion, floatIsPieced } from '@/engine/tools/fineFloat'
 import { gridBox, recolorBox, WHOLE_BOX, writeBox } from '@/engine/grid/cellBox'
-import type { AppState, SelectionTransformKind, ToolActionsSlice } from './types'
+import type { AppState, FloatOrigin, SelectionTransformKind, ToolActionsSlice } from './types'
 
 type Slice = StateCreator<AppState, [['zustand/immer', never]], [], ToolActionsSlice>
 
@@ -29,6 +29,60 @@ function planarFloodCell(state: AppState, coord: Coord, slot: PaletteSlotRef) {
   const box = gridBox(state.plane, state.gridSplit, null)
   if (state.model.color.has(key) || state.model.subdiv.has(key)) recolorBox(state.model, coord, box, slot)
   else writeBox(state.model, coord, box, { slot })
+}
+
+/**
+ * Normalizes a float origin: sub offsets are 0/1 half voxels, kept only when non-zero (sub-voxel
+ * content always carries its in-plane pair). Content holding whole chamfer cells has no
+ * half-voxel position (`fineFloatAtomic`): in-plane halves round to the nearest whole voxel —
+ * carried into the cell origin, so the verbatim chamfer restore and the pieces stay aligned.
+ * Enforced here (not in each gesture) so every drag path agrees. The depth shift is set only by
+ * paste (`pasteHalfShift`, already whole for atomic content) and rides along unchanged.
+ */
+function settleFloatOrigin(clip: NonNullable<AppState['floatContent']>, o: FloatOrigin): FloatOrigin {
+  let { originU, originV } = o
+  let subU = o.subU ?? 0
+  let subV = o.subV ?? 0
+  if (fineFloatAtomic(clip)) {
+    originU += Math.round(subU / 2)
+    originV += Math.round(subV / 2)
+    subU = 0
+    subV = 0
+  }
+  const subW = o.subW ?? 0
+  return {
+    originU,
+    originV,
+    ...(clip.fine || subU ? { subU } : {}),
+    ...(clip.fine || subV ? { subV } : {}),
+    ...(subW ? { subW } : {}),
+  }
+}
+
+/** The 2D selection a float at `o` shows: its exact fine footprint when the content or the
+ * position is sub-voxel, else null (callers keep the whole-cell region). */
+function floatSelection(plane: AppState['plane'], clip: NonNullable<AppState['floatContent']>, o: FloatOrigin) {
+  if (!clip.fine && !o.subU && !o.subV) return null
+  return floatFootprintRegion(plane, clip, o.originU, o.originV, o.subU ?? 0, o.subV ?? 0)
+}
+
+/** The whole-cell selection of a float's cells at `o` (every clipboard cell's du/dv). */
+function cellsRegion(clip: NonNullable<AppState['floatContent']>, o: FloatOrigin) {
+  const mask = new Uint8Array(clip.width * clip.height)
+  for (const c of clip.cells) mask[c.dv * clip.width + c.du] = 1
+  return { originU: o.originU, originV: o.originV, width: clip.width, height: clip.height, mask }
+}
+
+/**
+ * The half-voxel depth shift a paste takes so it sits at the same depth relative to the plane's
+ * stop as the copy did (`clipboardHalfShift`). Content holding whole chamfer cells has no
+ * half-voxel position (`fineFloatAtomic`), so it stays on the whole-voxel layer — said once.
+ */
+function pasteHalfShift(plane: AppState['plane'], clipboard: NonNullable<AppState['clipboard']>): -1 | 0 | 1 {
+  const shift = clipboardHalfShift(plane, clipboard)
+  if (shift === 0 || !fineFloatAtomic(clipboard)) return shift
+  showToast('Whole bevels sit on whole voxels — pasted on the voxel layer, not the half step')
+  return 0
 }
 
 // Invariant: every model-mutating action in this store must call `get().bakeFloatIfAny()` as its
@@ -253,20 +307,19 @@ export const createToolActionsSlice: Slice = (set, get) => ({
       showToast('Sub-voxel content can only be pasted onto the plane it was copied from')
       return
     }
+    // Depth follows the plane's stop exactly, half voxels included (computed off the clipboard
+    // as copied — the cross-plane rebase below resets its source stop).
+    const subW = pasteHalfShift(plane, clipboard)
     const transformedClipboard = transformClipboardToPlane(clipboard, plane)
-    if (transformedClipboard.fine) {
-      get().beginStroke()
-      set((state) => {
-        state.floatContent = transformedClipboard
-        state.floatOrigin = { originU: u, originV: v, subU: 0, subV: 0 }
-        state.selection = floatFootprintRegion(plane, transformedClipboard, u, v, 0, 0)
-      })
-      return
-    }
     get().beginStroke()
     set((state) => {
       state.floatContent = transformedClipboard
-      state.floatOrigin = { originU: u, originV: v }
+      if (transformedClipboard.fine) {
+        state.floatOrigin = { originU: u, originV: v, subU: 0, subV: 0, ...(subW ? { subW } : {}) }
+        state.selection = floatFootprintRegion(plane, transformedClipboard, u, v, 0, 0)
+        return
+      }
+      state.floatOrigin = { originU: u, originV: v, ...(subW ? { subW } : {}) }
       state.selection = {
         originU: u,
         originV: v,
@@ -310,24 +363,15 @@ export const createToolActionsSlice: Slice = (set, get) => ({
   },
 
   moveFloatTo: (originU, originV, subU = 0, subV = 0) => {
-    const { floatContent, plane } = get()
+    const { floatContent, floatOrigin, plane } = get()
     if (!floatContent) return
-    // Whole chamfer cells have no half-voxel position: snap the offset so their verbatim
-    // restore stays aligned with the shifted pieces. Enforced here (not in each gesture)
-    // so every drag path agrees. Detail children — beveled or not — move freely.
-    if (floatContent.fine && fineFloatAtomic(floatContent)) {
-      subU = Math.round(subU / floatContent.fine.su) * floatContent.fine.su
-      subV = Math.round(subV / floatContent.fine.sv) * floatContent.fine.sv
-    }
+    const at = settleFloatOrigin(floatContent, { originU, originV, subU, subV, subW: floatOrigin?.subW })
     set((state) => {
-      if (floatContent.fine) {
-        // Sub-voxel float: the selection tracks the float's exact fine footprint.
-        state.floatOrigin = { originU, originV, subU, subV }
-        state.selection = floatFootprintRegion(plane, floatContent, originU, originV, subU, subV)
-        return
-      }
-      state.floatOrigin = { originU, originV }
-      state.selection = { ...state.selection!, originU, originV }
+      state.floatOrigin = at
+      // The selection tracks the float's exact footprint (fine when it sits off the voxel grid).
+      // Back on the voxel grid: whole cells (re-derived when the previous footprint was fine).
+      state.selection = floatSelection(plane, floatContent, at)
+        ?? (state.selection?.fine ? cellsRegion(floatContent, at) : { ...state.selection!, originU: at.originU, originV: at.originV })
     })
   },
 
@@ -336,37 +380,34 @@ export const createToolActionsSlice: Slice = (set, get) => ({
     // (the 3D set tracks position separately — see the drop handler in Viewport3D.tsx).
     const fc = get().floatContent
     if (!fc) return
-    if (fc.fine && fineFloatAtomic(fc)) {
-      subU = Math.round(subU / fc.fine.su) * fc.fine.su
-      subV = Math.round(subV / fc.fine.sv) * fc.fine.sv
-    }
+    const at = settleFloatOrigin(fc, { originU, originV, subU, subV, subW: get().floatOrigin?.subW })
     set((state) => {
-      state.floatOrigin = get().floatContent?.fine ? { originU, originV, subU, subV } : { originU, originV }
+      state.floatOrigin = at
     })
   },
 
   transformFloat: (kind) => {
     get().liftSelectionToFloat() // no-op if already floating
-    const { floatContent, selection } = get()
+    const { floatContent, selection, floatOrigin, plane } = get()
     if (!floatContent || !selection) return
     const spin = kind === 'rotate' ? 'cw' : kind === 'rotate-ccw' ? 'ccw' : null
     const flip = kind === 'mirror-h' ? 'horizontal' : 'vertical'
     const transformedContent = spin ? rotateClipboard90(floatContent, spin) : mirrorClipboard(floatContent, flip)
-    const transformedRegion = spin ? rotateRegion90(selection, spin) : mirrorRegion(selection, flip)
-    if (transformedContent.fine) {
-      // Sub-voxel float: rotate/mirror in place about its frame; the selection is its new footprint.
-      const o = get().floatOrigin ?? { originU: transformedRegion.originU, originV: transformedRegion.originV }
-      const plane = get().plane
+    const o = floatOrigin ?? { originU: selection.originU, originV: selection.originV }
+    if (transformedContent.fine || o.subU || o.subV) {
+      // Off-grid float: rotate/mirror in place about its frame; the selection is its new footprint.
+      const at = settleFloatOrigin(transformedContent, o)
       set((state) => {
         state.floatContent = transformedContent
-        state.floatOrigin = { originU: o.originU, originV: o.originV, subU: o.subU ?? 0, subV: o.subV ?? 0 }
-        state.selection = floatFootprintRegion(plane, transformedContent, o.originU, o.originV, o.subU ?? 0, o.subV ?? 0)
+        state.floatOrigin = at
+        state.selection = floatSelection(plane, transformedContent, at)
       })
       return
     }
+    const transformedRegion = spin ? rotateRegion90(selection, spin) : mirrorRegion(selection, flip)
     set((state) => {
       state.floatContent = transformedContent
-      state.floatOrigin = { originU: transformedRegion.originU, originV: transformedRegion.originV }
+      state.floatOrigin = settleFloatOrigin(transformedContent, { originU: transformedRegion.originU, originV: transformedRegion.originV, subW: o.subW })
       state.selection = transformedRegion
     })
   },
@@ -375,7 +416,7 @@ export const createToolActionsSlice: Slice = (set, get) => ({
     const { floatContent, floatOrigin, plane, meta } = get()
     if (!floatContent || !floatOrigin) return
     set((state) => {
-      if (floatContent.fine) applyFineClipboardAt(state.model, plane, floatContent, floatOrigin.originU, floatOrigin.originV, floatOrigin.subU ?? 0, floatOrigin.subV ?? 0, meta.gridExtent)
+      if (floatIsPieced(floatContent, floatOrigin)) applyFloatAt(state.model, plane, floatContent, floatOrigin, meta.gridExtent)
       else applyClipboardAt(state.model, plane, floatContent, floatOrigin.originU, floatOrigin.originV, meta.gridExtent)
       state.meta.modifiedAt = new Date().toISOString()
       state.dirty = true
@@ -477,7 +518,9 @@ export const createToolActionsSlice: Slice = (set, get) => ({
       get().pasteClipboardInPlace()
       return
     }
-    // Same rebase as the 2D paste path so cross-plane pastes land on screen correctly.
+    // Same rebase as the 2D paste path so cross-plane pastes land on screen correctly; depth
+    // follows the plane's stop exactly, half voxels included (off the clipboard as copied).
+    const subW = pasteHalfShift(plane, clipboard)
     const transformed = transformClipboardToPlane(clipboard, plane)
     const originU = transformed.originU ?? 0
     const originV = transformed.originV ?? 0
@@ -498,7 +541,9 @@ export const createToolActionsSlice: Slice = (set, get) => ({
       }
       get().beginStroke()
       set((state) => {
-        applyClipboardAt(state.model, state.plane, shifted, match.originU, match.originV, meta.gridExtent)
+        const at = { originU: match.originU, originV: match.originV, ...(subW ? { subW } : {}) }
+        if (floatIsPieced(shifted, at)) applyFloatAt(state.model, state.plane, shifted, at, meta.gridExtent)
+        else applyClipboardAt(state.model, state.plane, shifted, match.originU, match.originV, meta.gridExtent)
         state.meta.modifiedAt = new Date().toISOString()
         state.dirty = true
       })
@@ -510,11 +555,11 @@ export const createToolActionsSlice: Slice = (set, get) => ({
     // copy+paste+drag duplicates instead of stomping the source — and select its footprint.
     // The 3D view ghosts the float and select/wand drags inside its footprint move it; the
     // drop (or any bake trigger) stamps it. Opens an undo stroke like every other lift/paste.
-    const footprint = placedFloatCoords(transformed, { originU, originV }, plane, meta.gridExtent)
+    const footprint = placedFloatCoords(transformed, { originU, originV, ...(subW ? { subW } : {}) }, plane, meta.gridExtent)
     get().beginStroke()
     set((state) => {
       state.floatContent = transformed
-      state.floatOrigin = { originU, originV }
+      state.floatOrigin = { originU, originV, ...(subW ? { subW } : {}) }
       state.selectedCells = new Set(footprint.map((c) => encodeKey(...c)))
     })
     // Deliberately no commitStroke() — this stroke stays open until bakeFloatIfAny().
@@ -563,7 +608,7 @@ export const createToolActionsSlice: Slice = (set, get) => ({
       get().beginStroke()
       set((state) => {
         clearFineRegion(state.model, fine3.plane, fine3.region)
-        applyFineClipboardAt(state.model, fine3.plane, transformed, originU, originV, 0, 0, meta.gridExtent)
+        applyFloatAt(state.model, fine3.plane, transformed, { originU, originV }, meta.gridExtent)
         state.meta.modifiedAt = new Date().toISOString()
         state.dirty = true
       })

@@ -94,6 +94,10 @@ export type ClipboardData = {
    * lifted 3D volume in UV must not collapse it onto the construction plane). Omitted means
    * slice-anchored. Cross-plane rebases always reset to slice-anchored. */
   depthAnchor?: 'slice' | 'bbox'
+  /** The copy plane's half-voxel stop at copy time (`ConstructionPlane.half`; null/absent = a
+   * whole stop). Slice-anchored pastes keep content at the same depth relative to the plane's
+   * stop, half voxels included (see `clipboardHalfShift`). Reset by cross-plane rebases. */
+  copyPlaneHalf?: 0 | 1 | null
 }
 
 export type ProjectSlice = {
@@ -242,8 +246,13 @@ export type ToolSlice = {
   clearPaintLineAnchor: () => void
 }
 
-/** `subU`/`subV` shift a sub-voxel float by that many fine units (0 .. su-1) past the cell origin. */
-export type FloatOrigin = { originU: number; originV: number; subU?: number; subV?: number }
+/**
+ * Where a pending float sits. `subU`/`subV` shift a sub-voxel float by that many fine units
+ * (0 .. su-1) past the cell origin; `subW` shifts any float by half voxels (−1, 0, +1) along the
+ * world plane axis — how a paste follows a construction plane that sits on a different half-voxel
+ * stop than the copy did. Any non-zero `subW` drops the float as pieces (`floatIsPieced`).
+ */
+export type FloatOrigin = { originU: number; originV: number; subU?: number; subV?: number; subW?: -1 | 0 | 1 }
 
 export type SelectionSlice = {
   selection: SelectionRegion | null

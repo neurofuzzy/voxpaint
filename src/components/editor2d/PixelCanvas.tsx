@@ -13,7 +13,7 @@ import { resolveSlotColor, shadeColor } from '@/engine/palette/palette'
 import { markerColorHex } from '@/engine/markers/markers'
 import { composedKeyOffset, posedBoxSliceFootprint, rigPivotOf } from '@/engine/rigging/types'
 import { fineDisplayRect, fineOutlineEdges, forEachFineCell } from '@/engine/tools/fineSelection'
-import { floatPieces, pieceDisplayRect } from '@/engine/tools/fineFloat'
+import { floatIsPieced, floatPieces, pieceDisplayRect } from '@/engine/tools/fineFloat'
 import { forEachSelectedCell, traceSelectionOutline } from '@/engine/tools/selectionMask'
 import { encodeSliceKey } from '@/engine/animation/animationLayers'
 import { useAppStore } from '@/store/useAppStore'
@@ -501,9 +501,13 @@ export function PixelCanvas() {
     // base grid (glass cells still get the 50% transparency treatment, same as committed cells).
     // Only the current slice is drawn: deep-lifted (Alt-drag) cells at other depths belong to
     // slices this canvas isn't showing (they still preview in the 3D ghost and bake in place).
-    if (floatContent && floatOrigin && floatContent.fine) {
-      // Sub-voxel float: every piece (half-voxel boxes included) at its exact shifted place.
-      for (const piece of floatPieces(plane, floatContent, floatOrigin.originU, floatOrigin.originV, floatOrigin.subU ?? 0, floatOrigin.subV ?? 0)) {
+    const piecedFloat = !!floatContent && !!floatOrigin && floatIsPieced(floatContent, floatOrigin)
+    if (floatContent && floatOrigin && piecedFloat) {
+      // Off-grid float: every piece (half-voxel boxes included) on this slice's layer, at its
+      // exact shifted place.
+      const wA = axisIndex(plane.axis)
+      for (const piece of floatPieces(plane, floatContent, floatOrigin)) {
+        if (piece.cell[wA] !== plane.offset) continue
         const [x0, y0, x1, y1] = pieceDisplayRect(plane, piece)
         const [sx, sy] = worldToScreen(x0, y0, size, pan, zoom, vScale)
         ctx.globalAlpha = piece.slot.kind === 'glass' ? 0.5 : 1
@@ -515,7 +519,7 @@ export function PixelCanvas() {
     if (floatContent && floatOrigin) {
       for (const cell of floatContent.cells) {
         if (cell.dw !== 0) continue
-        if (floatContent.fine && !cell.chamfer) continue // drawn as pieces above
+        if (piecedFloat && !cell.chamfer) continue // drawn as pieces above
         const u = floatOrigin.originU + cell.du
         const v = floatOrigin.originV + cell.dv
         const [sx, sy] = worldToScreen(toDisplayU(plane, u), toDisplayV(plane, v), size, pan, zoom, vScale)

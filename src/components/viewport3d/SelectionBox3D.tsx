@@ -8,6 +8,7 @@ import { bboxOfCoords, windowSlabBounds } from '@/engine/tools/cellSetOps'
 import { fineWorldBounds } from '@/engine/tools/fineSelection'
 import { liveFineSelection3D } from '@/store/selection3DSlice'
 import { useAppStore } from '@/store/useAppStore'
+import { floatIsPieced, floatPieceBounds } from '@/engine/tools/fineFloat'
 
 /** Matches the 2D canvas tint and SelectionHighlight cast (cyan-400). */
 const SELECTION_CYAN = 0x22d3ee
@@ -108,6 +109,10 @@ export function SelectionBox3D() {
     // set marks a 3D-originated float, a window a 2D one (2D lifts and pastes leave the set
     // empty, 3D lifts never touch the window).
     if (floatContent && floatOrigin && (selectedCells.size > 0 || selection)) {
+      // Off-grid floats box their exact half-voxel pieces (whole bevels ride as whole cells).
+      if (floatIsPieced(floatContent, floatOrigin) && !floatContent.cells.some((c) => c.chamfer)) {
+        return floatPieceBounds(plane, floatContent, floatOrigin, gridExtent)
+      }
       return cellsToBounds(bboxOfCoords(placedFloatCoords(floatContent, floatOrigin, plane, gridExtent)))
     }
     if (floatContent) return null

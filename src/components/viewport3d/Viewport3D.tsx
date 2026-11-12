@@ -48,7 +48,7 @@ import { placedFloatCoords } from '@/engine/instancing/ghostBatches'
 import type { ClipboardData, FloatOrigin } from '@/store/types'
 import { gridCoordFromPixel, pixelFromGridCoord, planeFromFaceHit, planeLogicalBasis } from '@/engine/plane/constructionPlane'
 import { fineDivisionFor, fineRectRegion, isWholeDivision, type FineDivision } from '@/engine/tools/fineSelection'
-import { floatFootprintRegion } from '@/engine/tools/fineFloat'
+import { draggedFloatOrigin, floatDragStep, floatFootprintRegion } from '@/engine/tools/fineFloat'
 import type { ConstructionPlane } from '@/engine/plane/types'
 import { bresenhamLine } from '@/engine/tools/lineUtils'
 import { WAND_DOUBLE_TAP_MS } from '@/engine/tools/wandTool'
@@ -938,7 +938,7 @@ function VoxelInteractionHandler({ managerRef, controlsRef }: {
             // is one to continue; otherwise arm below.
             const origin = useAppStore.getState().floatOrigin
             if (origin) {
-              const fcPress = useAppStore.getState().floatContent
+              const step = floatDragStep(activePlane, useAppStore.getState().gridSplit)
               floatDrag = {
                 startU: u,
                 startV: v,
@@ -946,12 +946,10 @@ function VoxelInteractionHandler({ managerRef, controlsRef }: {
                 originV: origin.originV,
                 cells3D: grabFloatCells ?? new Set(store.selectedCells),
                 // Press-anchored: the drag tracks from here, so even the first move displaces.
-                ...(fcPress?.fine && pressCell
+                // Grid-resolution floats step in half voxels from the press point.
+                ...(step && pressCell
                   ? {
-                    fineStart: fineUnitFor(
-                      { su: fcPress.fine.su, sv: fcPress.fine.sv, slab: null },
-                      activePlane, pressCell, subBitsAt(e.clientX, e.clientY, pressCell),
-                    ),
+                    fineStart: fineUnitFor({ ...step, slab: null }, activePlane, pressCell, subBitsAt(e.clientX, e.clientY, pressCell)),
                     fineOrigin: origin,
                   }
                   : {}),
@@ -1206,7 +1204,7 @@ function VoxelInteractionHandler({ managerRef, controlsRef }: {
           const origin = useAppStore.getState().floatOrigin
           if (origin) {
             const st = useAppStore.getState()
-            const liftedFine = st.floatContent?.fine
+            const step = floatDragStep(planeRef.current, st.gridSplit)
             floatDrag = {
               startU: pendingWandDrag.startU,
               startV: pendingWandDrag.startV,
@@ -1219,12 +1217,9 @@ function VoxelInteractionHandler({ managerRef, controlsRef }: {
                 ? new Set(placedFloatCoords(st.floatContent, origin, planeRef.current, st.meta.gridExtent).map((c) => encodeKey(...c)))
                 : new Set(st.selectedCells),
               // Press-anchored (same frame as the first over-threshold move): it displaces.
-              ...(liftedFine
+              ...(step
                 ? {
-                  fineStart: fineUnitFor(
-                    { su: liftedFine.su, sv: liftedFine.sv, slab: null },
-                    planeRef.current, pendingWandDrag.pressCell, pendingWandDrag.pressBits,
-                  ),
+                  fineStart: fineUnitFor({ ...step, slab: null }, planeRef.current, pendingWandDrag.pressCell, pendingWandDrag.pressBits),
                   fineOrigin: origin,
                 }
                 : {}),
@@ -1247,19 +1242,16 @@ function VoxelInteractionHandler({ managerRef, controlsRef }: {
           }
           const origin = useAppStore.getState().floatOrigin
           if (origin) {
-            const liftedFine = useAppStore.getState().floatContent?.fine
+            const step = floatDragStep(planeRef.current, useAppStore.getState().gridSplit)
             floatDrag = {
               startU: pendingSelectGrab.startU,
               startV: pendingSelectGrab.startV,
               originU: origin.originU,
               originV: origin.originV,
               cells3D: new Set(store.selectedCells),
-              ...(liftedFine
+              ...(step
                 ? {
-                  fineStart: fineUnitFor(
-                    { su: liftedFine.su, sv: liftedFine.sv, slab: null },
-                    planeRef.current, pendingSelectGrab.pressCell, pendingSelectGrab.pressBits,
-                  ),
+                  fineStart: fineUnitFor({ ...step, slab: null }, planeRef.current, pendingSelectGrab.pressCell, pendingSelectGrab.pressBits),
                   fineOrigin: origin,
                 }
                 : {}),
@@ -1275,26 +1267,19 @@ function VoxelInteractionHandler({ managerRef, controlsRef }: {
       // the plane's UV axes. The float ghost is the live feedback; hover stays cleared.
       if (floatDrag) {
         const cell = resolveEmptyCell(e.clientX, e.clientY)
-        const fc = useAppStore.getState().floatContent
-        if (cell && fc?.fine) {
-          // Sub-voxel float: step in fine units (the store snaps whole-chamfer content).
-          // The anchor is press-seeded at every drag site; the first-move fallback is safety
-          // for drags armed before their float existed.
-          const f = fc.fine
-          const fdiv: FineDivision = { su: f.su, sv: f.sv, slab: null }
-          const cur = fineUnitFor(fdiv, planeRef.current, cell, subBitsAt(e.clientX, e.clientY, cell))
+        const st0 = useAppStore.getState()
+        const step = floatDragStep(planeRef.current, st0.gridSplit)
+        if (cell && step) {
+          // Grid-resolution drag: half-voxel steps along the axes the grid cuts, for any float
+          // (the store snaps whole-chamfer content). The anchor is press-seeded at every drag
+          // site; the first-move fallback is safety for drags armed before their float existed.
+          const cur = fineUnitFor({ ...step, slab: null }, planeRef.current, cell, subBitsAt(e.clientX, e.clientY, cell))
           if (!floatDrag.fineStart) {
             floatDrag.fineStart = cur
-            floatDrag.fineOrigin = useAppStore.getState().floatOrigin ?? { originU: floatDrag.originU, originV: floatDrag.originV }
+            floatDrag.fineOrigin = st0.floatOrigin ?? { originU: floatDrag.originU, originV: floatDrag.originV }
           }
-          const du = cur[0] - floatDrag.fineStart[0]
-          const dv = cur[1] - floatDrag.fineStart[1]
-          const o0 = floatDrag.fineOrigin!
-          const fu = o0.originU * f.su + (o0.subU ?? 0) + du
-          const fv = o0.originV * f.sv + (o0.subV ?? 0) + dv
-          const ou = Math.floor(fu / f.su)
-          const ov = Math.floor(fv / f.sv)
-          useAppStore.getState().moveFloatCellsTo(ou, ov, fu - ou * f.su, fv - ov * f.sv)
+          const o = draggedFloatOrigin(floatDrag.fineOrigin!, step, cur[0] - floatDrag.fineStart[0], cur[1] - floatDrag.fineStart[1])
+          st0.moveFloatCellsTo(o.originU, o.originV, o.subU, o.subV)
           return
         }
         if (cell) {
@@ -1302,7 +1287,8 @@ function VoxelInteractionHandler({ managerRef, controlsRef }: {
           const st = useAppStore.getState()
           const nu = floatDrag.originU + (u - floatDrag.startU)
           const nv = floatDrag.originV + (v - floatDrag.startV)
-          st.moveFloatCellsTo(nu, nv)
+          // Whole-voxel steps keep whatever half-voxel offset the float already has.
+          st.moveFloatCellsTo(nu, nv, st.floatOrigin?.subU, st.floatOrigin?.subV)
         }
         return
       }
@@ -1652,10 +1638,10 @@ function VoxelInteractionHandler({ managerRef, controlsRef }: {
         down = null
         const st = useAppStore.getState()
         const originNow = st.floatOrigin
-        const droppedFine = st.floatContent?.fine ? st.floatContent : null
+        const droppedFine = st.floatContent && originNow && (st.floatContent.fine || originNow.subU || originNow.subV) ? st.floatContent : null
         st.bakeFloatIfAny()
         if (originNow && droppedFine) {
-          // Sub-voxel drop: the selection follows as the exact fine footprint it landed on.
+          // Off-grid drop: the selection follows as the exact fine footprint it landed on.
           const plane = planeRef.current
           const region = floatFootprintRegion(plane, droppedFine, originNow.originU, originNow.originV, originNow.subU ?? 0, originNow.subV ?? 0)
           if (region) st.setSelectedFine({ region, plane: { ...plane } })

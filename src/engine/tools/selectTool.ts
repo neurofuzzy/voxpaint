@@ -2,6 +2,7 @@ import { withinWorkingBounds } from '@/engine/grid/GridStore'
 import { gridCoordFromPixel } from '@/engine/plane/constructionPlane'
 import { bresenhamLine } from '@/engine/tools/lineUtils'
 import { fineDivisionFor, fineRectRegion, fineUnitAt, isFineSelected } from '@/engine/tools/fineSelection'
+import { draggedFloatOrigin, floatDragStep } from '@/engine/tools/fineFloat'
 import { isCellSelected, lassoRegion } from '@/engine/tools/selectionMask'
 import type { NormalizedPointerEvent } from '@/engine/input/PointerInputController'
 import type { ToolContext, ToolHandler } from './types'
@@ -20,10 +21,11 @@ export const selectTool: ToolHandler = {
     const { selection, floatContent, floatOrigin, plane, gridExtent } = ctx
 
     if (floatContent && selection && isCellSelected(selection, e.u, e.v)) {
-      // Continuing to drag the same pending float.
-      const ff = floatContent.fine
-      ctx.drag.current = { kind: 'moveFloat', startU: e.u, startV: e.v, originAtStart: floatOrigin!, startFine: ff ? fineUnitAt({ su: ff.su, sv: ff.sv, slab: null }, plane, e.u, e.v, e.cu, e.cv) : undefined,
-        fineStep: ff ? { su: ff.su, sv: ff.sv } : undefined }
+      // Continuing to drag the same pending float, in the grid's steps.
+      const step = floatDragStep(plane, ctx.gridSplit)
+      ctx.drag.current = { kind: 'moveFloat', startU: e.u, startV: e.v, originAtStart: floatOrigin!,
+        startFine: step ? fineUnitAt({ ...step, slab: null }, plane, e.u, e.v, e.cu, e.cv) : undefined,
+        fineStep: step ?? undefined }
       return
     }
     if (floatContent) {
@@ -34,18 +36,17 @@ export const selectTool: ToolHandler = {
       // separate "Move" tool needed for this; Select handles both selecting and repositioning.
       // Alt-drag lifts the full-depth cuboid under the selection window (like the Move tool's
       // Alt-drag moves the whole model); a plain drag lifts just the current slice.
-      const sf = selection.fine
       ctx.liftSelectionToFloat(e.altKey)
+      // The drag steps at the grid's resolution, whatever the content (whole-step snapping for
+      // whole chamfer cells is enforced where the origin lands — the store — not here).
+      const step = floatDragStep(plane, ctx.gridSplit)
       ctx.drag.current = {
         kind: 'moveFloat',
         startU: e.u,
         startV: e.v,
         originAtStart: { originU: selection.originU, originV: selection.originV, subU: 0, subV: 0 },
-        startFine: sf ? fineUnitAt({ su: sf.su, sv: sf.sv, slab: null }, plane, e.u, e.v, e.cu, e.cv) : undefined,
-        // The lifted content may not be visible in this context's snapshot yet (no render has
-        // flushed the lift), so record its resolution now. Whole-step snapping for whole
-        // chamfer cells is enforced where the origin lands (the store), not here.
-        fineStep: sf ? { su: sf.su, sv: sf.sv } : undefined,
+        startFine: step ? fineUnitAt({ ...step, slab: null }, plane, e.u, e.v, e.cu, e.cv) : undefined,
+        fineStep: step ?? undefined,
       }
       return
     }
@@ -75,23 +76,17 @@ export const selectTool: ToolHandler = {
     const drag = ctx.drag.current
     if (drag.kind === 'moveFloat') {
       const { startU, startV, originAtStart, startFine } = drag
-      // Prefer the lift-time record: the live content can lag a render behind on the gesture
-      // that performed the lift, which would otherwise step the first drag in whole voxels.
+      // The step was fixed at press time (the grid can't change mid-drag).
       const step = drag.fineStep
-        ?? (ctx.floatContent?.fine ? { su: ctx.floatContent.fine.su, sv: ctx.floatContent.fine.sv } : undefined)
       if (step && startFine) {
-        // Sub-voxel float: step in fine units (the store snaps whole-chamfer content).
-        const f = fineUnitAt({ su: step.su, sv: step.sv, slab: null }, ctx.plane, e.u, e.v, e.cu, e.cv)
-        const du = f[0] - startFine[0]
-        const dv = f[1] - startFine[1]
-        const fu = originAtStart.originU * step.su + (originAtStart.subU ?? 0) + du
-        const fv = originAtStart.originV * step.sv + (originAtStart.subV ?? 0) + dv
-        const ou = Math.floor(fu / step.su)
-        const ov = Math.floor(fv / step.sv)
-        ctx.moveFloatTo(ou, ov, fu - ou * step.su, fv - ov * step.sv)
+        // Half-voxel steps along the axes the grid cuts (the store snaps whole-chamfer content).
+        const f = fineUnitAt({ ...step, slab: null }, ctx.plane, e.u, e.v, e.cu, e.cv)
+        const o = draggedFloatOrigin(originAtStart, step, f[0] - startFine[0], f[1] - startFine[1])
+        ctx.moveFloatTo(o.originU, o.originV, o.subU, o.subV)
         return
       }
-      ctx.moveFloatTo(originAtStart.originU + (e.u - startU), originAtStart.originV + (e.v - startV))
+      // Whole-voxel steps keep whatever half-voxel offset the float already has.
+      ctx.moveFloatTo(originAtStart.originU + (e.u - startU), originAtStart.originV + (e.v - startV), originAtStart.subU, originAtStart.subV)
       return
     }
     if (drag.kind === 'selectLasso') {

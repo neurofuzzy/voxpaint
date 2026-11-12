@@ -115,7 +115,7 @@ export function copyCellsToClipboard(
   plane: ConstructionPlane,
 ): ClipboardData {
   const entries = snapshotCells(model, keys)
-  if (entries.length === 0) return { width: 0, height: 0, cells: [], copyPlaneAxis: plane.axis, copyPlaneOrientation: plane.orientation, copyPlaneOffset: plane.offset, depthAnchor: 'bbox' as const }
+  if (entries.length === 0) return { width: 0, height: 0, cells: [], copyPlaneAxis: plane.axis, copyPlaneOrientation: plane.orientation, copyPlaneOffset: plane.offset, copyPlaneHalf: plane.half, depthAnchor: 'bbox' as const }
   let minU = Infinity
   let minV = Infinity
   let maxU = -Infinity
@@ -149,6 +149,7 @@ export function copyCellsToClipboard(
     copyPlaneAxis: plane.axis,
     copyPlaneOrientation: plane.orientation,
     copyPlaneOffset: minW,
+    copyPlaneHalf: plane.half,
     depthAnchor: 'bbox' as const,
   }
 }

@@ -130,12 +130,11 @@ export type ToolDragState =
   | { kind: 'paint'; anchor: [number, number]; last: [number, number]; anchorQuad?: [number, number] | null; lastQuad?: [number, number] | null }
   | { kind: 'selectRect'; anchor: [number, number]; /** Fine-unit anchor (sub-voxel resolution). */ fineAnchor?: [number, number] }
   | { kind: 'selectLasso'; points: Array<[number, number]> }
-  | { kind: 'moveFloat'; startU: number; startV: number; originAtStart: FloatOrigin; /** Fine-unit pointer position at the start (sub-voxel floats). */ startFine?: [number, number];
+  | { kind: 'moveFloat'; startU: number; startV: number; originAtStart: FloatOrigin; /** Pointer position at the start in `fineStep` units (grid-resolution drags). */ startFine?: [number, number];
     /**
-     * Sub-voxel step recorded at lift time (the float's own resolution). The move uses this
-     * instead of re-reading `floatContent`, which can lag a render behind on the lift gesture
-     * itself — without it the first drag steps in whole voxels. Absent on old/whole drags,
-     * which fall back to the live content.
+     * The drag's half-voxel step per logical axis, fixed at press time from the armed grid
+     * (`floatDragStep`) — the grid is the control for every float, whatever its content.
+     * Absent when the grid is whole: whole-voxel steps that keep the float's sub offsets.
      */
     fineStep?: { su: 1 | 2; sv: 1 | 2 } }
   | { kind: 'moveGrid'; startU: number; startV: number; lastU: number; lastV: number }
