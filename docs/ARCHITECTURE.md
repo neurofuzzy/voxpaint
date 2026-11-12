@@ -34,13 +34,15 @@ Three strict layers, enforced by convention (not a lint rule):
 type VoxelModel = {
   color: Map<CellKey, ColorCell>      // every painted cell, chamfered or not
   chamfer: Map<CellKey, ChamferCell>  // subset of `color`'s keys that are chamfered
+  subdiv: Map<CellKey, SubdivCell>    // one-level sub-voxel parents (see "Sub-voxel editing")
   bounds: BBox | null                 // recomputed incrementally as cells are added/removed
 }
 ```
 
 - `CellKey` is the string `"x,y,z"` (`engine/grid/GridStore.ts`'s `encodeKey`/`decodeKey`).
 - A chamfer cell **always** has a matching color cell — chamfer paint writes both layers in one
-  gesture (`store/paintActions.ts`'s `paintChamferCell`).
+  gesture (`store/paintActions.ts`'s `applyPaintCell`).
+- A subdivided voxel (`subdiv`) has no `color` or `chamfer` entry; its content lives in its children.
 - `VoxelModel` is treated as immutable outside Immer producers even though it's built on mutable
   `Map`s (not `ReadonlyMap`) — `InstancingManager.sync()` and the 2D canvas both diff on reference
   equality (`model === lastSyncedModel`), so accidental in-place mutation would silently break
@@ -111,8 +113,11 @@ mapping changed, which is exactly what made this system fragile. It's now consol
   `ConstructionPlaneVisual.tsx` and `VoxelFaceHighlight.tsx` instead of each keeping its own
   `AXIS_UNIT` copy.
 
-`engine/plane/types.ts`: `{ axis: 'x'|'y'|'z', orientation: 1|-1, offset: number }`, stored at
-`store.plane` (`store/planeSlice.ts`). Determines which 2D (u,v) slice the pixel canvas shows, via
+`engine/plane/types.ts`: `{ axis: 'x'|'y'|'z', orientation: 1|-1, offset: number, half: 0|1|null }`, stored at
+`store.plane` (`store/planeSlice.ts`). `half` is a half-voxel stop (`null` = whole-voxel stop): a depth
+bit picking which slab of the layer the plane sits on. It is non-null exactly when the armed edit grid
+cuts the plane's axis — `snapPlaneToGrid` keeps the two in step, so the grid alone decides which plane
+stops exist (see "Sub-voxel editing" below). Determines which 2D (u,v) slice the pixel canvas shows, via
 a fixed cyclic basis (`gridCoordFromPixel`): `x → u=-z,v=-y-ish` / `y → u=x,v=-z-ish` /
 `z → u=x,v=-y-ish` (see the corner-anchoring note above for the exact `-v-1`/`-u-1` form). The
 x-axis case negates u (not just v) because a naive `u=z` assignment has the opposite handedness
@@ -147,17 +152,23 @@ side is "outward" for chamfer geometry.
      through that face (`offset + orientation`).
    - Any plane change not driven by this flow (gizmo, flip button, arrow-drag) clears
      `objectModeTarget`, so a stale "click again" target never lingers.
+   - A face click lands the plane on the clicked surface's slab and does not adopt the voxel's own
+     sub-voxel split as the armed grid.
 
 **Live hover preview** — independent of the click flow, `VoxelInteractionHandler` also raycasts on
-every `pointermove` and writes into two store fields that always reflect whatever's currently under
-the cursor: `store.hoverCell` (the whole voxel, drives the 3D hover blink) and `store.hoveredFace`
+every `pointermove` and writes into store fields that always reflect whatever's currently under
+the cursor: `store.hoverCell` (the whole voxel, drives the 3D hover blink), `store.hoveredFace`
 (the specific face, drives `VoxelFaceHighlight`'s live quad — same corner-anchoring math as above,
-offset outward by a small epsilon to avoid z-fighting with the voxel's own face). A click commits
-to whichever face is currently shown, via the same `resolveFaceHit` helper both paths share.
+offset outward by a small epsilon to avoid z-fighting with the voxel's own face; `HoveredFace.point`
+carries the grid-space hit point, used to locate the grid cell a voxel tap addresses), and
+`store.hoverBits` (the pointer's world half-bits inside the hovered cell, from the ray's crossing of
+the construction plane). A click commits to whichever face is currently shown, via the same
+`resolveFaceHit` helper both paths share.
 
 **2D → 3D hover** — `components/editor2d/usePixelCanvasTools.ts` forwards the 2D canvas's hovered
-cell into the same `store.hoverCell` field (converted through `gridCoordFromPixel`), so hovering
-the 2D canvas drives the exact same 3D feedback as hovering the 3D view directly:
+cell into the same `store.hoverCell` field (converted through `gridCoordFromPixel`), and the hovered
+quadrant into `store.hoverBits`, so hovering the 2D canvas drives the exact same 3D feedback as
+hovering the 3D view directly:
 - If a voxel already exists there, `InstancingManager`'s hover blink applies (see below).
 - If not, `components/viewport3d/VoxelGhostPreview.tsx` renders a translucent placeholder cube
   tinted with the active palette color.
@@ -194,7 +205,7 @@ paint-blocking validation (an earlier design gated the paint itself on `classify
 which meant the very first chamfer cell painted anywhere — always 0 filled neighbors — could never
 succeed; nothing could ever be painted). `ChamferCell` (`engine/grid/types.ts`) is
 `{planeAxis, planeOrientation, resolvedTo}`, where `resolvedTo: ChamferClassification | null`.
-`store/paintActions.ts`'s `paintChamferCell` (and **only** direct edits) always writes the cell
+`store/paintActions.ts`'s `applyPaintCell` (the unit paint path, reached only by direct edits) always writes the cell
 and calls `chamferResolver.ts`'s `classify` to resolve the cell's shape. **Direct edits are the
 only time resolution happens** — flood-fill, copy/paste, and clone/stamp do not trigger
 `resolveChamferCellsOnPlane` (which is now dead runtime code, kept only for its tests). Consequence:
@@ -237,6 +248,162 @@ placement (`makeBasis(U,V,W)·Rz(θ) = makeBasis(U,-V,W)·Rz(-θ)·mirror_v`) wi
 matters because a reflected instance matrix flips triangle winding in screen space, which inverts the
 shader's front/back decision and lit those chamfers as if from behind (dark). `basis.test.ts` guards
 the det = +1 invariant across every axis/orientation/rotation and that placement is preserved.
+
+Sub-voxel bevels (chamfered children of a subdivided voxel, see below) use the same `ChamferCell`
+shape and the same resolve-only-on-own-edit rule.
+
+---
+
+## Sub-voxel editing
+
+A voxel can be subdivided one level: split in half along 1–3 world axes into 2, 4, or 8 children, so
+tall/thin ramps and chamfers can be authored at half scale. Solid areas stay plain whole voxels;
+subdivisions exist only where an edit was made at grid resolution. Children never subdivide further.
+
+### Data model
+
+- `SubdivCell = { split: SplitAxis[], children: (DetailChild | null)[] }` (`engine/grid/types.ts`),
+  stored in `VoxelModel.subdiv` under the **parent's** `CellKey`. `split` is 1–3 distinct world axes in
+  x, y, z order. Children are indexed in split-bit order (`childIndex` / `childBits` in `engine/grid/cellBox.ts`).
+- `DetailChild = { slot: PaletteSlotRef, chamfer?: ChamferCell }`. A child is plain content or a frozen
+  bevel (same `ChamferCell` as a whole voxel), scaled to fill its box. `null` = empty.
+- **Normalized always**: uniform plain children fold back to one voxel, and all-empty entries are
+  deleted. A stored subdivision therefore always carries detail.
+- **Uniform view**: `readCellDetail` (`engine/grid/cellBox.ts`) reads any voxel as `{split, children}`.
+  A plain or chamfered voxel is the empty split with one child, so every edit runs one code path.
+- **Boxes**: `CellBox = [x, y, z]`, one `HalfBit` per world axis — `null` spans the full voxel, `0`/`1`
+  is the low/high half. `WHOLE_BOX` is all `null`.
+
+### Write path (`engine/grid/cellBox.ts`)
+
+Every sub-voxel content edit goes through this module. Two other paths touch `model.subdiv` directly:
+whole-voxel writes (`applyPaintCell` drops a parent's subdivision) and file load (`serialize.ts` builds
+entries, then normalizes them).
+
+- `writeBox(model, cell, box, content | null)` — the single write. Splits just far enough for the box
+  (refining an existing split by union), writes the box (`null` erases it), then normalizes.
+- `recolorBox` — recolor-only. It never adds, deletes, or reshapes content.
+- `normalizeCell` — folds every losslessly mergeable axis (uniform plain pairs and empty pairs; never
+  bevels). Uniform → plain voxel; all-empty → deleted.
+- **Bevel rules**: a bevel occupies exactly one child. Any split that cuts a bevel turns it into a
+  plain block of its slot (`refineChildren`). A bevel written into a box while the voxel is cut finer
+  outside that box lands as a plain block when the outside content can't merge (`bevelFitsBox`).
+  `bevelFitsBox` is shared with the ghost (`store/ghostPlacement.ts`), so the preview matches the write.
+- Addressing helpers in the same module: `gridBox` (plane-targeted edits), `gridBoxAtBits` (3D voxel taps),
+  `worldBitsFromQuad`, `faceHitBits`, `boxWorld`, `boxDisplayRect`, `exactChildIndex`, `contentAtBox`.
+
+Store entry points are in `store/paintActions.ts`: `paintBox` (a whole box runs the unit paint path,
+replacing any detail with one voxel; a sub-voxel box writes through `writeBox` for cubes or
+`paintDetailBevel` for shape kinds), `eraseBox`, `recolorAt`, and `editBox`. Fine-selection writes
+(`engine/grid/fineOps.ts`) and float drops (`engine/tools/fineFloat.ts`) also write through `writeBox`.
+
+### The armed grid is the control
+
+- `store.gridSplit: SplitAxis[] | null` is the one armed edit grid (`null` = whole voxels). It is set by
+  `setGridSplit` (normalizes, then snaps the plane) and cycled by `setGridDivision` from the toolbar's
+  grid picker (`components/panels/GridToggle.tsx`). There is no separate family state: the picker
+  family is derived by `gridFamilyOf` (`engine/grid/subdiv.ts`).
+- The grid decides the write granularity, not the tool. A **whole** grid writes whole voxels: paint
+  replaces any detail with one voxel, and erase and recolor act on whole voxels.
+- With a grid armed, the cut axes divide the voxel and uncut axes span it.
+- **2D canvas**: paint, erase, and recolor address the grid cell under the logical quadrant.
+- **3D paint**: addresses the plane cell the ghost shows — the pointer's half comes from the ray's
+  crossing of the construction plane (`store.hoverBits`).
+- **3D erase and recolor**: address the grid cell under the clicked hit point (`faceHitBits` →
+  `gridBoxAtBits`).
+- **Fills**: selection fills and 2D planar flood fills write at the grid's depth. Planar flood paints
+  empty regions and recolors colored ones. 3D volume fills (`floodFill3D`, `floodFillCellsAt`) are
+  material-only and grid-independent: they recolor whole voxels, and a subdivided start voxel recolors itself.
+- **Plane stops**: `plane.half` is non-null exactly when the grid cuts the plane's axis. A cut plane
+  axis sits on half-voxel slabs; an uncut one sits on whole voxels. Plane-targeted edits take the
+  plane's slab on the cut axis.
+
+### Paste depth and off-grid floats
+
+**Problem fixed** (`6d72a9e`): the clipboard didn't record the plane's half-voxel stop, so paste only
+followed whole-layer plane moves. Sub-voxel drops cleared the destination slab but wrote the source
+slab, and whole-voxel floats couldn't be dragged in half steps.
+
+**Depth rule**
+
+- `ClipboardData.copyPlaneHalf` (`store/types.ts`) records `plane.half` at copy time
+  (`copyRegionToClipboard` in `engine/tools/clipboard.ts`, `copyCellsToClipboard` in
+  `engine/tools/cellSetOps.ts`). `transformClipboardToPlane` clears it, since the half belongs to the old frame.
+- `clipboardHalfShift(plane, clipboard)` (`clipboard.ts`) returns the half-voxel depth shift (-1, 0, or 1):
+  the current `plane.half` minus the copy-time half, only when the copy was on the same axis; otherwise 0.
+  Same-plane 3D clipboards with `depthAnchor === 'bbox'` (multi-depth selections) return 0 and keep absolute depth.
+- Effect: step the plane 1.5 voxels between copy and paste and the paste lands 1.5 voxels away. This applies
+  to 2D paste-in-place, 3D floating paste, and 3D targeted paste (paste into an empty selection).
+
+**`FloatOrigin`** (`store/types.ts`): `{ originU, originV, subU?, subV?, subW? }`. The `sub` fields are
+half-voxel offsets (-1, 0, or 1) in u, v, and the plane normal. Zero fields are omitted.
+
+**Off-lattice floats** (`engine/tools/fineFloat.ts`, the general off-grid float module):
+
+- `floatIsPieced(clip, origin)` — true if the content is fine (sub-voxel) or any sub offset is nonzero.
+- `floatPieces(plane, clip, origin)` — cuts the float into world-space `CellBox` pieces. A piece cut at a
+  voxel boundary drops its bevel and lands as a plain block, per the `cellBox` rule that a cut bevel becomes a block.
+- `applyFloatAt(model, plane, clip, origin, extent)` — clears the footprint it covers (`writeBox(null)`),
+  writes the pieces with `writeBox`, then restores whole-chamfer cells verbatim. Used by bake
+  (`bakeFloatIfAny`), targeted 3D paste, and 3D rotate (`store/toolActionsSlice.ts`). Replaces the old `applyFineClipboardAt`.
+- `floatFootprintRegion`, `floatPieceBounds`, `pieceDisplayRect` — fine selection after a drop, exact 3D
+  selection bounds, and 2D preview rects.
+- Previews match the write: the 3D ghost (`engine/instancing/ghostBatches.ts`), the 2D float preview
+  (`components/editor2d/PixelCanvas.tsx`, only pieces on the current slice), and the 3D selection box
+  (`components/viewport3d/SelectionBox3D.tsx`).
+- After a drop, the selection becomes the fine footprint when pieced, otherwise the whole-cell region.
+
+**Dragging**
+
+- `floatDragStep(plane, gridSplit)` gives the drag step from the armed grid (half steps on cut in-plane
+  axes) for all content, not just fine content.
+- `draggedFloatOrigin(start, step, du, dv)` carries halves into whole voxels. Under the whole grid, floats
+  move in whole voxels and keep any existing half offset.
+- Used by `engine/tools/selectTool.ts` (2D) and `components/viewport3d/Viewport3D.tsx` (3D).
+
+**Atomic bevel content**
+
+- Content containing a whole chamfer (`fineFloatAtomic`) stays on whole voxels. `settleFloatOrigin`
+  (`store/toolActionsSlice.ts`) carries rounded sub offsets into `originU`/`originV`, so the restored
+  bevels and the written pieces stay aligned.
+- Pasting such content onto a half stop stays on the voxel layer and toasts "Whole bevels sit on whole
+  voxels — pasted on the voxel layer, not the half step" (`pasteHalfShift`).
+- A half-size detail bevel survives a half shift if the shift doesn't cut it.
+
+**Tests:** `src/store/pasteDepth.test.ts` (15 tests); two drag tests in `src/engine/tools/selectTool.test.ts`.
+
+### Rendering
+
+- **2D canvas**: a subdivided cell draws as 2×2 mini-cells, each showing the child live at that
+  quadrant (`visibleChildAt`, shared with the eyedropper). Empty parts draw nothing; detail bevels get
+  the chamfer stripes. Refinement lines show the union of the voxel's own split and the armed grid.
+- **3D instanced view**: `engine/instancing/pools.ts`'s `detailInstance` maps a child to its pool and
+  scaled matrix. `InstancingManager` and `ghostBatches.ts` both use it.
+- **Optimized-mesh and export geometry**: `detailChildGeometry` in `engine/instancing/voxelMeshBuilder.ts`.
+- **Highlights**: `ConstructionPlaneVisual.tsx` draws the refinement lines (union of the voxel split
+  and the armed grid, so the grid reads before an edit). `VoxelFaceHighlight.tsx` outlines the grid
+  cell under the hit point at the hit surface's depth (the whole face when no grid is armed).
+
+### Persistence
+
+Subdivisions are serialized as `model.subdivCells` (`SerializedSubdivCell`: `x`, `y`, `z`, `split`,
+`children`) in schema v19 (see [Persistence](#persistence)). Serialize writes only those fields.
+Deserialize validates the parent coordinates, split, and child count; ignores the legacy `slot` and
+`scaffold` fields that early v19 files carried; and normalizes every entry on load (all-empty entries
+are dropped, uniform entries fold to plain voxels). The schema version did not change.
+
+### Known limitations
+
+- Any detail bevel makes `buildOptimizedVoxelGroupsShell` (`engine/instancing/voxelMeshBuilder.ts`)
+  fall back to the CSG union for the whole model.
+- The shell path may keep interior faces where detail meets full cubes; export manifoldness there is unverified.
+- Rescale (`engine/grid/rescale.ts`) still blockifies detail bevels into plain cubes.
+- Fine-selection regions (`FineDivision`/`su`/`sv`/`slab` in `engine/tools/fineSelection.ts`) remain a
+  separate region format from `CellBox` addressing. Whole chamfer cells stay atomic inside selections.
+- The bevel-family re-click cycling (`nextBevelTurn` in `store/paintActions.ts`) predates this model and is unchanged.
+- The Move tool (`store/moveActions.ts`, "shift every pixel on this slice") still moves whole voxels of the
+  layer in whole steps; on a half stop it moves both halves. It is not yet grid- or half-stop-aware (pending
+  user decision). See [Paste depth and off-grid floats](#paste-depth-and-off-grid-floats).
 
 ---
 
@@ -283,8 +450,10 @@ or `animateToolMap` (Animate mode) based on `store.mode`. Animate mode only has 
 other tools are no-ops. See the Animation section below.
 
 Selection/clipboard support lives in `selectionMask.ts` (rect/lasso regions, rotate/mirror,
-boundary tracing for the marching-ants outline) and `clipboard.ts`/`transform.ts` (copy/paste with
-live chamfer re-validation at the destination, dropping invalid cells with a toast).
+boundary tracing for the marching-ants outline) and `clipboard.ts`/`transform.ts` (copy/paste; chamfer
+cells are copied verbatim, never re-resolved at the destination). Paste depth along the
+plane's half-voxel stop, and off-grid floats, are covered in
+[Paste depth and off-grid floats](#paste-depth-and-off-grid-floats).
 
 ---
 
@@ -478,12 +647,12 @@ with `enableMapSet()` since `VoxelModel` uses `Map`):
 |---|---|---|
 | project | `projectSlice.ts` | `model`, `palette`, `meta` |
 | history | `historySlice.ts` | `past`/`future` snapshot stacks, `beginStroke`/`commitStroke`/`undo`/`redo` |
-| plane | `planeSlice.ts` | `plane`, `objectModeTarget`, plane-setting actions |
-| tool | `toolSlice.ts` | `activeTool`, `activeLayer`, `activePaletteSlot` |
+| plane | `planeSlice.ts` | `plane` (incl. its half-voxel stop `half`), `objectModeTarget`, plane-setting actions, `snapPlaneToGrid` |
+| tool | `toolSlice.ts` | `activeTool`, `activeLayer`, `activePaletteSlot`, `gridSplit` (the armed edit grid; `setGridSplit`/`setGridDivision`) |
 | selection | `selectionSlice.ts` | `selection`, `clipboard`, `floatContent`/`floatOrigin` (pending move/paste buffer) |
-| view | `viewSlice.ts` | `fullscreen`, `hoverCell`, `hoveredFace`, `chamferHoverValid`, `wireframe`, `optimizedMesh`, `ambientOcclusion`, `noiseLevel`, `specularNoiseLevel`, `glassRoughnessLevel`, `aoStrength`, `meshTriangles` (render stats), `exportScaleFactor`/`exportAnchor` (ephemeral, not snapshotted) |
+| view | `viewSlice.ts` | `fullscreen`, `hoverCell`, `hoverBits`, `hoveredFace`, `chamferHoverValid`, `wireframe`, `optimizedMesh`, `ambientOcclusion`, `noiseLevel`, `specularNoiseLevel`, `glassRoughnessLevel`, `aoStrength`, `meshTriangles` (render stats), `exportScaleFactor`/`exportAnchor` (ephemeral, not snapshotted) |
 | persistence | `persistenceSlice.ts` | `dirty`, `lastSavedAt`, `lastError` |
-| paintActions | `paintActions.ts` | `paintColorCell`, `paintChamferCell`, `eraseCell` |
+| paintActions | `paintActions.ts` | `paintCell`, `paintCellAtCoord`, `paintLineAtCoord`, `eraseCell`, `eraseCellAtCoord`, `paintMaterialCell`, `paintMaterialAtCoord`, `fillSelection` (the `*AtCoord` actions take optional world half-bits `bits`; all sub-voxel writes route through `paintBox`/`eraseBox`/`recolorAt`, see [Sub-voxel editing](#sub-voxel-editing)) |
 | toolActions | `toolActionsSlice.ts` | flood fill, clone-stamp, copy/cut/delete, float lift/move/transform/bake |
 | mode | `modeSlice.ts` | `mode` (`'model'`\|`'animate'`\|`'texture'`), `setMode` (the top-level authoring mode switch) |
 | animation | `animationSlice.ts` + `riggingSlice.ts` | legacy `animSettings`/`sliceMasks`/`slicePivots` playback maps, live `rigBoxes` + selection, `animPast`/`animFuture` (separate undo/redo stack), `animBeginStroke`/`animCommitStroke`/`animUndo`/`animRedo`, rig actions |
@@ -502,10 +671,12 @@ whole lift→move→rotate→mirror→bake sequence is one undo step. Capped at 
 
 `engine/persistence/`:
 
-- `schema.ts` — `VoxPaintProjectFileV5` (current, `CURRENT_SCHEMA_VERSION = 5`). `VoxPaintProjectFile` now aliases V5.
-  - **V3** (prior): replaced blink/pulse palette slots with metal/glass. Texture is optional (added in v2).
+- `schema.ts` — `VoxPaintProjectFile` (current, `CURRENT_SCHEMA_VERSION = 19`).
+  - **V3**: replaced blink/pulse palette slots with metal/glass. Texture is optional (added in v2).
   - **V4**: adds optional `animations?: SerializedAnimLayer[]` (`{axis, offset, animationType, speed, slideAmount}`).
   - **V5**: adds optional `masks?: SerializedSliceMask[]` (`{axis, offset, cellKeys: string[]}`).
+  - **V19** (current): adds `model.subdivCells` for one-level sub-voxel parents (`{x, y, z, split, children}`).
+    Older files load with none. See [Sub-voxel editing](#sub-voxel-editing) for the write and load rules.
 - `serialize.ts` — `serializeProject(model, palette, meta, texture, animSettings, sliceMasks)` and `deserializeProject`
   include/restore the palette with material kinds, texture (base64 per face), animations and masks. Existing v1 projects
   load with defaults; v3 projects load with empty animations array; v4 projects load with no masks (reverting all
@@ -767,7 +938,8 @@ is the source of truth — treat the spec as historical context, not a contract:
   chamfers (see `resolveChamferCellsOnPlane`, now dead runtime code). When a chamfer is painted
   before its neighbors exist, it stays a plain cube until re-clicked. Copy/paste/clone now preserve
   the source chamfer's `planeAxis`/`planeOrientation`/`resolvedTo` verbatim instead of reclassifying,
-  fixing a reported bug where pasting garbled chamfer facings. Open consequence: rotate/mirror of
+  fixing a reported bug where pasting garbled chamfer facings. Sub-voxel bevels follow the same rule
+  (see [Sub-voxel editing](#sub-voxel-editing)). Open consequence: rotate/mirror of
   chamfer selections doesn't rotate the shapes themselves (kept verbatim); a proper transform would
   require rotating `resolvedTo.rotation`/`planeOrientation` in the instance matrix, not attempted.
 - **§5 GLTF export**: spec calls for a CSG-based pipeline (`three-bvh-csg`, Web Worker). Now

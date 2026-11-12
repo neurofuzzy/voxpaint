@@ -20,7 +20,10 @@ npm run lint      # oxlint
 - VoxelModel uses `Map`, not `ReadonlyMap`. Treat as immutable outside Immer producers.
 - CellKey = `"x,y,z"` string (encodeKey/decodeKey in `engine/grid/GridStore.ts`).
 - Chamfer shapes are baked at paint time, frozen forever. 3-piece autotile: ramp/convex/concave.
-- Chamfer paint always also writes color layer. Invalid neighbor configs are blocked.
+- Chamfer paint always also writes color layer. Chamfer paint always succeeds; a chamfer whose neighborhood doesn't classify stays unresolved and renders as a cube.
+- Sub-voxel edits all go through `writeBox`/`recolorBox` (`engine/grid/cellBox.ts`). A bevel is always exactly one child; a split that cuts it turns it into a plain block.
+- Write granularity comes from the armed grid (`store.gridSplit`), not the tool. Stored subdivisions stay normalized (uniform folds to a plain voxel).
+- Floats/paste follow the plane's half-voxel stop; off-lattice floats write piece-by-piece via `applyFloatAt` (`engine/tools/fineFloat.ts`).
 - InstancingManager lives outside React (no R3F state management on paint).
 - Undo: call `beginStroke()` before painting, `commitStroke()` on pointer up.
 - Palette is indexed (28 slots, cells store slot refs not hex).
