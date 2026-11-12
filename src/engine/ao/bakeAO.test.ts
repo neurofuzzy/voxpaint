@@ -61,6 +61,40 @@ describe('bakeAOToAtlas', () => {
     }
   })
 
+  it('a detail bevel never occludes its own slope (like a whole bevel voxel)', () => {
+    for (const shapeKind of ['ramp', 'convex', 'concave'] as const) {
+      const model = emptyModel()
+      const children: Array<{ slot: { kind: 'base'; index: number }; chamfer?: never } | null> = Array.from({ length: 8 }, () => null)
+      ;(children as unknown[])[0] = {
+        slot: { kind: 'base', index: 0 },
+        chamfer: { planeAxis: 'y', planeOrientation: 1, resolvedTo: { shapeKind, rotation: 0 } },
+      }
+      model.subdiv.set(encodeKey(0, 0, 0), { split: ['x', 'y', 'z'], children: children as never })
+      model.bounds = recomputeBounds(model)
+      const { data } = bakeForModel(model)
+      let min = 255
+      for (let i = 0; i < data.length; i += 4) min = Math.min(min, data[i])
+      expect(min, shapeKind).toBe(255)
+    }
+  })
+
+  it('a detail bevel still lets its plain siblings and neighbours cast as before', () => {
+    // A plain half block next to a taller neighbour keeps its contact shadow (children occupy).
+    const model = modelFrom([[1, 0, 0], [1, 0, 1]])
+    model.subdiv.set(encodeKey(0, 0, 0), {
+      split: ['x', 'y', 'z'],
+      children: [
+        { slot: { kind: 'base', index: 0 } }, { slot: { kind: 'base', index: 0 } }, null, null,
+        { slot: { kind: 'base', index: 0 } }, { slot: { kind: 'base', index: 0, }, chamfer: { planeAxis: 'y', planeOrientation: 1, resolvedTo: { shapeKind: 'ramp', rotation: 0 } } }, null, null,
+      ],
+    })
+    model.bounds = recomputeBounds(model)
+    const occ = buildOccGrid(model)!
+    const at = (x: number, y: number, z: number) => occ.grid[(x - occ.min[0] * 4) + (y - occ.min[1] * 4) * occ.gx + (z - occ.min[2] * 4) * occ.gx * occ.gy]
+    expect(at(0, 0, 0)).toBe(1) // child 0 (plain) occupies its half block
+    expect(at(2, 0, 2)).toBe(0) // child 5 (bevel, x-high z-high) does not
+  })
+
   it('bakes identical occlusion for a subdivided cell as for the plain cube it replaced', () => {
     // The 8 half-cubes occupy exactly the plain cube's volume (half-unit blocks at exact-half
     // origins tile the full-unit block), so the marched occupancy field is byte-identical and

@@ -117,7 +117,8 @@ export function makeSpecularNoiseTexture(
  * Builds a high-resolution 3D occupancy grid (TEXELS_PER_UNIT cells per world unit).
  * Each occupied voxel fills a TEXELS_PER_UNIT³ block; each live detail child fills an exact
  * half-unit (TEXELS_PER_UNIT/2)³ block at its half origin — the same volume the plain cube
- * filled, so occlusion never shifts when a cell is subdivided.
+ * filled, so occlusion never shifts when a cell is subdivided. Bevels never occupy — whole
+ * chamfer voxels and beveled detail children alike — so no bevel shadows its own slope.
  *
  * `excludeKeys`, when given, omits those cells from the occupancy grid entirely — used to keep
  * animated-slice voxels from acting as AO occluders for the rest of the model, since they won't
@@ -156,7 +157,9 @@ export function buildOccGrid(model: VoxelModel, excludeKeys?: Set<CellKey>): {
 
   // Detail children fill fractional texel blocks (size × TEXELS_PER_UNIT per axis) at their
   // exact origins — occluders at the same resolution the rays march, so contact shadows from
-  // detail read correctly. Erased children stay empty.
+  // detail read correctly. Erased children stay empty. Beveled children are left out exactly like
+  // whole chamfer voxels above: a bevel's sloped face lies inside its own box, so a filled box
+  // would occlude the bevel's own surface (self-shadowing every detail ramp/corner).
   for (const [parentKey, sub] of model.subdiv) {
     if (excludeKeys?.has(parentKey)) continue
     const parent = decodeKey(parentKey)
@@ -165,7 +168,8 @@ export function buildOccGrid(model: VoxelModel, excludeKeys?: Set<CellKey>): {
     const ty = Math.round(sy * TEXELS_PER_UNIT)
     const tz = Math.round(sz * TEXELS_PER_UNIT)
     for (let o = 0; o < sub.children.length; o++) {
-      if (!sub.children[o]) continue
+      const child = sub.children[o]
+      if (!child || child.chamfer) continue
       const [ox, oy, oz] = splitChildOrigin(parent, sub.split, o)
       const bx = Math.round((ox - min[0]) * TEXELS_PER_UNIT)
       const by = Math.round((oy - min[1]) * TEXELS_PER_UNIT)
