@@ -26,6 +26,29 @@ function groupTriCounts(groups: ColorGroupGeometry[]): Map<string, number> {
   return out
 }
 
+/** Total triangle area per outward axis direction ("+x", "-y", …; "other" for sloped). */
+function surfaceByDir(geoms: THREE.BufferGeometry[]): Record<string, number> {
+  const out: Record<string, number> = {}
+  const a = new THREE.Vector3()
+  const b = new THREE.Vector3()
+  const c = new THREE.Vector3()
+  for (const g of geoms) {
+    const pos = g.getAttribute('position')
+    for (let t = 0; t < pos.count / 3; t++) {
+      a.fromBufferAttribute(pos, t * 3)
+      b.fromBufferAttribute(pos, t * 3 + 1)
+      c.fromBufferAttribute(pos, t * 3 + 2)
+      const n = new THREE.Vector3().crossVectors(b.clone().sub(a), c.clone().sub(a))
+      const area = n.length() / 2
+      n.normalize()
+      const i = [n.x, n.y, n.z].findIndex((v) => Math.abs(v) > 0.999)
+      const dir = i === -1 ? 'other' : `${[n.x, n.y, n.z][i] > 0 ? '+' : '-'}${'xyz'[i]}`
+      out[dir] = Math.round(((out[dir] ?? 0) + area) * 1000) / 1000
+    }
+  }
+  return out
+}
+
 describe('shell fast path parity with CSG', () => {
   // The chamfer-field corpus case exercises bevels, which the shell path declines.
   const eligible = CORPUS.filter((c) => c.name !== 'chamfer-8x8(64)')
@@ -113,8 +136,8 @@ describe('shell fast path parity with CSG', () => {
   it('matches CSG on mixed full/detail seams (2x2 slab, one cell subdivided)', () => {
     // Mixed seams triangulate differently: the CSG union splits neighbor faces at half-planes
     // (and can leave an unpaired hidden interior quad — a known ThreeBSP wart at exact-half
-    // coordinates), while the shell keeps both sides of every partial-overlap seam. Both are
-    // interior/hidden, so the assertion is exterior-surface equivalence, not tri equality.
+    // coordinates), while the shell drops every hidden partial-overlap seam via the half-voxel
+    // hidden-face pass. The assertion is exterior-surface equivalence, not tri equality.
     const model = emptyModel()
     for (const [x, z] of [[0, 0], [1, 0], [0, 1], [1, 1]] as const) {
       model.color.set(encodeKey(x, 0, z), { paletteSlot: base0 })
@@ -126,9 +149,9 @@ describe('shell fast path parity with CSG', () => {
       const shell = buildOptimizedVoxelGroupsShell(withBounds, DEFAULT_PALETTE, merge)
       expect(shell, `merge=${merge}: shell handles mixed seams`).not.toBeNull()
       expect(shell!.groups.length, `merge=${merge}: group count`).toBe(csg.groups.length)
-      // Shell keeps paired interior seam faces the CSG union cancels (or leaves single) —
-      // a superset of hidden triangles over the same visible surface.
-      expect(shell!.optimizedTriangles, `merge=${merge}: shell superset`).toBeGreaterThanOrEqual(csg.optimizedTriangles)
+      // The shell keeps no hidden seam faces: its total surface is exactly the slab's outer
+      // surface (2×1×2: 4 top, 4 bottom, 2 per side), per outward direction.
+      expect(surfaceByDir(shell!.groups.map((g) => g.geometry)), `merge=${merge}: shell surface`).toEqual({ '+x': 2, '-x': 2, '+y': 4, '-y': 4, '+z': 2, '-z': 2 })
       // Exterior equivalence: rays from every side (including through the subdivided cell's
       // quarter-faces) first-hit at identical distances on both meshes.
       const rays: Array<[origin: [number, number, number], dir: [number, number, number]]> = [

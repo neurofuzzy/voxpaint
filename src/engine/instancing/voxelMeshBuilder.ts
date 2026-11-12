@@ -8,6 +8,7 @@ import type { PaletteState } from '@/engine/palette/types'
 import type { SliceKey } from '@/engine/animation/types'
 import { chamferBasisIsReflected, chamferInstanceMatrix, scaledChamferInstanceMatrix } from './basis'
 import { mergeCoplanarFaces, mergeCoplanarFacesWithKeys, optimizeGroupsByCSG, triangleCount, type VoxelGroup } from './meshOptimizer'
+import { halfOccupancy, triangleHidden } from './hiddenFaceCull'
 
 /**
  * Bakes the whole model into a single optimized "shell" mesh for the 3D preview's optimized-mesh
@@ -397,9 +398,8 @@ function buildShellFaces(
   }
 
   // Detail children emit at their fractional origins and sizes; same-size interfaces between
-  // subdivided parents still triple-match and cull, while seams against full cubes keep both
-  // sides, which is correct — the interface is interior and hidden (or glass-separated,
-  // handled per-side by the glass rules). Chamfer children emit their scaled prefabs; the
+  // subdivided parents still triple-match and cull, and seams against full cubes (differently
+  // sized faces) are dropped by the half-voxel hidden-face pass after the shell cull. Chamfer children emit their scaled prefabs; the
   // shell fast path declines those models to the CSG union (see buildOptimizedVoxelGroupsShell).
   forEachSubdivChild(model, (parentKey, _index, origin, size, child) => {
     const mat: Mat = { colorKey: color.set(resolveSlotColor(palette, child.slot)).getHex(), materialClass: materialClassFor(child.slot.kind) }
@@ -419,7 +419,19 @@ function buildShellFaces(
   })
 
   const rawTriangles = faces.length
-  return { faces: removeInteriorFaces(faces, nodeAssignment, cullInteriorFaces, rigAssignment), rawTriangles }
+  const shell = removeInteriorFaces(faces, nodeAssignment, cullInteriorFaces, rigAssignment)
+  if (model.subdiv.size === 0) return { faces: shell, rawTriangles }
+  // Differently sized faces (detail against whole voxels, or against another split) never
+  // triple-match above: drop the ones the half-voxel volume hides (see hiddenFaceCull.ts).
+  const nodeOf = cellNode(nodeAssignment, rigAssignment)
+  const occ = halfOccupancy(model, palette, nodeOf)
+  const visible = shell.filter((f) => f.twoSided || !triangleHidden(f.a, f.b, f.c, f.normal, { materialClass: f.materialClass, colorKey: f.colorKey, node: nodeOf(f.cellKey!) }, occ, !cullInteriorFaces))
+  return { faces: visible, rawTriangles }
+}
+
+/** A cell's animation/rig node identity — the same `slice\0rig` form the CSG cull gives groups. */
+function cellNode(nodeAssignment?: Map<CellKey, SliceKey>, rigAssignment?: Map<CellKey, string>): (key: CellKey) => string {
+  return (key) => `${nodeAssignment?.get(key) ?? ''}\0${rigAssignment?.get(key) ?? ''}`
 }
 
 export interface ColorGroupGeometry {
@@ -543,7 +555,8 @@ export function buildOptimizedVoxelGroups(model: VoxelModel, palette: PaletteSta
   })
 
   const isOccupied = (x: number, y: number, z: number) => isCellOccupied(model, x, y, z)
-  const groups = optimizeGroupsByCSG(Array.from(byGroup.values()), mergeCoplanar ?? true, isOccupied, cullInteriorFaces)
+  const occ = model.subdiv.size > 0 ? halfOccupancy(model, palette, cellNode(undefined, rigAssignment)) : undefined
+  const groups = optimizeGroupsByCSG(Array.from(byGroup.values()), mergeCoplanar ?? true, isOccupied, cullInteriorFaces, occ)
   let optimizedTriangles = 0
   for (const g of groups) optimizedTriangles += triangleCount(g.geometry)
 
@@ -697,7 +710,8 @@ export function buildOptimizedVoxelGroupsBySlice(
   })
 
   const isOccupied = (x: number, y: number, z: number) => isCellOccupied(model, x, y, z)
-  const groups: SliceGroupGeometry[] = optimizeGroupsByCSG(Array.from(byGroup.values()), mergeCoplanar ?? true, isOccupied, cullInteriorFaces)
+  const occ = model.subdiv.size > 0 ? halfOccupancy(model, palette, cellNode(nodeAssignment, rigAssignment)) : undefined
+  const groups: SliceGroupGeometry[] = optimizeGroupsByCSG(Array.from(byGroup.values()), mergeCoplanar ?? true, isOccupied, cullInteriorFaces, occ)
   let optimizedTriangles = 0
   for (const g of groups) optimizedTriangles += triangleCount(g.geometry)
 

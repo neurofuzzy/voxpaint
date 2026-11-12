@@ -311,9 +311,9 @@ replacing any detail with one voxel; a sub-voxel box writes through `writeBox` f
   crossing of the construction plane (`store.hoverBits`).
 - **3D erase and recolor**: address the grid cell under the clicked hit point (`faceHitBits` →
   `gridBoxAtBits`).
-- **Fills**: selection fills and 2D planar flood fills write at the grid's depth. Planar flood paints
-  empty regions and recolors colored ones. 3D volume fills (`floodFill3D`, `floodFillCellsAt`) are
-  material-only and grid-independent: they recolor whole voxels, and a subdivided start voxel recolors itself.
+- **Fills**: selection fills, flood fills (2D planar, 3D volume), and the armed-grid window-select wand work
+  per grid unit via `engine/tools/gridFlood.ts`. Empty units are painted and filled units are recolored; fills
+  never reshape content. See [Every tool follows the grid](#every-tool-follows-the-grid).
 - **Plane stops**: `plane.half` is non-null exactly when the grid cuts the plane's axis. A cut plane
   axis sits on half-voxel slabs; an uncut one sits on whole voxels. Plane-targeted edits take the
   plane's slab on the cut axis.
@@ -359,18 +359,83 @@ half-voxel offsets (-1, 0, or 1) in u, v, and the plane normal. Zero fields are 
   axes) for all content, not just fine content.
 - `draggedFloatOrigin(start, step, du, dv)` carries halves into whole voxels. Under the whole grid, floats
   move in whole voxels and keep any existing half offset.
-- Used by `engine/tools/selectTool.ts` (2D) and `components/viewport3d/Viewport3D.tsx` (3D).
+- Used by `engine/tools/selectTool.ts` (2D), `components/viewport3d/Viewport3D.tsx` (3D), and the Move tool
+  (`store/moveActions.ts`, which measures its drags in the same step).
 
 **Atomic bevel content**
 
 - Content containing a whole chamfer (`fineFloatAtomic`) stays on whole voxels. `settleFloatOrigin`
-  (`store/toolActionsSlice.ts`) carries rounded sub offsets into `originU`/`originV`, so the restored
+  (`engine/tools/fineFloat.ts`) carries rounded sub offsets into `originU`/`originV`, so the restored
   bevels and the written pieces stay aligned.
 - Pasting such content onto a half stop stays on the voxel layer and toasts "Whole bevels sit on whole
   voxels — pasted on the voxel layer, not the half step" (`pasteHalfShift`).
 - A half-size detail bevel survives a half shift if the shift doesn't cut it.
 
 **Tests:** `src/store/pasteDepth.test.ts` (15 tests); two drag tests in `src/engine/tools/selectTool.test.ts`.
+
+### Every tool follows the grid
+
+**Rule** (`4df3548`): all editing and movement follow the grid as displayed (`store.gridSplit` plus
+`plane.half`). Fine and whole content share the same paths.
+
+- **Move** (`store/moveActions.ts`, `engine/tools/moveTool.ts`; 3D drag in `components/viewport3d/Viewport3D.tsx`):
+  - `beginMove` lifts the content out. When the grid cuts the plane axis, it lifts the plane's slab only, as a
+    fine region `{su:1,sv:1,slab}`. Alt and whole-model moves lift every cell via `copyCellsToClipboard`
+    (bounding-box anchored, keeps absolute depth).
+  - The gesture keeps `original` (the model at press time) and `base` (the lifted content removed, built with
+    Immer `produce`, never stored in the store).
+  - `updateMove(du, dv)` takes deltas in the grid's in-plane step units (`floatDragStep`: half voxels on cut
+    axes). Callers measure the pointer in the same step: 2D via `fineUnitAt`; 3D via `fineUnitFor` and
+    `subBitsAt`, steering by the plane cell when half-stepping (`moveCellAt`).
+  - Each step is `produce(base, placeFloat(...))`. Returning to the start, or an empty slice, assigns `original`
+    back, so no undo step is recorded.
+  - Whole bevels keep whole-voxel positions via `settleFloatOrigin`, with a toast shown once per gesture.
+    Texture carry for whole-model drags uses the half-voxel world delta.
+- **`placeFloat`** (`engine/tools/fineFloat.ts`): the single entry point. Calls `applyFloatAt` when the content is
+  pieced, otherwise `applyClipboardAt`. Used by bake, targeted 3D paste, and Move.
+- **Flood fill** (`engine/tools/gridFlood.ts`): fills at grid resolution. A *unit* is one grid cell (`gridRes`
+  per world axis, 1 or 2; unit coordinates are `cell*res+bit`).
+  - `unitColor` returns the sorted slot set of the content overlapping a unit (a chamfer counts as its slot;
+    `null` = empty). A partly filled unit is not empty, so it walls off empty fills.
+  - `floodPlanarUnits` is 4-connected on the plane's slab. `floodVolumeUnits` is 6-connected, in `'color'` or
+    `'occupied'` mode.
+  - `fillUnits` writes empty units with `writeBox` and recolors filled ones with `recolorBox`. It never reshapes.
+  - Store actions `floodFill(u,v,qu?,qv?)`, `floodFill3D(u,v,qu?,qv?)`, and `floodFillCellsAt(coord, alt, bits?)`
+    all use it. A shared `planarFill` helper inside `createToolActionsSlice` applies the selection bound and
+    leak guard.
+  - `fillTool` passes the pointer quadrant. The 3D fill tap passes face-hit bits, or plane-crossing bits when it
+    hits empty space.
+  - Behaviour change: under the whole grid, a split voxel whose content is one colour now joins a fill of that
+    colour instead of walling it. The old `planarFloodCell` and whole-voxel path are removed.
+  - `floodFillRegion`, `floodFillRegion3D`, and `floodFillOccupied3D` in `floodFill.ts` remain for the whole-grid
+    wand and slice wand.
+  - `fillLeaksToEdges` now uses `effectiveExtent`. The leak guard never fired on odd-sized projects before
+    (a half-voxel edge of 7.5 never matched an integer cell). Pre-existing bug, fixed.
+- **Lasso** (`engine/tools/selectTool.ts`): traces in fine units of `fineDivisionFor`; the drag state
+  `selectLasso` carries `div`. Region built by `fineLassoRegion` (`engine/tools/fineSelection.ts`).
+- **Shift-lines**: 2D (`engine/tools/editToolFactory.ts`) snaps in grid units (`snapToOrthoFine` in
+  `lineUtils.ts`), stores fine endpoints in `LinePreview.fine` (`engine/tools/types.ts`), and writes every fine
+  unit along a Bresenham line. `components/editor2d/PixelCanvas.tsx` draws the preview between fine-cell centres.
+  Whole-grid lines are unchanged. In 3D, shift-tap lines (`paintLineAtCoord`, `store/paintActions.ts`) run on
+  grid cells via `dominantAxisLineFine` when the grid cuts an in-plane axis; `paintLineAnchor` carries optional
+  `bits`. Touch hold-to-paint sweeps (`Viewport3D.tsx`, `paintTouchDrag`) interpolate in fine units.
+- **Selections on half stops** (`store/toolActionsSlice.ts`, `gridSelection`): a whole-cell 2D selection made
+  before the grid changed (select-all, a whole paste footprint) is treated as the plane's slab on a half stop.
+  Copy, delete/cut, and non-Alt lift all use it. Consequence: copying such a selection on a half stop yields
+  fine clipboard content, which (like all fine content) cannot paste across planes yet.
+- **Slab follows the plane** (`store/planeSlice.ts`, `selectionFollowsSlab`): a fine 2D selection's slab moves
+  with the plane when it steps half stops (`stepPlaneHalf`, `setPlaneHalf`, `snapPlaneToGrid`). `setPlaneHalf`
+  now bakes a pending float when the half changes; it previously did not.
+- **Window-select double-click** (`applySliceWandAt(start, union?, bits?)`, `store/selection3DSlice.ts`): with a
+  grid armed, floods the tapped slab at grid resolution (`floodFineCells`). Shift unions with a same-resolution
+  selection.
+- **Face selection** (`faceSelection`, `faceCells3D`) also rebases detail bevels (chamfer children), not just
+  whole chamfer cells.
+- **Not grid-driven by design**: Animate-mode offset drags (thirds) and markers. The armed-grid wand is planar
+  while the whole-grid wand is volumetric (pre-existing).
+
+**Tests:** `src/store/moveGrid.test.ts`, `src/store/gridFollow.test.ts`, and the updated fill tests in
+`src/store/paintActions.test.ts`.
 
 ### Rendering
 
@@ -396,14 +461,14 @@ are dropped, uniform entries fold to plain voxels). The schema version did not c
 
 - Any detail bevel makes `buildOptimizedVoxelGroupsShell` (`engine/instancing/voxelMeshBuilder.ts`)
   fall back to the CSG union for the whole model.
-- The shell path may keep interior faces where detail meets full cubes; export manifoldness there is unverified.
+- Detail/whole seams are culled by the half-voxel pass (see **Half-voxel hidden-face cull** under
+  [Mesh optimization](#mesh-optimization-csg-pipeline-pbr-export-and-ambient-occlusion)). Remaining: interfaces
+  against resolved bevels are never culled, since a bevel doesn't fill its box; merged triangle counts on mixed
+  seams can exceed the CSG path's (merge triangulation, not hidden faces).
 - Rescale (`engine/grid/rescale.ts`) still blockifies detail bevels into plain cubes.
 - Fine-selection regions (`FineDivision`/`su`/`sv`/`slab` in `engine/tools/fineSelection.ts`) remain a
   separate region format from `CellBox` addressing. Whole chamfer cells stay atomic inside selections.
 - The bevel-family re-click cycling (`nextBevelTurn` in `store/paintActions.ts`) predates this model and is unchanged.
-- The Move tool (`store/moveActions.ts`, "shift every pixel on this slice") still moves whole voxels of the
-  layer in whole steps; on a half stop it moves both halves. It is not yet grid- or half-stop-aware (pending
-  user decision). See [Paste depth and off-grid floats](#paste-depth-and-off-grid-floats).
 
 ---
 
@@ -521,7 +586,8 @@ The optimized-mesh path builds a watertight surface from per-voxel solid geometr
   binary-tree-unioned **unconditionally** — CSG union always runs, there is no raw/uncombined render mode.
   The boolean union naturally discards interior faces between adjacent same-colour voxels and never bridges
   disconnected voxel components (fixing the old coplanar optimizer's tendency to merge faces from separate
-  voxel groups via shared quantized edge keys).
+  voxel groups via shared quantized edge keys). Detail/whole seams, where faces differ in size, are handled by
+  the half-voxel pass described below.
 - **Post-CSG coplanar face merge** (`mergeCoplanarFaces` in `meshOptimizer.ts`): The CSG output still
   contains coplanar-adjacent polygon pairs (e.g. the top face of a 2×1 union still has two quads).
   These are grouped by coplanarity + edge connectivity, merged into boundary loops (outer + holes), and
@@ -546,6 +612,21 @@ triangular/folded faces are left as-is.
 **Material-aware interior face culling** (texture shell path only): `removeInteriorFaces` handles
 back-to-back coincident faces by material class: (a) same class → drop both; (b) glass↔non-glass →
 drop only the glass face; (c) two different opaque classes → keep both.
+
+**Half-voxel hidden-face cull** (`engine/instancing/hiddenFaceCull.ts`): exact face matching can't pair faces of
+different sizes, so both sides of every detail/whole seam survived inside the solid (dark in the AO bake, wasted
+atlas and triangles, visible through glass). `halfOccupancy(model, palette, nodeOf)` returns the occupant of each
+half-voxel cube (material class, colour key, node), or `null` for empty cells and resolved bevels (whole or
+detail). `cullHiddenTriangles` drops an axis-aligned triangle lying on a half-voxel plane when every half-cell its
+area covers (Sutherland–Hodgman clip) on the outward side is occluded. The rules mirror the exact culls: opaque
+occludes opaque; glass never occludes an opaque face; anything occludes a glass face; the occupant must share the
+animation/rig node (`slice\0rig`); `sameGroupOnly` (no-cull export) lets only the same (material class, colour key)
+occlude. It runs in `buildShellFaces` (after `removeInteriorFaces`, `engine/instancing/voxelMeshBuilder.ts`) and in
+`optimizeGroupsByCSG` (optional `halfOcc` argument, after `cullCoincidentOpaqueInterfaces`, only when culling is
+on; `engine/instancing/meshOptimizer.ts`). Both run only when `model.subdiv.size > 0`, so whole-voxel models are
+unchanged. Measured cost: about 60 ms extra on a 24×12×24 model with 288 split voxels. Tests:
+`src/engine/instancing/hiddenFaceCull.test.ts`. `meshShellParity.test.ts` asserts the shell's surface area per
+direction equals the outer surface.
 
 **Textured geometry support**: `buildTexturedShellGeometry` / `buildTexturedShellGeometryByColor`
 use the classic face-emission shell pass (per-face triangles with per-vertex box-map UVs via an
@@ -580,8 +661,10 @@ For glass, the geometry also drops its `TEXCOORD_0` attribute so no unused UV ch
 (see `uvUnwrap.ts` below — not the paint box-map atlas), decoupled to avoid the box-map's stacking/overhang
 ambiguity. `src/engine/ao/bakeAO.ts`:
 - `buildOccGrid(model, excludeKeys?)` — builds a 4×-resolution occupancy grid (`TEXELS_PER_UNIT = 4`) from
-  `model.color` (chamfer cells approximated as empty). `excludeKeys` omits animated-slice voxels from occlusion
-  (see [Animation](#animation) below).
+  `model.color` and subdivided children. Bevels never occupy: whole chamfer voxels are skipped, and so are
+  beveled detail children (a plain detail child still occludes its box). Previously each detail bevel's whole
+  box occluded its own slope, roughly half dark. `excludeKeys` omits animated-slice voxels from occlusion
+  (see [Animation](#animation) below). Tests: `src/engine/ao/bakeAO.test.ts`.
 - `buildHemisphereDirs()` — 80 precomputed hemisphere-sample directions (5 polar rings × up to 16 azimuthal
   steps), reused per texel via a per-texel basis transform (cheaper than per-texel spherical raycast setup).
 - `bakeAOToAtlas(model, atlas, noiseLevel = 0, aoStrength = 1, excludeKeys?)` — ray-marches through the

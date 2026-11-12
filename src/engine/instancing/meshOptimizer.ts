@@ -1,4 +1,5 @@
 import * as THREE from 'three'
+import { cullHiddenTriangles, type HalfOccupancy } from './hiddenFaceCull'
 import earcut from 'earcut'
 import ThreeBSP from '@/engine/csg/ThreeCSG'
 import type { MaterialClass } from '@/engine/palette/palette'
@@ -83,6 +84,10 @@ function unionAll(bsps: ThreeBSP[]): ThreeBSP | null {
  * count, and convert the result back to BufferGeometry. Each output entry carries the group's
  * `colorKey` and `materialClass` — the caller applies a solid-colour material (no vertex colors).
  *
+ * `halfOcc`, when given (models with subdivided voxels), drops cross-group interface triangles
+ * the half-voxel volume hides after the exact cross-group cull — seams between detail and whole
+ * voxels, whose two sides never match exactly (see `hiddenFaceCull.ts`).
+ *
  * `isOccupied`, when given, additionally strips any **glass** group's faces that back onto an
  * occupied grid cell (see `removeOccludedGlassFaces`) — right after the CSG union, before the
  * coplanar merge, while triangles still correspond ~1:1 to per-voxel faces.
@@ -145,6 +150,7 @@ export function optimizeGroupsByCSG<T extends VoxelGroup>(
   mergeCoplanar = true,
   isOccupied?: (x: number, y: number, z: number) => boolean,
   cullInteriorFaces = true,
+  halfOcc?: HalfOccupancy,
 ): (ColorGroupGeometry & Omit<T, keyof VoxelGroup>)[] {
   const postUnion: { group: T; geometry: THREE.BufferGeometry; flatGeoms: THREE.BufferGeometry[] }[] = []
 
@@ -183,6 +189,21 @@ export function optimizeGroupsByCSG<T extends VoxelGroup>(
   // across entries.
   if (cullInteriorFaces) {
     cullCoincidentOpaqueInterfaces(postUnion)
+    // Interfaces whose two sides are differently sized (detail against whole voxels) never
+    // match exactly above: drop the triangles the half-voxel volume hides (hiddenFaceCull.ts).
+    // Same-group interiors are already gone (the union), so this only ever meets cross-group
+    // seams — the no-cull mode, which keeps those on purpose, skips it.
+    if (halfOcc) {
+      for (const entry of postUnion) {
+        const g = entry.group as unknown as { sliceKey?: string; rigId?: string }
+        const self = { materialClass: entry.group.materialClass, colorKey: entry.group.colorKey, node: `${g.sliceKey ?? ''}\0${g.rigId ?? ''}` }
+        const culled = cullHiddenTriangles(entry.geometry, self, halfOcc, false)
+        if (culled !== entry.geometry) {
+          entry.geometry.dispose()
+          entry.geometry = culled
+        }
+      }
+    }
   }
 
   const results: (ColorGroupGeometry & Omit<T, keyof VoxelGroup>)[] = []

@@ -1,8 +1,8 @@
 ```
 # Auto-generated project map
-# Last updated: 2026-11-12 07:29:31
-# Files: 297
-# Lines of code: ~54181
+# Last updated: 2026-11-12 07:51:07
+# Files: 299
+# Lines of code: ~54578
 ```
 - **/assets**
 - **/components**
@@ -510,6 +510,13 @@
     - [ghostDither.ts](../src/engine/instancing/ghostDither.ts)
       - Function: `enableGhostDither`
       - Function: `setGhostDither`
+    - [hiddenFaceCull.test.ts](../src/engine/instancing/hiddenFaceCull.test.ts)
+    - [hiddenFaceCull.ts](../src/engine/instancing/hiddenFaceCull.ts)
+      - Type: `HalfOccupant` - Hidden-face cull at half-voxel resolution — the...
+      - Type: `HalfOccupancy` - Occupant of the half-voxel cube at half coords ...
+      - Function: `halfOccupancy` - Builds the half-voxel occupancy lookup for a mo...
+      - Function: `triangleHidden` - True when the triangle (outward `normal`) lies ...
+      - Function: `cullHiddenTriangles` - Drops the hidden triangles of one non-indexed p...
     - [InstancingManager.test.ts](../src/engine/instancing/InstancingManager.test.ts)
     - [InstancingManager.ts](../src/engine/instancing/InstancingManager.ts)
       - Class: `InstancingManager` (Methods: makePickMesh, ensureCapacity, ensurePickCapacity, syncPickMesh, sync, tick, setHoveredCell, setWireframe, setRenderVisible, cellKeyForPick, detailIndexForPick, dispose) - Owns the 4 InstancedMesh pools (cube + 3 chamfe...
