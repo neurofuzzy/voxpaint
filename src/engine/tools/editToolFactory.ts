@@ -1,4 +1,5 @@
-import { bresenhamLine, snapToOrtho } from '@/engine/tools/lineUtils'
+import { bresenhamLine, snapToOrtho, snapToOrthoFine } from '@/engine/tools/lineUtils'
+import { fineDivisionFor, fineUnitAt } from '@/engine/tools/fineSelection'
 import { quadrantFromFractions } from '@/engine/tools/quadrant'
 import type { ToolContext, ToolHandler } from './types'
 
@@ -25,6 +26,12 @@ export type EditToolHooks = {
 const defaultHooks: EditToolHooks = {
   beginStroke: (ctx) => ctx.beginStroke(),
   commitStroke: (ctx) => ctx.commitStroke(),
+}
+
+/** The in-plane step shift-lines snap in: the armed grid's division on the plane (null = whole cells). */
+function lineStep(ctx: ToolContext): { su: 1 | 2; sv: 1 | 2 } | null {
+  const { su, sv } = fineDivisionFor(ctx.plane, ctx.gridSplit)
+  return su === 1 && sv === 1 ? null : { su, sv }
 }
 
 /** Quadrant-precise stroke point: integer cell plus the hovered quadrant (or null). */
@@ -72,7 +79,10 @@ export function makeEditTool(apply: (ctx: ToolContext, u: number, v: number, qua
       ctx.drag.current = { kind: 'paint', anchor: [e.u, e.v], last: [e.u, e.v], anchorQuad: quad, lastQuad: quad }
 
       if (e.shiftKey) {
-        ctx.setLinePreview({ anchor: [e.u, e.v], end: [e.u, e.v] })
+        // With a grid armed (and a real pointer position) the line runs on the grid's cells.
+        const step = lineStep(ctx)
+        const f = step && quad ? fineUnitAt({ ...step, slab: null }, ctx.plane, e.u, e.v, e.cu, e.cv) : null
+        ctx.setLinePreview({ anchor: [e.u, e.v], end: [e.u, e.v], ...(step && f ? { fine: { ...step, anchor: f, end: f } } : {}) })
         return
       }
       apply(ctx, e.u, e.v, quad)
@@ -84,6 +94,13 @@ export function makeEditTool(apply: (ctx: ToolContext, u: number, v: number, qua
       const quad = quadrantFromFractions(ctx.plane, e.cu, e.cv)
       if (e.shiftKey) {
         const anchor = ctx.drag.current.anchor
+        const fine = ctx.linePreview?.fine
+        if (fine && quad) {
+          const p = fineUnitAt({ su: fine.su, sv: fine.sv, slab: null }, ctx.plane, e.u, e.v, e.cu, e.cv)
+          const end = snapToOrthoFine(fine.anchor, p, fine.su, fine.sv)
+          ctx.setLinePreview({ anchor, end: [Math.floor(end[0] / fine.su), Math.floor(end[1] / fine.sv)], fine: { ...fine, end } })
+          return
+        }
         const [su, sv] = snapToOrtho(anchor[0], anchor[1], e.u, e.v)
         ctx.setLinePreview({ anchor, end: [su, sv] })
         return
@@ -103,7 +120,15 @@ export function makeEditTool(apply: (ctx: ToolContext, u: number, v: number, qua
     onUp(ctx, e) {
       if (ctx.drag.current.kind !== 'paint') return
 
-      if (ctx.linePreview) {
+      if (ctx.linePreview?.fine) {
+        // Grid-resolution line: every fine unit the preview passes through, as (cell, quadrant).
+        const { su, sv, anchor, end } = ctx.linePreview.fine
+        for (const [fu, fv] of bresenhamLine(anchor[0], anchor[1], end[0], end[1])) {
+          const u = Math.floor(fu / su)
+          const v = Math.floor(fv / sv)
+          apply(ctx, u, v, [fu - u * su, fv - v * sv])
+        }
+      } else if (ctx.linePreview) {
         const { anchor, end } = ctx.linePreview
         const endQuad = quadrantFromFractions(ctx.plane, e.cu, e.cv)
         for (const p of interpolateStrokePoints({ u: anchor[0], v: anchor[1], quad: ctx.drag.current.anchorQuad ?? null }, { u: end[0], v: end[1], quad: endQuad })) {

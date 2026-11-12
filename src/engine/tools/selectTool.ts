@@ -1,9 +1,9 @@
 import { withinWorkingBounds } from '@/engine/grid/GridStore'
 import { gridCoordFromPixel } from '@/engine/plane/constructionPlane'
 import { bresenhamLine } from '@/engine/tools/lineUtils'
-import { fineDivisionFor, fineRectRegion, fineUnitAt, isFineSelected } from '@/engine/tools/fineSelection'
+import { fineDivisionFor, fineLassoRegion, fineRectRegion, fineUnitAt, isFineSelected } from '@/engine/tools/fineSelection'
 import { draggedFloatOrigin, floatDragStep } from '@/engine/tools/fineFloat'
-import { isCellSelected, lassoRegion } from '@/engine/tools/selectionMask'
+import { isCellSelected } from '@/engine/tools/selectionMask'
 import type { NormalizedPointerEvent } from '@/engine/input/PointerInputController'
 import type { ToolContext, ToolHandler } from './types'
 
@@ -61,7 +61,9 @@ export const selectTool: ToolHandler = {
     }
 
     if (e.altKey) {
-      ctx.drag.current = { kind: 'selectLasso', points: [[e.u, e.v]] }
+      // The lasso traces at the grid's resolution too (fine units; whole cells under the whole grid).
+      const div = fineDivisionFor(ctx.plane, ctx.gridSplit)
+      ctx.drag.current = { kind: 'selectLasso', points: [fineUnitAt(div, ctx.plane, e.u, e.v, e.cu, e.cv)], div }
       ctx.setSelectPreview(null)
     } else {
       // Resolution follows the grid: with a division armed the marquee snaps to its fine cells.
@@ -91,10 +93,12 @@ export const selectTool: ToolHandler = {
     }
     if (drag.kind === 'selectLasso') {
       const points = drag.points
+      const div = drag.div ?? { su: 1, sv: 1, slab: null }
+      const at = fineUnitAt(div, ctx.plane, e.u, e.v, e.cu, e.cv)
       const last = points[points.length - 1]
-      if (last[0] === e.u && last[1] === e.v) return
-      for (const p of bresenhamLine(last[0], last[1], e.u, e.v)) points.push(p)
-      ctx.setSelectPreview(lassoRegion(points))
+      if (last[0] === at[0] && last[1] === at[1]) return
+      for (const p of bresenhamLine(last[0], last[1], at[0], at[1])) points.push(p)
+      ctx.setSelectPreview(fineLassoRegion(div, points))
       return
     }
     if (drag.kind === 'selectRect') {
@@ -113,7 +117,7 @@ export const selectTool: ToolHandler = {
       // used everywhere else (Escape, a genuinely new selection, or any other mutating action).
       return
     }
-    const region = drag.kind === 'selectLasso' ? lassoRegion(drag.points) : ctx.selectPreview
+    const region = drag.kind === 'selectLasso' ? fineLassoRegion(drag.div ?? { su: 1, sv: 1, slab: null }, drag.points) : ctx.selectPreview
     ctx.setSelection(region) // bakes any pending float internally (selectionSlice.setSelection)
     ctx.setSelectPreview(null)
     ctx.drag.current = { kind: 'idle' }

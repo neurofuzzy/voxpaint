@@ -8,7 +8,7 @@ import { toNormalizedPointerEvent } from '@/engine/input/PointerInputController'
 import { quadrantFromFractions } from '@/engine/tools/quadrant'
 import { worldBitsFromQuad } from '@/engine/grid/cellBox'
 import { animateToolMap, resolveGestureTool, toolMap } from '@/engine/tools'
-import type { ToolContext, ToolDragState } from '@/engine/tools/types'
+import type { LinePreview, ToolContext, ToolDragState } from '@/engine/tools/types'
 import type { ToolId } from '@/store/types'
 import type { ConstructionPlane } from '@/engine/plane/types'
 import { useAppStore } from '@/store/useAppStore'
@@ -176,7 +176,7 @@ export function usePixelCanvasTools(canvasRef: React.RefObject<HTMLCanvasElement
     setPan({ x: -centre.u, y: -centre.v })
   }, [gridExtent, voxelScaleY])
 
-  const [linePreview, setLinePreview] = useState<{ anchor: [number, number]; end: [number, number] } | null>(null)
+  const [linePreview, setLinePreview] = useState<LinePreview | null>(null)
   // Store-backed (not local) so the 3D selection box can mirror the live marquee while it is
   // being dragged — the 2D canvas renders `selectPreview ?? selection` for the same reason.
   const selectPreview = useAppStore((s) => s.selectPreview)

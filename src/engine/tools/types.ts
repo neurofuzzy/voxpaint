@@ -1,3 +1,4 @@
+import type { FineDivision } from './fineSelection'
 import type { Coord, GridExtent, SplitAxis, VoxelModel } from '@/engine/grid/types'
 import type { Marker } from '@/engine/markers/types'
 import type { ConstructionPlane } from '@/engine/plane/types'
@@ -32,9 +33,9 @@ export interface ToolContext {
   paintMaterialCell: (u: number, v: number, qu?: number, qv?: number) => boolean
   /** Texture-face rebase: re-authors the ramp/wedge at (u,v) onto the active plane's basis. */
   rebaseRampCell: (u: number, v: number) => boolean
-  floodFill: (u: number, v: number) => void
+  floodFill: (u: number, v: number, qu?: number, qv?: number) => void
   /** 3D connected fill, alt-click's variant — only meaningful when (u,v) is an existing voxel. */
-  floodFill3D: (u: number, v: number) => void
+  floodFill3D: (u: number, v: number, qu?: number, qv?: number) => void
   /** Animate-mode pivot tool: with a rig box selected it sets that box's rotation
    * center, otherwise it toasts that a selection is needed (slice pivots are legacy,
    * no longer authorable). Both self-bracket their own (Animate-mode-scoped) undo stroke. */
@@ -70,6 +71,7 @@ export interface ToolContext {
   animBeginStroke: () => void
   animCommitStroke: () => void
   beginMove: (wholeModel: boolean) => void
+  /** Deltas in the grid's in-plane step units (`floatDragStep`) from the press. */
   updateMove: (du: number, dv: number) => void
   endMove: () => void
   setActivePaletteSlot: (slot: PaletteSlotRef) => void
@@ -115,8 +117,8 @@ export interface ToolContext {
 
   // Transient UI-only preview state (drag-in-progress rendering), backed by React state in the
   // adapter hook but exposed here so tool modules can read/write it without knowing that.
-  linePreview: { anchor: [number, number]; end: [number, number] } | null
-  setLinePreview: (v: { anchor: [number, number]; end: [number, number] } | null) => void
+  linePreview: LinePreview | null
+  setLinePreview: (v: LinePreview | null) => void
   selectPreview: SelectionRegion | null
   setSelectPreview: (v: SelectionRegion | null) => void
 
@@ -125,11 +127,21 @@ export interface ToolContext {
   drag: { current: ToolDragState }
 }
 
+/** Shift-line preview: whole-cell endpoints, plus the grid-resolution endpoints (fine units at
+ * `su`×`sv` per cell — `fineDivisionFor`) when a grid is armed, so the preview and the write
+ * both follow the grid. */
+export type LinePreview = {
+  anchor: [number, number]
+  end: [number, number]
+  fine?: { su: 1 | 2; sv: 1 | 2; anchor: [number, number]; end: [number, number] }
+}
+
 export type ToolDragState =
   | { kind: 'idle' }
   | { kind: 'paint'; anchor: [number, number]; last: [number, number]; anchorQuad?: [number, number] | null; lastQuad?: [number, number] | null }
   | { kind: 'selectRect'; anchor: [number, number]; /** Fine-unit anchor (sub-voxel resolution). */ fineAnchor?: [number, number] }
-  | { kind: 'selectLasso'; points: Array<[number, number]> }
+  /** Lasso path in the grid's fine units (`div`, fixed at press; whole cells when absent). */
+  | { kind: 'selectLasso'; points: Array<[number, number]>; div?: FineDivision }
   | { kind: 'moveFloat'; startU: number; startV: number; originAtStart: FloatOrigin; /** Pointer position at the start in `fineStep` units (grid-resolution drags). */ startFine?: [number, number];
     /**
      * The drag's half-voxel step per logical axis, fixed at press time from the armed grid
@@ -137,7 +149,9 @@ export type ToolDragState =
      * Absent when the grid is whole: whole-voxel steps that keep the float's sub offsets.
      */
     fineStep?: { su: 1 | 2; sv: 1 | 2 } }
-  | { kind: 'moveGrid'; startU: number; startV: number; lastU: number; lastV: number }
+  /** Move-tool drag. `step` is the grid's in-plane step at press time (`floatDragStep`; whole
+   * voxels when null) and `startFine`/`last` are pointer positions in those step units. */
+  | { kind: 'moveGrid'; step: { su: 1 | 2; sv: 1 | 2 }; startFine: [number, number]; last: [number, number] }
   | { kind: 'marker'; id: string }
   /** Marker tap candidate: pointer went down on an existing marker but hasn't dragged off it
    * yet. A release here resolves to recolor-or-delete; leaving the start cell converts to a

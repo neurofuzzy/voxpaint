@@ -7,7 +7,7 @@ import { toDisplayU, toDisplayV } from '@/engine/plane/planeDisplay'
 import type { ConstructionPlane } from '@/engine/plane/types'
 import type { FineSelection, SelectionRegion } from '@/store/types'
 import { quadrantFromFractions } from './quadrant'
-import { isCellSelected, rectRegion } from './selectionMask'
+import { forEachSelectedCell, isCellSelected, lassoRegion, rectRegion } from './selectionMask'
 
 /**
  * Sub-voxel (grid-resolution) selection. The grid division decides the resolution: along logical
@@ -73,6 +73,16 @@ export function fineRectRegion(div: FineDivision, f0u: number, f0v: number, f1u:
     }
   }
   return { originU, originV, width, height, mask: cover, fine: { su, sv, slab: div.slab, mask: fmask } }
+}
+
+/** A freehand (lasso) path traced in fine units, as a region at the division's resolution: the
+ * fine cells whose centers fall inside the path. Whole divisions are the plain cell lasso. */
+export function fineLassoRegion(div: FineDivision, points: ReadonlyArray<readonly [number, number]>): SelectionRegion | null {
+  const r = lassoRegion(points)
+  if (!r || isWholeDivision(div)) return r
+  const cells: Array<[number, number]> = []
+  forEachSelectedCell(r, (fu, fv) => cells.push([fu, fv]))
+  return regionFromFineCells(div, cells)
 }
 
 /** True when the fine cell (fu,fv) is selected (a coarse region counts whole cells). */

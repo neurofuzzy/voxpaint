@@ -473,22 +473,18 @@ export function PixelCanvas() {
 
     // paint-tool shift-line preview
     if (linePreview) {
-      const [ax, ay] = worldToScreen(
-        toDisplayU(plane, linePreview.anchor[0]) + 0.5,
-        toDisplayV(plane, linePreview.anchor[1]) + 0.5,
-        size,
-        pan,
-        zoom,
-        vScale,
-      )
-      const [ex, ey] = worldToScreen(
-        toDisplayU(plane, linePreview.end[0]) + 0.5,
-        toDisplayV(plane, linePreview.end[1]) + 0.5,
-        size,
-        pan,
-        zoom,
-        vScale,
-      )
+      // Grid-resolution lines run between fine-cell centers; whole lines between cell centers.
+      const fine = linePreview.fine
+      const centerOf = (cell: [number, number], f: [number, number] | undefined): [number, number] => {
+        if (!fine || !f) return [toDisplayU(plane, cell[0]) + 0.5, toDisplayV(plane, cell[1]) + 0.5]
+        const pseudo = { originU: 0, originV: 0, width: 0, height: 0, mask: new Uint8Array(), fine: { su: fine.su, sv: fine.sv, slab: null, mask: new Uint8Array() } }
+        const [x0, y0, x1, y1] = fineDisplayRect(plane, pseudo, f[0], f[1])
+        return [(x0 + x1) / 2, (y0 + y1) / 2]
+      }
+      const a = centerOf(linePreview.anchor, fine?.anchor)
+      const b = centerOf(linePreview.end, fine?.end)
+      const [ax, ay] = worldToScreen(a[0], a[1], size, pan, zoom, vScale)
+      const [ex, ey] = worldToScreen(b[0], b[1], size, pan, zoom, vScale)
       ctx.strokeStyle = '#ffffff'
       ctx.lineWidth = 2
       ctx.beginPath()

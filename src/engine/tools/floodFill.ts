@@ -1,7 +1,7 @@
 import type { CellKey, Coord, GridExtent, VoxelModel } from '@/engine/grid/types'
 import type { PaletteSlotRef } from '@/engine/palette/types'
 import type { ConstructionPlane } from '@/engine/plane/types'
-import { encodeKey, withinWorkingBounds } from '@/engine/grid/GridStore'
+import { effectiveExtent, encodeKey, withinWorkingBounds } from '@/engine/grid/GridStore'
 import { gridCoordFromPixel } from '@/engine/plane/constructionPlane'
 
 function slotsEqual(a: PaletteSlotRef | undefined, b: PaletteSlotRef | undefined): boolean {
@@ -66,7 +66,8 @@ export function floodFillRegion(
  * rather than a deliberate edge-to-edge fill. Callers use this to reject the fill outright.
  */
 export function fillLeaksToEdges(cells: Array<[number, number]>, gridExtent: GridExtent): boolean {
-  const half = gridExtent / 2
+  // The working span (odd extents round up — `effectiveExtent`), so the edges are integer cells.
+  const half = effectiveExtent(gridExtent) / 2
   let touchesMinU = false, touchesMaxU = false, touchesMinV = false, touchesMaxV = false
   for (const [u, v] of cells) {
     if (u === -half) touchesMinU = true

@@ -8,7 +8,7 @@ import { toDisplayU, toDisplayV } from '@/engine/plane/planeDisplay'
 import { axisIndex } from '@/engine/plane/planeGeometry'
 import type { ConstructionPlane } from '@/engine/plane/types'
 import type { ClipboardCell, ClipboardData, FloatOrigin, SelectionRegion } from '@/store/types'
-import { cloneChamfer, placeClipboardCell } from './clipboard'
+import { applyClipboardAt, cloneChamfer, placeClipboardCell } from './clipboard'
 import { fineDivisionFor, worldAxisOf } from './fineSelection'
 
 /**
@@ -64,6 +64,41 @@ export function draggedFloatOrigin(start: FloatOrigin, step: { su: 1 | 2; sv: 1 
   const [originU, subU] = along(start.originU, start.subU ?? 0, step.su, du)
   const [originV, subV] = along(start.originV, start.subV ?? 0, step.sv, dv)
   return { originU, originV, subU, subV, ...(start.subW ? { subW: start.subW } : {}) }
+}
+
+/**
+ * Normalizes a float origin: sub offsets are 0/1 half voxels, kept only when non-zero (sub-voxel
+ * content always carries its in-plane pair). Content holding whole chamfer cells has no
+ * half-voxel position (`fineFloatAtomic`): in-plane halves round to the nearest whole voxel —
+ * carried into the cell origin, so the verbatim chamfer restore and the pieces stay aligned.
+ * Every placement path (float drags, the Move tool) settles through here so they all agree. The
+ * depth shift is set only by paste (already whole for atomic content) and rides along unchanged.
+ */
+export function settleFloatOrigin(clip: ClipboardData, o: FloatOrigin): FloatOrigin {
+  let { originU, originV } = o
+  let subU = o.subU ?? 0
+  let subV = o.subV ?? 0
+  if (fineFloatAtomic(clip)) {
+    originU += Math.round(subU / 2)
+    originV += Math.round(subV / 2)
+    subU = 0
+    subV = 0
+  }
+  const subW = o.subW ?? 0
+  return {
+    originU,
+    originV,
+    ...(clip.fine || subU ? { subU } : {}),
+    ...(clip.fine || subV ? { subV } : {}),
+    ...(subW ? { subW } : {}),
+  }
+}
+
+/** Writes a float into `model` at `origin`, whichever way it lands: pieced (`applyFloatAt`) when
+ * the content or the position is off the voxel lattice, else the verbatim whole-cell stamp. */
+export function placeFloat(model: VoxelModel, plane: ConstructionPlane, clip: ClipboardData, origin: FloatOrigin, gridExtent: GridExtent): void {
+  if (floatIsPieced(clip, origin)) applyFloatAt(model, plane, clip, origin, gridExtent)
+  else applyClipboardAt(model, plane, clip, origin.originU, origin.originV, gridExtent)
 }
 
 export type FloatPiece = {

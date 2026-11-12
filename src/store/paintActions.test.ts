@@ -1374,10 +1374,11 @@ describe('grid-resolution editing (writeBox)', () => {
       expect(m.color.get(encodeKey(0, 0, 0))).toEqual({ paletteSlot: SLOT_M })
     })
 
-    it('3D fill on a subdivided voxel recolors it (it is occupied, not empty space)', () => {
+    it('3D fill on a subdivided voxel recolors the grid cell tapped (it is occupied, not empty space)', () => {
       stroke((s) => s.paintCell(0, -1, 0, 0))
       useAppStore.getState().setActivePaletteSlot(SLOT_M)
-      useAppStore.getState().floodFillCellsAt([0, 0, 0], false)
+      // The tap lands on child 6's surface: world bits x0 y1 z1.
+      useAppStore.getState().floodFillCellsAt([0, 0, 0], false, [0, 1, 1])
       expect(sub0()!.children[6]).toEqual({ slot: SLOT_M })
       expect(useAppStore.getState().model.color.size).toBe(0)
     })
@@ -1393,7 +1394,7 @@ describe('grid-resolution editing (writeBox)', () => {
       expect(useAppStore.getState().model.color.has(encodeKey(0, 0, 0))).toBe(true)
     })
 
-    it('flood fill treats subdivided cells as occupied boundaries', () => {
+    it('flood fill runs at grid resolution: an empty half of a split voxel fills like any grid cell', () => {
       useAppStore.getState().setGridSplit(null)
       stroke((s) => {
         for (const [u, v] of [[-1, -1], [0, -1], [1, -1], [-1, 0], [1, 0], [-1, 1], [0, 1], [1, 1]]) s.paintCell(u, v)
@@ -1402,8 +1403,39 @@ describe('grid-resolution editing (writeBox)', () => {
       useAppStore.getState().setGridSplit(['x'])
       stroke((s) => s.paintCell(0, 0, 1, 0)) // x-high half of the middle
       useAppStore.getState().setActivePaletteSlot(SLOT_M)
-      stroke((s) => s.floodFill(0, 0))
-      expect(useAppStore.getState().model.subdiv.get(encodeKey(...mid))!.children).toEqual([null, { slot: SLOT_B }])
+      // Click the empty x-low half: only that grid cell is enclosed (ring + the B half).
+      stroke((s) => s.floodFill(0, 0, 0, 0))
+      expect(useAppStore.getState().model.subdiv.get(encodeKey(...mid))!.children).toEqual([{ slot: SLOT_M }, { slot: SLOT_B }])
+      expect(useAppStore.getState().model.color.get(encodeKey(...gridCoordFromPixel(PLANE, -1, 0)))?.paletteSlot).toEqual(SLOT_B)
+    })
+
+    it('a filled half is a wall to an empty fill, and a color fill follows it at grid resolution', () => {
+      useAppStore.getState().setGridSplit(['x'])
+      // Two B halves side by side across a voxel boundary: (0,0) x-high and (1,0) x-low.
+      stroke((s) => {
+        s.paintCell(0, 0, 1, 0)
+        s.paintCell(1, 0, 0, 0)
+      })
+      useAppStore.getState().setActivePaletteSlot(SLOT_M)
+      // Color fill from (0,0)'s x-high half takes exactly the connected B halves.
+      stroke((s) => s.floodFill(0, 0, 1, 0))
+      const m = useAppStore.getState().model
+      expect(m.subdiv.get(encodeKey(...gridCoordFromPixel(PLANE, 0, 0)))!.children).toEqual([null, { slot: SLOT_M }])
+      expect(m.subdiv.get(encodeKey(...gridCoordFromPixel(PLANE, 1, 0)))!.children).toEqual([{ slot: SLOT_M }, null])
+    })
+
+    it('volume fill (Alt) follows the grid through split voxels', () => {
+      useAppStore.getState().setGridSplit(['x'])
+      stroke((s) => {
+        s.paintCell(0, 0, 1, 0)
+        s.paintCell(1, 0, 0, 0)
+        s.paintCell(3, 0, 0, 0) // not connected
+      })
+      useAppStore.getState().setActivePaletteSlot(SLOT_M)
+      useAppStore.getState().floodFill3D(0, 0, 1, 0)
+      const m = useAppStore.getState().model
+      expect(m.subdiv.get(encodeKey(...gridCoordFromPixel(PLANE, 1, 0)))!.children).toEqual([{ slot: SLOT_M }, null])
+      expect(m.subdiv.get(encodeKey(...gridCoordFromPixel(PLANE, 3, 0)))!.children).toEqual([{ slot: SLOT_B }, null])
     })
   })
 

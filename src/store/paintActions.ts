@@ -1,7 +1,7 @@
 import type { StateCreator } from 'zustand'
 import { decodeKey, encodeKey, expandBounds, withinWorkingBounds } from '@/engine/grid/GridStore'
 import { getSubdivCell, sampleBoxNeighborhood } from '@/engine/grid/subdiv'
-import { childBox, exactChildIndex, gridBox, gridBoxAtBits, isWholeBox, recolorBox, worldBitsFromQuad, writeBox, WHOLE_BOX, type CellBox } from '@/engine/grid/cellBox'
+import { childBox, exactChildIndex, gridBox, gridBoxAtBits, isWholeBox, planeFrame, recolorBox, worldBitsFromQuad, writeBox, WHOLE_BOX, type CellBox } from '@/engine/grid/cellBox'
 import type { Axis, CellKey, Coord, Orientation, Rotation } from '@/engine/grid/types'
 import type { PaletteSlotRef } from '@/engine/palette/types'
 import type { ConstructionPlane } from '@/engine/plane/types'
@@ -9,10 +9,10 @@ import { classify, sampleNeighbors } from '@/engine/chamfer/chamferResolver'
 import { spinSlabAboutLocalY } from '@/engine/chamfer/chamferTransform'
 import { findDualRampRotation, findWedgeRampDual } from '@/engine/chamfer/rampDual'
 import { gridCoordFromPixel, pixelFromGridCoord } from '@/engine/plane/constructionPlane'
-import { dominantAxisLine } from '@/engine/tools/lineUtils'
+import { dominantAxisLine, dominantAxisLineFine } from '@/engine/tools/lineUtils'
 import { axisIndex } from '@/engine/plane/planeGeometry'
 import { isCellSelected, forEachSelectedCell } from '@/engine/tools/selectionMask'
-import { fineCellBox, forEachFineCell, isSelectedAt } from '@/engine/tools/fineSelection'
+import { fineCellBox, fineDivisionFor, forEachFineCell, isSelectedAt } from '@/engine/tools/fineSelection'
 import { paintFineRegion } from '@/engine/grid/fineOps'
 import { liveFineSelection3D } from './selection3DSlice'
 import type { AppState, PaintActionsSlice, VoxelKind } from './types'
@@ -646,7 +646,7 @@ export const createPaintActionsSlice: Slice = (set, get) => ({
     get().bakeFloatIfAny()
     const { plane, meta, paintLineAnchor } = get()
     // Every tap re-establishes the anchor — chaining for the next shift-click.
-    get().setPaintLineAnchor({ coord, axis: plane.axis, orientation: plane.orientation })
+    get().setPaintLineAnchor({ coord, axis: plane.axis, orientation: plane.orientation, ...(bits ? { bits } : {}) })
     // Without a usable anchor (none yet, or the plane frame changed since) — or when the
     // target sits off the active slice (out-of-plane stacking has no in-plane line) — paint one.
     const anchorUsable = extend && paintLineAnchor !== null
@@ -657,7 +657,31 @@ export const createPaintActionsSlice: Slice = (set, get) => ({
     // 3D tap path brackets it instead — so bracketing here nests nothing).
     get().beginStroke()
     let ok = true
-    if (paintLineAnchor && anchorUsable && onSlice) {
+    const div = fineDivisionFor(plane, get().gridSplit)
+    const fineLine = (div.su === 2 || div.sv === 2) && !!paintLineAnchor?.bits && !!bits
+    if (paintLineAnchor && anchorUsable && onSlice && fineLine) {
+      // Grid-resolution line: from the anchor's grid cell to the tapped one, one grid cell per
+      // step along the dominant axis (half voxels on the axes the grid cuts).
+      const { uA, vA, uPos, vPos } = planeFrame(plane.axis)
+      const fineOf = (c: Coord, b: Coord): [number, number] => {
+        const { u, v } = pixelFromGridCoord(plane, c)
+        return [u * div.su + (div.su === 2 ? (uPos ? b[uA] : 1 - b[uA]) : 0), v * div.sv + (div.sv === 2 ? (vPos ? b[vA] : 1 - b[vA]) : 0)]
+      }
+      const a = fineOf(paintLineAnchor.coord, paintLineAnchor.bits!)
+      const b = fineOf(coord, bits!)
+      const kind = get().activeVoxelKind
+      const slot = get().activePaletteSlot
+      set((state) => {
+        for (const [fu, fv] of dominantAxisLineFine(a, b, div.su, div.sv)) {
+          const lu = Math.floor(fu / div.su)
+          const lv = Math.floor(fv / div.sv)
+          const c = gridCoordFromPixel(plane, lu, lv)
+          if (!withinWorkingBounds(c, meta.gridExtent)) continue
+          const box = gridBox(plane, state.gridSplit, worldBitsFromQuad(plane, fu - lu * div.su, fv - lv * div.sv))
+          paintBox(state, plane, c, lu, lv, box, kind, slot, false)
+        }
+      })
+    } else if (paintLineAnchor && anchorUsable && onSlice) {
       const a = pixelFromGridCoord(plane, paintLineAnchor.coord)
       const b = pixelFromGridCoord(plane, coord)
       const kind = get().activeVoxelKind

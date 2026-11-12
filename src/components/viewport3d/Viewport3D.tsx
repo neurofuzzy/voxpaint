@@ -9,7 +9,7 @@ import { angleAroundAxis, closestAxisParam, composeAxisAngle, intersectAxisPlane
 import { previewFrame } from '@/engine/rigging/preview'
 import { hasActiveTweens } from '@/engine/rigging/rigLoop'
 import type { Axis, CellKey, Coord } from '@/engine/grid/types'
-import { faceHitBits, frontSlabBit } from '@/engine/grid/cellBox'
+import { faceHitBits, frontSlabBit, worldBitsFromQuad } from '@/engine/grid/cellBox'
 import { hasActiveAnimations } from '@/engine/animation/animationLayers'
 
 /**
@@ -323,16 +323,19 @@ function VoxelInteractionHandler({ managerRef, controlsRef }: {
     // Unlike select it must NOT lift yet — a tap here is a two-stage wand click, so the lift
     // waits until the pointer actually moves past the tap threshold, then converts to floatDrag.
     let pendingWandDrag: { startU: number; startV: number; pressCell: Coord; pressBits: Coord | null } | null = null
-    // Open whole-model move drag (3D-only layout, Model mode only): the plane-UV anchor plus the
-    // last-applied UV (integer-deduped, like the 2D tool) and whether the undo stroke opened. The
+    // Open whole-model move drag (3D-only layout, Model mode only): the press position and the
+    // last position sent, in the grid's in-plane step (`floatDragStep` — half voxels along axes
+    // the grid cuts; deduped per step like the 2D tool), and whether the undo stroke opened. The
     // stroke opens on the first over-threshold move; a tap orients the plane instead. Orbit
     // suppressed until pointer-up, like the marquee.
-    let moveDrag: { startU: number; startV: number; lastU: number; lastV: number; begun: boolean } | null = null
+    let moveDrag: { step: { su: 1 | 2; sv: 1 | 2 }; start: [number, number]; last: [number, number]; begun: boolean } | null = null
     // Open touch hold-to-paint drag (3D-only Model + paint tool + hold button pressed): the
     // stylus/finger paints directly onto the construction plane while orbit stays locked.
     // One undo stroke per drag, bracketed here (not per cell); `lastCoord` anchors the
     // Bresenham interpolation so fast sweeps don't gap. Orbit suppressed until pointer-up.
-    let paintTouchDrag: { lastCoord: Coord } | null = null
+    // `lastFine` is the last painted grid cell in fine plane units at `step` (`fineDivisionFor` —
+    // half cells along in-plane axes the grid cuts), so sweeps follow the grid; null = whole cells.
+    let paintTouchDrag: { lastCoord: Coord; step: { su: 1 | 2; sv: 1 | 2 } | null; lastFine: [number, number] | null } | null = null
     // Open pose drag (Animate mode, Rotate tool only): pointer went down on a gizmo ring
     // (axis drag, immediate — a ring is never a plane-nav target). Presses anywhere
     // else fall through to rig selection / plane navigation: there is no free-rotation
@@ -396,17 +399,37 @@ function VoxelInteractionHandler({ managerRef, controlsRef }: {
     /** Writes one touch hold-to-paint cell inside the already-open stroke (orientation
      * always inherits the active construction plane, matching taps and the ghost).
      * Replace-only: occupied cells are overwritten, like taps. */
-    function paintTouchCell(coord: Coord): void {
+    function paintTouchCell(coord: Coord, bits: Coord | null = null): void {
       const st = useAppStore.getState()
       if (!withinWorkingBounds(coord, st.meta.gridExtent)) return
-      st.paintCellAtCoord(coord, st.plane.axis, st.plane.orientation)
+      st.paintCellAtCoord(coord, st.plane.axis, st.plane.orientation, bits)
+    }
+
+    /** The in-plane grid step a touch sweep paints in (null under whole in-plane cells). */
+    function touchPaintStep(): { su: 1 | 2; sv: 1 | 2 } | null {
+      const { su, sv } = fineDivisionFor(planeRef.current, useAppStore.getState().gridSplit)
+      return su === 1 && sv === 1 ? null : { su, sv }
     }
 
     /** Paints the interpolated run from the drag's last cell to the current target so fast
-     * stylus sweeps don't gap (plane-UV Bresenham, like the 2D drag path). Both endpoints
-     * sit on the active slice by construction, so the run stays in-plane. */
-    function paintTouchRunTo(target: Coord, drag: { lastCoord: Coord }): void {
+     * stylus sweeps don't gap (plane-UV Bresenham, like the 2D drag path) — in grid cells when
+     * the grid cuts an in-plane axis. Both endpoints sit on the active slice by construction,
+     * so the run stays in-plane. */
+    function paintTouchRunTo(target: Coord, bits: Coord | null, drag: NonNullable<typeof paintTouchDrag>): void {
       const activePlane = planeRef.current
+      if (drag.step && drag.lastFine) {
+        const { su, sv } = drag.step
+        const to = fineUnitFor({ su, sv, slab: null }, activePlane, target, bits)
+        if (to[0] === drag.lastFine[0] && to[1] === drag.lastFine[1]) return
+        for (const [fu, fv] of bresenhamLine(drag.lastFine[0], drag.lastFine[1], to[0], to[1]).slice(1)) {
+          const lu = Math.floor(fu / su)
+          const lv = Math.floor(fv / sv)
+          paintTouchCell(gridCoordFromPixel(activePlane, lu, lv), worldBitsFromQuad(activePlane, fu - lu * su, fv - lv * sv))
+        }
+        drag.lastFine = to
+        drag.lastCoord = target
+        return
+      }
       const a = pixelFromGridCoord(activePlane, drag.lastCoord)
       const b = pixelFromGridCoord(activePlane, target)
       if (a.u === b.u && a.v === b.v) return
@@ -421,9 +444,13 @@ function VoxelInteractionHandler({ managerRef, controlsRef }: {
     function endPaintTouchDrag(commit: boolean) {
       if (!paintTouchDrag) return
       const last = paintTouchDrag.lastCoord
+      const lastFine = paintTouchDrag.lastFine
+      const step = paintTouchDrag.step
       paintTouchDrag = null
       const st = useAppStore.getState()
-      st.setPaintLineAnchor({ coord: last, axis: st.plane.axis, orientation: st.plane.orientation })
+      // The last grid cell's in-plane bits ride along, so a following shift-tap line starts there.
+      const bits = step && lastFine ? worldBitsFromQuad(st.plane, lastFine[0] - Math.floor(lastFine[0] / step.su) * step.su, lastFine[1] - Math.floor(lastFine[1] / step.sv) * step.sv) : null
+      st.setPaintLineAnchor({ coord: last, axis: st.plane.axis, orientation: st.plane.orientation, ...(bits ? { bits } : {}) })
       if (commit) st.commitStroke()
       else st.cancelStroke()
       if (controlsRef.current) controlsRef.current.enabled = true
@@ -536,6 +563,18 @@ function VoxelInteractionHandler({ managerRef, controlsRef }: {
       return bits
     }
 
+    /** The cell a Move drag steers by: the face hit (else the plane cell) for whole-voxel steps;
+     * with half steps the plane cell itself (face hit as the fallback), since the half the
+     * pointer is over is read where the ray crosses the plane (`subBitsAt`). */
+    function moveCellAt(clientX: number, clientY: number, step: { su: 1 | 2; sv: 1 | 2 }): Coord | null {
+      const faceCell = () => {
+        const hit = resolveFaceHit(clientX, clientY)
+        return hit ? decodeKey(hit.key) : null
+      }
+      if (step.su === 1 && step.sv === 1) return faceCell() ?? resolveEmptyCell(clientX, clientY)
+      return resolveEmptyCell(clientX, clientY) ?? faceCell()
+    }
+
     /** Fine (u,v) unit of the pointer on `cell`: the cell's plane coords plus the half the ray is over. */
     function fineUnitFor(div: FineDivision, plane: ConstructionPlane, cell: Coord, bits: Coord | null): [number, number] {
       const { u, v } = pixelFromGridCoord(plane, cell)
@@ -598,7 +637,7 @@ function VoxelInteractionHandler({ managerRef, controlsRef }: {
           const now = Date.now()
           if (lastSelectTap && now - lastSelectTap.time <= WAND_DOUBLE_TAP_MS && lastSelectTap.key === result.key) {
             lastSelectTap = null
-            store.applySliceWandAt(decodeKey(result.key), shiftKey)
+            store.applySliceWandAt(decodeKey(result.key), shiftKey, faceHitBits(result.point, decodeKey(result.key), result.plane.axis, result.plane.orientation))
             useAppStore.setState((s) => { s.objectModeTarget = null })
           } else {
             lastSelectTap = { time: now, key: result.key }
@@ -840,8 +879,10 @@ function VoxelInteractionHandler({ managerRef, controlsRef }: {
           const store = useAppStore.getState()
           store.bakeFloatIfAny()
           store.beginStroke()
-          paintTouchCell(target)
-          paintTouchDrag = { lastCoord: target }
+          const step = touchPaintStep()
+          const bits = step ? subBitsAt(e.clientX, e.clientY, target) : null
+          paintTouchCell(target, bits)
+          paintTouchDrag = { lastCoord: target, step, lastFine: step ? fineUnitFor({ ...step, slab: null }, planeRef.current, target, bits) : null }
           if (controlsRef.current) controlsRef.current.enabled = false
           try {
             dom.setPointerCapture(e.pointerId)
@@ -870,11 +911,11 @@ function VoxelInteractionHandler({ managerRef, controlsRef }: {
         activeToolRef.current === 'move' &&
         modeRef.current === 'model'
       ) {
-        const hit = resolveFaceHit(e.clientX, e.clientY)
-        const cell = hit ? decodeKey(hit.key) : resolveEmptyCell(e.clientX, e.clientY)
+        const step = floatDragStep(planeRef.current, useAppStore.getState().gridSplit) ?? { su: 1, sv: 1 }
+        const cell = moveCellAt(e.clientX, e.clientY, step)
         if (cell) {
-          const { u, v } = pixelFromGridCoord(planeRef.current, cell)
-          moveDrag = { startU: u, startV: v, lastU: u, lastV: v, begun: false }
+          const at = fineUnitFor({ ...step, slab: null }, planeRef.current, cell, subBitsAt(e.clientX, e.clientY, cell))
+          moveDrag = { step, start: at, last: at, begun: false }
           if (controlsRef.current) controlsRef.current.enabled = false
           try {
             dom.setPointerCapture(e.pointerId)
@@ -1093,8 +1134,8 @@ function VoxelInteractionHandler({ managerRef, controlsRef }: {
         const target = resolveTouchPaintTarget(e.clientX, e.clientY)
         if (target) {
           const drag = paintTouchDrag
-          const lastKey = encodeKey(...drag.lastCoord)
-          if (encodeKey(...target) !== lastKey) paintTouchRunTo(target, drag)
+          const bits = drag.step ? subBitsAt(e.clientX, e.clientY, target) : null
+          if (drag.step || encodeKey(...target) !== encodeKey(...drag.lastCoord)) paintTouchRunTo(target, bits, drag)
         }
         return
       }
@@ -1165,7 +1206,7 @@ function VoxelInteractionHandler({ managerRef, controlsRef }: {
       }
       // Open whole-model move: steer by the plane cell under the cursor (face hit, else the
       // empty-space plane cell — the model slides under the pointer like the 2D tool). The
-      // stroke opens on the first over-threshold move; integer-UV dedupe skips sub-cell moves.
+      // stroke opens on the first over-threshold move; moves dedupe per grid step.
       if (moveDrag) {
         if (
           !moveDrag.begun && down &&
@@ -1175,14 +1216,13 @@ function VoxelInteractionHandler({ managerRef, controlsRef }: {
           useAppStore.getState().beginMove(true)
         }
         if (moveDrag.begun) {
-          const hit = resolveFaceHit(e.clientX, e.clientY)
-          const cell = hit ? decodeKey(hit.key) : resolveEmptyCell(e.clientX, e.clientY)
+          const cell = moveCellAt(e.clientX, e.clientY, moveDrag.step)
           if (cell) {
-            const { u, v } = pixelFromGridCoord(planeRef.current, cell)
-            if (u !== moveDrag.lastU || v !== moveDrag.lastV) {
-              moveDrag.lastU = u
-              moveDrag.lastV = v
-              useAppStore.getState().updateMove(u - moveDrag.startU, v - moveDrag.startV)
+            // Grid-step position (half voxels along the axes the grid cuts); dedupe per step.
+            const at = fineUnitFor({ ...moveDrag.step, slab: null }, planeRef.current, cell, subBitsAt(e.clientX, e.clientY, cell))
+            if (at[0] !== moveDrag.last[0] || at[1] !== moveDrag.last[1]) {
+              moveDrag.last = at
+              useAppStore.getState().updateMove(at[0] - moveDrag.start[0], at[1] - moveDrag.start[1])
             }
           }
         }
@@ -1705,7 +1745,7 @@ function VoxelInteractionHandler({ managerRef, controlsRef }: {
           if (lastSelectTap && now - lastSelectTap.time <= WAND_DOUBLE_TAP_MS && lastSelectTap.key === hit.key) {
             lastSelectTap = null
             // Shift-double-click unions the flood region instead of replacing.
-            st.applySliceWandAt(decodeKey(hit.key), e.shiftKey)
+            st.applySliceWandAt(decodeKey(hit.key), e.shiftKey, faceHitBits(hit.point, decodeKey(hit.key), hit.plane.axis, hit.plane.orientation))
             // Kill the same-face-click-again memory (set by the first tap's reorient) so the
             // next same-face tap re-lands instead of advancing the plane off the selection —
             // repeat double-clicks then idempotently re-select it.
@@ -1801,7 +1841,9 @@ function VoxelInteractionHandler({ managerRef, controlsRef }: {
         const hit = resolveFaceHit(e.clientX, e.clientY)
         const coord: Coord | null = hit ? decodeKey(hit.key) : resolveEmptyCell(e.clientX, e.clientY)
         if (!coord) return
-        st.floodFillCellsAt(coord, e.altKey)
+        // The grid cell the tap is in: the hit surface's own part, or where the ray crosses the plane.
+        const bits = hit ? faceHitBits(hit.point, coord, hit.plane.axis, hit.plane.orientation) : subBitsAt(e.clientX, e.clientY, coord)
+        st.floodFillCellsAt(coord, e.altKey, bits)
         return
       }
 

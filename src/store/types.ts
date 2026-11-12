@@ -230,7 +230,9 @@ export type ToolSlice = {
    * in. Every 3D paint tap re-establishes it (fast chaining); a shift-tap draws the
    * dominant-axis line from it. Null until the first tap; stale frames (plane axis/orientation
    * changed since) fall back to a single paint. Session state, never persisted. */
-  paintLineAnchor: { coord: Coord; axis: Axis; orientation: Orientation } | null
+  /** Last 3D paint tap, for shift-click lines: its voxel and (when known) the world half-bits of the
+   * tapped point, so lines under an armed grid run on the grid's cells. */
+  paintLineAnchor: { coord: Coord; axis: Axis; orientation: Orientation; bits?: Coord | null } | null
   setActiveTool: (tool: ToolId) => void
   setActiveVoxelKind: (kind: VoxelKind) => void
   setActivePaletteSlot: (slot: PaletteSlotRef) => void
@@ -242,7 +244,7 @@ export type ToolSlice = {
   setBrushRotation: (r: Rotation) => void
   /** Steps the brush rotation ±1 quarter-turn (wraps mod 4). */
   rotateBrush: (dir: 1 | -1) => void
-  setPaintLineAnchor: (anchor: { coord: Coord; axis: Axis; orientation: Orientation }) => void
+  setPaintLineAnchor: (anchor: { coord: Coord; axis: Axis; orientation: Orientation; bits?: Coord | null }) => void
   clearPaintLineAnchor: () => void
 }
 
@@ -330,9 +332,10 @@ export type Selection3DSlice = {
    * which is never moved). Single-stage and idempotent; empty seeds are a no-op. With
    * `union` (shift-double-click) the region merges into the existing selection instead of
    * replacing it. Writes the 3D voxel set in 3D-only layout, the 2D footprint region in
-   * split layout.
+   * split layout. With a grid armed the flood runs at the grid's resolution (a sub-voxel
+   * selection) from the grid cell `bits` (world half-bits of the tapped point) lies in, on that slab.
    */
-  applySliceWandAt: (start: Coord, union?: boolean) => void
+  applySliceWandAt: (start: Coord, union?: boolean, bits?: Coord | null) => void
 }
 
 /** The specific voxel face currently under the pointer in the 3D view — live, updates on every
@@ -568,19 +571,24 @@ export type ToolActionsSlice = {
   /** Flood fill (color layer only, spec §2) starting at plane-space (u,v). One undo stroke.
    * No-op if the region leaks across all 4 edges of the plane's span (see `fillLeaksToEdges`) —
    * unless (u,v) lands inside the active selection, which bounds the fill to its own mask (no
-   * painted enclosure needed) and skips the leak guard. */
-  floodFill: (u: number, v: number) => void
+   * painted enclosure needed) and skips the leak guard. Runs at the armed grid's resolution on
+   * the plane's slab (`engine/tools/gridFlood.ts`): `qu`/`qv` is the logical quadrant the click
+   * landed in (omitted → the cell's low quadrant). */
+  floodFill: (u: number, v: number, qu?: number, qv?: number) => void
   /** 6-connected flood fill through the full 3D model (not just the current plane), color layer
-   * only. No-op unless (u,v) lands on an already-occupied voxel. One undo stroke. */
-  floodFill3D: (u: number, v: number) => void
+   * only, at the armed grid's resolution. No-op unless the clicked grid cell holds content. One
+   * undo stroke. */
+  floodFill3D: (u: number, v: number, qu?: number, qv?: number) => void
   /** Fill from a 3D-viewport tap in 3D-only layout (the split 3D view only ever sets the
    * construction plane — it never calls this). A tap on a voxel floods its volume, color layer
    * only (geometry untouched, like the material tool): the color-connected region normally, the
    * whole touching component on Alt (mirroring the wand's two stages). A tap on empty space
    * fills the plane slice at that UV instead; Alt on empty space does nothing. Volume floods
    * clip to the 3D selection set with a blocked-toast when nothing overlaps, and slice fills
-   * keep the 2D leak guard. One undo stroke. The tap path never moves the construction plane. */
-  floodFillCellsAt: (coord: Coord, alt: boolean) => void
+   * keep the 2D leak guard. One undo stroke. The tap path never moves the construction plane.
+   * Floods run at the armed grid's resolution; `bits` are the world half-bits of the hit inside
+   * `coord` (face-hit bits for a voxel, plane-crossing bits for empty space). */
+  floodFillCellsAt: (coord: Coord, alt: boolean, bits?: Coord | null) => void
   copySelection: () => void
   cutSelection: () => void
   deleteSelection: () => void
@@ -648,10 +656,13 @@ export type ToolActionsSlice = {
 }
 
 export type MoveActionsSlice = {
-  /** Starts a Move-tool drag: snapshots the cells to translate (current plane slice, or the whole
-   * model when `wholeModel`) and opens one undo stroke. No selection, no float. */
+  /** Starts a Move-tool drag: lifts the content to translate (current plane slice — just the
+   * plane's slab when the grid cuts the plane axis — or the whole model when `wholeModel`) and
+   * opens one undo stroke. No selection, no float. */
   beginMove: (wholeModel: boolean) => void
-  /** Live-translates the snapshotted cells by a plane-space (du,dv) offset from the drag start. */
+  /** Live-translates the lifted content by a plane-space (du,dv) offset from the drag start, in
+   * the grid's in-plane step units (`floatDragStep` at press time: half voxels along each
+   * in-plane axis the grid cuts, whole voxels otherwise). */
   updateMove: (du: number, dv: number) => void
   /** Ends the Move drag and commits the undo stroke. */
   endMove: () => void

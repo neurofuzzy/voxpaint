@@ -7,6 +7,16 @@ import type { AppState, PlaneSlice } from './types'
 
 type Slice = StateCreator<AppState, [['zustand/immer', never]], [], PlaneSlice>
 
+/**
+ * A sub-voxel 2D selection addresses the plane's slab: like a whole-layer move re-addresses the
+ * same UV window on the new slice, stepping the plane to the other half moves the selection's
+ * slab with it. Called inside every producer that changes the plane's half.
+ */
+function selectionFollowsSlab(state: AppState): void {
+  const f = state.selection?.fine
+  if (f && f.slab !== null && state.plane.half !== null) f.slab = state.plane.half
+}
+
 /** True when the armed grid division cuts along `axis` — the only case where the plane has
  * half-voxel stops. Every plane step follows the grid: no cut on the plane's axis, whole voxels. */
 export function gridSplitsAxis(split: SplitAxis[] | null, axis: Axis): boolean {
@@ -98,10 +108,13 @@ export const createPlaneSlice: Slice = (set, get) => ({
   },
 
   setPlaneHalf: (half) => {
-    // Slab-only switch: the frame (axis/orientation/offset) doesn't move, so no float bake
-    // and no selection invalidation — same slice, narrower edit target.
+    // Slab-only switch: the frame (axis/orientation/offset) doesn't move, so no selection
+    // invalidation — the selection's slab follows. A pending float bakes first, like any depth
+    // move of the plane (its footprint is drawn on the plane's slab).
+    if (half !== get().plane.half) get().bakeFloatIfAny()
     set((state) => {
       state.plane.half = half
+      selectionFollowsSlab(state)
     })
     savePlanePref(get().plane)
   },
@@ -123,6 +136,7 @@ export const createPlaneSlice: Slice = (set, get) => ({
       state.plane.offset = offset
       state.plane.half = half
       state.objectModeTarget = null
+      selectionFollowsSlab(state)
     })
     savePlanePref(get().plane)
   },
@@ -139,6 +153,7 @@ export const createPlaneSlice: Slice = (set, get) => ({
     set((state) => {
       state.plane.offset = offset
       state.plane.half = half
+      selectionFollowsSlab(state)
     })
     savePlanePref(get().plane)
   },
