@@ -11,7 +11,7 @@ import type { TexelClip } from '@/engine/texture/texelOps'
 import type { SliceAnimSettings, SliceKey } from '@/engine/animation/types'
 
 export type ToolId = 'paint' | 'erase' | 'eyedropper' | 'select' | 'fill' | 'move' | 'material' | 'pivot' | 'textureface' | 'marker' | 'wand' | 'rigbox' | 'pose' | 'offset'
-export type VoxelKind = 'cube' | 'ramp' | 'convex' | 'concave' | 'wedge' | 'thin' | 'half' | 'post' | 'quarter' | 'flat' | 'flatwedge'
+export type VoxelKind = 'cube' | 'ramp' | 'convex' | 'concave' | 'wedge' | 'tricorner' | 'triconcave' | 'thin' | 'half' | 'post' | 'quarter' | 'flat' | 'flatwedge'
 
 /**
  * Sub-voxel refinement of a selection, present only when the grid division was not whole when the

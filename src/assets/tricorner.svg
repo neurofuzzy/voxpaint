@@ -1,0 +1,10 @@
+<svg viewBox="0 0 111 128" xmlns="http://www.w3.org/2000/svg">
+  <!-- Tricorner voxel-kind toolbar icon: a tetrahedron — outer triangle apex-top with inner
+       lines from the centroid to each vertex, reading as three triangular faces. Same 111×128
+       frame as cube.svg / chamfer.svg. Edit freely — the toolbar picks up changes. -->
+  <g transform="matrix(1,0,0,1,-277.128,-512)">
+    <path d="M332.554,512L277.128,608L332.554,576L332.554,512Z" fill="rgb(223,223,223)" />
+    <path d="M332.554,512L332.554,576L387.979,608L332.554,512Z" fill="rgb(184,184,184)" />
+    <path d="M277.128,608L387.979,608L332.554,576L277.128,608Z" fill="rgb(142,141,141)" />
+  </g>
+</svg>

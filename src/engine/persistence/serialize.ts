@@ -342,7 +342,7 @@ export function deserializeProject(file: VoxPaintProjectFile): { model: VoxelMod
   // written from a state where the parent had neither; overlap means hand-edit corruption).
   // Early v19 files also carried a parent `slot` and a `scaffold` flag; both are ignored, and
   // every entry is normalized on load (uniform → plain voxel, all-empty → dropped).
-  const SHAPE_KINDS = ['ramp', 'convex', 'concave', 'wedge', 'thin', 'half', 'post', 'quarter', 'flat', 'flatwedge'] as const
+  const SHAPE_KINDS = ['ramp', 'convex', 'concave', 'wedge', 'tricorner', 'triconcave', 'thin', 'half', 'post', 'quarter', 'flat', 'flatwedge'] as const
   for (const cell of file.model.subdivCells ?? []) {
     if (!cell || !Number.isInteger(cell.x) || !Number.isInteger(cell.y) || !Number.isInteger(cell.z)) continue
     if (!withinWorkingBounds([cell.x, cell.y, cell.z], meta.gridExtent)) continue

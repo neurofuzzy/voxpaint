@@ -2,7 +2,7 @@ import type { ChamferClassification, Rotation } from '@/engine/grid/types'
 import type { VoxelKind } from './types'
 
 /** Preview shape for the brush HUD/ghost: null = plain cube (no chamfer entry). */
-export type BrushPreviewShape = { shapeKind: 'ramp' | 'convex' | 'concave' | 'wedge' | 'thin' | 'half' | 'post' | 'quarter' | 'flat' | 'flatwedge'; rotation: Rotation }
+export type BrushPreviewShape = { shapeKind: 'ramp' | 'convex' | 'concave' | 'wedge' | 'tricorner' | 'triconcave' | 'thin' | 'half' | 'post' | 'quarter' | 'flat' | 'flatwedge'; rotation: Rotation }
 
 /**
  * Resolves what the brush will paint, for previews (ghost + HUD mini-renderer).
@@ -26,6 +26,8 @@ export function resolveBrushPreview(
       return { shapeKind: 'wedge', rotation: (((auto?.shapeKind === 'convex' ? auto.rotation : 0) + brush) % 4) as Rotation }
     case 'convex':
     case 'concave':
+    case 'tricorner':
+    case 'triconcave':
     case 'quarter':
     case 'flatwedge':
       return { shapeKind: kind, rotation: brush }

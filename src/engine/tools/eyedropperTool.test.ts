@@ -47,7 +47,7 @@ describe('voxelKindForCell', () => {
   })
 
   it('maps every other resolved shape to its own kind', () => {
-    for (const shapeKind of ['convex', 'concave', 'wedge', 'thin', 'half', 'post', 'quarter', 'flat', 'flatwedge'] as const) {
+    for (const shapeKind of ['convex', 'concave', 'wedge', 'tricorner', 'triconcave', 'thin', 'half', 'post', 'quarter', 'flat', 'flatwedge'] as const) {
       expect(
         voxelKindForCell({ planeAxis: 'z', planeOrientation: 1, resolvedTo: { shapeKind, rotation: 0 } }),
       ).toBe(shapeKind)

@@ -11,8 +11,8 @@ import type { ClipboardCell, ClipboardData, FineSelection } from '@/store/types'
  * their new positions still bevelling the old way.
  *
  * `ramp` numbers its rotation off the OPEN side shifted by -1 (see `classify`), so it renumbers
- * through the side tables; `convex`, `concave`, `wedge`, `quarter`, and `flatwedge` all number
- * theirs directly off a corner (`quarter`'s is the *occupied* corner, `flatwedge`'s the *open*
+ * through the side tables; `convex`, `concave`, `wedge`, `tricorner`, `triconcave`,
+ * `quarter`, and `flatwedge` all number theirs directly off a corner (`quarter`'s is the *occupied* corner, `flatwedge`'s the *open*
  * corner like the wedge; wedge borrows convex's corner rotation — see paintActions.ts). `thin`,
  * `half`, `post`, and `flat` are invariant under in-plane rotation/mirror (always rotation 0)
  * and pass through untouched.

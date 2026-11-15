@@ -26,7 +26,7 @@ const convex = (rotation: Rotation): ChamferClassification => ({ shapeKind: 'con
 
 describe('mirrorClassification', () => {
   it('is an involution for every kind and rotation', () => {
-    const kinds = ['ramp', 'convex', 'concave', 'wedge', 'thin', 'half', 'post', 'quarter', 'flat', 'flatwedge'] as const
+    const kinds = ['ramp', 'convex', 'concave', 'wedge', 'tricorner', 'triconcave', 'thin', 'half', 'post', 'quarter', 'flat', 'flatwedge'] as const
     for (const shapeKind of kinds) {
       for (const rotation of [0, 1, 2, 3] as const) {
         for (const [mu, mv] of [

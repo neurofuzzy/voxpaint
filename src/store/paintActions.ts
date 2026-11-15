@@ -81,6 +81,26 @@ function nextBevelTurn(shape: BevelFamilyKind, rotation: Rotation, brush: Rotati
   return { shapeKind: shape, rotation: next }
 }
 
+/** The triangular corner pair, in cycle order: re-clicking rotates, and completing a full
+ * turn advances to the partner. Never joins the autotile bevel family. */
+const TRI_PAIR = ['tricorner', 'triconcave'] as const
+type TriPairKind = (typeof TRI_PAIR)[number]
+
+function isTriPairKind(shapeKind: string | undefined): shapeKind is TriPairKind {
+  return shapeKind === 'tricorner' || shapeKind === 'triconcave'
+}
+
+/**
+ * One step of the triangular-corner re-click cycle: rotate 90°, or — when that would return
+ * to the brush home orientation (a full turn completed) — advance to the partner shape at
+ * home instead. Mirrors `nextBevelTurn` for the two-shape outer/inner pair.
+ */
+function nextTriTurn(shape: TriPairKind, rotation: Rotation, brush: Rotation): { shapeKind: TriPairKind; rotation: Rotation } {
+  const next = ((rotation + 1) % 4) as Rotation
+  if (next === brush) return { shapeKind: shape === 'tricorner' ? 'triconcave' : 'tricorner', rotation: brush }
+  return { shapeKind: shape, rotation: next }
+}
+
 /**
  * The box a plane-targeted edit at logical quadrant (qu, qv) addresses under the armed grid
  * (whole voxel when the grid is whole; the quadrant's half on cut in-plane axes, full extent
@@ -260,6 +280,40 @@ function applyPaintCell(
     }
     strokeSlabKeys?.add(key)
     strokeChamferKeys?.add(key)
+  } else if (kind === 'tricorner' || kind === 'triconcave') {
+    // Paired triangular corner kinds (outer/inner siblings): re-clicking either cycles its
+    // own open corner 90°, advancing to its partner on completing a full turn back to the
+    // brush home — the convex/concave contract for the triangular pair, never joining the
+    // ramp/convex/concave/wedge family. Fresh paints land verbatim at the brush rotation.
+    // Revisits within the same stroke are left untouched so a drag's interpolation can't
+    // spin what the stroke just wrote.
+    const existing = state.model.chamfer.get(key)
+    if (strokeSlabKeys?.has(key)) {
+      // Already touched this stroke — leave the chamfer entry exactly as the stroke left it.
+    } else if (!stamp && existing?.resolvedTo && isTriPairKind(existing.resolvedTo.shapeKind) && !strokeChamferKeys?.has(key)) {
+      // Re-click on a tri corner: rotate, advancing to the partner once a full turn
+      // completes — no neighbor sampling (the shape is explicitly revisited, not fresh).
+      const turned = nextTriTurn(existing.resolvedTo.shapeKind, existing.resolvedTo.rotation, brush)
+      state.model.chamfer.set(key, { planeAxis: plane.axis, planeOrientation: plane.orientation, resolvedTo: { shapeKind: turned.shapeKind, rotation: turned.rotation } })
+      freshChamferKeys?.delete(key)
+      pendingWedgeKeys?.delete(key)
+      strokeChamferKeys?.add(key)
+    } else if (!stamp && existing?.resolvedTo?.shapeKind === kind) {
+      const rotation = ((existing.resolvedTo.rotation + 1) % 4) as Rotation
+      existing.resolvedTo = { shapeKind: kind, rotation }
+    } else {
+      // A tricorner is the outer corner's triangular sibling: a tetrahedron with the wedge's
+      // triangular footprint and its apex above the corner opposite the open one. A triconcave
+      // is its flat-cut inner sibling: quad base, full-height quad walls, triangle walls and
+      // top, diagonal cut facet. Frozen at paint time with the brush rotation; never
+      // auto-resolved.
+      state.model.chamfer.set(key, {
+        planeAxis: plane.axis,
+        planeOrientation: plane.orientation,
+        resolvedTo: { shapeKind: kind, rotation: brush },
+      })
+    }
+    strokeSlabKeys?.add(key)
   } else if (kind === 'thin') {
     // Re-clicking a thin slab spins it 90° about the V it was painted on (the wedge-style
     // click-to-rotate escape hatch). Revisits within the same stroke are left untouched so a
@@ -436,7 +490,8 @@ function recolorAt(state: AppState, coord: Coord, box: CellBox, slot: PaletteSlo
 /**
  * Shape-kind paint into a sub-voxel box — the detail analogue of `applyPaintCell`'s shape
  * branches. A re-click on a family bevel that exactly occupies the box cycles it (rotate, then
- * advance the family once a full turn completes); otherwise ramp/wedge classify the box's own
+ * advance the family once a full turn completes); a re-click on a tri-pair bevel cycles it
+ * the same way within the outer/inner pair. Otherwise ramp/wedge classify the box's own
  * subcell neighborhood (`sampleBoxNeighborhood`, which reads children in adjacent voxels) and
  * every other kind freezes verbatim at the brush rotation. `writeBox` places the bevel — or a
  * plain block when the voxel is cut finer than the box. Unclassifiable ramps (null shape) and
@@ -454,11 +509,15 @@ function paintDetailBevel(
   const brush = (state.brushRotation ?? 0) as Rotation
   const parentKey = encodeKey(...coord)
   const at = exactChildIndex(state.model, coord, box)
-  if (!stamp && at !== null && isBevelFamilyKind(kind) && !strokeDetailKeys?.has(`${parentKey}/${at}`)) {
+  if (!stamp && at !== null && !strokeDetailKeys?.has(`${parentKey}/${at}`)) {
     const entry = getSubdivCell(state.model, coord)!.children[at]
     const existing = entry?.chamfer?.resolvedTo
-    if (entry && existing && isBevelFamilyKind(existing.shapeKind)) {
-      const turned = nextBevelTurn(existing.shapeKind, existing.rotation, brush)
+    const familyCycle = isBevelFamilyKind(kind) && existing && isBevelFamilyKind(existing.shapeKind)
+    const triCycle = isTriPairKind(kind) && existing && isTriPairKind(existing.shapeKind)
+    if (entry && existing && (familyCycle || triCycle)) {
+      const turned = familyCycle
+        ? nextBevelTurn(existing.shapeKind as BevelFamilyKind, existing.rotation, brush)
+        : nextTriTurn(existing.shapeKind as TriPairKind, existing.rotation, brush)
       writeBox(state.model, coord, box, {
         slot: entry.slot,
         chamfer: { planeAxis: plane.axis, planeOrientation: plane.orientation, resolvedTo: { shapeKind: turned.shapeKind, rotation: turned.rotation } },

@@ -6,7 +6,7 @@ import { mirrorChamferCell, rotateChamferCell, spinSlabAboutLocalY } from './cha
 const AXES: Axis[] = ['x', 'y', 'z']
 const ORIENTATIONS: Orientation[] = [1, -1]
 const ROTATIONS: Rotation[] = [0, 1, 2, 3]
-const SHAPES: ChamferShapeKind[] = ['ramp', 'convex', 'concave', 'wedge', 'thin', 'half', 'post', 'quarter', 'flat', 'flatwedge']
+const SHAPES: ChamferShapeKind[] = ['ramp', 'convex', 'concave', 'wedge', 'tricorner', 'triconcave', 'thin', 'half', 'post', 'quarter', 'flat', 'flatwedge']
 
 function cell(axis: Axis, orientation: Orientation, shape: ChamferShapeKind, rotation: Rotation): ChamferCell {
   return { planeAxis: axis, planeOrientation: orientation, resolvedTo: { shapeKind: shape, rotation } }

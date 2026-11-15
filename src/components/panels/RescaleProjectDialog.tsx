@@ -23,11 +23,13 @@ export function RescaleProjectDialog({ open, onOpenChange }: { open: boolean; on
   // empty. A child on k split axes lands on 2^(3-k) doubled cells, counted here so the
   // projection stays exact.
   let concaveCount = 0
+  let tricornerCount = 0
   let subdivRescaled = 0
   let subdivParents = 0
   if (model) {
     for (const cell of model.chamfer.values()) {
       if (cell.resolvedTo?.shapeKind === 'concave') concaveCount++
+      if (cell.resolvedTo?.shapeKind === 'tricorner') tricornerCount++
     }
     for (const sub of model.subdiv.values()) {
       let live = 0
@@ -39,7 +41,7 @@ export function RescaleProjectDialog({ open, onOpenChange }: { open: boolean; on
 
   const target = rescaleTargetExtent(gridExtent)
   const overCap = target > MAX_GRID_EXTENT
-  const projected = colorCount * 8 - concaveCount + subdivRescaled
+  const projected = colorCount * 8 - concaveCount - 4 * tricornerCount + subdivRescaled
 
   function rescale() {
     if (overCap) return
@@ -74,7 +76,7 @@ export function RescaleProjectDialog({ open, onOpenChange }: { open: boolean; on
                 <span className="text-neutral-500"> · </span>
                 <span className="font-mono tabular-nums">{colorCount + subdivParents} → {projected} voxels</span>
               </li>
-              <li className="text-neutral-400">Ramps and corners become exact staircases; thin slabs become back-to-back half-slabs, posts become quarter-columns, quarters become full cubes.</li>
+              <li className="text-neutral-400">Ramps, wedges and corners become exact staircases; thin slabs become back-to-back half-slabs, posts become quarter-columns, quarters become full cubes.</li>
               <li className="text-neutral-400">Subdivided detail dissolves into plain cubes (bevels become solid blocks, erased sub-cells stay empty).</li>
               <li className="text-neutral-400">Flat wedges tile the doubled diagonal; flats shift half a voxel toward their facing (no exact fit).</li>
               <li className="text-neutral-400">Texture paint, markers, and animation scale along.</li>

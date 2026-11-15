@@ -49,6 +49,29 @@ const CONCAVE_LOCAL_CORNERS: Coord[] = [
   [-0.5, -0.5, 0.5], // t3 NW top
 ]
 
+// Occupied local-prefab corners of a rotation-0 tricorner: the SE/SW/NW base triangle plus
+// the single top vertex above SW (see tricornerGeometry, canonical open corner NE).
+const TRICORNER_LOCAL_CORNERS: Coord[] = [
+  [0.5, 0.5, -0.5], // b1 SE base
+  [-0.5, 0.5, -0.5], // b2 SW base
+  [-0.5, -0.5, -0.5], // b3 NW base
+  [-0.5, 0.5, 0.5], // t2 SW top
+]
+
+// Occupied local-prefab corners of a rotation-0 triconcave: the full base quad plus every top
+// vertex except the notched NE corner (see triconcaveGeometry, canonical NE notch — the same
+// corner set as `concave`, differing only in the flat-cut vs folded-roof interior faces,
+// which the corner signature never sees).
+const TRICONCAVE_LOCAL_CORNERS: Coord[] = [
+  [0.5, -0.5, -0.5], // b0 NE base
+  [0.5, 0.5, -0.5], // b1 SE base
+  [-0.5, 0.5, -0.5], // b2 SW base
+  [-0.5, -0.5, -0.5], // b3 NW base
+  [0.5, 0.5, 0.5], // t1 SE top
+  [-0.5, 0.5, 0.5], // t2 SW top
+  [-0.5, -0.5, 0.5], // t3 NW top
+]
+
 // Occupied local-prefab corners of a rotation-0 quarter column: the NE vertical edge only
 // (base b0 + top t0) — the 0.5×0.5×1 column in the NE quadrant (see quarterGeometry).
 const QUARTER_LOCAL_CORNERS: Coord[] = [
@@ -70,6 +93,8 @@ const SHAPE_CORNERS: Record<Exclude<ChamferShapeKind, 'thin' | 'half' | 'post' |
   wedge: WEDGE_LOCAL_CORNERS,
   convex: CONVEX_LOCAL_CORNERS,
   concave: CONCAVE_LOCAL_CORNERS,
+  tricorner: TRICORNER_LOCAL_CORNERS,
+  triconcave: TRICONCAVE_LOCAL_CORNERS,
   quarter: QUARTER_LOCAL_CORNERS,
   flatwedge: FLATWEDGE_LOCAL_CORNERS,
 }

@@ -2,7 +2,7 @@ import * as THREE from 'three'
 import { decodeKey, encodeKey } from '@/engine/grid/GridStore'
 import type { CellKey, ChamferCell, Coord, DetailChild, VoxelModel } from '@/engine/grid/types'
 import { forEachSubdivChild } from '@/engine/grid/subdiv'
-import { concaveCornerGeometry, convexCornerGeometry, flatGeometry, flatWedgeGeometry, halfGeometry, mirrorVGeometry, postGeometry, quarterGeometry, rampGeometry, thinGeometry, wedgeGeometry } from '@/engine/chamfer/chamferGeometry'
+import { concaveCornerGeometry, convexCornerGeometry, flatGeometry, flatWedgeGeometry, halfGeometry, mirrorVGeometry, postGeometry, quarterGeometry, rampGeometry, thinGeometry, triconcaveGeometry, tricornerGeometry, wedgeGeometry } from '@/engine/chamfer/chamferGeometry'
 import { materialClassFor, resolveSlotColor, type MaterialClass } from '@/engine/palette/palette'
 import type { PaletteState } from '@/engine/palette/types'
 import type { SliceKey } from '@/engine/animation/types'
@@ -73,6 +73,8 @@ const CHAMFER_BASE: Record<string, THREE.BufferGeometry> = (() => {
   const convex = convexCornerGeometry(0)
   const concave = concaveCornerGeometry(0)
   const wedge = wedgeGeometry(0)
+  const tricorner = tricornerGeometry(0)
+  const triconcave = triconcaveGeometry(0)
   const thin = thinGeometry()
   const half = halfGeometry()
   const post = postGeometry()
@@ -84,6 +86,8 @@ const CHAMFER_BASE: Record<string, THREE.BufferGeometry> = (() => {
     convex,
     concave,
     wedge,
+    tricorner,
+    triconcave,
     thin,
     half,
     post,
@@ -94,6 +98,8 @@ const CHAMFER_BASE: Record<string, THREE.BufferGeometry> = (() => {
     convexM: mirrorVGeometry(convex),
     concaveM: mirrorVGeometry(concave),
     wedgeM: mirrorVGeometry(wedge),
+    tricornerM: mirrorVGeometry(tricorner),
+    triconcaveM: mirrorVGeometry(triconcave),
     thinM: mirrorVGeometry(thin),
     halfM: mirrorVGeometry(half),
     postM: mirrorVGeometry(post),

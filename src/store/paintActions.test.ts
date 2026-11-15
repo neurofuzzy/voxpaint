@@ -940,6 +940,183 @@ describe.each(['convex', 'concave'] as const)('paintCell explicit %s handling', 
   })
 })
 
+/** Paired triangular corner kinds (outer/inner siblings): frozen at paint time with the brush
+ * rotation, never autotiled, never joining the bevel-family cycle — re-clicking rotates, and a
+ * full turn advances to the partner. */
+describe.each(['tricorner', 'triconcave'] as const)('paintCell explicit %s handling', (kind) => {
+  const partner = kind === 'tricorner' ? 'triconcave' : 'tricorner'
+  beforeEach(() => {
+    const s = useAppStore.getState()
+    s.newProject('Test', 16)
+    s.setActiveVoxelKind(kind)
+    s.setBrushRotation(0)
+    s.setPlaneAxisOrientation('z', 1)
+    s.setPlaneOffset(0)
+  })
+
+  it('paints resolved at the brush rotation', () => {
+    const s = useAppStore.getState()
+    s.setBrushRotation(2)
+    s.beginStroke()
+    expect(s.paintCell(4, 4)).toBe(true)
+    s.commitStroke()
+
+    const after = useAppStore.getState()
+    expect(after.model.color.size).toBe(1)
+    expect(after.model.chamfer.get(keyFor(4, 4))).toEqual({
+      planeAxis: 'z',
+      planeOrientation: 1,
+      resolvedTo: { shapeKind: kind, rotation: 2 },
+    })
+  })
+
+  it('never autotiles, even surrounded by neighbors that would classify', () => {
+    useAppStore.getState().setActiveVoxelKind('cube')
+    const s = useAppStore.getState()
+    s.beginStroke()
+    for (const [u, v] of [[3, 4], [5, 4], [4, 3], [4, 5]] as const) expect(s.paintCell(u, v)).toBe(true)
+    s.commitStroke()
+
+    useAppStore.getState().setActiveVoxelKind(kind)
+    useAppStore.getState().beginStroke()
+    expect(useAppStore.getState().paintCell(4, 4)).toBe(true)
+    useAppStore.getState().commitStroke()
+    expect(useAppStore.getState().model.chamfer.get(keyFor(4, 4))).toEqual({
+      planeAxis: 'z',
+      planeOrientation: 1,
+      resolvedTo: { shapeKind: kind, rotation: 0 },
+    })
+  })
+
+  it('re-clicking rotates three times, then advances to the partner shape', () => {
+    const s = useAppStore.getState()
+    s.beginStroke()
+    expect(s.paintCell(4, 4)).toBe(true)
+    s.commitStroke()
+
+    for (const rotation of [1, 2, 3]) {
+      useAppStore.getState().beginStroke()
+      expect(useAppStore.getState().paintCell(4, 4)).toBe(true)
+      useAppStore.getState().commitStroke()
+      expect(useAppStore.getState().model.chamfer.get(keyFor(4, 4))).toEqual({
+        planeAxis: 'z',
+        planeOrientation: 1,
+        resolvedTo: { shapeKind: kind, rotation },
+      })
+    }
+    // Completing the full turn advances to the partner instead of wrapping the rotation.
+    useAppStore.getState().beginStroke()
+    expect(useAppStore.getState().paintCell(4, 4)).toBe(true)
+    useAppStore.getState().commitStroke()
+    expect(useAppStore.getState().model.chamfer.get(keyFor(4, 4))).toEqual({
+      planeAxis: 'z',
+      planeOrientation: 1,
+      resolvedTo: { shapeKind: partner, rotation: 0 },
+    })
+  })
+
+  it('re-applying within the same stroke does not cycle it', () => {
+    const s = useAppStore.getState()
+    s.beginStroke()
+    expect(s.paintCell(4, 4)).toBe(true)
+    expect(s.paintCell(4, 4)).toBe(true)
+    s.commitStroke()
+
+    expect(useAppStore.getState().model.chamfer.get(keyFor(4, 4))).toEqual({
+      planeAxis: 'z',
+      planeOrientation: 1,
+      resolvedTo: { shapeKind: kind, rotation: 0 },
+    })
+  })
+
+  it('a 3D-tap re-click rotates through the same path', () => {
+    const s = useAppStore.getState()
+    const key = encodeKey(4, 4, 0)
+    expect(s.paintLineAtCoord([4, 4, 0], false, null)).toBe(true)
+    expect(useAppStore.getState().model.chamfer.get(key)?.resolvedTo).toEqual({ shapeKind: kind, rotation: 0 })
+    expect(s.paintLineAtCoord([4, 4, 0], false, null)).toBe(true)
+    expect(useAppStore.getState().model.chamfer.get(key)?.resolvedTo).toEqual({ shapeKind: kind, rotation: 1 })
+  })
+})
+
+describe('tri-pair cross-kind behavior', () => {
+  beforeEach(() => {
+    const s = useAppStore.getState()
+    s.newProject('Test', 16)
+    s.setBrushRotation(0)
+    s.setPlaneAxisOrientation('z', 1)
+    s.setPlaneOffset(0)
+  })
+
+  it('painting tricorner over a convex corner replaces it verbatim', () => {
+    useAppStore.getState().setActiveVoxelKind('convex')
+    const s = useAppStore.getState()
+    s.beginStroke()
+    expect(s.paintCell(4, 4)).toBe(true)
+    s.commitStroke()
+
+    useAppStore.getState().setActiveVoxelKind('tricorner')
+    useAppStore.getState().beginStroke()
+    expect(useAppStore.getState().paintCell(4, 4)).toBe(true)
+    useAppStore.getState().commitStroke()
+    expect(useAppStore.getState().model.chamfer.get(keyFor(4, 4))).toEqual({
+      planeAxis: 'z',
+      planeOrientation: 1,
+      resolvedTo: { shapeKind: 'tricorner', rotation: 0 },
+    })
+  })
+
+  it('a convex full turn advances to concave, never to a tri corner', () => {
+    useAppStore.getState().setActiveVoxelKind('convex')
+    const s = useAppStore.getState()
+    s.beginStroke()
+    expect(s.paintCell(4, 4)).toBe(true)
+    s.commitStroke()
+
+    for (let i = 0; i < 4; i++) {
+      useAppStore.getState().beginStroke()
+      expect(useAppStore.getState().paintCell(4, 4)).toBe(true)
+      useAppStore.getState().commitStroke()
+    }
+    expect(useAppStore.getState().model.chamfer.get(keyFor(4, 4))).toEqual({
+      planeAxis: 'z',
+      planeOrientation: 1,
+      resolvedTo: { shapeKind: 'concave', rotation: 0 },
+    })
+  })
+
+  it('a partner full turn cycles back: tricorner to triconcave and back', () => {
+    useAppStore.getState().setActiveVoxelKind('tricorner')
+    const s = useAppStore.getState()
+    s.beginStroke()
+    expect(s.paintCell(4, 4)).toBe(true)
+    s.commitStroke()
+
+    // Four re-clicks: r1, r2, r3, then the partner at home.
+    for (let i = 0; i < 4; i++) {
+      useAppStore.getState().beginStroke()
+      expect(useAppStore.getState().paintCell(4, 4)).toBe(true)
+      useAppStore.getState().commitStroke()
+    }
+    expect(useAppStore.getState().model.chamfer.get(keyFor(4, 4))).toEqual({
+      planeAxis: 'z',
+      planeOrientation: 1,
+      resolvedTo: { shapeKind: 'triconcave', rotation: 0 },
+    })
+    // Four more re-clicks with the tricorner brush still loaded cycle the partner and return.
+    for (let i = 0; i < 4; i++) {
+      useAppStore.getState().beginStroke()
+      expect(useAppStore.getState().paintCell(4, 4)).toBe(true)
+      useAppStore.getState().commitStroke()
+    }
+    expect(useAppStore.getState().model.chamfer.get(keyFor(4, 4))).toEqual({
+      planeAxis: 'z',
+      planeOrientation: 1,
+      resolvedTo: { shapeKind: 'tricorner', rotation: 0 },
+    })
+  })
+})
+
 /** Clicking the yellow 3D selection box stamps the whole selection with the brush. */
 describe('fillSelection (box click fills the window with the brush)', () => {
   const SLOT_A = { kind: 'base', index: 0 } as const
@@ -1450,6 +1627,21 @@ describe('grid-resolution editing (writeBox)', () => {
         chamfer: { planeAxis: 'z', planeOrientation: 1, resolvedTo: { shapeKind: 'convex', rotation: 0 } },
       })
       expect(sub.children.filter((c) => c?.chamfer)).toHaveLength(1)
+    })
+
+    it('re-clicking a tri-pair detail bevel cycles it within the pair', () => {
+      frontSlab()
+      useAppStore.getState().setActiveVoxelKind('tricorner')
+      stroke((s) => expect(s.paintCell(0, -1, 0, 0)).toBe(true))
+      expect(sub0()!.children[6]?.chamfer?.resolvedTo).toEqual({ shapeKind: 'tricorner', rotation: 0 })
+      stroke((s) => expect(s.paintCell(0, -1, 0, 0)).toBe(true))
+      expect(sub0()!.children[6]?.chamfer?.resolvedTo).toEqual({ shapeKind: 'tricorner', rotation: 1 })
+      // Two more re-clicks rotate on, and the fourth completes the turn to the partner.
+      stroke((s) => expect(s.paintCell(0, -1, 0, 0)).toBe(true))
+      stroke((s) => expect(s.paintCell(0, -1, 0, 0)).toBe(true))
+      expect(sub0()!.children[6]?.chamfer?.resolvedTo).toEqual({ shapeKind: 'tricorner', rotation: 3 })
+      stroke((s) => expect(s.paintCell(0, -1, 0, 0)).toBe(true))
+      expect(sub0()!.children[6]?.chamfer?.resolvedTo).toEqual({ shapeKind: 'triconcave', rotation: 0 })
     })
 
     it('auto-bevels ramps from the subcell neighborhood', () => {

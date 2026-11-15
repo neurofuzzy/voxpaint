@@ -80,9 +80,10 @@ const EXPECTED_ROTATION_GRID = [
   '--2111--',
 ]
 
-// `thin`/`half`/`post`/`quarter`/`flat`/`flatwedge` are never produced by the resolver (painted
-// directly, not classified from neighbors); their entries only satisfy the total Record type.
-const SHAPE_LETTER: Record<ChamferShapeKind, string> = { ramp: 'B', convex: 'C', concave: 'D', wedge: 'E', thin: 'F', half: 'G', post: 'H', quarter: 'I', flat: 'J', flatwedge: 'K' }
+// `thin`/`half`/`post`/`quarter`/`flat`/`flatwedge`/`tricorner`/`triconcave` are never produced
+// by the resolver (painted directly, not classified from neighbors); their entries only satisfy
+// the total Record type.
+const SHAPE_LETTER: Record<ChamferShapeKind, string> = { ramp: 'B', convex: 'C', concave: 'D', wedge: 'E', thin: 'F', half: 'G', post: 'H', quarter: 'I', flat: 'J', flatwedge: 'K', tricorner: 'L', triconcave: 'M' }
 
 function buildSteadyStateModel(): VoxelModel {
   const model = emptyModel()

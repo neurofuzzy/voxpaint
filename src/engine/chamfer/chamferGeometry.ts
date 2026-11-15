@@ -226,6 +226,68 @@ export function convexCornerGeometry(rotation: 0 | 1 | 2 | 3 = 0): THREE.BufferG
 }
 
 /**
+ * Model L — tricorner (triangular-plan outer corner): a tetrahedron — 4 sides, 4 triangles.
+ * The outer corner's triangular sibling: full height only at the south-west corner (its single
+ * top vertex is above SW), sloping down to the base at every other corner like `convex`, but
+ * the base itself is the SE/SW/NW triangle (no vertex at all, top or bottom, at the cut NE
+ * corner — the wedge footprint). Canonical (rotation-0) open corner is NE, same convention as
+ * `convex`/`wedge`, so a tricorner is interchangeable with an outer corner voxel on the same
+ * rotation. Every face is a triangle: bottom, west + south wall triangles (each exactly the
+ * lower-diagonal half of the matching wedge wall quad), and one sloped facet from the SW top
+ * vertex over the NW/SE base diagonal. Stacks cleanly on a same-rotation wedge (identical
+ * triangular footprint) and joins two perpendicular ramps triangle-to-triangle.
+ */
+export function tricornerGeometry(rotation: 0 | 1 | 2 | 3 = 0): THREE.BufferGeometry {
+  return buildGeometry(
+    [
+      // bottom (triangular footprint, z=-0.5) — SE, SW, NW only, no NE
+      [b(3), b(2), b(1)],
+      // west wall triangle (lower-diagonal half of the wedge's west quad)
+      [b(3), t(2), b(2)],
+      // south wall triangle (lower-diagonal half of the wedge's south quad)
+      [b(2), t(2), b(1)],
+      // sloped facet: SW top vertex over the NW/SE base diagonal
+      [t(2), b(3), b(1)],
+    ],
+    rotation,
+  )
+}
+
+/**
+ * Model M — triconcave (triangular inner corner): a cube with the open corner's top tetrahedron
+ * sliced off — 7 sides, 10 triangles. The inner sibling of the tricorner tetrahedron (and the
+ * flat-cut counterpart of the folded-roof `concave`): quad base, full-height quad west + south
+ * walls, triangle east + north walls tapering to the notch, a flat triangle top, and one flat
+ * diagonal cut facet where the NE-top corner (base NE kept, top NE removed) used to be.
+ * Canonical (rotation-0) notch is NE — same "missing corner" convention as `concave` — so the
+ * two inner corners take the same rotation for the same opening. The cut facet is exactly the
+ * sloped face an outer tricorner's slope would continue, and its solid is exactly what an
+ * outer tricorner's rescale leaves in the (0,1,0)-type child — the pair decomposes exactly.
+ */
+export function triconcaveGeometry(rotation: 0 | 1 | 2 | 3 = 0): THREE.BufferGeometry {
+  return buildGeometry(
+    [
+      // bottom (full footprint, z=-0.5)
+      [b(0), b(3), b(2)],
+      [b(0), b(2), b(1)],
+      // west + south full-height quads (flush walls, like concave)
+      [b(3), t(3), t(2)],
+      [b(3), t(2), b(2)],
+      [b(1), b(2), t(2)],
+      [b(1), t(2), t(1)],
+      // east + north sloped-side triangles tapering to the NE notch
+      [b(0), b(1), t(1)], // east wall triangle
+      [b(0), t(3), b(3)], // north wall triangle
+      // flat triangle top (the two edges meeting at the notch's south/west sides)
+      [t(3), t(1), t(2)],
+      // flat diagonal cut facet where the NE-top corner was
+      [t(3), b(0), t(1)],
+    ],
+    rotation,
+  )
+}
+
+/**
  * Model E — corner wedge: a flat diagonal cut, constant through the full outward (z) depth (not a
  * spec model — an editor-only shortcut shape, see the `wedge` voxel-kind's use of this). 5 sides,
  * 8 triangles. Full height at both the west and south walls (they meet at a right-angle SW corner);

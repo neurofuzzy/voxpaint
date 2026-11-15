@@ -1,0 +1,7 @@
+<svg viewBox="0 0 111 128" xmlns="http://www.w3.org/2000/svg">
+  <!-- Triconcave voxel-kind toolbar icon: a square with its top-right corner sliced away — the
+       flat-cut notch of the triangular inner corner. Same 111×128 frame as the other kind icons.
+       Edit freely — the toolbar picks up changes. -->
+  <path d="M277.128,512 L387.979,512 L387.979,608 L277.128,608 Z" fill="rgb(223,223,223)" />
+  <path d="M332.554,512 L387.979,512 L387.979,567.425 Z" fill="rgb(142,141,141)" />
+</svg>

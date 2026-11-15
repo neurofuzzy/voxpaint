@@ -7,6 +7,8 @@ import halfUrl from '@/assets/half.svg'
 import postUrl from '@/assets/post.svg'
 import quarterUrl from '@/assets/quarter.svg'
 import thinUrl from '@/assets/thin.svg'
+import triconcaveUrl from '@/assets/triconcave.svg'
+import tricornerUrl from '@/assets/tricorner.svg'
 import wedgeUrl from '@/assets/wedge.svg'
 
 /**
@@ -41,6 +43,14 @@ export function ConcaveIcon({ size = 18 }: IconProps) {
 
 export function WedgeIcon({ size = 18 }: IconProps) {
   return <FileIcon url={wedgeUrl} size={size} />
+}
+
+export function TricornerIcon({ size = 18 }: IconProps) {
+  return <FileIcon url={tricornerUrl} size={size} />
+}
+
+export function TriconcaveIcon({ size = 18 }: IconProps) {
+  return <FileIcon url={triconcaveUrl} size={size} />
 }
 
 export function ThinIcon({ size = 18 }: IconProps) {
