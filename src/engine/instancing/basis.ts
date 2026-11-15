@@ -1,7 +1,7 @@
 import * as THREE from 'three'
 import type { Axis, Coord, Orientation } from '@/engine/grid/types'
 import { planeLogicalBasis } from '@/engine/plane/constructionPlane'
-import { ALL_AXES, axisIndex, outwardNormal } from '@/engine/plane/planeGeometry'
+import { ALL_AXES, outwardNormal } from '@/engine/plane/planeGeometry'
 
 function setFromCoord(v: THREE.Vector3, coord: Coord): THREE.Vector3 {
   return v.set(coord[0], coord[1], coord[2])
@@ -70,11 +70,12 @@ export function chamferBasisIsReflected(planeAxis: Axis, planeOrientation: Orien
 /**
  * Placement matrix for a chamfer prefab scaled to fill an arbitrary subcell box. Same
  * convention as `chamferInstanceMatrix` (proper rotation, mirrored-variant geometry for
- * reflected planes), composed as T(center)·Basis·Rz·S: the shape rotates in unit space,
- * then stretches to fill the box exactly. `origin`/`size` are the subcell's world-space
- * min corner and extents (see subdiv.ts's `splitChildOrigin`/`splitChildSize`); `size` is
- * remapped into the prefab's (u, v, outward) frame internally, so the stretched shape
- * always fills exactly the subcell box regardless of which world axes are split.
+ * reflected planes), composed as T(center)·S·Basis·Rz: the shape spins in unit space,
+ * lands on its world axes via the basis, and only then stretches along the world axes
+ * into the box — so the stretched shape always fills exactly the subcell box regardless
+ * of which world axes are split. (Scaling before the spin instead — T·Basis·Rz·S —
+ * rotates the squash axes with the shape, so odd rotations in anisotropic boxes come
+ * out narrow on one world axis and overflowing their box on the other.)
  */
 export function scaledChamferInstanceMatrix(
   origin: [x: number, y: number, z: number],
@@ -90,17 +91,17 @@ export function scaledChamferInstanceMatrix(
   const sign = chamferBasisIsReflected(planeAxis, planeOrientation) ? -1 : 1
   scratchV.copy(worldV).multiplyScalar(sign)
   scratchBasis.makeBasis(worldU, scratchV, scratchOutward)
-  scratchBasis.setPosition(origin[0] + size[0] / 2, origin[1] + size[1] / 2, origin[2] + size[2] / 2)
-
-  // Prefab axes (u, v, outward) permute world x/y/z — scale each by the box's extent along
-  // that basis direction (not the world-axis size), so the shape fills the box exactly.
-  const axisOf = (v: THREE.Vector3): 0 | 1 | 2 => (v.getComponent(0) !== 0 ? 0 : v.getComponent(1) !== 0 ? 1 : 2)
-  const su = size[axisOf(worldU)]
-  const sv = size[axisOf(scratchV)]
-  const sw = size[axisIndex(planeAxis)]
+  // Rotation-only here: the translation is set on `out` below, after the world-axis
+  // scale is folded in (makeBasis leaves translation untouched, so clear any stale one
+  // from this shared scratch matrix instead of scaling it into the result).
+  scratchBasis.setPosition(0, 0, 0)
 
   scratchRotZ.makeRotationZ((sign * rotation * Math.PI) / 2)
-  return out.copy(scratchBasis).multiply(scratchRotZ).scale(new THREE.Vector3(su, sv, sw))
+  return out
+    .makeScale(size[0], size[1], size[2])
+    .multiply(scratchBasis)
+    .multiply(scratchRotZ)
+    .setPosition(origin[0] + size[0] / 2, origin[1] + size[1] / 2, origin[2] + size[2] / 2)
 }
 
 /**
