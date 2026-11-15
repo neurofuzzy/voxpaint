@@ -1,12 +1,14 @@
 import * as THREE from 'three'
 import { decodeKey, encodeKey } from '@/engine/grid/GridStore'
-import type { CellKey, ChamferCell, Coord, VoxelModel } from '@/engine/grid/types'
-import { concaveCornerGeometry, convexCornerGeometry, flatGeometry, flatWedgeGeometry, halfGeometry, mirrorVGeometry, postGeometry, quarterGeometry, rampGeometry, thinGeometry, wedgeGeometry } from '@/engine/chamfer/chamferGeometry'
+import type { CellKey, ChamferCell, Coord, DetailChild, VoxelModel } from '@/engine/grid/types'
+import { forEachSubdivChild } from '@/engine/grid/subdiv'
+import { concaveCornerGeometry, convexCornerGeometry, flatGeometry, flatWedgeGeometry, halfGeometry, mirrorVGeometry, postGeometry, quarterGeometry, rampGeometry, thinGeometry, triconcaveGeometry, tricornerGeometry, wedgeGeometry } from '@/engine/chamfer/chamferGeometry'
 import { materialClassFor, resolveSlotColor, type MaterialClass } from '@/engine/palette/palette'
 import type { PaletteState } from '@/engine/palette/types'
 import type { SliceKey } from '@/engine/animation/types'
-import { chamferBasisIsReflected, chamferInstanceMatrix } from './basis'
-import { mergeCoplanarFacesWithKeys, optimizeGroupsByCSG, triangleCount, type VoxelGroup } from './meshOptimizer'
+import { chamferBasisIsReflected, chamferInstanceMatrix, scaledChamferInstanceMatrix } from './basis'
+import { mergeCoplanarFaces, mergeCoplanarFacesWithKeys, optimizeGroupsByCSG, triangleCount, type VoxelGroup } from './meshOptimizer'
+import { halfOccupancy, triangleHidden } from './hiddenFaceCull'
 
 /**
  * Bakes the whole model into a single optimized "shell" mesh for the 3D preview's optimized-mesh
@@ -71,6 +73,8 @@ const CHAMFER_BASE: Record<string, THREE.BufferGeometry> = (() => {
   const convex = convexCornerGeometry(0)
   const concave = concaveCornerGeometry(0)
   const wedge = wedgeGeometry(0)
+  const tricorner = tricornerGeometry(0)
+  const triconcave = triconcaveGeometry(0)
   const thin = thinGeometry()
   const half = halfGeometry()
   const post = postGeometry()
@@ -82,6 +86,8 @@ const CHAMFER_BASE: Record<string, THREE.BufferGeometry> = (() => {
     convex,
     concave,
     wedge,
+    tricorner,
+    triconcave,
     thin,
     half,
     post,
@@ -92,6 +98,8 @@ const CHAMFER_BASE: Record<string, THREE.BufferGeometry> = (() => {
     convexM: mirrorVGeometry(convex),
     concaveM: mirrorVGeometry(concave),
     wedgeM: mirrorVGeometry(wedge),
+    tricornerM: mirrorVGeometry(tricorner),
+    triconcaveM: mirrorVGeometry(triconcave),
     thinM: mirrorVGeometry(thin),
     halfM: mirrorVGeometry(half),
     postM: mirrorVGeometry(post),
@@ -162,17 +170,32 @@ function addTri(faces: Face[], a: THREE.Vector3, b: THREE.Vector3, c: THREE.Vect
 }
 
 /** Emit a quad as two triangles split on a canonical diagonal (min→max corner), so coincident
- * faces from adjacent cells produce identical vertex-triples for the shell pass. */
+ * faces from adjacent cells produce identical vertex-triples for the shell pass. The order only
+ * needs to be deterministic on corner sets (any total order gives the same diagonal for the same
+ * quad), so corners are compared as quantized integer triples — far cheaper than the old
+ * `localeCompare` on key strings, which dominated emission time on large models. */
 function pushQuad(faces: Face[], corners: THREE.Vector3[], outward: THREE.Vector3, mat: Mat) {
-  const s = [...corners].sort((p, q) => qkey(p).localeCompare(qkey(q), undefined, { numeric: true }))
+  const keyed = corners.map((p) => ({
+    p,
+    x: Math.round(p.x * QUANT),
+    y: Math.round(p.y * QUANT),
+    z: Math.round(p.z * QUANT),
+  }))
+  keyed.sort((a, b) => a.x - b.x || a.y - b.y || a.z - b.z)
+  const s = keyed.map((e) => e.p)
   addTri(faces, s[0], s[1], s[3], mat, outward)
   addTri(faces, s[0], s[3], s[2], mat, outward)
 }
 
-function emitCube(faces: Face[], [x, y, z]: Coord, mat: Mat) {
-  const x1 = x + 1
-  const y1 = y + 1
-  const z1 = z + 1
+function emitCube(faces: Face[], [x, y, z]: Coord | [number, number, number], mat: Mat, size = 1) {
+  emitBox(faces, [x, y, z], [size, size, size], mat)
+}
+
+/** Axis-aligned box emission (the shell path's unit workhorse, generalized for subcells). */
+function emitBox(faces: Face[], [x, y, z]: [number, number, number], [sx, sy, sz]: [number, number, number], mat: Mat) {
+  const x1 = x + sx
+  const y1 = y + sy
+  const z1 = z + sz
   const P = (px: number, py: number, pz: number) => new THREE.Vector3(px, py, pz)
   // 6 axis-aligned faces, each with its outward normal.
   pushQuad(faces, [P(x, y, z), P(x, y1, z), P(x, y1, z1), P(x, y, z1)], new THREE.Vector3(-1, 0, 0), mat)
@@ -380,8 +403,41 @@ function buildShellFaces(
     for (let i = start; i < faces.length; i++) faces[i].cellKey = key
   }
 
+  // Detail children emit at their fractional origins and sizes; same-size interfaces between
+  // subdivided parents still triple-match and cull, and seams against full cubes (differently
+  // sized faces) are dropped by the half-voxel hidden-face pass after the shell cull. Chamfer children emit their scaled prefabs; the
+  // shell fast path declines those models to the CSG union (see buildOptimizedVoxelGroupsShell).
+  forEachSubdivChild(model, (parentKey, _index, origin, size, child) => {
+    const mat: Mat = { colorKey: color.set(resolveSlotColor(palette, child.slot)).getHex(), materialClass: materialClassFor(child.slot.kind) }
+    const start = faces.length
+    const resolved = child.chamfer?.resolvedTo
+    if (resolved) {
+      const chamfer = child.chamfer!
+      const variant = chamferBasisIsReflected(chamfer.planeAxis, chamfer.planeOrientation) ? 'M' : ''
+      const base = CHAMFER_BASE[`${resolved.shapeKind}${variant}`]
+      scaledChamferInstanceMatrix(origin, size, chamfer.planeAxis, chamfer.planeOrientation, resolved.rotation, matrix)
+      emitChamfer(faces, base, matrix, mat)
+      for (let i = start; i < faces.length; i++) faces[i].chamfer = chamfer
+    } else {
+      emitBox(faces, origin, size, mat)
+    }
+    for (let i = start; i < faces.length; i++) faces[i].cellKey = parentKey
+  })
+
   const rawTriangles = faces.length
-  return { faces: removeInteriorFaces(faces, nodeAssignment, cullInteriorFaces, rigAssignment), rawTriangles }
+  const shell = removeInteriorFaces(faces, nodeAssignment, cullInteriorFaces, rigAssignment)
+  if (model.subdiv.size === 0) return { faces: shell, rawTriangles }
+  // Differently sized faces (detail against whole voxels, or against another split) never
+  // triple-match above: drop the ones the half-voxel volume hides (see hiddenFaceCull.ts).
+  const nodeOf = cellNode(nodeAssignment, rigAssignment)
+  const occ = halfOccupancy(model, palette, nodeOf)
+  const visible = shell.filter((f) => f.twoSided || !triangleHidden(f.a, f.b, f.c, f.normal, { materialClass: f.materialClass, colorKey: f.colorKey, node: nodeOf(f.cellKey!) }, occ, !cullInteriorFaces))
+  return { faces: visible, rawTriangles }
+}
+
+/** A cell's animation/rig node identity — the same `slice\0rig` form the CSG cull gives groups. */
+function cellNode(nodeAssignment?: Map<CellKey, SliceKey>, rigAssignment?: Map<CellKey, string>): (key: CellKey) => string {
+  return (key) => `${nodeAssignment?.get(key) ?? ''}\0${rigAssignment?.get(key) ?? ''}`
 }
 
 export interface ColorGroupGeometry {
@@ -394,15 +450,38 @@ export interface ColorGroupGeometry {
   rigId?: string
 }
 
+/** World-space solid for one detail child: its frozen bevel prefab scaled into the child box,
+ * or the box itself (plain and unresolved children). Shared by the CSG builders. */
+function detailChildGeometry(
+  origin: [number, number, number],
+  size: [number, number, number],
+  child: DetailChild,
+  matrix: THREE.Matrix4,
+): THREE.BufferGeometry {
+  const resolved = child.chamfer?.resolvedTo
+  if (resolved) {
+    const chamfer = child.chamfer!
+    const variant = chamferBasisIsReflected(chamfer.planeAxis, chamfer.planeOrientation) ? 'M' : ''
+    const geom = CHAMFER_BASE[`${resolved.shapeKind}${variant}`].clone()
+    scaledChamferInstanceMatrix(origin, size, chamfer.planeAxis, chamfer.planeOrientation, resolved.rotation, matrix)
+    return geom.applyMatrix4(matrix)
+  }
+  const geom = new THREE.BoxGeometry(size[0], size[1], size[2])
+  return geom.translate(origin[0] + size[0] / 2, origin[1] + size[1] / 2, origin[2] + size[2] / 2)
+}
+
 /**
  * "Occupied" for the glass occlusion cull (see `meshOptimizer.ts`'s `removeOccludedGlassFaces`):
  * a resolved chamfer cell doesn't fully fill its cube — a wedge or ramp leaves part of the
  * neighbouring face's view open — so it's treated as unoccupied here even though `model.color`
  * has an entry for it. An *unresolved* chamfer cell still renders as a plain cube (see
  * `ChamferCell.resolvedTo`'s doc comment) and counts as occupied like any other solid voxel.
+ * A subdivided parent counts as occupied: its volume is detail-solid, and the probe only ever
+ * lands inside it past a genuinely adjacent face (see the probe's doc comment on half-faces).
  */
 function isCellOccupied(model: VoxelModel, x: number, y: number, z: number): boolean {
   const key = encodeKey(x, y, z)
+  if (model.subdiv.has(key)) return true
   if (!model.color.has(key)) return false
   return !model.chamfer.get(key)?.resolvedTo
 }
@@ -465,10 +544,88 @@ export function buildOptimizedVoxelGroups(model: VoxelModel, palette: PaletteSta
     rawTriangles += triangleCount(geom) + pushCellGeometry(group, geom, chamfer)
   }
 
+  // Detail children union as subcell-box solids in their own slot's group, chamfered or
+  // plain (subcell bevels scale their prefab to fill the box — the union is scale-agnostic).
+  forEachSubdivChild(model, (parentKey, _index, origin, size, child) => {
+    const materialClass = materialClassFor(child.slot.kind)
+    const colorKey = color.set(resolveSlotColor(palette, child.slot)).getHex()
+    const rigId = rigAssignment?.get(parentKey)
+    const groupKey = `${materialClass}:${colorKey}:${rigId ?? ''}`
+    let group = byGroup.get(groupKey)
+    if (!group) {
+      group = { colorKey, materialClass, geometries: [], rigId }
+      byGroup.set(groupKey, group)
+    }
+    const geom = detailChildGeometry(origin, size, child, matrix)
+    rawTriangles += triangleCount(geom) + pushCellGeometry(group, geom, child.chamfer)
+  })
+
   const isOccupied = (x: number, y: number, z: number) => isCellOccupied(model, x, y, z)
-  const groups = optimizeGroupsByCSG(Array.from(byGroup.values()), mergeCoplanar ?? true, isOccupied, cullInteriorFaces)
+  const occ = model.subdiv.size > 0 ? halfOccupancy(model, palette, cellNode(undefined, rigAssignment)) : undefined
+  const groups = optimizeGroupsByCSG(Array.from(byGroup.values()), mergeCoplanar ?? true, isOccupied, cullInteriorFaces, occ)
   let optimizedTriangles = 0
   for (const g of groups) optimizedTriangles += triangleCount(g.geometry)
+
+  return { groups, rawTriangles, optimizedTriangles }
+}
+
+/**
+ * Shell-based fast path for `buildOptimizedVoxelGroups`: emits per-cell faces, culls exact
+ * interior pairs via `removeInteriorFaces`, groups by (materialClass, colorKey), and runs the
+ * coplanar merge per group — no BSP booleans, no per-voxel `BoxGeometry` allocation.
+ *
+ * Returns `null` when the model contains a resolved non-flat chamfer (`ramp`/`convex`/
+ * `concave`/`wedge`/`thin`/`half`/`post`/`quarter`): a bevel's side faces can partially overlap
+ * a neighbour's full quad (e.g. two adjacent ramps with mismatched rotations), which exact
+ * triple-matching can neither cull nor keep cleanly — the CSG union is still required there.
+ * Scaled subcell bevels decline for the same reason (their sloped faces never triple-match).
+ * Callers fall back to `buildOptimizedVoxelGroups` in that case.
+ *
+ * Exact for everything else, by construction: cubes (and unresolved chamfers, which emit as
+ * cubes) only ever share full quads across a boundary, and every such quad is emitted on the
+ * canonical `pushQuad` diagonal on both sides, so interior interfaces always match exactly and
+ * partial overlaps are impossible. Zero-thickness flats only live on cell centre planes, never
+ * coincident with a boundary face; their opposite-winding pairs never pair in the shell pass
+ * and self-cancel in boundary extraction, so they weld into panes exactly like the CSG flat
+ * pass (see the flat parity test). Glass agrees with the CSG occupancy test on this subset:
+ * every neighbour here either fully occupies its cell (cube) or never shares a triple (flat).
+ */
+export function buildOptimizedVoxelGroupsShell(model: VoxelModel, palette: PaletteState, mergeCoplanar = true, cullInteriorFaces = true): OptimizedVoxelGroups | null {
+  for (const cell of model.chamfer.values()) {
+    const kind = cell.resolvedTo?.shapeKind
+    if (kind !== undefined && kind !== 'flat' && kind !== 'flatwedge') return null
+  }
+  for (const sub of model.subdiv.values()) {
+    for (const child of sub.children) {
+      if (child?.chamfer) return null
+    }
+  }
+
+  const { faces, rawTriangles } = buildShellFaces(model, palette, undefined, cullInteriorFaces)
+
+  const byGroup = new Map<string, { colorKey: number; materialClass: MaterialClass; faces: Face[] }>()
+  for (const f of faces) {
+    const groupKey = `${f.materialClass}:${f.colorKey}`
+    let group = byGroup.get(groupKey)
+    if (!group) {
+      group = { colorKey: f.colorKey, materialClass: f.materialClass, faces: [] }
+      byGroup.set(groupKey, group)
+    }
+    group.faces.push(f)
+  }
+
+  const groups: ColorGroupGeometry[] = []
+  let optimizedTriangles = 0
+  for (const group of byGroup.values()) {
+    let geometry = geometryFromFaces(group.faces)
+    if (mergeCoplanar) {
+      const merged = mergeCoplanarFaces(geometry)
+      geometry.dispose()
+      geometry = merged
+    }
+    optimizedTriangles += triangleCount(geometry)
+    groups.push({ colorKey: group.colorKey, materialClass: group.materialClass, geometry })
+  }
 
   return { groups, rawTriangles, optimizedTriangles }
 }
@@ -541,8 +698,26 @@ export function buildOptimizedVoxelGroupsBySlice(
     rawTriangles += triangleCount(geom) + pushCellGeometry(group, geom, chamfer)
   }
 
+  // Detail children union as subcell-box solids, inheriting the parent cell's animation
+  // node and rig assignment (detail follows its parent — see rigIdForCoord).
+  forEachSubdivChild(model, (parentKey, _index, origin, size, child) => {
+    const materialClass = materialClassFor(child.slot.kind)
+    const colorKey = color.set(resolveSlotColor(palette, child.slot)).getHex()
+    const sliceKey = nodeAssignment.get(parentKey) ?? ''
+    const rigId = rigAssignment?.get(parentKey)
+    const groupKey = `${materialClass}:${colorKey}:${sliceKey}:${rigId ?? ''}`
+    let group = byGroup.get(groupKey)
+    if (!group) {
+      group = { colorKey, materialClass, geometries: [], sliceKey, rigId }
+      byGroup.set(groupKey, group)
+    }
+    const geom = detailChildGeometry(origin, size, child, matrix)
+    rawTriangles += triangleCount(geom) + pushCellGeometry(group, geom, child.chamfer)
+  })
+
   const isOccupied = (x: number, y: number, z: number) => isCellOccupied(model, x, y, z)
-  const groups: SliceGroupGeometry[] = optimizeGroupsByCSG(Array.from(byGroup.values()), mergeCoplanar ?? true, isOccupied, cullInteriorFaces)
+  const occ = model.subdiv.size > 0 ? halfOccupancy(model, palette, cellNode(nodeAssignment, rigAssignment)) : undefined
+  const groups: SliceGroupGeometry[] = optimizeGroupsByCSG(Array.from(byGroup.values()), mergeCoplanar ?? true, isOccupied, cullInteriorFaces, occ)
   let optimizedTriangles = 0
   for (const g of groups) optimizedTriangles += triangleCount(g.geometry)
 

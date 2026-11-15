@@ -87,33 +87,63 @@ function findConnectedComponents(faces: Face[]): Face[][] {
     else byNormal.set(nk, [f])
   }
 
+  // Union-find over shared edges within each dominant-axis bucket (the old BFS scanned every
+  // face against every other face — O(n²) edge-set compares — then flood-filled; the closure it
+  // computed is exactly the connected components of (shared edge ∧ normals past threshold),
+  // which the edge hash below collects in near-linear time). Kept bucket-first so a pair whose
+  // normals agree past threshold but fall under different dominant axes still never merges,
+  // exactly like the old pass.
   const groups: Face[][] = []
   for (const [, subset] of byNormal) {
-    const edgesByFace = subset.map((f) => new Set([edgeKey(f.v0, f.v1), edgeKey(f.v1, f.v2), edgeKey(f.v2, f.v0)]))
+    const parent = subset.map((_, i) => i)
+    const find = (x: number): number => {
+      let root = x
+      while (parent[root] !== root) root = parent[root]
+      while (parent[x] !== root) {
+        const next = parent[x]
+        parent[x] = root
+        x = next
+      }
+      return root
+    }
+    const union = (a: number, b: number): void => {
+      const ra = find(a)
+      const rb = find(b)
+      if (ra === rb) return
+      if (ra < rb) parent[rb] = ra
+      else parent[ra] = rb
+    }
 
-    const visited = new Set<number>()
-    for (let start = 0; start < subset.length; start++) {
-      if (visited.has(start)) continue
-      const group: Face[] = []
-      const stack = [start]
-      while (stack.length > 0) {
-        const idx = stack.pop()!
-        if (visited.has(idx)) continue
-        visited.add(idx)
-        group.push(subset[idx])
-        for (let other = 0; other < subset.length; other++) {
-          if (visited.has(other)) continue
-          if (subset[idx].normal.dot(subset[other].normal) < NORMAL_THRESHOLD) continue
-          for (const e of edgesByFace[idx]) {
-            if (edgesByFace[other].has(e)) {
-              stack.push(other)
-              break
-            }
-          }
+    const byEdge = new Map<string, number[]>()
+    subset.forEach((f, i) => {
+      for (const e of [edgeKey(f.v0, f.v1), edgeKey(f.v1, f.v2), edgeKey(f.v2, f.v0)]) {
+        const arr = byEdge.get(e)
+        if (arr) arr.push(i)
+        else byEdge.set(e, [i])
+      }
+    })
+
+    for (const idxs of byEdge.values()) {
+      if (idxs.length < 2) continue
+      for (let a = 0; a < idxs.length; a++) {
+        for (let b = a + 1; b < idxs.length; b++) {
+          const i = idxs[a]
+          const j = idxs[b]
+          if (find(i) === find(j)) continue
+          if (subset[i].normal.dot(subset[j].normal) < NORMAL_THRESHOLD) continue
+          union(i, j)
         }
       }
-      groups.push(group)
     }
+
+    const byRoot = new Map<number, Face[]>()
+    subset.forEach((f, i) => {
+      const r = find(i)
+      const g = byRoot.get(r)
+      if (g) g.push(f)
+      else byRoot.set(r, [f])
+    })
+    for (const [, g] of [...byRoot.entries()].sort((a, b) => a[0] - b[0])) groups.push(g)
   }
 
   return groups
@@ -228,8 +258,11 @@ export function unwrapGeometries(geometries: THREE.BufferGeometry[]): {
     const faces = allFaces[rect.geomIdx]
     const uv1 = uv1Arrays[rect.geomIdx]
 
+    // `faceIndices` are dense 0-based triangle indices and `parseFaces` pushes faces in index
+    // order, so this is a direct lookup — the old `faces.find(f => f.index === fi)` re-scanned
+    // the whole list per face (O(n²) total) on every preview rebuild and export.
     for (const fi of rect.faceIndices) {
-      const face = faces.find((f) => f.index === fi)
+      const face = faces[fi]
       if (!face) continue
 
       const baseIdx = fi * 3

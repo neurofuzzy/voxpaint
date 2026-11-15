@@ -3,7 +3,7 @@ import type { PaletteSlotRef } from '@/engine/palette/types'
 export type Axis = 'x' | 'y' | 'z'
 export type Orientation = 1 | -1
 export type Rotation = 0 | 1 | 2 | 3
-export type ChamferShapeKind = 'ramp' | 'convex' | 'concave' | 'wedge' | 'thin' | 'half' | 'post' | 'quarter' | 'flat' | 'flatwedge'
+export type ChamferShapeKind = 'ramp' | 'convex' | 'concave' | 'wedge' | 'tricorner' | 'triconcave' | 'thin' | 'half' | 'post' | 'quarter' | 'flat' | 'flatwedge'
 
 /** Locked-in project size (edge length of the working cube), chosen at project creation and
  * editable thereafter in Project Settings (`updateProjectSettings` — growing keeps everything,
@@ -55,10 +55,44 @@ export type BBox = {
   max: Coord
 }
 
+/**
+ * A split world axis of a subdivided voxel. A voxel is cut in half along 1–3 of them (one
+ * level only — children never subdivide further), giving 2, 4, or 8 children. Stored as one
+ * `SubdivCell` under the voxel's CellKey; the voxel's `color`/`chamfer` cells are absent while
+ * subdivided. Children hold any voxel content, scaled to fill their box at render/export —
+ * chamfer shapes are frozen explicit kinds. All writes go through `engine/grid/cellBox.ts`.
+ */
+export type SplitAxis = 'x' | 'y' | 'z'
+
+/**
+ * Global edit grid family, derived from the armed split's axis count (see `gridFamilyOf`):
+ * whole paints unit voxels; half, quarter, and octal arm a world-axis division every edit
+ * writes at.
+ */
+export type GridFamily = 'whole' | 'half' | 'quarter' | 'octal'
+
+export type DetailChild = {
+  slot: PaletteSlotRef
+  /** Frozen explicit shape, scaled to fill the child's box. Absent = plain cube. */
+  chamfer?: ChamferCell
+}
+
+export type SubdivCell = {
+  /** Split world axes, 1–3 distinct, in x,y,z order. Children = 2^split.length. */
+  split: SplitAxis[]
+  /**
+   * Per-child content in split-bit order (see `childIndex` in cellBox.ts) — `null` = empty.
+   * Always normalized: never all-empty, never uniform plain (those fold to a plain voxel).
+   */
+  children: (DetailChild | null)[]
+}
+
 export type VoxelModel = {
   /** Plain cubic voxels, keyed by CellKey. Treat as immutable outside of Immer producers. */
   color: Map<CellKey, ColorCell>
   /** Chamfered voxels, keyed by CellKey. A chamfer cell always has a matching color cell. */
   chamfer: Map<CellKey, ChamferCell>
+  /** Subdivided voxels, keyed by the PARENT CellKey. A subdiv parent has no color/chamfer cell. */
+  subdiv: Map<CellKey, SubdivCell>
   bounds: BBox | null
 }

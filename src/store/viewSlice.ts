@@ -25,6 +25,7 @@ export const createViewSlice: Slice = (set, get) => ({
   // Model's own layout, remembered across tab switches and refreshes (see modelLayout pref).
   modelLayout: loadUiPrefs().modelLayout ?? loadUiPrefs().layoutMode ?? 'split',
   hoverCell: null,
+  hoverBits: null,
   chamferHoverValid: null,
   hoveredFace: null,
   wireframe: false,
@@ -53,6 +54,8 @@ export const createViewSlice: Slice = (set, get) => ({
   exportIncludeTextureMaps: true,
   exportIncludeAOMaps: true,
   exportIncludeMarkers: true,
+  exportIncludeAnimations: true,
+  exportBakeAssemblyPose: false,
 
   setFullscreen: (v) => set((state) => { state.fullscreen = v }),
   setLayoutMode: (v) => {
@@ -94,6 +97,7 @@ export const createViewSlice: Slice = (set, get) => ({
       state.hoverCell = coord
       state.chamferHoverValid = chamferValid
     }),
+  setHoverBits: (bits) => set((state) => { state.hoverBits = bits }),
   setHoveredFace: (face) => set((state) => { state.hoveredFace = face }),
   setStatusMessage: (msg) => set((state) => { state.statusMessage = msg }),
   flashSelectionBlocked: () => {
@@ -123,4 +127,6 @@ export const createViewSlice: Slice = (set, get) => ({
   setExportIncludeTextureMaps: (v) => set((state) => { state.exportIncludeTextureMaps = v; state.dirty = true }),
   setExportIncludeAOMaps: (v) => set((state) => { state.exportIncludeAOMaps = v; state.dirty = true }),
   setExportIncludeMarkers: (v) => set((state) => { state.exportIncludeMarkers = v; state.dirty = true }),
+  setExportIncludeAnimations: (v) => set((state) => { state.exportIncludeAnimations = v; state.dirty = true }),
+  setExportBakeAssemblyPose: (v) => set((state) => { state.exportBakeAssemblyPose = v; state.dirty = true }),
 })

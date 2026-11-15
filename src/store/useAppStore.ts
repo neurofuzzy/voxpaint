@@ -9,10 +9,12 @@ import { createRiggingSlice } from './riggingSlice'
 import { createPaintActionsSlice } from './paintActions'
 import { createPersistenceSlice } from './persistenceSlice'
 import { createPlaneSlice } from './planeSlice'
+import { createPoseSlice } from './poseSlice'
 import { createProjectSlice } from './projectSlice'
 import { createSelectionSlice } from './selectionSlice'
 import { createSelection3DSlice } from './selection3DSlice'
 import { createMoveActionsSlice } from './moveActions'
+import { createPartMoveActionsSlice } from './partMoveActions'
 import { createTextureSlice } from './textureSlice'
 import { createToolActionsSlice } from './toolActionsSlice'
 import { createToolSlice } from './toolSlice'
@@ -35,11 +37,13 @@ export const useAppStore = create<AppState>()(
     ...createPaintActionsSlice(...a),
     ...createToolActionsSlice(...a),
     ...createMoveActionsSlice(...a),
+    ...createPartMoveActionsSlice(...a),
     ...createModeSlice(...a),
     ...createTextureSlice(...a),
     ...createAnimationSlice(...a),
     ...createMarkerSlice(...a),
     ...createRiggingSlice(...a),
+    ...createPoseSlice(...a),
     ...createUiSlice(...a),
   })),
 )

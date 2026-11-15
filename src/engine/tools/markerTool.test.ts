@@ -11,7 +11,7 @@ function makeCtx(): ToolContext & {
 } {
   const live: Marker[] = []
   let counter = 0
-  const plane = { axis: 'y', orientation: 1, offset: 0 } as const
+  const plane = { axis: 'y', orientation: 1, offset: 0, half: null } as const
   const base = {
     live,
     strokes: 0,
@@ -51,8 +51,8 @@ function makeCtx(): ToolContext & {
   }
   return {
     ...base,
-    model: { color: new Map(), chamfer: new Map(), bounds: null },
-    plane: { axis: 'y', orientation: 1, offset: 0 },
+    model: { color: new Map(), chamfer: new Map(), subdiv: new Map(), bounds: null },
+    plane: { axis: 'y', orientation: 1, offset: 0, half: null },
     gridExtent: 16,
     activeVoxelKind: 'cube',
     activePaletteSlot: { kind: 'base', index: 0 },

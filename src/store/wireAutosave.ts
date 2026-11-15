@@ -11,7 +11,7 @@ export function restoreAutosave(): void {
   try {
     const file = loadAutosave()
     if (!file) return
-    const { model, palette, meta, texture, view, animSettings, sliceMasks, slicePivots, markers, rigBoxes } = deserializeProject(file)
+    const { model, palette, meta, texture, view, animSettings, sliceMasks, slicePivots, markers, rigBoxes, clips } = deserializeProject(file)
     useAppStore.getState().setModel(model)
     useAppStore.getState().setPalette(palette)
     useAppStore.getState().setTexture(texture)
@@ -36,6 +36,13 @@ export function restoreAutosave(): void {
       state.rigBoxes = rigBoxes
       state.selectedRigBoxId = null
       state.selectedMarkerId = null
+      // Keyframe clips persist; selection and transport are session-only and start cleared.
+      state.clips = clips
+      state.activeClipId = clips.length > 0 ? clips[0].id : null
+      state.selectedKeyId = null
+      state.clipPlaying = false
+      state.clipStartedAt = 0
+      state.clipTime = null
     })
     // A refresh restores the same project, so the persisted plane pose comes back with it
     // (clamped — a hand-edited autosave could carry an out-of-range offset). Explicit project
@@ -46,8 +53,11 @@ export function restoreAutosave(): void {
         state.plane.axis = savedPlane.axis
         state.plane.orientation = savedPlane.orientation
         state.plane.offset = clampPlaneOffset(savedPlane.offset, state.meta.gridExtent)
+        state.plane.half = savedPlane.half === 0 || savedPlane.half === 1 ? savedPlane.half : null
         state.objectModeTarget = null
       })
+      // The grid division isn't persisted: a saved slab is meaningless under a whole grid.
+      useAppStore.getState().snapPlaneToGrid()
     }
   } catch (err) {
     console.error('Failed to restore autosave', err)
@@ -62,12 +72,15 @@ const flush = debounce(() => {
       state.palette,
       state.meta,
       state.texture,
-      { ambientOcclusion: state.ambientOcclusion, noiseLevel: state.noiseLevel, specularNoiseLevel: state.specularNoiseLevel, noiseScale: state.noiseScale, aoStrength: state.aoStrength, glassRoughnessLevel: state.glassRoughnessLevel, exposure: state.exposure, exportScaleFactor: state.exportScaleFactor, exportAnchor: state.exportAnchor, exportAlignToObjectBounds: state.exportAlignToObjectBounds, exportDisableMeshOptimization: state.exportDisableMeshOptimization, exportCullInteriorFaces: state.exportCullInteriorFaces, exportIncludeTextureMaps: state.exportIncludeTextureMaps, exportIncludeAOMaps: state.exportIncludeAOMaps, exportIncludeMarkers: state.exportIncludeMarkers },
-      state.animSettings,
-      state.sliceMasks,
-      state.slicePivots,
-      state.markers,
-      state.rigBoxes,
+      {
+        view: { ambientOcclusion: state.ambientOcclusion, noiseLevel: state.noiseLevel, specularNoiseLevel: state.specularNoiseLevel, noiseScale: state.noiseScale, aoStrength: state.aoStrength, glassRoughnessLevel: state.glassRoughnessLevel, exposure: state.exposure, exportScaleFactor: state.exportScaleFactor, exportAnchor: state.exportAnchor, exportAlignToObjectBounds: state.exportAlignToObjectBounds, exportDisableMeshOptimization: state.exportDisableMeshOptimization, exportCullInteriorFaces: state.exportCullInteriorFaces, exportIncludeTextureMaps: state.exportIncludeTextureMaps, exportIncludeAOMaps: state.exportIncludeAOMaps, exportIncludeMarkers: state.exportIncludeMarkers, exportIncludeAnimations: state.exportIncludeAnimations, exportBakeAssemblyPose: state.exportBakeAssemblyPose },
+        animSettings: state.animSettings,
+        sliceMasks: state.sliceMasks,
+        slicePivots: state.slicePivots,
+        markers: state.markers,
+        rigBoxes: state.rigBoxes,
+        clips: state.clips,
+      },
     )
     saveAutosave(file)
     state.markSaved(new Date().toISOString())

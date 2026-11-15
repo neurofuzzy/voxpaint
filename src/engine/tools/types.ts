@@ -1,4 +1,5 @@
-import type { GridExtent, VoxelModel } from '@/engine/grid/types'
+import type { FineDivision } from './fineSelection'
+import type { Coord, GridExtent, SplitAxis, VoxelModel } from '@/engine/grid/types'
 import type { Marker } from '@/engine/markers/types'
 import type { ConstructionPlane } from '@/engine/plane/types'
 import type { PaletteSlotRef } from '@/engine/palette/types'
@@ -21,18 +22,20 @@ export interface ToolContext {
   activeVoxelKind: VoxelKind
   activePaletteSlot: PaletteSlotRef
   selection: SelectionRegion | null
+  /** The armed grid division (`gridSplit`): sets the resolution of new selections. */
+  gridSplit: SplitAxis[] | null
   floatContent: ClipboardData | null
   floatOrigin: FloatOrigin | null
   clipboard: ClipboardData | null
 
-  paintCell: (u: number, v: number) => boolean
-  eraseCell: (coord: [number, number, number]) => void
-  paintMaterialCell: (u: number, v: number) => boolean
+  paintCell: (u: number, v: number, qu?: number, qv?: number) => boolean
+  eraseCell: (coord: [number, number, number], qu?: number, qv?: number) => void
+  paintMaterialCell: (u: number, v: number, qu?: number, qv?: number) => boolean
   /** Texture-face rebase: re-authors the ramp/wedge at (u,v) onto the active plane's basis. */
   rebaseRampCell: (u: number, v: number) => boolean
-  floodFill: (u: number, v: number) => void
+  floodFill: (u: number, v: number, qu?: number, qv?: number) => void
   /** 3D connected fill, alt-click's variant — only meaningful when (u,v) is an existing voxel. */
-  floodFill3D: (u: number, v: number) => void
+  floodFill3D: (u: number, v: number, qu?: number, qv?: number) => void
   /** Animate-mode pivot tool: with a rig box selected it sets that box's rotation
    * center, otherwise it toasts that a selection is needed (slice pivots are legacy,
    * no longer authorable). Both self-bracket their own (Animate-mode-scoped) undo stroke. */
@@ -45,11 +48,30 @@ export interface ToolContext {
   rigBoxes: RigBox[]
   selectedRigBoxId: string | null
   selectRigBox: (id: string | null) => void
-  /** Translates a box's whole subtree (no undo bracketing — the caller owns the stroke). */
+  /** The keyframe under edit's per-box offsets (empty when none) — 2D footprint hit-testing
+   * and drawing shift boxes by their composed offset so the editor agrees with the 3D
+   * preview about where an offset box is. Live store-backed, like `rigBoxes`. */
+  keyOffsets: Record<string, Coord>
+  /** Translates a box's whole subtree WITHOUT its voxels (binding-volume slide only — the
+   * part-move gesture below is the voxels-travel-along variant). No undo bracketing — the
+   * caller owns the stroke. */
   translateRigBox: (id: string, delta: [number, number, number]) => void
+  /** Part-move gesture (Animate mode): box + subtree + voxels travel as one part. The delta
+   * is absolute world-space from the drag start (the slice clamps it to the working cube). */
+  beginPartMove: (id: string) => boolean
+  updatePartMove: (delta: [number, number, number]) => void
+  endPartMove: () => void
+  /** Offset drag (Animate mode, Offset tool): the dragged box's keyframe offset follows the
+   * pointer in the slice plane. Absolute world-space delta from the drag start; the store
+   * snaps the written total to the third-step lattice live, so the drag visibly steps
+   * through thirds. Self-heals the key selection when none is under edit. */
+  beginOffsetMove: (id: string) => boolean
+  updateOffsetMove: (delta: [number, number, number]) => void
+  endOffsetMove: () => void
   animBeginStroke: () => void
   animCommitStroke: () => void
   beginMove: (wholeModel: boolean) => void
+  /** Deltas in the grid's in-plane step units (`floatDragStep`) from the press. */
   updateMove: (du: number, dv: number) => void
   endMove: () => void
   setActivePaletteSlot: (slot: PaletteSlotRef) => void
@@ -57,14 +79,14 @@ export interface ToolContext {
   setActiveTool: (tool: ToolId) => void
   setSelection: (region: SelectionRegion | null) => void
   /** Two-stage wand click (color, then whole-component on rapid re-tap). Wand stays active. */
-  applyWandAt: (start: [number, number, number]) => void
+  applyWandAt: (start: [number, number, number], fine?: [number, number]) => void
   /** Rig tool: tap empty space to box the tapped region, tap a footprint to select it, drag
    * a footprint to move its box across the slice. Rig tool stays active. */
   applyRigBoxAt: (start: [number, number, number]) => void
   /** Alt-drag passes `deep` to lift the full cuboid under the selection window (see
    * `liftSelectionToFloat` in store/types.ts). */
   liftSelectionToFloat: (deep?: boolean) => void
-  moveFloatTo: (originU: number, originV: number) => void
+  moveFloatTo: (originU: number, originV: number, subU?: number, subV?: number) => void
   transformFloat: (kind: SelectionTransformKind) => void
   bakeFloatIfAny: () => void
   beginStroke: () => void
@@ -95,8 +117,8 @@ export interface ToolContext {
 
   // Transient UI-only preview state (drag-in-progress rendering), backed by React state in the
   // adapter hook but exposed here so tool modules can read/write it without knowing that.
-  linePreview: { anchor: [number, number]; end: [number, number] } | null
-  setLinePreview: (v: { anchor: [number, number]; end: [number, number] } | null) => void
+  linePreview: LinePreview | null
+  setLinePreview: (v: LinePreview | null) => void
   selectPreview: SelectionRegion | null
   setSelectPreview: (v: SelectionRegion | null) => void
 
@@ -105,21 +127,45 @@ export interface ToolContext {
   drag: { current: ToolDragState }
 }
 
+/** Shift-line preview: whole-cell endpoints, plus the grid-resolution endpoints (fine units at
+ * `su`×`sv` per cell — `fineDivisionFor`) when a grid is armed, so the preview and the write
+ * both follow the grid. */
+export type LinePreview = {
+  anchor: [number, number]
+  end: [number, number]
+  fine?: { su: 1 | 2; sv: 1 | 2; anchor: [number, number]; end: [number, number] }
+}
+
 export type ToolDragState =
   | { kind: 'idle' }
-  | { kind: 'paint'; anchor: [number, number]; last: [number, number] }
-  | { kind: 'selectRect'; anchor: [number, number] }
-  | { kind: 'selectLasso'; points: Array<[number, number]> }
-  | { kind: 'moveFloat'; startU: number; startV: number; originAtStart: FloatOrigin }
-  | { kind: 'moveGrid'; startU: number; startV: number; lastU: number; lastV: number }
+  | { kind: 'paint'; anchor: [number, number]; last: [number, number]; anchorQuad?: [number, number] | null; lastQuad?: [number, number] | null }
+  | { kind: 'selectRect'; anchor: [number, number]; /** Fine-unit anchor (sub-voxel resolution). */ fineAnchor?: [number, number] }
+  /** Lasso path in the grid's fine units (`div`, fixed at press; whole cells when absent). */
+  | { kind: 'selectLasso'; points: Array<[number, number]>; div?: FineDivision }
+  | { kind: 'moveFloat'; startU: number; startV: number; originAtStart: FloatOrigin; /** Pointer position at the start in `fineStep` units (grid-resolution drags). */ startFine?: [number, number];
+    /**
+     * The drag's half-voxel step per logical axis, fixed at press time from the armed grid
+     * (`floatDragStep`) — the grid is the control for every float, whatever its content.
+     * Absent when the grid is whole: whole-voxel steps that keep the float's sub offsets.
+     */
+    fineStep?: { su: 1 | 2; sv: 1 | 2 } }
+  /** Move-tool drag. `step` is the grid's in-plane step at press time (`floatDragStep`; whole
+   * voxels when null) and `startFine`/`last` are pointer positions in those step units. */
+  | { kind: 'moveGrid'; step: { su: 1 | 2; sv: 1 | 2 }; startFine: [number, number]; last: [number, number] }
   | { kind: 'marker'; id: string }
   /** Marker tap candidate: pointer went down on an existing marker but hasn't dragged off it
    * yet. A release here resolves to recolor-or-delete; leaving the start cell converts to a
    * `marker` move drag instead. */
   | { kind: 'marker-pending'; id: string; startU: number; startV: number }
-  /** Rig-box move drag (Animate mode): pointer went down on a box footprint and is sliding it
-   * across the slice. Coordinates are logical (u,v) cells; the offset-axis delta is always 0. */
-  | { kind: 'rig-move'; id: string; lastU: number; lastV: number }
+  /** Rig-box part-move gesture (Animate mode): pointer went down on a box footprint and is
+   * sliding its part across the slice. Start is the press cell in logical (u,v); moves pass
+   * the absolute world-space delta from there (offset-axis component always 0). */
+  | { kind: 'rig-move'; id: string; startU: number; startV: number }
+  /** Offset drag (Animate mode, Offset tool): pointer went down on a box footprint and is
+   * sliding its keyframe offset across the slice. Same absolute-delta semantics; startCu/
+   * startCv carry the press's continuous display position (absent on synthetic events, which
+   * fall back to whole-cell deltas) so sub-cell pointer motion yields fractional offsets. */
+  | { kind: 'offset-move'; id: string; startU: number; startV: number; startCu?: number; startCv?: number }
 
 export interface ToolHandler {
   onDown?(ctx: ToolContext, e: NormalizedPointerEvent): void

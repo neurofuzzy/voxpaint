@@ -1,5 +1,6 @@
 import type { Coord, GridExtent, Orientation, Rotation, VoxelModel } from '@/engine/grid/types'
 import { decodeKey, effectiveExtent, encodeKey, recomputeBounds } from '@/engine/grid/GridStore'
+import { splitChildBits } from '@/engine/grid/subdiv'
 import { planeLogicalBasis } from '@/engine/plane/constructionPlane'
 import { outwardNormal } from '@/engine/plane/planeGeometry'
 
@@ -8,14 +9,16 @@ import { outwardNormal } from '@/engine/plane/planeGeometry'
  * origin (old cell `c` spans new cells `2c, 2c+1` — same world cell size, twice as many cells).
  *
  * Bevels decompose exactly: every chamfer solid's boundaries pass through half-lattice points,
- * so sampling each child's 8 corners (also half-lattice) against the shape's exact inequalities
- * is exact — no epsilons, no clipping code. The sampled corner pattern is matched against the
- * canonical patterns of the known shapes, so children land as cubes/ramps/wedges/corners with
- * rotations in the parent's own logical frame (the authoring basis is preserved verbatim —
- * rescale never re-resolves anything). This is sound because a parent shape plane restricted to
- * a child box coincides with the canonical plane of the matched shape: every plane passes
- * through the child's lattice points, so restriction and canonical form agree (volume
- * conservation per kind × rotation in rescale.test.ts guards this).
+ * so sampling each child's 8 corners plus 6 face centres (also half-lattice or coarser)
+ * against the shape's exact inequalities is exact — no epsilons, no clipping code. The sampled
+ * pattern is matched against the canonical patterns of the known shapes, so children land as
+ * cubes/ramps/wedges/corners with rotations in the parent's own logical frame (the authoring
+ * basis is preserved verbatim — rescale never re-resolves anything). This is sound because a
+ * parent shape plane restricted to a child box coincides with the canonical plane of the
+ * matched shape: every plane passes through the child's lattice points, so restriction and
+ * canonical form agree (volume conservation per kind × rotation in rescale.test.ts guards
+ * this). Face centres join the signature only to separate `concave`'s folded roof from
+ * `triconcave`'s flat cut — the two agree on all 8 corners but differ inside.
  *
  * Children reduced to an edge or less (zero volume — e.g. concave's far-corner child) match
  * nothing and are left empty, which is exact. Six shapes need direct rules instead of sampling:
@@ -54,13 +57,13 @@ export function rescaleCoord(c: number): [number, number] {
   return [RESCALE_FACTOR * c, RESCALE_FACTOR * c + 1]
 }
 
-type BevelKind = 'ramp' | 'wedge' | 'concave' | 'convex'
+type BevelKind = 'ramp' | 'wedge' | 'convex' | 'concave' | 'tricorner' | 'triconcave'
 
 /**
  * Inverse in-plane quarter-turn R^-r on logical (u, v): shape rotation renumbers exactly like the
  * baked geometry rotation (r=1 turns an east opening south — pinned by rescale tests against the
- * geometry + resolver conventions: ramp opens east at r=0; wedge/convex/concave cut/open the NE
- * corner at r=0).
+ * geometry + resolver conventions: ramp opens east at r=0; wedge/convex/concave/tricorner/
+ * triconcave cut/open the NE corner at r=0).
  */
 function unrotate(u: number, v: number, rotation: Rotation): [number, number] {
   switch (rotation) {
@@ -82,16 +85,25 @@ function insideCanonical(kind: BevelKind, u: number, v: number, w: number, rotat
     case 'wedge': return cu <= cv
     case 'convex': return w <= cv && cu + w <= 1
     case 'concave': return w <= cv || cu + w <= 1
+    case 'tricorner': return w <= cv - cu
+    case 'triconcave': return cu - cv + w <= 1
   }
 }
 
 type ChildOutcome = { kind: 'cube' } | { kind: BevelKind; rotation: Rotation } | null
 
-const CANDIDATES: Array<{ kind: BevelKind; rotation: Rotation }> = (['ramp', 'wedge', 'convex', 'concave'] as const).flatMap(
+const CANDIDATES: Array<{ kind: BevelKind; rotation: Rotation }> = (['ramp', 'wedge', 'convex', 'concave', 'tricorner', 'triconcave'] as const).flatMap(
   (kind) => ([0, 1, 2, 3] as const).map((rotation) => ({ kind, rotation })),
 )
 
-/** Inside-pattern of the 8 unit-box corners (index a+2b+4c) for a candidate solid. */
+/**
+ * Inside-pattern of the 8 unit-box corners (index a+2b+4c) plus the 6 face centres for a
+ * candidate solid. Corners alone can't tell the two 7-corner solids apart — `concave`'s
+ * folded roof and `triconcave`'s flat cut agree on all 8 corners but differ inside (the top
+ * face centre is outside the folded roof, inside the flat cut) — so the centres join the
+ * signature. All sample points are quarter-lattice or coarser, exact in binary floating
+ * point, so the parent-plane-restricts-to-canonical-plane exactness argument still holds.
+ */
 function canonicalPattern(kind: BevelKind, rotation: Rotation): boolean[] {
   const pattern: boolean[] = []
   for (let c = 0; c < 2; c++) {
@@ -101,15 +113,26 @@ function canonicalPattern(kind: BevelKind, rotation: Rotation): boolean[] {
       }
     }
   }
+  for (const [a, b, c] of FACE_CENTRES) {
+    pattern.push(insideCanonical(kind, a, b, c, rotation))
+  }
   return pattern
 }
+
+/** Face centres of the unit box, in the same (a, b, c) logical frame as the corners above. */
+const FACE_CENTRES: Array<[number, number, number]> = [
+  [0, 0.5, 0.5], [1, 0.5, 0.5],
+  [0.5, 0, 0.5], [0.5, 1, 0.5],
+  [0.5, 0.5, 0], [0.5, 0.5, 1],
+]
 
 const CANONICAL_PATTERNS: Array<{ kind: BevelKind; rotation: Rotation; pattern: boolean[] }> = CANDIDATES.map(
   ({ kind, rotation }) => ({ kind, rotation, pattern: canonicalPattern(kind, rotation) }),
 )
 
-/** Matches a sampled child corner pattern to a solid: full box, empty, or a known shape. Null
- * (empty) is also the documented concave-apex-tetrahedron approximation — see module doc. */
+/** Matches a sampled child corner+face-centre pattern to a solid: full box, empty, or a known
+ * shape. Null (empty) is also the documented concave-apex-tetrahedron approximation — see
+ * module doc. */
 function matchChild(pattern: boolean[]): ChildOutcome {
   if (pattern.every(Boolean)) return { kind: 'cube' }
   if (pattern.every((inside) => !inside)) return null
@@ -289,7 +312,8 @@ export function rescaleVoxelModel(model: VoxelModel): VoxelModel {
       continue
     }
 
-    // Bevels: sample each child's corners against the exact solid, match to a solid.
+    // Bevels: sample each child's corners and face centres against the exact solid, match to
+    // a solid.
     for (const [du, dv, dw] of CHILD_OFFSETS) {
       const pattern: boolean[] = []
       for (let c = 0; c < 2; c++) {
@@ -300,6 +324,11 @@ export function rescaleVoxelModel(model: VoxelModel): VoxelModel {
             )
           }
         }
+      }
+      for (const [a, b, c] of FACE_CENTRES) {
+        pattern.push(
+          insideCanonical(shapeKind as BevelKind, (du + a) / 2, (dv + b) / 2, (dw + c) / 2, resolved.rotation),
+        )
       }
       const outcome = matchChild(pattern)
       if (!outcome) continue
@@ -316,7 +345,32 @@ export function rescaleVoxelModel(model: VoxelModel): VoxelModel {
     }
   }
 
-  const next: VoxelModel = { color, chamfer, bounds: null }
+  // Subdivided parents dissolve into their live children: each child fills the doubled
+  // cells of its footprint with plain cubes (detail bevels blockify — see the dialog copy;
+  // cube children map exactly). Erased (null) children stay empty, so no subdiv entries
+  // survive the rescale. Doubling maps child box [m, m+s] to [2m, 2m+2s]: one doubled cell
+  // on split axes (2·base+bit), two on unsplit axes (2·base, 2·base+1).
+  for (const [key, sub] of model.subdiv) {
+    const base = decodeKey(key)
+    for (let i = 0; i < sub.children.length; i++) {
+      const child = sub.children[i]
+      if (!child) continue
+      const [dx, dy, dz] = splitChildBits(sub.split, i)
+      const bit = { x: dx, y: dy, z: dz }
+      const lanes = (['x', 'y', 'z'] as const).map((a, ai) =>
+        sub.split.includes(a) ? [RESCALE_FACTOR * base[ai] + bit[a]] : [RESCALE_FACTOR * base[ai], RESCALE_FACTOR * base[ai] + 1],
+      )
+      for (const cx of lanes[0]) {
+        for (const cy of lanes[1]) {
+          for (const cz of lanes[2]) {
+            color.set(encodeKey(cx, cy, cz), { paletteSlot: child.slot })
+          }
+        }
+      }
+    }
+  }
+
+  const next: VoxelModel = { color, chamfer, subdiv: new Map(), bounds: null }
   next.bounds = recomputeBounds(next)
   return next
 }

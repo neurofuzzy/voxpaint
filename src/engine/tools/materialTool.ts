@@ -7,6 +7,6 @@ import type { ToolHandler } from './types'
  * so crossing faces can't pile anything up); the store action no-ops same-slot repaints so
  * empty drags don't record junk undo steps.
  */
-export const materialTool: ToolHandler = makeEditTool((ctx, u, v) => {
-  ctx.paintMaterialCell(u, v)
+export const materialTool: ToolHandler = makeEditTool((ctx, u, v, quad) => {
+  ctx.paintMaterialCell(u, v, quad?.[0], quad?.[1])
 })

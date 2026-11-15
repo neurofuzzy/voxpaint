@@ -1,9 +1,10 @@
 import * as ToggleGroup from '@radix-ui/react-toggle-group'
 import * as Tooltip from '@radix-ui/react-tooltip'
-import { Bone, Brush, Droplet, Eraser, MapPin, Move, Pin, Pipette, SquareArrowOutDownLeft, SquareDashedMousePointer, PaintBucket } from 'lucide-react'
+import { Bone, Brush, Droplet, Eraser, MapPin, MousePointerClick, Move, Pin, Pipette, Rotate3d, SquareArrowOutDownLeft, SquareDashedMousePointer, PaintBucket } from 'lucide-react'
 import { useAppStore } from '@/store/useAppStore'
-import type { ToolId } from '@/store/types'
+import type { AnimateTab, ToolId } from '@/store/types'
 
+/** Model-mode tools (texture mode reuses the same rail; animate swaps it per tab). */
 const TOOLS: Array<{ id: ToolId; label: string; icon: typeof Brush; hint: string }> = [
   { id: 'paint', label: 'Paint', icon: Brush, hint: 'click or drag to paint · shift+drag: straight line' },
   { id: 'erase', label: 'Erase', icon: Eraser, hint: 'click or drag to erase · shift+drag: straight line' },
@@ -17,20 +18,32 @@ const TOOLS: Array<{ id: ToolId; label: string; icon: typeof Brush; hint: string
 ]
 
 /** Animate mode edits the rig, not the voxel model (which is a non-interactive underlay
- * there) — box regions into named selections, drag them across the slice, pin pivots. Mask
- * paint/erase are gone: slice loops still play back for old files, but only whole-slice. */
-const ANIMATE_TOOLS: Array<{ id: ToolId; label: string; icon: typeof Brush; hint: string }> = [
-  { id: 'rigbox', label: 'Rig Box', icon: Bone, hint: 'click a voxel to box its color-connected region · click a box to select it · drag a box to move it on this slice · hold Alt for Pivot' },
-  { id: 'pivot', label: 'Pivot Point', icon: Pin, hint: 'click: place pivot on the half-grid · rotate the plane for depth · right-click: reset to center' },
-]
+ * there). Tools follow the panel tab so a tap always dispatches somewhere sensible:
+ * Rig tab boxes/selects/moves and pins pivots, Tweens tab only selects (params live in
+ * the panel), Motion tab selects in 2D and poses in 3D. Mask paint/erase are gone: slice
+ * loops still play back for old files, but only whole-slice. */
+const ANIMATE_TOOLS: Record<AnimateTab, Array<{ id: ToolId; label: string; icon: typeof Brush; hint: string }>> = {
+  rig: [
+    { id: 'rigbox', label: 'Rig Box', icon: Bone, hint: 'click a voxel to box its color-connected region · click a box to select it · drag a box to move its part — box, subtree and voxels travel together · hold Alt for Pivot' },
+    { id: 'pivot', label: 'Pivot Point', icon: Pin, hint: 'click: place pivot on the half-grid · rotate the plane for depth · right-click: reset to center' },
+  ],
+  tweens: [
+    { id: 'select', label: 'Select', icon: MousePointerClick, hint: 'click a box to select it — edit its motion in the Tweens tab' },
+  ],
+  poses: [
+    { id: 'pose', label: 'Rotate', icon: Rotate3d, hint: 'drag a ring to rotate the selected joint about one axis · edits land in the selected keyframe' },
+    { id: 'offset', label: 'Offset', icon: Move, hint: 'drag an arrow to move the selected joint along one axis · edits land in the selected keyframe' },
+  ],
+}
 
 export function ToolPalette() {
   const activeTool = useAppStore((s) => s.activeTool)
   const setActiveTool = useAppStore((s) => s.setActiveTool)
   const setStatusMessage = useAppStore((s) => s.setStatusMessage)
   const mode = useAppStore((s) => s.mode)
+  const animateTab = useAppStore((s) => s.animateTab)
 
-  const tools = mode === 'animate' ? ANIMATE_TOOLS : TOOLS
+  const tools = mode === 'animate' ? ANIMATE_TOOLS[animateTab] : TOOLS
 
   return (
     <Tooltip.Provider delayDuration={300}>

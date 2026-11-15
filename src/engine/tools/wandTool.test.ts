@@ -8,7 +8,7 @@ import { floodFillOccupied3D, floodFillRegion3D } from './floodFill'
 import { regionForFloodedCells, wandTool } from './wandTool'
 import type { ToolContext } from './types'
 
-const PLANE: ConstructionPlane = { axis: 'z', orientation: 1, offset: 0 }
+const PLANE: ConstructionPlane = { axis: 'z', orientation: 1, offset: 0, half: null }
 const SLOT_A = { kind: 'base', index: 0 } as PaletteSlotRef
 const SLOT_B = { kind: 'base', index: 3 } as PaletteSlotRef
 
@@ -19,7 +19,7 @@ function paintBox(model: VoxelModel, x0: number, y0: number, z0: number, x1: num
 }
 
 function emptyModel(): VoxelModel {
-  return { color: new Map(), chamfer: new Map(), bounds: null }
+  return { color: new Map(), chamfer: new Map(), subdiv: new Map(), bounds: null }
 }
 
 describe('floodFillOccupied3D', () => {

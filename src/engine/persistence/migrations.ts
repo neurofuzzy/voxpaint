@@ -1,4 +1,6 @@
 import { DEFAULT_PALETTE } from '@/engine/palette/defaultPalette'
+import { clipFromPoseCycle, deriveAnimationMode } from '@/engine/rigging/clip'
+import type { AnimationMode } from '@/engine/rigging/types'
 import { CURRENT_SCHEMA_VERSION, type VoxPaintProjectFile } from './schema'
 
 type Migration = (json: any) => any
@@ -93,6 +95,124 @@ MIGRATIONS[11] = (doc) => ({ ...doc, schemaVersion: 12 })
 /** v12 → v13: rig boxes gain an optional `pivot` override. Nothing to reshape — pre-v13
  * rigs simply have no pivot recorded (box center), matching their pre-pivot posing behavior. */
 MIGRATIONS[12] = (doc) => ({ ...doc, schemaVersion: 13 })
+
+/** v13 → v14: rig boxes gain an optional `loop` procedural motion. Nothing to reshape —
+ * pre-v14 rigs simply have no loop recorded (static joints), matching pre-loop behavior. */
+MIGRATIONS[13] = (doc) => ({ ...doc, schemaVersion: 14 })
+
+/** v14 → v15: the single `loop` becomes an ordered `tweens` stack — one enabled entry per
+ * recorded loop (id derived from the box id so the migration is deterministic). */
+MIGRATIONS[14] = (doc) => ({
+  ...doc,
+  schemaVersion: 15,
+  rigBoxes: Array.isArray(doc.rigBoxes)
+    ? doc.rigBoxes.map((b: any) => {
+      if (!b || typeof b !== 'object' || Array.isArray(b.tweens)) return b
+      const { loop, ...rest } = b
+      if (!loop || typeof loop !== 'object') return { ...rest }
+      return {
+        ...rest,
+        tweens: [{ ...loop, id: `tw-${String(b.id ?? 'box').slice(0, 48)}-1`, enabled: loop.enabled !== false }],
+      }
+    })
+    : doc.rigBoxes,
+})
+
+/** v15 → v16: named joint snapshots (`poses`) plus the pose-cycle definition (`poseCycle`).
+ * Nothing to reshape — pre-v16 files simply have no pose library (empty, no cycle). */
+MIGRATIONS[15] = (doc) => ({ ...doc, schemaVersion: 16 })
+
+/** v16 → v17: the pose cycle becomes the first keyed-pose clip (name `cycle`) and `poseCycle`
+ * is dropped; `meta.animationMode` is stamped from the data (a cycle or un-tweened poses
+ * mean poses, otherwise tweens). A dangling/invalid cycle converts to no clip (the file
+ * keeps its poses; the mode still derives through the same rule). */
+MIGRATIONS[16] = (doc) => {
+  const poses = Array.isArray(doc?.poses) ? doc.poses : []
+  const poseIds = new Set<string>()
+  for (const p of poses) {
+    if (p && typeof p.id === 'string') poseIds.add(p.id)
+  }
+  const raw = doc?.poseCycle
+  const cycle =
+    raw && typeof raw === 'object'
+    && typeof raw.fromId === 'string' && typeof raw.toId === 'string'
+    && poseIds.has(raw.fromId) && poseIds.has(raw.toId)
+    && (raw.mode === 'once' || raw.mode === 'loop' || raw.mode === 'pingpong')
+    && (raw.speed === 1 || raw.speed === 2 || raw.speed === 3)
+      ? { fromId: raw.fromId, toId: raw.toId, mode: raw.mode, speed: raw.speed }
+      : null
+  const rigBoxes = Array.isArray(doc?.rigBoxes) ? doc.rigBoxes : []
+  // A cycle always means poses; otherwise poses with no enabled tween mean poses.
+  let animationMode: AnimationMode = cycle ? 'poses' : 'tweens'
+  if (!cycle) {
+    try {
+      animationMode = deriveAnimationMode({ rigBoxes, poses })
+    } catch {
+      // Malformed rig data (hand-edited files) — fall back to tweens.
+    }
+  }
+  const { poseCycle: _dropped, ...rest } = doc ?? {}
+  return {
+    ...rest,
+    schemaVersion: 17,
+    meta: { ...doc?.meta, animationMode: doc?.meta?.animationMode ?? animationMode },
+    ...(cycle ? { clips: [clipFromPoseCycle(cycle, poses)] } : {}),
+  }
+}
+
+/** v17 → v18: keyframes own their joint angles directly (the pose is the keyframe).
+ * Keys that already embed joints (the v16→v17 chain output above) pass through with
+ * their names kept; `poseId` keys resolve through the `poses` library, inheriting the
+ * pose's name and joints (dangling ids embed empty/bind joints named `Key N`).
+ * The library is then dropped. The load-time sanitizer re-sorts keys, locks the first
+ * to 0, and floors durations, so the migration only reshapes. */
+MIGRATIONS[17] = (doc) => {
+  const poses = Array.isArray(doc?.poses) ? doc.poses : []
+  const byId = new Map<string, any>()
+  for (const p of poses) {
+    if (p && typeof p?.id === 'string' && !byId.has(p.id)) byId.set(p.id, p)
+  }
+  const clips = Array.isArray(doc?.clips)
+    ? doc.clips.map((clip: any) => {
+      if (!clip || typeof clip !== 'object' || !Array.isArray(clip.keys)) return clip
+      const used = new Set<string>()
+      const uniquify = (base: string): string => {
+        if (!used.has(base)) { used.add(base); return base }
+        let i = 2
+        while (used.has(`${base} ${i}`)) i++
+        const name = `${base} ${i}`
+        used.add(name)
+        return name
+      }
+      const keys = clip.keys.map((key: any, i: number) => {
+        if (!key || typeof key !== 'object') return key
+        if (key.joints && typeof key.joints === 'object') {
+          return { ...key, name: typeof key.name === 'string' && key.name ? key.name : uniquify(`Key ${i + 1}`) }
+        }
+        const pose = typeof key.poseId === 'string' ? byId.get(key.poseId) : undefined
+        const { poseId: _droppedPose, ...rest } = key
+        return {
+          ...rest,
+          name: uniquify(typeof pose?.name === 'string' && pose.name ? pose.name : `Key ${i + 1}`),
+          joints: pose?.joints && typeof pose.joints === 'object' ? { ...pose.joints } : {},
+          ...(pose?.offsets && typeof pose.offsets === 'object' ? { offsets: { ...pose.offsets } } : {}),
+        }
+      })
+      return { ...clip, keys }
+    })
+    : doc?.clips
+  const { poses: _droppedPoses, ...rest } = doc ?? {}
+  return { ...rest, schemaVersion: 18, clips }
+}
+
+/** v18 → v19: the `subdivCells` array is added for one-level detail voxels. Pre-v19
+ * files simply contain no subdivisions (the array stamps empty); the field is required
+ * from v19 on so older app versions reject detail files with "please update". */
+MIGRATIONS[18] = (doc) => ({
+  ...doc,
+  schemaVersion: 19,
+  model: { ...doc?.model, subdivCells: Array.isArray(doc?.model?.subdivCells) ? doc.model.subdivCells : [] },
+})
 
 export class UnsupportedSchemaVersionError extends Error {
   constructor(foundVersion: unknown) {

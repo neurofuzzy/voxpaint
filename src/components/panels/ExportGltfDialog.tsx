@@ -7,6 +7,8 @@ import { isIPad } from '@/engine/input/isIPad'
 import { TEXEL_SCALE } from '@/engine/texture/types'
 import { normalizeProjectFilename } from '@/engine/persistence/projectFile'
 import { hasActiveAnimations } from '@/engine/animation/animationLayers'
+import { boxHasActiveTweens } from '@/engine/rigging/rigLoop'
+import { normalizeFps } from '@/engine/rigging/types'
 import { useAppStore } from '@/store/useAppStore'
 import { showToast } from '@/components/ui/toastBus'
 
@@ -16,15 +18,32 @@ const ANCHOR_LABELS: Record<GltfExportAnchor, string> = {
   back: 'Back',
 }
 
-/** Heads-up when both systems are in play: rigged voxels export as poseable joints under the
- * Rig node and are excluded from slice-loop animation. */
+/** Heads-up for rigged projects: what the export will bake, by animation mode. */
 function RigWinsNote() {
   const rigBoxes = useAppStore((s) => s.rigBoxes)
   const animSettings = useAppStore((s) => s.animSettings)
-  if (rigBoxes.length === 0 || !hasActiveAnimations(animSettings)) return null
+  const animationMode = useAppStore((s) => s.meta.animationMode ?? 'tweens')
+  const clips = useAppStore((s) => s.clips)
+  const exportIncludeAnimations = useAppStore((s) => s.exportIncludeAnimations)
+  const exportBakeAssemblyPose = useAppStore((s) => s.exportBakeAssemblyPose)
+  if (rigBoxes.length === 0) return null
+  const tweened = rigBoxes.filter(boxHasActiveTweens).length
+  if (!hasActiveAnimations(animSettings) && tweened === 0 && clips.length === 0) return null
+  // The assembly always comes from the first animation — drag to reorder.
+  const assembly = clips[0]
   return (
-    <p className="mt-2 rounded-md border border-violet-500/30 bg-violet-500/10 px-3 py-1.5 text-xs text-violet-200">
+    <p className="mt-2 rounded-md border border-violet-500/30 bg-violet-500/10 px-3 py-1 text-xs text-violet-200">
       Rigged voxels export as poseable joints and skip slice-loop animation.
+      {exportIncludeAnimations ? (
+        animationMode === 'tweens'
+          ? (tweened > 0 ? ` 1 clip: loop.` : ` No clips: no enabled tweens.`)
+          : (clips.length > 0 ? ` ${clips.length} clip${clips.length === 1 ? '' : 's'}: ${clips.map((c) => c.name).join(', ')}.` : ` No clips yet — add one in the Motion tab.`)
+      ) : (
+        ` Animation is off — joints export posed at bind with no clips.`
+      )}
+      {animationMode === 'poses' && exportBakeAssemblyPose && assembly
+        ? ` Base pose baked from “${assembly.name}” Key 1.`
+        : ``}
     </p>
   )
 }
@@ -40,6 +59,7 @@ export function ExportGltfDialog({ open, onOpenChange }: { open: boolean; onOpen
   const exportIncludeTextureMaps = useAppStore((s) => s.exportIncludeTextureMaps)
   const exportIncludeAOMaps = useAppStore((s) => s.exportIncludeAOMaps)
   const exportIncludeMarkers = useAppStore((s) => s.exportIncludeMarkers)
+  const exportIncludeAnimations = useAppStore((s) => s.exportIncludeAnimations)
   const setExportScaleFactor = useAppStore((s) => s.setExportScaleFactor)
   const setExportAnchor = useAppStore((s) => s.setExportAnchor)
   const setExportAlignToObjectBounds = useAppStore((s) => s.setExportAlignToObjectBounds)
@@ -48,6 +68,11 @@ export function ExportGltfDialog({ open, onOpenChange }: { open: boolean; onOpen
   const setExportIncludeTextureMaps = useAppStore((s) => s.setExportIncludeTextureMaps)
   const setExportIncludeAOMaps = useAppStore((s) => s.setExportIncludeAOMaps)
   const setExportIncludeMarkers = useAppStore((s) => s.setExportIncludeMarkers)
+  const setExportIncludeAnimations = useAppStore((s) => s.setExportIncludeAnimations)
+  const clips = useAppStore((s) => s.clips)
+  const animationMode = useAppStore((s) => s.meta.animationMode ?? 'tweens')
+  const exportBakeAssemblyPose = useAppStore((s) => s.exportBakeAssemblyPose)
+  const setExportBakeAssemblyPose = useAppStore((s) => s.setExportBakeAssemblyPose)
 
   useEffect(() => {
     if (open) setScaleInput(String(exportScaleFactor))
@@ -67,12 +92,12 @@ export function ExportGltfDialog({ open, onOpenChange }: { open: boolean; onOpen
 
   async function run() {
     const state = useAppStore.getState()
-    const { model, palette, meta, texture, noiseLevel, specularNoiseLevel, aoStrength, glassRoughnessLevel, animSettings, sliceMasks, slicePivots, markers, rigBoxes } = state
+    const { model, palette, meta, texture, noiseLevel, specularNoiseLevel, aoStrength, glassRoughnessLevel, animSettings, sliceMasks, slicePivots, markers, rigBoxes, clips } = state
     const { gridExtent } = meta
     const sf = state.exportScaleFactor
     const anchor = state.exportAnchor
     const alignToObjectBounds = state.exportAlignToObjectBounds
-    if (model.color.size === 0) {
+    if (model.color.size === 0 && model.subdiv.size === 0) {
       showToast('Nothing to export — the model is empty.')
       onOpenChange(false)
       return
@@ -98,7 +123,13 @@ export function ExportGltfDialog({ open, onOpenChange }: { open: boolean; onOpen
         voxelScaleY: meta.voxelScaleY,
         markers,
         includeMarkers: state.exportIncludeMarkers,
+        includeAnimations: state.exportIncludeAnimations,
         rigBoxes,
+        animationMode: meta.animationMode ?? 'tweens',
+        clips,
+        bakeAssemblyPose: state.exportBakeAssemblyPose,
+        assemblyClipId: state.clips[0]?.id ?? null,
+        fps: normalizeFps(meta.fps),
       }, animSettings, sliceMasks, slicePivots)
       downloadGlb(glb, normalizeProjectFilename(meta.name || 'voxpaint-model'))
       showToast('GLTF exported.')
@@ -187,6 +218,37 @@ export function ExportGltfDialog({ open, onOpenChange }: { open: boolean; onOpen
                 className="h-4 w-4 shrink-0 cursor-pointer accent-violet-500"
               />
               <span className="text-sm text-neutral-400">Include AO maps</span>
+            </label>
+
+            <label className="flex items-start gap-2.5 ml-[4.5rem] cursor-pointer select-none" title="Off exports the joint/node structure posed at bind with no animation clips">
+              <input
+                type="checkbox"
+                checked={exportIncludeAnimations}
+                onChange={(e) => setExportIncludeAnimations(e.target.checked)}
+                className="mt-0.5 h-4 w-4 shrink-0 cursor-pointer accent-violet-500"
+              />
+              <span className="text-sm text-neutral-400">
+                Include animations
+                <span className="block text-xs text-neutral-500">
+                  Off exports joints posed at bind, no clips
+                </span>
+              </span>
+            </label>
+
+            <label className={`flex items-start gap-2.5 ml-[4.5rem] select-none ${animationMode === 'poses' && clips.length > 0 ? 'cursor-pointer' : 'cursor-not-allowed opacity-50'}`} title={animationMode === 'poses' && clips.length > 0 ? 'Freeze the assembly pose (the first animation’s Key 1 — drag the list to reorder) into the joints’ base transforms — the exported static model shows the parts brought together' : 'Needs a poses-mode clip: arrange the parts on any clip’s Key 1 first'}>
+              <input
+                type="checkbox"
+                checked={exportBakeAssemblyPose}
+                disabled={animationMode !== 'poses' || clips.length === 0}
+                onChange={(e) => setExportBakeAssemblyPose(e.target.checked)}
+                className="mt-0.5 h-4 w-4 shrink-0 cursor-pointer accent-violet-500 disabled:cursor-not-allowed"
+              />
+              <span className="text-sm text-neutral-400">
+                Bake assembly pose
+                <span className="block text-xs text-neutral-500">
+                  Key 1 becomes the joints’ rest pose
+                </span>
+              </span>
             </label>
 
             <label className="flex items-center gap-2.5 ml-[4.5rem] cursor-pointer select-none" title="Emit design markers as empty nodes (name + extras.voxpaint payload) for composing external content downstream">

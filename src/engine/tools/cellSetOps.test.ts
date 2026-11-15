@@ -5,6 +5,8 @@ import type { PaletteSlotRef } from '@/engine/palette/types'
 import type { ConstructionPlane } from '@/engine/plane/types'
 import { gridCoordFromPixel } from '@/engine/plane/constructionPlane'
 import { axisIndex } from '@/engine/plane/planeGeometry'
+import { subdivideCell } from '@/engine/grid/subdiv'
+import { emptyDetailAt, setDetailChild } from '@/engine/grid/subdivFixtures'
 import {
   bboxOfCoords,
   copyCellsToClipboard,
@@ -17,12 +19,12 @@ import {
   windowSlabBounds,
 } from './cellSetOps'
 
-const PLANE: ConstructionPlane = { axis: 'z', orientation: 1, offset: 0 }
+const PLANE: ConstructionPlane = { axis: 'z', orientation: 1, offset: 0, half: null }
 const EXTENT = 16 // working bounds [-8, 8)
 const SLOT = { kind: 'base', index: 0 } as PaletteSlotRef
 
 function emptyModel(): VoxelModel {
-  return { color: new Map(), chamfer: new Map(), bounds: null }
+  return { color: new Map(), chamfer: new Map(), subdiv: new Map(), bounds: null }
 }
 
 function paintBox(model: VoxelModel, x0: number, y0: number, z0: number, x1: number, y1: number, z1: number) {
@@ -40,7 +42,7 @@ describe('bboxOfCoords', () => {
 
 describe('windowSlabBounds', () => {
   const ALL_PLANES: ConstructionPlane[] = (['x', 'y', 'z'] as const).flatMap((axis: Axis) =>
-    ([1, -1] as const).map((orientation: Orientation) => ({ axis, orientation, offset: 3 })),
+    ([1, -1] as const).map((orientation: Orientation) => ({ axis, orientation, offset: 3, half: null })),
   )
   const region = { originU: 1, originV: 2, width: 3, height: 2, mask: new Uint8Array(6).fill(1) }
 
@@ -65,13 +67,13 @@ describe('windowSlabBounds', () => {
     // z-plane: u=x, v=-y-1.
     const slab = windowSlabBounds(
       { originU: 0, originV: -2, width: 2, height: 2, mask: new Uint8Array(4).fill(1) },
-      { axis: 'z', orientation: 1, offset: 0 },
+      { axis: 'z', orientation: 1, offset: 0, half: null },
     )
     expect(slab).toEqual({ min: [0, 0, 0], max: [1, 1, 0] })
 
     const single = windowSlabBounds(
       { originU: 4, originV: 5, width: 1, height: 1, mask: new Uint8Array(1).fill(1) },
-      { axis: 'z', orientation: 1, offset: 0 },
+      { axis: 'z', orientation: 1, offset: 0, half: null },
     )
     expect(single.min).toEqual(single.max)
   })
@@ -183,6 +185,35 @@ describe('rotateCellsInPlane', () => {
     })
     const [only] = rotateCellsInPlane(snapshotCells(model, [encodeKey(0, 0, 0)]), PLANE, 'rotate', 16)
     expect(only.chamfer?.resolvedTo).toEqual({ shapeKind: 'ramp', rotation: 1 })
+  })
+
+  it('turns subdivided detail with the cells: split exchanges, children permute, bevels renumber', () => {
+    const model = emptyModel()
+    paintBox(model, 0, 0, 0, 0, 0, 0)
+    expect(subdivideCell(model, [0, 0, 0], ['x'])).toBe(true)
+    expect(
+      setDetailChild(model, [0, 0, 0], 1, {
+        slot: { kind: 'base', index: 3 },
+        chamfer: { planeAxis: 'z', planeOrientation: 1, resolvedTo: { shapeKind: 'ramp', rotation: 0 } },
+      }),
+    ).toBe(true)
+    const [only] = rotateCellsInPlane(snapshotCells(model, [encodeKey(0, 0, 0)]), PLANE, 'rotate', 16)
+    expect(only.coord).toEqual([0, 0, 0])
+    expect(only.subdiv?.split).toEqual(['y'])
+    expect(only.subdiv?.children.map((c) => c?.slot)).toEqual([{ kind: 'base', index: 3 }, SLOT])
+    // The bevel rides its child and renumbers like a unit voxel would (ramp 0 → 1 cw).
+    expect(only.subdiv?.children[0]?.chamfer?.resolvedTo).toEqual({ shapeKind: 'ramp', rotation: 1 })
+  })
+
+  it('mirrors subdivided detail across the split axis', () => {
+    const model = emptyModel()
+    emptyDetailAt(model, [1, 0, 0], ['x'])
+    setDetailChild(model, [1, 0, 0], 1, { slot: { ...SLOT } })
+    const [only] = rotateCellsInPlane(snapshotCells(model, [encodeKey(1, 0, 0)]), PLANE, 'mirror-h', 16)
+    // Single cell mirrors onto itself; the live half moves to the other side.
+    expect(only.coord).toEqual([1, 0, 0])
+    expect(only.subdiv?.split).toEqual(['x'])
+    expect(only.subdiv?.children).toEqual([{ slot: SLOT }, null])
   })
 
   it('drops results landing outside the grid', () => {

@@ -1,16 +1,20 @@
 import { decodeKey, effectiveExtent, emptyModel, encodeKey, recomputeBounds, withinWorkingBounds } from '@/engine/grid/GridStore'
-import type { CellKey, GridExtent, VoxelModel } from '@/engine/grid/types'
+import type { CellKey, GridExtent, SplitAxis, VoxelModel } from '@/engine/grid/types'
 import type { Marker, SerializedMarkerPosition } from '@/engine/markers/types'
-import type { RigBox } from '@/engine/rigging/types'
+import type { RigBox, RigClip, RigTween } from '@/engine/rigging/types'
+import { newTweenId } from '@/engine/rigging/types'
+import { normalizeFps, sanitizeRigClip, sanitizeRigTween } from '@/engine/rigging/types'
 import { MARKER_COLORS } from '@/engine/markers/types'
 import { DEFAULT_PALETTE } from '@/engine/palette/defaultPalette'
+import { isValidSlotRef } from '@/engine/palette/palette'
+import { normalizeCell } from '@/engine/grid/cellBox'
 import type { PaletteState } from '@/engine/palette/types'
 import type { BoxFace, TextureModel } from '@/engine/texture/types'
 import { BOX_FACES, faceSizeFor, TEXEL_SCALE } from '@/engine/texture/types'
 import { emptyTextureModel, normalizeTexelScale } from '@/engine/texture/TextureStore'
 import type { SliceAnimSettings, SliceKey } from '@/engine/animation/types'
 import { encodeSliceKey } from '@/engine/animation/animationLayers'
-import { CURRENT_SCHEMA_VERSION, type ProjectMeta, type SerializedAnimLayer, type SerializedRigBox, type SerializedSliceMask, type SerializedSlicePivot, type SerializedTexture, type ViewSettings, type VoxPaintProjectFile } from './schema'
+import { CURRENT_SCHEMA_VERSION, type ProjectMeta, type SerializedAnimLayer, type SerializedClip, type SerializedRigBox, type SerializedSliceMask, type SerializedSlicePivot, type SerializedTexture, type ViewSettings, type VoxPaintProjectFile } from './schema'
 
 function u8ToBase64(a: Uint8Array): string {
   let s = ''
@@ -113,6 +117,36 @@ function serializeMarkers(markers: Marker[]): SerializedMarkerPosition[] {
   }))
 }
 
+function serializeClips(clips: RigClip[]): SerializedClip[] {
+  return clips.map((c) => ({
+    id: c.id,
+    name: c.name,
+    loop: c.loop,
+    duration: c.duration,
+    keys: c.keys.map((k) => ({
+      id: k.id,
+      name: k.name,
+      time: k.time,
+      ease: k.ease,
+      joints: Object.fromEntries(Object.entries(k.joints).map(([id, e]) => [id, [e[0], e[1], e[2]] as [number, number, number]])),
+      ...(k.offsets ? { offsets: Object.fromEntries(Object.entries(k.offsets).map(([id, o]) => [id, [o[0], o[1], o[2]] as [number, number, number]])) } : {}),
+    })),
+  }))
+}
+
+function deserializeClips(entries: SerializedClip[] | undefined, fps: number): RigClip[] {
+  if (!entries) return []
+  const out: RigClip[] = []
+  const seen = new Set<string>()
+  for (const e of entries) {
+    const clip = sanitizeRigClip(e, fps)
+    if (!clip || seen.has(clip.id)) continue
+    seen.add(clip.id)
+    out.push(clip)
+  }
+  return out
+}
+
 function serializeRigBoxes(rigBoxes: RigBox[]): SerializedRigBox[] {
   return rigBoxes.map((b) => ({
     id: b.id,
@@ -121,6 +155,7 @@ function serializeRigBoxes(rigBoxes: RigBox[]): SerializedRigBox[] {
     max: [b.max[0], b.max[1], b.max[2]],
     parentId: b.parentId,
     ...(b.pivot ? { pivot: [b.pivot[0], b.pivot[1], b.pivot[2]] as [number, number, number] } : {}),
+    ...((b.tweens ?? []).length > 0 ? { tweens: (b.tweens ?? []).map((t) => ({ ...t })) } : {}),
   }))
 }
 
@@ -168,7 +203,18 @@ function deserializeRigBoxes(entries: SerializedRigBox[] | undefined, gridExtent
       const half = effectiveExtent(gridExtent) / 2
       if (p.every((n) => n >= -half && n <= half)) pivot = [p[0], p[1], p[2]]
     }
-    out.push({ id: e.id, name: e.name.slice(0, 64) || 'rig', min, max, parentId: null, pivot })
+    // Tween stack (v15; v14 files carry a single `loop` — folded in by the migration).
+    // Malformed entries are dropped; an id collision within the box falls back to a fresh id.
+    const tweens: RigTween[] = []
+    const seenTweenIds = new Set<string>()
+    for (const raw of e.tweens ?? []) {
+      const tween = sanitizeRigTween(raw)
+      if (!tween) continue
+      if (seenTweenIds.has(tween.id)) tween.id = newTweenId()
+      seenTweenIds.add(tween.id)
+      tweens.push(tween)
+    }
+    out.push({ id: e.id, name: e.name.slice(0, 64) || 'rig', min, max, parentId: null, pivot, tweens })
     rawParents.set(e.id, typeof e.parentId === 'string' ? e.parentId : null)
   }
   // Resolve parents second: keep the link only when the parent survived, isn't self, and the
@@ -217,7 +263,18 @@ function deserializeMarkers(entries: SerializedMarkerPosition[] | undefined, gri
   return out
 }
 
-export function serializeProject(model: VoxelModel, palette: PaletteState, meta: ProjectMeta, texture: TextureModel, view?: ViewSettings, animSettings?: Map<SliceKey, SliceAnimSettings>, sliceMasks?: Map<SliceKey, Set<CellKey>>, slicePivots?: Map<SliceKey, CellKey>, markers?: Marker[], rigBoxes?: RigBox[]): VoxPaintProjectFile {
+export type SerializeOptions = {
+  view?: ViewSettings
+  animSettings?: Map<SliceKey, SliceAnimSettings>
+  sliceMasks?: Map<SliceKey, Set<CellKey>>
+  slicePivots?: Map<SliceKey, CellKey>
+  markers?: Marker[]
+  rigBoxes?: RigBox[]
+  clips?: RigClip[]
+}
+
+export function serializeProject(model: VoxelModel, palette: PaletteState, meta: ProjectMeta, texture: TextureModel, options: SerializeOptions = {}): VoxPaintProjectFile {
+  const { view, animSettings, sliceMasks, slicePivots, markers, rigBoxes, clips } = options
   const colorCells = Array.from(model.color.entries()).map(([key, cell]) => {
     const [x, y, z] = decodeKey(key)
     return { x, y, z, paletteSlot: cell.paletteSlot }
@@ -226,11 +283,22 @@ export function serializeProject(model: VoxelModel, palette: PaletteState, meta:
     const [x, y, z] = decodeKey(key)
     return { x, y, z, ...cell }
   })
+  const subdivCells = Array.from(model.subdiv.entries()).map(([key, cell]) => {
+    const [x, y, z] = decodeKey(key)
+    return {
+      x, y, z,
+      split: [...cell.split],
+      children: cell.children.map((c) => c ? {
+        slot: c.slot,
+        ...(c.chamfer ? { chamfer: { planeAxis: c.chamfer.planeAxis, planeOrientation: c.chamfer.planeOrientation, resolvedTo: c.chamfer.resolvedTo ? { ...c.chamfer.resolvedTo } : null } } : {}),
+      } : null),
+    }
+  })
   return {
     schemaVersion: CURRENT_SCHEMA_VERSION,
     meta,
     palette,
-    model: { bounds: model.bounds, colorCells, chamferCells },
+    model: { bounds: model.bounds, colorCells, chamferCells, subdivCells },
     texture: serializeTexture(texture, meta.gridExtent, normalizeTexelScale(meta.texelScale ?? TEXEL_SCALE)),
     view,
     animations: animSettings ? serializeAnimations(animSettings) : undefined,
@@ -238,13 +306,15 @@ export function serializeProject(model: VoxelModel, palette: PaletteState, meta:
     pivots: slicePivots ? serializeSlicePivots(slicePivots) : undefined,
     markers: markers ? serializeMarkers(markers) : undefined,
     rigBoxes: rigBoxes ? serializeRigBoxes(rigBoxes) : undefined,
+    ...(clips && clips.length > 0 ? { clips: serializeClips(clips) } : {}),
   }
 }
 
-export function deserializeProject(file: VoxPaintProjectFile): { model: VoxelModel; palette: PaletteState; meta: ProjectMeta; texture: TextureModel; view: ViewSettings; animSettings: Map<SliceKey, SliceAnimSettings>; sliceMasks: Map<SliceKey, Set<CellKey>>; slicePivots: Map<SliceKey, CellKey>; markers: Marker[]; rigBoxes: RigBox[] } {
+export function deserializeProject(file: VoxPaintProjectFile): { model: VoxelModel; palette: PaletteState; meta: ProjectMeta; texture: TextureModel; view: ViewSettings; animSettings: Map<SliceKey, SliceAnimSettings>; sliceMasks: Map<SliceKey, Set<CellKey>>; slicePivots: Map<SliceKey, CellKey>; markers: Marker[]; rigBoxes: RigBox[]; clips: RigClip[] } {
   const model = emptyModel()
   const color = new Map(model.color)
   const chamfer = new Map(model.chamfer)
+  const subdiv = new Map(model.subdiv)
 
   for (const cell of file.model.colorCells) {
     color.set(encodeKey(cell.x, cell.y, cell.z), { paletteSlot: cell.paletteSlot })
@@ -257,18 +327,54 @@ export function deserializeProject(file: VoxPaintProjectFile): { model: VoxelMod
     })
   }
 
-  const built: VoxelModel = { color, chamfer, bounds: file.model.bounds }
+  const built: VoxelModel = { color, chamfer, subdiv, bounds: file.model.bounds }
   // `noiseSeed` post-dates `ProjectMeta` being otherwise fully required. Default to 0 (the
   // hash functions' unseeded behavior) rather than a fresh random seed, so an old project's noise
   // looks exactly the same as it always did instead of visibly shifting on next load.
   // `voxelScaleY` is the same story one generation later: pre-scale files load as 1x (unit cubes).
   // `texelScale` one generation after that: pre-scale files load at full detail (4). The merged
   // meta must exist before the texture (whose face size derives from gridExtent + texelScale).
-  const meta: ProjectMeta = { ...file.meta, noiseSeed: file.meta.noiseSeed ?? 0, voxelScaleY: file.meta.voxelScaleY ?? 1, texelScale: normalizeTexelScale(file.meta.texelScale ?? TEXEL_SCALE) }
+  const meta: ProjectMeta = { ...file.meta, noiseSeed: file.meta.noiseSeed ?? 0, voxelScaleY: file.meta.voxelScaleY ?? 1, texelScale: normalizeTexelScale(file.meta.texelScale ?? TEXEL_SCALE), animationMode: file.meta.animationMode === 'poses' ? 'poses' : 'tweens', fps: normalizeFps(file.meta.fps) }
+  // Detail voxels (v19+): validate parent coords like any grid cell; the split must be 1–3
+  // distinct world axes and children must number exactly 2^split. Slots sanitize to empty
+  // on invalid; chamfers validate shape/rotation or degrade to plain. A subdiv parent is
+  // mutually exclusive with color/chamfer cells — on overlap the subdivision wins (it was
+  // written from a state where the parent had neither; overlap means hand-edit corruption).
+  // Early v19 files also carried a parent `slot` and a `scaffold` flag; both are ignored, and
+  // every entry is normalized on load (uniform → plain voxel, all-empty → dropped).
+  const SHAPE_KINDS = ['ramp', 'convex', 'concave', 'wedge', 'tricorner', 'triconcave', 'thin', 'half', 'post', 'quarter', 'flat', 'flatwedge'] as const
+  for (const cell of file.model.subdivCells ?? []) {
+    if (!cell || !Number.isInteger(cell.x) || !Number.isInteger(cell.y) || !Number.isInteger(cell.z)) continue
+    if (!withinWorkingBounds([cell.x, cell.y, cell.z], meta.gridExtent)) continue
+    const split = cell.split
+    if (!Array.isArray(split) || split.length < 1 || split.length > 3 || new Set(split).size !== split.length || !split.every((a) => a === 'x' || a === 'y' || a === 'z')) continue
+    if (!Array.isArray(cell.children) || cell.children.length !== 2 ** split.length) continue
+    const key = encodeKey(cell.x, cell.y, cell.z)
+    built.color.delete(key)
+    built.chamfer.delete(key)
+    built.subdiv.set(key, {
+      split: [...split].sort() as SplitAxis[],
+      children: cell.children.map((c) => {
+        if (!c || !isValidSlotRef(c.slot)) return null
+        const r = c.chamfer?.resolvedTo
+        const chamfer = c.chamfer && (c.chamfer.planeAxis === 'x' || c.chamfer.planeAxis === 'y' || c.chamfer.planeAxis === 'z')
+          && (c.chamfer.planeOrientation === 1 || c.chamfer.planeOrientation === -1)
+          && (r === null || (r && (SHAPE_KINDS as readonly unknown[]).includes(r.shapeKind) && Number.isInteger(r.rotation) && r.rotation >= 0 && r.rotation <= 3))
+          ? {
+            planeAxis: c.chamfer.planeAxis,
+            planeOrientation: c.chamfer.planeOrientation,
+            resolvedTo: r ? { shapeKind: r.shapeKind as (typeof SHAPE_KINDS)[number], rotation: r.rotation as 0 | 1 | 2 | 3 } : null,
+          }
+          : undefined
+        return chamfer ? { slot: c.slot, chamfer } : { slot: c.slot }
+      }),
+    })
+    normalizeCell(built, [cell.x, cell.y, cell.z])
+  }
   const texture = file.texture
     ? deserializeTexture(file.texture, meta.gridExtent, meta.texelScale!)
     : emptyTextureModel(meta.gridExtent, meta.texelScale!)
-  const view: ViewSettings = { ambientOcclusion: false, noiseLevel: 0, specularNoiseLevel: 0, noiseScale: 1, aoStrength: 1, glassRoughnessLevel: 0.3, exposure: 1, exportScaleFactor: 100, exportAnchor: 'center', exportAlignToObjectBounds: false, exportDisableMeshOptimization: false, exportCullInteriorFaces: true, exportIncludeTextureMaps: true, exportIncludeAOMaps: true, exportIncludeMarkers: true, ...file.view }
+  const view: ViewSettings = { ambientOcclusion: false, noiseLevel: 0, specularNoiseLevel: 0, noiseScale: 1, aoStrength: 1, glassRoughnessLevel: 0.3, exposure: 1, exportScaleFactor: 100, exportAnchor: 'center', exportAlignToObjectBounds: false, exportDisableMeshOptimization: false, exportCullInteriorFaces: true, exportIncludeTextureMaps: true, exportIncludeAOMaps: true, exportIncludeMarkers: true, exportIncludeAnimations: true, exportBakeAssemblyPose: false, ...file.view }
   const animSettings = file.animations ? deserializeAnimations(file.animations) : new Map()
   const sliceMasks = file.masks ? deserializeSliceMasks(file.masks) : new Map()
   const slicePivots = file.pivots ? deserializeSlicePivots(file.pivots) : new Map()
@@ -278,5 +384,6 @@ export function deserializeProject(file: VoxPaintProjectFile): { model: VoxelMod
   const palette: PaletteState = { ...DEFAULT_PALETTE, ...file.palette }
   const markers = deserializeMarkers(file.markers, meta.gridExtent)
   const rigBoxes = deserializeRigBoxes(file.rigBoxes, meta.gridExtent)
-  return { model: { ...built, bounds: recomputeBounds(built) }, palette, meta, texture, view, animSettings, sliceMasks, slicePivots, markers, rigBoxes }
+  const clips = deserializeClips(file.clips, normalizeFps(file.meta.fps))
+  return { model: { ...built, bounds: recomputeBounds(built) }, palette, meta, texture, view, animSettings, sliceMasks, slicePivots, markers, rigBoxes, clips }
 }

@@ -167,6 +167,37 @@ describe('3D selection store + exact-set actions', () => {
     expect(after.selectedCells).toEqual(new Set([encodeKey(4, 4, 0)]))
   })
 
+  it('rotateCells3D turns subdivided detail with the parent: split, children, and bevels', () => {
+    paintAt([0, 0, 0])
+    const s = useAppStore.getState()
+    // A whole-voxel paint first (no pointer half spans the cut axis), then one grid cell.
+    s.setGridSplit(['x'])
+    s.beginStroke()
+    expect(s.paintCellAtCoord([0, 0, 0], 'z', 1)).toBe(true)
+    s.commitStroke()
+    s.setActivePaletteSlot(SLOT_B)
+    s.beginStroke()
+    // The pointer over the x-high half picks that grid cell.
+    expect(s.paintCellAtCoord([0, 0, 0], 'z', 1, [1, 0, 0])).toBe(true)
+    s.commitStroke()
+    // A frozen bevel on the far half: the rotation must carry and renumber it.
+    useAppStore.setState((st) => {
+      st.model.subdiv.get(encodeKey(0, 0, 0))!.children[1] = {
+        slot: { ...SLOT_B },
+        chamfer: { planeAxis: 'z', planeOrientation: 1, resolvedTo: { shapeKind: 'ramp', rotation: 0 } },
+      }
+    })
+    useAppStore.getState().setSelectedCells(new Set([encodeKey(0, 0, 0)]))
+    useAppStore.getState().rotateCells3D('rotate')
+    const after = useAppStore.getState()
+    // Lone cell stays put; the x-split turns onto its side and the bevel renumbers 0 → 1.
+    const sub = after.model.subdiv.get(encodeKey(0, 0, 0))
+    expect(sub?.split).toEqual(['y'])
+    expect(sub?.children.map((c) => c?.slot)).toEqual([SLOT_B, SLOT_A])
+    expect(sub?.children[0]?.chamfer?.resolvedTo).toEqual({ shapeKind: 'ramp', rotation: 1 })
+    expect(after.selectedCells).toEqual(new Set([encodeKey(0, 0, 0)]))
+  })
+
   it('rotateCells3D expands the model bounds over the placed cells', () => {
     paintAt([0, 0, 0], SLOT_A)
     paintAt([1, 0, 0], SLOT_B)
@@ -320,7 +351,8 @@ describe('3D selection store + exact-set actions', () => {
     useAppStore.getState().copyCells3D()
     // 2D-path clipboard: no bbox depth anchor, so the bake follows the destination slice.
     expect(useAppStore.getState().clipboard!.depthAnchor).not.toBe('bbox')
-    // Move the plane two layers up — the set clears (plane setters), the clipboard survives.
+    // Move the plane two layers up — the offset shift keeps the set (and the occupied
+    // source cells mean the paste floats rather than stamping); the clipboard survives.
     useAppStore.getState().setPlaneOffset(2)
     useAppStore.getState().pasteCells3D()
     const after = useAppStore.getState()
@@ -428,7 +460,7 @@ describe('applySliceWandAt', () => {
 
     const after = useAppStore.getState()
     expect(after.selectedCells).toEqual(new Set([encodeKey(0, 0, 2), encodeKey(1, 0, 2)]))
-    expect(after.plane).toEqual({ axis: 'z', orientation: 1, offset: 0 })
+    expect(after.plane).toEqual({ axis: 'z', orientation: 1, offset: 0, half: null })
   })
 
   it('select-tap order (reorient then select) survives the setter clear', () => {
@@ -436,15 +468,15 @@ describe('applySliceWandAt', () => {
     paintAt([5, 0, 0])
     useAppStore.getState().setSelectedCells(new Set([encodeKey(5, 0, 0)]))
 
-    // What a 3D select tap does: reorient first (wiping the stale selection via the plane
-    // setters — reversing this order would lose the fresh set)...
-    useAppStore.getState().handleVoxelFaceClick(encodeKey(0, 0, 0), 'z', 1, 0)
+    // What a 3D select tap does: reorient first (a genuine facing change wipes the stale
+    // selection via the plane setters — reversing this order would lose the fresh set)...
+    useAppStore.getState().handleVoxelFaceClick(encodeKey(0, 0, 0), 'x', 1, 0)
     expect(useAppStore.getState().selectedCells.size).toBe(0)
     // ...then the fresh single-voxel set lands.
     useAppStore.getState().setSelectedCells(new Set([encodeKey(0, 0, 0)]))
 
     const after = useAppStore.getState()
-    expect(after.plane).toEqual({ axis: 'z', orientation: 1, offset: 0 })
+    expect(after.plane).toEqual({ axis: 'x', orientation: 1, offset: 0, half: null })
     expect(after.selectedCells).toEqual(new Set([encodeKey(0, 0, 0)]))
   })
 })

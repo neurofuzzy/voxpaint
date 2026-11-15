@@ -1,11 +1,13 @@
 import type { ChamferCell, Coord, GridExtent, VoxelModel } from '@/engine/grid/types'
+import { cloneSubdiv } from '@/engine/grid/subdiv'
+import { extractFineRegion } from '@/engine/grid/fineOps'
 import type { ConstructionPlane } from '@/engine/plane/types'
 import { effectiveExtent, encodeKey, expandBounds, withinWorkingBounds } from '@/engine/grid/GridStore'
 import { gridCoordFromPixel } from '@/engine/plane/constructionPlane'
 import { axisIndex } from '@/engine/plane/planeGeometry'
 import { toDisplayU, toDisplayV } from '@/engine/plane/planeDisplay'
 import { forEachSelectedCell } from './selectionMask'
-import { mirrorClassification } from './transform'
+import { mirrorClassification, mirrorSubdivEntry } from './transform'
 import type { ClipboardCell, ClipboardData, SelectionRegion } from '@/store/types'
 
 /** Deep-copy a chamfer cell so the clipboard never shares references with the live model. */
@@ -33,18 +35,28 @@ export function copyRegionToClipboard(
   gridExtent?: GridExtent,
 ): ClipboardData {
   const cells: ClipboardCell[] = []
+  // A sub-voxel selection copies only its selected parts (the copies keep their finer split).
+  let fineFootprint: ClipboardData['fine']
+  if (region.fine && !deep) {
+    const f = region.fine
+    fineFootprint = { su: f.su, sv: f.sv, slab: f.slab, mask: new Uint8Array(f.mask) }
+    model = extractFineRegion(model, plane, region)
+    region = { originU: region.originU, originV: region.originV, width: region.width, height: region.height, mask: region.mask }
+  }
   const wantDeep = deep && gridExtent !== undefined
   const half = wantDeep ? effectiveExtent(gridExtent!) / 2 : 0
   const push = (u: number, v: number, w: number) => {
     const key = encodeKey(...gridCoordFromPixel({ ...plane, offset: w }, u, v))
     const color = model.color.get(key)
     const chamfer = model.chamfer.get(key)
+    const subdiv = model.subdiv.get(key)
     cells.push({
       du: u - region.originU,
       dv: v - region.originV,
       dw: w - plane.offset,
       color: color ? { paletteSlot: color.paletteSlot } : undefined,
       chamfer: chamfer ? cloneChamfer(chamfer) : undefined,
+      subdiv: subdiv ? cloneSubdiv(subdiv) : undefined,
     })
   }
   forEachSelectedCell(region, (u, v) => {
@@ -54,7 +66,7 @@ export function copyRegionToClipboard(
     }
     for (let w = -half; w < half; w++) push(u, v, w)
   })
-  return { width: region.width, height: region.height, originU: region.originU, originV: region.originV, cells, copyPlaneAxis: plane.axis, copyPlaneOrientation: plane.orientation, copyPlaneOffset: plane.offset }
+  return { width: region.width, height: region.height, originU: region.originU, originV: region.originV, cells, copyPlaneAxis: plane.axis, copyPlaneOrientation: plane.orientation, copyPlaneOffset: plane.offset, copyPlaneHalf: plane.half, ...(fineFootprint ? { fine: fineFootprint } : {}) }
 }
 
 /** Erases both layers under a selection mask (used by cut/move). With `deep` (Alt-drag lift) the
@@ -72,6 +84,7 @@ export function clearRegion(
       const key = encodeKey(...gridCoordFromPixel(plane, u, v))
       model.color.delete(key)
       model.chamfer.delete(key)
+      model.subdiv.delete(key)
       return
     }
     const half = effectiveExtent(gridExtent) / 2
@@ -79,6 +92,7 @@ export function clearRegion(
       const key = encodeKey(...gridCoordFromPixel({ ...plane, offset: w }, u, v))
       model.color.delete(key)
       model.chamfer.delete(key)
+      model.subdiv.delete(key)
     }
   })
 }
@@ -95,6 +109,22 @@ export function clipboardDepthBase(plane: ConstructionPlane, clipboard: Clipboar
   const samePlane = clipboard.copyPlaneAxis === plane.axis && clipboard.copyPlaneOrientation === plane.orientation
   if (samePlane && clipboard.depthAnchor === 'bbox') return clipboard.copyPlaneOffset ?? plane.offset
   return plane.offset
+}
+
+/**
+ * Half-voxel depth shift (−1, 0, +1 half voxels along the world plane axis) that keeps pasted
+ * content at the same depth relative to the construction plane's stop as when it was copied.
+ * Depth is measured from the low edge of the plane's stop (a whole stop and its low half share
+ * one), so stepping the plane by half voxels between copy and paste moves the paste by exactly
+ * that much; the whole-voxel part rides `clipboardDepthBase`. Bbox-anchored content keeps its
+ * absolute depth on same-plane drops (0). Copies off another axis anchor at that layer's low edge.
+ * Compute it from the clipboard as copied — `transformClipboardToPlane` resets the source stop.
+ */
+export function clipboardHalfShift(plane: ConstructionPlane, clipboard: ClipboardData): -1 | 0 | 1 {
+  const samePlane = clipboard.copyPlaneAxis === plane.axis && clipboard.copyPlaneOrientation === plane.orientation
+  if (samePlane && clipboard.depthAnchor === 'bbox') return 0
+  const src = clipboard.copyPlaneAxis === plane.axis ? (clipboard.copyPlaneHalf ?? 0) : 0
+  return ((plane.half ?? 0) - src) as -1 | 0 | 1
 }
 
 /**
@@ -119,11 +149,13 @@ export function placeClipboardCell(
  * Stamps clipboard data at a destination origin. Chamfer cells are restored **verbatim** — their
  * copied plane basis and resolved shape are written back unchanged, with no reclassification against
  * the destination's neighbors, so the pasted result exactly matches the source. (A chamfer only ever
- * (re)resolves when the user edits that specific voxel.) Cells with neither `color` nor `chamfer`
- * are explicitly empty voxels: they delete whatever they land on, so every drop replaces its
- * footprint instead of merging into it. Depth lands per `clipboardDepthBase`: ordinary region
- * pastes land on the destination slice, while bbox-anchored exact-set lifts preserve absolute
- * depth on same-plane drops. Mutates the given (draft) model directly.
+ * (re)resolves when the user edits that specific voxel.) Subdivided parents restore verbatim too
+ * (detail rides along atomically, mutually exclusive with color/chamfer). Cells with neither
+ * `color`/`subdiv` nor `chamfer` are explicitly empty voxels: they delete whatever they land on,
+ * so every drop replaces its footprint instead of merging into it. Depth lands per
+ * `clipboardDepthBase`: ordinary region pastes land on the destination slice, while bbox-anchored
+ * exact-set lifts preserve absolute depth on same-plane drops. Mutates the given (draft) model
+ * directly.
  */
 export function applyClipboardAt(
   model: VoxelModel,
@@ -138,6 +170,15 @@ export function applyClipboardAt(
     if (!withinWorkingBounds(coord, gridExtent)) continue
 
     const key = encodeKey(...coord)
+
+    if (cell.subdiv) {
+      model.subdiv.set(key, cloneSubdiv(cell.subdiv))
+      model.color.delete(key)
+      model.chamfer.delete(key)
+      model.bounds = expandBounds(model.bounds, coord)
+      continue
+    }
+    model.subdiv.delete(key)
 
     if (cell.chamfer) model.chamfer.set(key, cloneChamfer(cell.chamfer))
     else model.chamfer.delete(key)
@@ -237,7 +278,7 @@ export function transformClipboardToPlane(clipboard: ClipboardData, toPlane: Con
   if (!copyPlaneAxis || copyPlaneOrientation == null) return clipboard
   if (copyPlaneAxis === toPlane.axis && copyPlaneOrientation === toPlane.orientation) return clipboard
 
-  const fromPlane: ConstructionPlane = { axis: copyPlaneAxis, orientation: copyPlaneOrientation, offset: 0 }
+  const fromPlane: ConstructionPlane = { axis: copyPlaneAxis, orientation: copyPlaneOrientation, offset: 0, half: null }
   const mirrorU = mirrorsU(fromPlane) !== mirrorsU(toPlane)
   const mirrorV = mirrorsV(fromPlane) !== mirrorsV(toPlane)
 
@@ -247,12 +288,17 @@ export function transformClipboardToPlane(clipboard: ClipboardData, toPlane: Con
     copyPlaneAxis: toPlane.axis,
     copyPlaneOrientation: toPlane.orientation,
     copyPlaneOffset: undefined,
+    copyPlaneHalf: undefined,
     depthAnchor: undefined,
     cells: clipboard.cells.map((cell) => ({
       ...cell,
       du: mirrorU ? width - 1 - cell.du : cell.du,
       dv: mirrorV ? height - 1 - cell.dv : cell.dv,
       chamfer: cell.chamfer ? rebaseChamfer(cell.chamfer, fromPlane, toPlane, mirrorU, mirrorV) : undefined,
+      // Detail mirrors in the source plane's logical frame (same frame as the du/dv flip
+      // above), so the pasted half-cells keep their on-screen arrangement — bevels
+      // renumber with the mirror via `mirrorSubdivEntry`.
+      subdiv: cell.subdiv ? mirrorSubdivEntry(cell.subdiv, fromPlane.axis, mirrorU, mirrorV) : undefined,
     })),
   }
 }

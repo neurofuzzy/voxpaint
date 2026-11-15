@@ -19,13 +19,38 @@ export const createModeSlice: Slice = (set, get) => ({
     if (mode === 'animate') {
       get().bakeFloatIfAny()
     }
+    // Pose preview is Animate-only working state — leaving the mode stops transport
+    // (the clips themselves stay in the file, and re-entering re-selects).
+    if (mode !== 'animate' && get().clipPlaying) {
+      get().setClipPlaying(false)
+    }
     set((state) => {
       state.mode = mode
-      // Animate mode only has rig/pivot handlers wired up (see engine/tools's animateToolMap) —
-      // land on a tool that's actually wired up there instead of leaving dispatch pointed at
-      // one that silently no-ops (e.g. 'select' or 'move' from Model mode).
-      if (mode === 'animate' && state.activeTool !== 'pivot' && state.activeTool !== 'rigbox') {
-        state.activeTool = 'rigbox'
+      // Animate tools follow the panel tab (see animateToolMap + ANIMATE_TOOLS) — land on a
+      // tab whose toolbar actually wires the current tool up instead of leaving dispatch
+      // pointed at one that silently no-ops. Unknown tools fall back to rig + rigbox.
+      if (mode === 'animate') {
+        const t = state.activeTool
+        if (t === 'pose' || t === 'offset') {
+          state.animateTab = 'poses'
+        } else if (t === 'select') {
+          state.animateTab = 'tweens'
+        } else if (t === 'rigbox' || t === 'pivot') {
+          state.animateTab = 'rig'
+        } else {
+          state.animateTab = 'rig'
+          state.activeTool = 'rigbox'
+        }
+        // The panel only shows one motion tab per project — clamp a hidden tab (and its
+        // tool) to the visible one so the toolbar never points at a tab that isn't there.
+        const animationMode = state.meta.animationMode ?? 'tweens'
+        if (animationMode === 'tweens' && state.animateTab === 'poses') {
+          state.animateTab = 'tweens'
+          state.activeTool = 'select'
+        } else if (animationMode === 'poses' && state.animateTab === 'tweens') {
+          state.animateTab = 'poses'
+          state.activeTool = 'pose'
+        }
       }
     })
     // Animate and Texture modes have no 3D-only editing surface — leaving Model mode drops the

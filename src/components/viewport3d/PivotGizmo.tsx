@@ -1,6 +1,10 @@
+import { useRef } from 'react'
+import * as THREE from 'three'
+import { useFrame } from '@react-three/fiber'
 import { decodeKey } from '@/engine/grid/GridStore'
 import { encodeSliceKey } from '@/engine/animation/animationLayers'
-import { rigPivotOf } from '@/engine/rigging/types'
+import { previewFrame } from '@/engine/rigging/preview'
+import { pivotWorldFromMatrix } from '@/engine/rigging/rigLoop'
 import { useAppStore } from '@/store/useAppStore'
 
 const PIVOT_COLOR = '#8b5cf6' // violet-500, matching the app's UI accent
@@ -13,7 +17,9 @@ const RIG_PIVOT_DIM = '#f59e0b' // amber-500, matching unselected rig box outlin
  * - one sphere per rig box at its rotation center, colored like its bounding-box outline
  *   (white when selected, amber otherwise) — all drawn on top of geometry via depthTest-off
  *   rendering, like the selected box's outline
- * Null when none apply.
+ * Null when none apply. Rig markers ride full animation (tween stacks × pose): positions
+ * are written per frame from the same composed world matrices the voxel meshes use, so
+ * they stay glued to the moving joints with zero React re-renders.
  */
 export function PivotGizmo() {
   const mode = useAppStore((s) => s.mode)
@@ -23,6 +29,24 @@ export function PivotGizmo() {
   const selectedRigBoxId = useAppStore((s) => s.selectedRigBoxId)
   // Isolate mode shows only the selected box's pivot, matching its wire box.
   const isolating = useAppStore((s) => s.isolateRig)
+  const markers = useRef(new Map<string, THREE.Mesh>())
+
+  // Same per-frame plumbing as the wire outlines: each marker's position is its pivot
+  // carried by the box's composed world matrix (a joint's own motion never moves its own
+  // pivot — only ancestors carry it — and the matrix encodes exactly that).
+  useFrame(() => {
+    const st = useAppStore.getState()
+    if (st.mode !== 'animate' || markers.current.size === 0) return
+    const { worlds: matrices } = previewFrame(st, performance.now() / 1000)
+    const byId = new Map(st.rigBoxes.map((b) => [b.id, b]))
+    for (const [id, mesh] of markers.current) {
+      const box = byId.get(id)
+      const m = box ? matrices.get(id) : undefined
+      if (!box || !m) continue
+      const pivot = pivotWorldFromMatrix(m, box)
+      mesh.position.set(pivot[0], pivot[1], pivot[2])
+    }
+  })
 
   if (mode !== 'animate') return null
 
@@ -43,14 +67,16 @@ export function PivotGizmo() {
       )}
       {shownBoxes.map((box) => {
         const active = box.id === selectedRigBoxId
-        const pivot = rigPivotOf(box)
         const color = active ? RIG_PIVOT_COLOR : RIG_PIVOT_DIM
         return (
           <mesh
             key={box.id}
-            position={[pivot[0] + 0.5, pivot[1] + 0.5, pivot[2] + 0.5]}
             raycast={() => null}
             renderOrder={10}
+            ref={(m) => {
+              if (m) markers.current.set(box.id, m)
+              else markers.current.delete(box.id)
+            }}
           >
             <sphereGeometry args={[active ? 0.28 : 0.22, 16, 16]} />
             <meshStandardMaterial

@@ -85,8 +85,8 @@ export function classify(n: NeighborSample): ChamferClassification | null {
 /**
  * Re-attempts resolution for every still-unresolved (`resolvedTo: null`) chamfer cell that lives
  * on the given plane's exact (axis, offset) slice — the only cells whose neighbor context an edit
- * on this plane could possibly have changed. Once resolved, a cell's shape is frozen forever, so
- * this only ever moves `resolvedTo` from null to non-null, never re-resolves an already-resolved
+ * on this plane could possibly have changed. Once resolved, a shape is frozen forever, so this
+ * only ever moves `resolvedTo` from null to non-null, never re-resolves an already-resolved
  * cell (matching the old "frozen at paint time" rule, just deferred to whenever it first becomes
  * resolvable instead of blocking the paint that couldn't yet resolve it). Mutates the given
  * (draft) model. Cheap to call after every chamfer paint — it only scans one plane's worth of

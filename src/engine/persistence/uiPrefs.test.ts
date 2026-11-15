@@ -27,7 +27,7 @@ describe('construction-plane prefs', () => {
 
   it('round-trips the plane pose through save/load', () => {
     savePlanePref({ axis: 'x', orientation: -1, offset: 3 })
-    expect(loadUiPrefs().plane).toEqual({ axis: 'x', orientation: -1, offset: 3 })
+    expect(loadUiPrefs().plane).toEqual({ axis: 'x', orientation: -1, offset: 3, half: null })
   })
 
   it('preserves unrelated prefs across plane saves', () => {
@@ -36,7 +36,7 @@ describe('construction-plane prefs', () => {
     const prefs = loadUiPrefs()
     expect(prefs.layoutMode).toBe('3d-only')
     expect(prefs.dontShowSplash).toBe(true)
-    expect(prefs.plane).toEqual({ axis: 'y', orientation: 1, offset: -8 })
+    expect(prefs.plane).toEqual({ axis: 'y', orientation: 1, offset: -8, half: null })
   })
 
   it('drops corrupt planes (bad axis, bad orientation, non-integer offset)', () => {

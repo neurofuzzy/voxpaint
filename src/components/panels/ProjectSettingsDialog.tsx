@@ -3,6 +3,8 @@ import { Settings } from 'lucide-react'
 import { useEffect, useState } from 'react'
 import { countCellsOutsideBounds } from '@/engine/grid/GridStore'
 import type { GridExtent, VoxelScaleY } from '@/engine/grid/types'
+import type { AnimationMode } from '@/engine/rigging/types'
+import { normalizeFps } from '@/engine/rigging/types'
 import { faceSizeFor, TEXEL_SCALE } from '@/engine/texture/types'
 import type { TexelScale } from '@/engine/texture/types'
 import { hasTextureContent, normalizeTexelScale } from '@/engine/texture/TextureStore'
@@ -22,7 +24,8 @@ const TEXEL_OPTIONS: TexelScale[] = [1, 2, 4]
 
 /**
  * Project Settings modal: rename the project, resize its working cube, set the Y voxel scale,
- * and/or set the texture detail (texels per voxel). Mirrors the New Project dialog's name + size
+ * set the texture detail (texels per voxel), and/or pick the animation system (Machine
+ * tweens vs Character keyframes). Mirrors the New Project dialog's name + size
  * controls, prefilled with the current values. Growing keeps everything; shrinking deletes voxels
  * outside the new bounds (warned with an exact count, and reported on save) and center-crops the
  * texture faces, and any resize clears undo history. The voxel-height scale (flat/cubic/tall) is
@@ -34,7 +37,9 @@ export function ProjectSettingsDialog({ open, onOpenChange }: { open: boolean; o
   const currentName = useAppStore((s) => s.meta.name)
   const currentExtent = useAppStore((s) => s.meta.gridExtent)
   const currentScale = useAppStore((s) => s.meta.voxelScaleY)
+  const currentFps = useAppStore((s) => normalizeFps(s.meta.fps))
   const currentTexelScale = useAppStore((s) => normalizeTexelScale(s.meta.texelScale ?? TEXEL_SCALE))
+  const currentMode = useAppStore((s) => s.meta.animationMode ?? 'tweens')
   const model = useAppStore((s) => s.model)
   const texture = useAppStore((s) => s.texture)
 
@@ -43,13 +48,17 @@ export function ProjectSettingsDialog({ open, onOpenChange }: { open: boolean; o
   const [customText, setCustomText] = useState('')
   const [scale, setScale] = useState<VoxelScaleY>(currentScale)
   const [texelScale, setTexelScale] = useState<TexelScale>(currentTexelScale)
+  const [mode, setMode] = useState<AnimationMode>(currentMode)
+  const [fpsText, setFpsText] = useState(String(currentFps))
 
   useEffect(() => {
     if (open) {
       const state = useAppStore.getState()
       setName(state.meta.name)
       setScale(state.meta.voxelScaleY)
+      setFpsText(String(normalizeFps(state.meta.fps)))
       setTexelScale(normalizeTexelScale(state.meta.texelScale ?? TEXEL_SCALE))
+      setMode(state.meta.animationMode ?? 'tweens')
       if (SIZE_OPTIONS.some(({ extent }) => extent === state.meta.gridExtent)) {
         setSelected(state.meta.gridExtent)
         setCustomText('')
@@ -66,9 +75,12 @@ export function ProjectSettingsDialog({ open, onOpenChange }: { open: boolean; o
   const trimmedName = name.trim() || 'Untitled Project'
   const nameChanged = trimmedName !== currentName
   const sizeChanged = nextExtent !== null && nextExtent !== currentExtent
+  const fps = normalizeFps(Number(fpsText))
+  const fpsChanged = fps !== currentFps
   const scaleChanged = scale !== currentScale
   const texelChanged = texelScale !== currentTexelScale
-  const canSave = nextExtent !== null && (nameChanged || sizeChanged || scaleChanged || texelChanged)
+  const modeChanged = mode !== currentMode
+  const canSave = nextExtent !== null && (nameChanged || sizeChanged || scaleChanged || texelChanged || modeChanged || fpsChanged)
 
   // Voxels the new size would delete. Only meaningful when shrinking.
   const doomed =
@@ -77,12 +89,15 @@ export function ProjectSettingsDialog({ open, onOpenChange }: { open: boolean; o
 
   function save() {
     if (nextExtent === null || !canSave) return
-    const { updateProjectSettings, setVoxelScaleY, setTexelScale: applyTexelScale } = useAppStore.getState()
+    const { updateProjectSettings, setVoxelScaleY, setTexelScale: applyTexelScale, setAnimationMode, setFps } = useAppStore.getState()
     if (nameChanged || sizeChanged) updateProjectSettings(trimmedName, nextExtent)
     else useAppStore.getState().setProjectName(trimmedName)
+    if (fpsChanged) setFps(fps)
     if (scaleChanged) setVoxelScaleY(scale)
     // Resize first (crop/pad at the old scale), then resample to the new one.
     if (texelChanged) applyTexelScale(texelScale)
+    // Mode switch is its own toast + transport reset (not undoable, like the voxel scale).
+    if (modeChanged) setAnimationMode(mode)
     if (doomed > 0) {
       showToast(`Project resized to ${nextExtent}³ — ${doomed} voxel${doomed === 1 ? '' : 's'} removed.`)
     }
@@ -130,6 +145,70 @@ export function ProjectSettingsDialog({ open, onOpenChange }: { open: boolean; o
               onCustomTextChange={setCustomText}
               onCommit={save}
             />
+
+            <div className="flex items-start gap-2.5">
+              <span className="mt-2 w-18 text-sm font-medium text-neutral-400 select-none">Animation</span>
+              <div className="flex flex-1 flex-col gap-2">
+                <div className="flex gap-2" role="group" aria-label="Animation mode">
+                  <button
+                    onClick={() => setMode('tweens')}
+                    aria-pressed={mode === 'tweens'}
+                    title="Machine: per-joint looping tweens (rotate, pendulum, slide) — wheels, fans, doors"
+                    className={
+                      'flex-1 rounded-md px-3 py-2 text-left transition ' +
+                      (mode === 'tweens'
+                        ? 'bg-violet-500/20 text-violet-300'
+                        : 'bg-neutral-800 text-neutral-400 hover:bg-neutral-700 hover:text-neutral-200')
+                    }
+                  >
+                    <div className="text-sm font-medium">Machine</div>
+                    <div className="text-xs opacity-70">looping tweens per joint</div>
+                  </button>
+                  <button
+                    onClick={() => setMode('poses')}
+                    aria-pressed={mode === 'poses'}
+                    title="Character: keyframed animations on a timeline (walk, idle, dodge)"
+                    className={
+                      'flex-1 rounded-md px-3 py-2 text-left transition ' +
+                      (mode === 'poses'
+                        ? 'bg-violet-500/20 text-violet-300'
+                        : 'bg-neutral-800 text-neutral-400 hover:bg-neutral-700 hover:text-neutral-200')
+                    }
+                  >
+                    <div className="text-sm font-medium">Character</div>
+                    <div className="text-xs opacity-70">keyframed timeline clips</div>
+                  </button>
+                </div>
+                <span className="text-xs text-neutral-500">
+                  never both at once — switching keeps the other mode's data but mutes it, and
+                  export writes only the active mode.
+                </span>
+              </div>
+            </div>
+
+            <div className="flex items-start gap-2.5">
+              <label htmlFor="settings-fps" className="mt-2 w-18 text-sm font-medium text-neutral-400 select-none">Frame rate</label>
+              <div className="flex flex-1 flex-col gap-2">
+                <div className="flex items-center gap-2">
+                  <input
+                    id="settings-fps"
+                    type="number"
+                    value={fpsText}
+                    min={1}
+                    max={120}
+                    step={1}
+                    onChange={(e) => setFpsText(e.target.value)}
+                    onKeyDown={(e) => { if (e.key === 'Enter') save() }}
+                    className="w-20 rounded-md border border-neutral-700 bg-neutral-800 px-3 py-1.5
+                      font-mono text-sm text-neutral-200 focus:outline-none focus:ring-1 focus:ring-violet-500"
+                  />
+                  <span className="text-sm text-neutral-400">fps</span>
+                </div>
+                <span className="text-xs text-neutral-500">
+                  timeline grid + export sample rate (1–120, whole frames)
+                </span>
+              </div>
+            </div>
 
             <div className="flex items-start gap-2.5">
               <span className="mt-2 w-18 text-sm font-medium text-neutral-400 select-none">Height</span>

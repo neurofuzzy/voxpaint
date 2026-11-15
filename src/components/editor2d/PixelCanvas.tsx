@@ -1,11 +1,19 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { decodeKey, encodeKey } from '@/engine/grid/GridStore'
-import { gridCoordFromPixel, pixelFromGridCoord } from '@/engine/plane/constructionPlane'
+import type { SubdivCell } from '@/engine/grid/types'
+import { subdivDisplaySlot, visibleChildAt } from '@/engine/grid/subdiv'
+import { gridBox, isWholeBox } from '@/engine/grid/cellBox'
+import { boxDisplayFootprint, logicalQuadrant } from '@/engine/tools/quadrant'
+import { gridCoordFromPixel, pixelFromGridCoord, planeLogicalBasis } from '@/engine/plane/constructionPlane'
+import type { ConstructionPlane } from '@/engine/plane/types'
+import type { PaletteState } from '@/engine/palette/types'
 import { displayPointForGridPoint, displayViewCenter, toDisplayGridlineU, toDisplayGridlineV, toDisplayU, toDisplayV } from '@/engine/plane/planeDisplay'
 import { axisIndex } from '@/engine/plane/planeGeometry'
 import { resolveSlotColor, shadeColor } from '@/engine/palette/palette'
 import { markerColorHex } from '@/engine/markers/markers'
-import { boxSliceFootprint, rigPivotOf } from '@/engine/rigging/types'
+import { composedKeyOffset, posedBoxSliceFootprint, rigPivotOf } from '@/engine/rigging/types'
+import { fineDisplayRect, fineOutlineEdges, forEachFineCell } from '@/engine/tools/fineSelection'
+import { floatIsPieced, floatPieces, pieceDisplayRect } from '@/engine/tools/fineFloat'
 import { forEachSelectedCell, traceSelectionOutline } from '@/engine/tools/selectionMask'
 import { encodeSliceKey } from '@/engine/animation/animationLayers'
 import { useAppStore } from '@/store/useAppStore'
@@ -49,7 +57,8 @@ function fillDither(ctx: CanvasRenderingContext2D, sx: number, sy: number, size:
 
 const CHAMFER_STRIPE_WIDTH = 4
 const CHAMFER_SHADE_DELTA = 24
-
+/** The normal grid line color; subdivision refinement lines use it too. */
+const FINE_GRID_COLOR = '#22303a'
 /**
  * 2px-wide 45° diagonal stripes alternating between a slightly darker and slightly lighter shade
  * of the voxel's own color — the active-plane marker for a chamfered cell, replacing a flat fill.
@@ -76,12 +85,55 @@ function fillDiagonalStripes(ctx: CanvasRenderingContext2D, sx: number, sy: numb
   ctx.restore()
 }
 
+/**
+ * Paints one subdivided cell as 2×2 mini-cells, each showing the child the slice shows there
+ * (`visibleChildAt`: the viewer-side live child, or only the plane's slab on a half-voxel stop
+ * — a cutaway). Empty parts draw nothing, exactly like empty cells; detail bevels get the
+ * chamfer stripes. On a half stop the live parts get a gold wash, the 2D echo of the 3D
+ * plane's slab. (Separators come from the grid refinement pass in the cell loop.)
+ */
+function drawDetailQuadrants(
+  ctx: CanvasRenderingContext2D,
+  sub: SubdivCell,
+  plane: ConstructionPlane,
+  palette: PaletteState,
+  sx: number, sy: number, cellPx: number, cellH: number,
+) {
+  for (const dqu of [0, 1]) {
+    for (const dqv of [0, 1]) {
+      const [qu, qv] = logicalQuadrant(plane, [dqu, dqv])
+      const at = visibleChildAt(plane, sub, qu, qv)
+      const live = at === null ? null : sub.children[at]
+      if (!live) continue
+      const x = sx + dqu * cellPx / 2
+      const y = sy + dqv * cellH / 2
+      const color = resolveSlotColor(palette, live.slot)
+      ctx.globalAlpha = live.slot.kind === 'glass' ? 0.5 : 1
+      if (live.chamfer) {
+        fillDiagonalStripes(ctx, x, y, cellPx / 2, color, cellH / 2)
+      } else {
+        ctx.fillStyle = color
+        ctx.fillRect(x, y, cellPx / 2, cellH / 2)
+      }
+      if (plane.half !== null) {
+        ctx.globalAlpha = 1
+        ctx.fillStyle = 'rgba(242, 201, 76, 0.25)'
+        ctx.fillRect(x, y, cellPx / 2, cellH / 2)
+      }
+    }
+  }
+  ctx.globalAlpha = 1
+}
+
 export function PixelCanvas() {
   const canvasRef = useRef<HTMLCanvasElement>(null)
 
   const model = useAppStore((s) => s.model)
   const palette = useAppStore((s) => s.palette)
   const plane = useAppStore((s) => s.plane)
+  const gridSplit = useAppStore((s) => s.gridSplit)
+  const hoverCell = useAppStore((s) => s.hoverCell)
+  const hoverBits = useAppStore((s) => s.hoverBits)
   const selection = useAppStore((s) => s.selection)
   const floatContent = useAppStore((s) => s.floatContent)
   const floatOrigin = useAppStore((s) => s.floatOrigin)
@@ -89,6 +141,10 @@ export function PixelCanvas() {
   const slicePivots = useAppStore((s) => s.slicePivots)
   const rigBoxes = useAppStore((s) => s.rigBoxes)
   const selectedRigBoxId = useAppStore((s) => s.selectedRigBoxId)
+  // The keyframe under edit's per-box offsets — footprints draw posed (bind + composed
+  // offset) so a 2D offset drag visibly follows the pointer, agreeing with the 3D preview.
+  // Subscribing here is also what re-renders the canvas live mid-drag.
+  const keyOffsets = useAppStore((s) => s.clips.find((c) => c.id === s.activeClipId)?.keys.find((k) => k.id === s.selectedKeyId)?.offsets)
   const gridExtent = useAppStore((s) => s.meta.gridExtent)
   const voxelScaleY = useAppStore((s) => s.meta.voxelScaleY)
   const markers = useAppStore((s) => s.markers)
@@ -237,13 +293,17 @@ export function PixelCanvas() {
     }
     const uTiers = tiers(dLoU, dHiU, centreU, demoteU)
     const vTiers = tiers(dLoV, dHiV, centreV, demoteV)
-    // Colors match the 3D construction plane's gridHelper tiers exactly (ConstructionPlaneVisual.tsx).
-    strokeVLines(uTiers.fine, '#22303a')
-    strokeHLines(vTiers.fine, '#22303a')
-    strokeVLines(uTiers.subdiv, '#3d6d8a')
-    strokeHLines(vTiers.subdiv, '#3d6d8a')
-    strokeVLines(centreU, '#7ac8ff')
-    strokeHLines(centreV, '#7ac8ff')
+    // Grid lines draw AFTER the voxel fills (modeling mode): the grid sits on top of painted
+    // cells so it reads as graph paper, and per-cell detail refinements (below) subdivide
+    // exactly the subdivided footprints. Colors match the 3D gridHelper tiers exactly.
+    const drawGridLines = () => {
+      strokeVLines(uTiers.fine, FINE_GRID_COLOR)
+      strokeHLines(vTiers.fine, FINE_GRID_COLOR)
+      strokeVLines(uTiers.subdiv, '#3d6d8a')
+      strokeHLines(vTiers.subdiv, '#3d6d8a')
+      strokeVLines(centreU, '#7ac8ff')
+      strokeHLines(centreV, '#7ac8ff')
+    }
 
     // Architectural-drawing-style reference: the layer immediately behind the active plane (one
     // step further from the viewer along the plane's own normal — offset - orientation), shown as
@@ -258,9 +318,12 @@ export function PixelCanvas() {
         const u = toDisplayU(plane, du)
         const v = toDisplayV(plane, dv)
         const behindCell = model.color.get(encodeKey(...gridCoordFromPixel(behindPlane, u, v)))
-        if (!behindCell) continue
+        // Subdivided parents show like plain cubes here (the behind layer never shows markers).
+        const behindSub = behindCell ? undefined : model.subdiv.get(encodeKey(...gridCoordFromPixel(behindPlane, u, v)))
+        const behindSlot = behindCell ? behindCell.paletteSlot : behindSub && subdivDisplaySlot(behindSub)
+        if (!behindSlot) continue
         const [sx, sy] = worldToScreen(du, dv, size, pan, zoom, vScale)
-        const color = resolveSlotColor(palette, behindCell.paletteSlot)
+        const color = resolveSlotColor(palette, behindSlot)
         fillDither(ctx, sx, sy, cellPx, color, cellH)
         ctx.strokeStyle = color
         ctx.strokeRect(sx + 0.5, sy + 0.5, cellPx - 1, cellH - 1)
@@ -274,19 +337,53 @@ export function PixelCanvas() {
         const coord = gridCoordFromPixel(plane, u, v)
         const key = encodeKey(...coord)
         const colorCell = model.color.get(key)
-        if (!colorCell) continue
+        const sub = colorCell ? undefined : model.subdiv.get(key)
+        // The armed grid previews everywhere in model mode: every cell shows the edit
+        // resolution's refinement lines, so the grid reads before an edit.
+        const armed = mode === 'model' && gridSplit ? gridSplit : null
+        if (!colorCell && !sub && !armed) continue
         const [sx, sy] = worldToScreen(du, dv, size, pan, zoom, vScale)
-        const color = resolveSlotColor(palette, colorCell.paletteSlot)
-        // Glass reads as 50% transparent here too, echoing the 3D view's transmissive material —
-        // otherwise a glass cell looks identical to a solid one on the flat 2D canvas.
-        ctx.globalAlpha = colorCell.paletteSlot.kind === 'glass' ? 0.5 : 1
-        // Any chamfer cell shows the diagonal-stripe marker (whether or not its shape has resolved
-        // yet), so it's always distinguishable from a plain cube; plain cubes get a flat fill.
-        if (model.chamfer.has(key)) {
-          fillDiagonalStripes(ctx, sx, sy, cellPx, color, cellH)
-        } else {
-          ctx.fillStyle = color
-          ctx.fillRect(sx, sy, cellPx, cellH)
+        if (sub) {
+          // Subdivided parents render per-quadrant (see drawDetailQuadrants); the on-top grid
+          // (below) subdivides the footprint.
+          drawDetailQuadrants(ctx, sub, plane, palette, sx, sy, cellPx, cellH)
+        } else if (colorCell) {
+          const color = resolveSlotColor(palette, colorCell.paletteSlot)
+          // Glass reads as 50% transparent here too, echoing the 3D view's transmissive material —
+          // otherwise a glass cell looks identical to a solid one on the flat 2D canvas.
+          ctx.globalAlpha = colorCell?.paletteSlot.kind === 'glass' ? 0.5 : 1
+          // Any chamfer cell shows the diagonal-stripe marker (whether or not its shape has resolved
+          // yet), so it's always distinguishable from a plain cube; plain cubes get a flat fill.
+          if (model.chamfer.has(key)) {
+            fillDiagonalStripes(ctx, sx, sy, cellPx, color, cellH)
+          } else {
+            ctx.fillStyle = color
+            ctx.fillRect(sx, sy, cellPx, cellH)
+          }
+        }
+        // Grid refinement: a mid-cell line along each in-plane axis the voxel is split on or the
+        // armed grid cuts, in the normal fine-grid color (a subdivided grid reads as the same
+        // grid, just finer).
+        const refineSplit = sub || armed ? [...new Set([...(sub?.split ?? []), ...(armed ?? [])])] : null
+        if (refineSplit) {
+          const { uDir } = planeLogicalBasis(plane.axis)
+          for (const a of refineSplit) {
+            if (a === plane.axis) continue
+            const alongU = uDir[axisIndex(a)] !== 0
+            ctx.strokeStyle = FINE_GRID_COLOR
+            ctx.lineWidth = 1
+            ctx.beginPath()
+            if (alongU) {
+              const mx = snapPx(sx + cellPx / 2)
+              ctx.moveTo(mx, sy)
+              ctx.lineTo(mx, sy + cellH)
+            } else {
+              const my = snapPx(sy + cellH / 2)
+              ctx.moveTo(sx, my)
+              ctx.lineTo(sx + cellPx, my)
+            }
+            ctx.stroke()
+          }
         }
       }
     }
@@ -294,11 +391,13 @@ export function PixelCanvas() {
 
     // Animate-mode rig footprints — the boxes are what you edit here (the voxel model is just
     // an underlay), so every box intersecting this slice draws its outline in display space,
-    // exactly over its cells. The selected box draws last, white with a translucent fill, so
-    // it reads on top of overlaps.
+    // exactly over its cells. Posed: each outline shifts by the box's composed key offset
+    // (own + ancestors, translation only — exact until rotations enter), so offset drags
+    // visibly follow the pointer and agree with the 3D preview. The selected box draws last,
+    // white with a translucent fill, so it reads on top of overlaps.
     if (mode === 'animate' && rigBoxes.length > 0) {
-      const footprints = rigBoxes.map((box) => ({ box, fp: boxSliceFootprint(box, plane) }))
-        .filter((r): r is { box: (typeof rigBoxes)[number]; fp: NonNullable<ReturnType<typeof boxSliceFootprint>> } => r.fp !== null)
+      const footprints = rigBoxes.map((box) => ({ box, fp: posedBoxSliceFootprint(rigBoxes, box, plane, keyOffsets) }))
+        .filter((r): r is { box: (typeof rigBoxes)[number]; fp: NonNullable<ReturnType<typeof posedBoxSliceFootprint>> } => r.fp !== null)
       const ordered = [
         ...footprints.filter(({ box }) => box.id !== selectedRigBoxId),
         ...footprints.filter(({ box }) => box.id === selectedRigBoxId),
@@ -346,8 +445,11 @@ export function PixelCanvas() {
       for (const pbox of pivotBoxes) {
         const active = pbox.id === selectedRigBoxId
         const pivot = rigPivotOf(pbox)
-        const onSlice = Math.floor(pivot[axisIndex(plane.axis)] + 0.5) === plane.offset
-        const world: [number, number, number] = [pivot[0] + 0.5, pivot[1] + 0.5, pivot[2] + 0.5]
+        // Rides the box's composed key offset like its footprint does, so the pin stays on
+        // the posed box during offset drags (translation-only, same approximation).
+        const shift = composedKeyOffset(rigBoxes, pbox, keyOffsets)
+        const onSlice = Math.floor(pivot[axisIndex(plane.axis)] + shift[axisIndex(plane.axis)] + 0.5) === plane.offset
+        const world: [number, number, number] = [pivot[0] + 0.5 + shift[0], pivot[1] + 0.5 + shift[1], pivot[2] + 0.5 + shift[2]]
         const { u: ru, v: rv } = displayPointForGridPoint(plane, world)
         const [px, py] = worldToScreen(ru, rv, size, pan, zoom, vScale)
         const radius = cellPx * (active ? 0.26 : 0.2)
@@ -371,22 +473,18 @@ export function PixelCanvas() {
 
     // paint-tool shift-line preview
     if (linePreview) {
-      const [ax, ay] = worldToScreen(
-        toDisplayU(plane, linePreview.anchor[0]) + 0.5,
-        toDisplayV(plane, linePreview.anchor[1]) + 0.5,
-        size,
-        pan,
-        zoom,
-        vScale,
-      )
-      const [ex, ey] = worldToScreen(
-        toDisplayU(plane, linePreview.end[0]) + 0.5,
-        toDisplayV(plane, linePreview.end[1]) + 0.5,
-        size,
-        pan,
-        zoom,
-        vScale,
-      )
+      // Grid-resolution lines run between fine-cell centers; whole lines between cell centers.
+      const fine = linePreview.fine
+      const centerOf = (cell: [number, number], f: [number, number] | undefined): [number, number] => {
+        if (!fine || !f) return [toDisplayU(plane, cell[0]) + 0.5, toDisplayV(plane, cell[1]) + 0.5]
+        const pseudo = { originU: 0, originV: 0, width: 0, height: 0, mask: new Uint8Array(), fine: { su: fine.su, sv: fine.sv, slab: null, mask: new Uint8Array() } }
+        const [x0, y0, x1, y1] = fineDisplayRect(plane, pseudo, f[0], f[1])
+        return [(x0 + x1) / 2, (y0 + y1) / 2]
+      }
+      const a = centerOf(linePreview.anchor, fine?.anchor)
+      const b = centerOf(linePreview.end, fine?.end)
+      const [ax, ay] = worldToScreen(a[0], a[1], size, pan, zoom, vScale)
+      const [ex, ey] = worldToScreen(b[0], b[1], size, pan, zoom, vScale)
       ctx.strokeStyle = '#ffffff'
       ctx.lineWidth = 2
       ctx.beginPath()
@@ -399,13 +497,33 @@ export function PixelCanvas() {
     // base grid (glass cells still get the 50% transparency treatment, same as committed cells).
     // Only the current slice is drawn: deep-lifted (Alt-drag) cells at other depths belong to
     // slices this canvas isn't showing (they still preview in the 3D ghost and bake in place).
+    const piecedFloat = !!floatContent && !!floatOrigin && floatIsPieced(floatContent, floatOrigin)
+    if (floatContent && floatOrigin && piecedFloat) {
+      // Off-grid float: every piece (half-voxel boxes included) on this slice's layer, at its
+      // exact shifted place.
+      const wA = axisIndex(plane.axis)
+      for (const piece of floatPieces(plane, floatContent, floatOrigin)) {
+        if (piece.cell[wA] !== plane.offset) continue
+        const [x0, y0, x1, y1] = pieceDisplayRect(plane, piece)
+        const [sx, sy] = worldToScreen(x0, y0, size, pan, zoom, vScale)
+        ctx.globalAlpha = piece.slot.kind === 'glass' ? 0.5 : 1
+        ctx.fillStyle = resolveSlotColor(palette, piece.slot)
+        ctx.fillRect(sx, sy, (x1 - x0) * cellPx, (y1 - y0) * cellH)
+      }
+      ctx.globalAlpha = 1
+    }
     if (floatContent && floatOrigin) {
       for (const cell of floatContent.cells) {
         if (cell.dw !== 0) continue
+        if (piecedFloat && !cell.chamfer) continue // drawn as pieces above
         const u = floatOrigin.originU + cell.du
         const v = floatOrigin.originV + cell.dv
         const [sx, sy] = worldToScreen(toDisplayU(plane, u), toDisplayV(plane, v), size, pan, zoom, vScale)
-        if (cell.color) {
+        // Floating detail previews like committed detail (per-quadrant minis + separators);
+        // erased holes preview nothing, matching the 3D ghost.
+        if (cell.subdiv) {
+          drawDetailQuadrants(ctx, cell.subdiv, plane, palette, sx, sy, cellPx, cellH)
+        } else if (cell.color) {
           const color = resolveSlotColor(palette, cell.color.paletteSlot)
           ctx.globalAlpha = cell.color.paletteSlot.kind === 'glass' ? 0.5 : 1
           if (cell.chamfer) {
@@ -419,26 +537,43 @@ export function PixelCanvas() {
       ctx.globalAlpha = 1
     }
 
+    // The grid draws on top of the voxel fills in modeling mode — graph paper over paint —
+    // with per-cell refinement lines (drawn in the active-cell loop) subdividing the
+    // subdivided footprints and previewing the armed grid division on plain cells.
+    // Selection, hover, and markers stay above it.
+    drawGridLines()
+
     // selection overlay — cyan tint + animated marching-ants outline (live drag preview takes
     // precedence over the committed selection).
     const activeRegion = selectPreview ?? selection
     if (activeRegion) {
       ctx.fillStyle = 'rgba(34, 211, 238, 0.25)'
-      forEachSelectedCell(activeRegion, (u, v) => {
-        const [sx, sy] = worldToScreen(toDisplayU(plane, u), toDisplayV(plane, v), size, pan, zoom, vScale)
-        ctx.fillRect(sx, sy, cellPx, cellH)
-      })
+      if (activeRegion.fine) {
+        // Sub-voxel selection: tint exactly the fine cells (display rects, mirror-corrected).
+        forEachFineCell(activeRegion, (fu, fv) => {
+          const [x0, y0, x1, y1] = fineDisplayRect(plane, activeRegion, fu, fv)
+          const [sx, sy] = worldToScreen(x0, y0, size, pan, zoom, vScale)
+          ctx.fillRect(sx, sy, (x1 - x0) * cellPx, (y1 - y0) * cellH)
+        })
+      } else {
+        forEachSelectedCell(activeRegion, (u, v) => {
+          const [sx, sy] = worldToScreen(toDisplayU(plane, u), toDisplayV(plane, v), size, pan, zoom, vScale)
+          ctx.fillRect(sx, sy, cellPx, cellH)
+        })
+      }
 
       ctx.strokeStyle = 'rgb(34, 211, 238)'
       ctx.lineWidth = 1.5
       ctx.setLineDash([8, 6])
       ctx.lineDashOffset = -antPhase
-      for (const [[au, av], [bu, bv]] of traceSelectionOutline(activeRegion)) {
+      const fineEdges = activeRegion.fine ? fineOutlineEdges(plane, activeRegion) : null
+      for (const [[au, av], [bu, bv]] of fineEdges ?? traceSelectionOutline(activeRegion)) {
         // Outline vertices are gridline positions, not cell indices, so they mirror as `-n` rather
         // than the cells' corner-anchored `-n - 1` — using the cell transform here draws the whole
         // outline one cell off from its own fill on mirrored planes. See planeDisplay.ts.
-        const [ax, ay] = worldToScreen(toDisplayGridlineU(plane, au), toDisplayGridlineV(plane, av), size, pan, zoom, vScale)
-        const [bx, by] = worldToScreen(toDisplayGridlineU(plane, bu), toDisplayGridlineV(plane, bv), size, pan, zoom, vScale)
+        // (Fine edges are already display-space gridline positions.)
+        const [ax, ay] = worldToScreen(fineEdges ? au : toDisplayGridlineU(plane, au), fineEdges ? av : toDisplayGridlineV(plane, av), size, pan, zoom, vScale)
+        const [bx, by] = worldToScreen(fineEdges ? bu : toDisplayGridlineU(plane, bu), fineEdges ? bv : toDisplayGridlineV(plane, bv), size, pan, zoom, vScale)
         // Every outline edge is axis-aligned (traceSelectionOutline only emits unit cell edges),
         // so snap the shared coordinate for the same crisp-line reason as the grid.
         ctx.beginPath()
@@ -480,7 +615,30 @@ export function PixelCanvas() {
       ctx.strokeStyle = selected ? '#ffffff' : 'rgba(0, 0, 0, 0.55)'
       ctx.stroke()
     }
-  }, [model, palette, plane, linePreview, selection, selectPreview, floatContent, floatOrigin, antPhase, altHeld, size, pan, zoom, vScale, mode, slicePivots, rigBoxes, selectedRigBoxId, gridExtent, markers, selectedMarkerId])
+
+    // Hovered edit target — a semi-opaque gold fill over exactly the box a tap writes (the same
+    // `gridBox` paint/erase/recolor use): the hovered grid cell with a division armed, else the
+    // whole voxel (occupied cells only — empty space previews in the 3D ghost). Same
+    // color/opacity as the 3D face highlight (#f2c94c at 0.45). Drawn last so it sits on top of
+    // everything. Modeling mode only: in animate mode taps pose rigs.
+    if (hoverCell && mode !== 'animate') {
+      const key = encodeKey(...hoverCell)
+      const { u: hu, v: hv } = pixelFromGridCoord(plane, hoverCell)
+      const [hx, hy] = worldToScreen(toDisplayU(plane, hu), toDisplayV(plane, hv), size, pan, zoom, vScale)
+      const box = gridBox(plane, gridSplit, hoverBits)
+      let rect: [number, number, number, number] | null = null
+      if (!isWholeBox(box)) {
+        const [u0, v0, u1, v1] = boxDisplayFootprint(plane, box)
+        rect = [hx + u0 * cellPx, hy + v0 * cellH, (u1 - u0) * cellPx, (v1 - v0) * cellH]
+      } else if (model.color.has(key) || model.subdiv.has(key)) {
+        rect = [hx, hy, cellPx, cellH]
+      }
+      if (rect) {
+        ctx.fillStyle = 'rgba(242, 201, 76, 0.45)'
+        ctx.fillRect(...rect)
+      }
+    }
+  }, [model, palette, plane, gridSplit, linePreview, selection, selectPreview, floatContent, floatOrigin, antPhase, altHeld, size, pan, zoom, vScale, mode, slicePivots, rigBoxes, selectedRigBoxId, keyOffsets, gridExtent, markers, selectedMarkerId, hoverCell, hoverBits])
 
   useEffect(() => {
     draw()

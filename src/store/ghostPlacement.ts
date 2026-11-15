@@ -5,9 +5,11 @@ import { axisIndex } from '@/engine/plane/planeGeometry'
 import { pixelFromGridCoord } from '@/engine/plane/constructionPlane'
 import type { ConstructionPlane } from '@/engine/plane/types'
 import { classify, sampleNeighbors } from '@/engine/chamfer/chamferResolver'
-import { chamferBasisIsReflected, chamferInstanceMatrix } from '@/engine/instancing/basis'
+import { chamferBasisIsReflected, chamferInstanceMatrix, scaledChamferInstanceMatrix } from '@/engine/instancing/basis'
 import type { PoolId } from '@/engine/instancing/pools'
-import type { VoxelModel } from '@/engine/grid/types'
+import type { SplitAxis, VoxelModel } from '@/engine/grid/types'
+import { sampleBoxNeighborhood } from '@/engine/grid/subdiv'
+import { bevelFitsBox, boxWorld, gridBox, isWholeBox } from '@/engine/grid/cellBox'
 import { resolveBrushPreview } from './brushPreview'
 import type { HoveredFace, ToolId, VoxelKind } from './types'
 
@@ -23,10 +25,15 @@ export type GhostPlacementInput = {
    * `layoutMode === '3d-only'` — split layout is orbit/navigate only, so this is false there. */
   directEdit: boolean
   gridExtent: GridExtent
+  /** The armed grid division (the box a paint tap writes — see `gridBox`). */
+  gridSplit?: SplitAxis[] | null
+  /** World half-bits of the pointer inside the hovered cell (in-plane axes; the plane's slab
+   * decides depth), from whichever view the pointer is in. Null spans the in-plane extent. */
+  hoverBits?: Coord | null
 }
 
 export type GhostPlacement =
-  | { kind: 'cube'; target: Coord }
+  | { kind: 'cube'; target: Coord; box?: { origin: Coord; size: Coord } }
   | { kind: 'chamfer'; target: Coord; axis: Axis; orientation: Orientation; pool: PoolId; matrix: THREE.Matrix4; flat: boolean }
 
 /**
@@ -86,38 +93,58 @@ export function resolveDirectPaintTarget(
  * never autotile).
  */
 export function resolveGhostPlacement(input: GhostPlacementInput): GhostPlacement | null {
-  const { model, plane, hoverCell, hoveredFace, activeVoxelKind, brushRotation, activeTool, directEdit, gridExtent } = input
+  const { model, plane, hoverCell, hoveredFace, activeVoxelKind, brushRotation, activeTool, directEdit, gridExtent, gridSplit, hoverBits } = input
   // Direct-manipulation 3D (3D-only layout) shows a ghost only for tools that place something
   // at the hover cell — paint, plus marker (which drops a marker there). Material recolors on
-  // hover-blink; select/wand show their own overlays; erase/eyedropper/fill/move act on
-  // existing voxels or whole regions, so a place-here cube would promise a paint that never
-  // comes.
+  // hover-blink; select/wand show their own overlays; erase/eyedropper/fill act on
+  // existing voxels or whole regions, so a place-here cube would promise a paint that never comes.
   if (directEdit && activeTool !== 'paint' && activeTool !== 'marker') return null
   let target: Coord | null = null
-  let faceAxis: Axis | null = null
-  let faceOrientation: Orientation | null = null
   if (directEdit && activeTool === 'paint') {
     // 3D-direct paint (both face hits and empty-space hovers) resolves through the shared
     // helper so preview and write agree (replace-only on the construction plane).
-    const t = resolveDirectPaintTarget(plane, hoverCell, hoveredFace, gridExtent)
-    if (!t) return null
-    target = t
-    // Orientation inherits the active construction plane — never the raycast face — so the
-    // preview matches the paint write (see `applyBlockingTap` in Viewport3D.tsx).
-    faceAxis = plane.axis
-    faceOrientation = plane.orientation
+    target = resolveDirectPaintTarget(plane, hoverCell, hoveredFace, gridExtent)
+    if (!target) return null
   } else {
     if (!hoverCell) return null
+    // No ghost on occupied voxels in split layout: the 2D canvas's gold footprint carries the
+    // feedback there, and marker drops only on empty space.
     if (model.color.has(encodeKey(...hoverCell))) return null
     if (!withinWorkingBounds(hoverCell, gridExtent)) return null
     target = hoverCell
-    faceAxis = plane.axis
-    faceOrientation = plane.orientation
   }
 
   if (activeTool !== 'paint') return { kind: 'cube', target }
 
-  const facePlane: ConstructionPlane = { axis: faceAxis, orientation: faceOrientation, offset: target[axisIndex(faceAxis)] }
+  // Orientation ALWAYS inherits the active construction plane — never the raycast face — so the
+  // preview matches the paint write (see `applyBlockingTap` in Viewport3D.tsx).
+  const faceAxis = plane.axis
+  const faceOrientation = plane.orientation
+  const box = gridBox(plane, gridSplit ?? null, hoverBits ?? null)
+
+  if (!isWholeBox(box)) {
+    // Sub-voxel paint: exactly the box `paintBox` writes — a scaled bevel when the target can
+    // hold one as a single child (`bevelFitsBox`), else the box itself.
+    const { origin, size } = boxWorld(target, box)
+    const cubeGhost: GhostPlacement = { kind: 'cube', target, box: { origin: origin as Coord, size: size as Coord } }
+    if (activeVoxelKind === 'cube' || !bevelFitsBox(model, target, box)) return cubeGhost
+    const auto = activeVoxelKind === 'ramp' || activeVoxelKind === 'wedge'
+      ? classify(sampleBoxNeighborhood(model, plane, target, box))
+      : null
+    const shape = resolveBrushPreview(activeVoxelKind, brushRotation, auto)
+    if (!shape) return cubeGhost
+    return {
+      kind: 'chamfer',
+      target,
+      axis: faceAxis,
+      orientation: faceOrientation,
+      pool: chamferBasisIsReflected(faceAxis, faceOrientation) ? (`${shape.shapeKind}M` as PoolId) : shape.shapeKind,
+      matrix: scaledChamferInstanceMatrix(origin, size, faceAxis, faceOrientation, shape.rotation),
+      flat: shape.shapeKind === 'flat' || shape.shapeKind === 'flatwedge',
+    }
+  }
+
+  const facePlane: ConstructionPlane = { axis: faceAxis, orientation: faceOrientation, offset: target[axisIndex(faceAxis)], half: null }
   const { u, v } = pixelFromGridCoord(facePlane, target)
   const auto = (activeVoxelKind === 'ramp' || activeVoxelKind === 'wedge')
     ? classify(sampleNeighbors(model, facePlane, u, v))

@@ -15,7 +15,9 @@ import {
 import { RESCALE_FACTOR, rescaleCoord, rescaleTargetExtent, rescaleVoxelModel } from '@/engine/grid/rescale'
 import { axisIndex } from '@/engine/plane/planeGeometry'
 import { savePlanePref } from '@/engine/persistence/uiPrefs'
+import { showToast } from '@/components/ui/toastBus'
 import { DEFAULT_PALETTE } from '@/engine/palette/defaultPalette'
+import { normalizeFps } from '@/engine/rigging/types'
 import { TEXEL_SCALE } from '@/engine/texture/types'
 import { emptyTextureModel, normalizeTexelScale, resampleTextureModel, rescaleTextureModel2x, resizeTextureModel } from '@/engine/texture/TextureStore'
 import type { TexelScale } from '@/engine/texture/types'
@@ -40,6 +42,7 @@ export const createProjectSlice: Slice = (set, get) => ({
     noiseSeed: generateNoiseSeed(),
     voxelScaleY: 1,
     texelScale: TEXEL_SCALE,
+    animationMode: 'tweens',
   },
 
   setModel: (model) =>
@@ -83,6 +86,38 @@ export const createProjectSlice: Slice = (set, get) => ({
       state.dirty = true
     }),
 
+  setFps: (fps) =>
+    set((state) => {
+      state.meta.fps = normalizeFps(fps)
+      state.meta.modifiedAt = new Date().toISOString()
+      state.dirty = true
+    }),
+
+  setAnimationMode: (mode) => {
+    if (get().meta.animationMode === mode) return
+    set((state) => {
+      state.meta.animationMode = mode
+      // The panel only shows one motion tab per project — remap a hidden tab (and its
+      // tool) to the visible one so the toolbar never points at a tab that isn't there.
+      if (mode === 'tweens' && state.animateTab === 'poses') {
+        state.animateTab = 'tweens'
+        state.activeTool = 'select'
+      } else if (mode === 'poses' && state.animateTab === 'tweens') {
+        state.animateTab = 'poses'
+        state.activeTool = 'pose'
+      }
+      // The switch keeps the other mode's data (tweens stay on their boxes, keyframe clips
+      // stay in the file) but mutes it — transport stops and the playhead steps off, so
+      // the first frame after the switch never shows the other mode's leftovers.
+      state.clipPlaying = false
+      state.selectedKeyId = null
+      state.clipTime = null
+      state.meta.modifiedAt = new Date().toISOString()
+      state.dirty = true
+    })
+    showToast(mode === 'poses' ? 'Tweens kept, muted — switch back anytime' : 'Poses and clips kept — switch back anytime')
+  },
+
   setTexelScale: (scale: TexelScale) => {
     const next = normalizeTexelScale(scale)
     get().textureBakeFloatIfAny()
@@ -119,11 +154,17 @@ export const createProjectSlice: Slice = (set, get) => ({
       if (extent === prevExtent) return // rename only — everything else stays put
 
       // Clip voxels outside the new working cube (chamfer cells always have a matching color
-      // cell, so deleting by color key drops both layers together).
+      // cell, so deleting by color key drops both layers together; subdiv parents clip by
+      // their integer parent coords).
       for (const key of state.model.color.keys()) {
         if (!withinWorkingBounds(decodeKey(key), extent)) {
           state.model.color.delete(key)
           state.model.chamfer.delete(key)
+        }
+      }
+      for (const key of state.model.subdiv.keys()) {
+        if (!withinWorkingBounds(decodeKey(key), extent)) {
+          state.model.subdiv.delete(key)
         }
       }
       state.model.bounds = recomputeBounds(state.model)
@@ -347,6 +388,7 @@ export const createProjectSlice: Slice = (set, get) => ({
         noiseSeed: generateNoiseSeed(),
         voxelScaleY: 1,
         texelScale: TEXEL_SCALE,
+        animationMode: 'tweens',
       }
       state.past = []
       state.future = []
@@ -376,6 +418,16 @@ export const createProjectSlice: Slice = (set, get) => ({
       state.selectedMarkerId = null
       state.rigBoxes = []
       state.selectedRigBoxId = null
+      // A new project starts on the whole grid (no division armed).
+      state.gridSplit = null
+      // Pose state is per-project too — keyframe clips, selection, and drag latch.
+      state.clips = []
+      state.activeClipId = null
+      state.selectedKeyId = null
+      state.clipPlaying = false
+      state.clipStartedAt = 0
+      state.clipTime = null
+      state.poseDragging = false
       state.dirty = true
       // A new project starts grounded (see resetPlaneToGround) instead of inheriting a stale
       // mid-air slice — applied after this block so it reads the fresh extent.

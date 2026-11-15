@@ -19,15 +19,15 @@ export function FileMenu() {
   const setStatusMessage = useAppStore((s) => s.setStatusMessage)
 
   function handleExport() {
-    const { model, palette, meta, texture, ambientOcclusion, noiseLevel, specularNoiseLevel, noiseScale, aoStrength, glassRoughnessLevel, exposure, exportScaleFactor, exportAnchor, exportAlignToObjectBounds, exportIncludeTextureMaps, exportIncludeAOMaps, exportIncludeMarkers, animSettings, sliceMasks, slicePivots, markers, rigBoxes } = useAppStore.getState()
-    downloadProjectFile(serializeProject(model, palette, meta, texture, { ambientOcclusion, noiseLevel, specularNoiseLevel, noiseScale, aoStrength, glassRoughnessLevel, exposure, exportScaleFactor, exportAnchor, exportAlignToObjectBounds, exportIncludeTextureMaps, exportIncludeAOMaps, exportIncludeMarkers }, animSettings, sliceMasks, slicePivots, markers, rigBoxes))
+    const { model, palette, meta, texture, ambientOcclusion, noiseLevel, specularNoiseLevel, noiseScale, aoStrength, glassRoughnessLevel, exposure, exportScaleFactor, exportAnchor, exportAlignToObjectBounds, exportIncludeTextureMaps, exportIncludeAOMaps, exportIncludeMarkers, exportIncludeAnimations, animSettings, sliceMasks, slicePivots, markers, rigBoxes, clips } = useAppStore.getState()
+    downloadProjectFile(serializeProject(model, palette, meta, texture, { view: { ambientOcclusion, noiseLevel, specularNoiseLevel, noiseScale, aoStrength, glassRoughnessLevel, exposure, exportScaleFactor, exportAnchor, exportAlignToObjectBounds, exportIncludeTextureMaps, exportIncludeAOMaps, exportIncludeMarkers, exportIncludeAnimations }, animSettings, sliceMasks, slicePivots, markers, rigBoxes, clips }))
     showToast('Project exported.')
   }
 
   async function handleImportFile(file: File) {
     try {
       const parsed = await readProjectFile(file)
-      const { model, palette, meta, texture, view, animSettings, sliceMasks, slicePivots, markers, rigBoxes } = deserializeProject(parsed)
+      const { model, palette, meta, texture, view, animSettings, sliceMasks, slicePivots, markers, rigBoxes, clips } = deserializeProject(parsed)
       // Same project-switch hygiene as newProject: abandon open strokes (a pending float belongs
       // to the old model) rather than baking them into the imported one.
       useAppStore.getState().cancelStroke()
@@ -68,6 +68,8 @@ export function FileMenu() {
         s.exportIncludeTextureMaps = view.exportIncludeTextureMaps ?? true
         s.exportIncludeAOMaps = view.exportIncludeAOMaps ?? true
         s.exportIncludeMarkers = view.exportIncludeMarkers ?? true
+        s.exportIncludeAnimations = view.exportIncludeAnimations ?? true
+        s.exportBakeAssemblyPose = view.exportBakeAssemblyPose ?? false
         s.animSettings = animSettings
         s.sliceMasks = sliceMasks
         s.slicePivots = slicePivots
@@ -77,6 +79,17 @@ export function FileMenu() {
         s.selectedMarkerId = null
         s.rigBoxes = rigBoxes
         s.selectedRigBoxId = null
+        // Keyframe clips persist with the project; selection and transport reset (session-only).
+        s.clips = clips
+        s.activeClipId = clips.length > 0 ? clips[0].id : null
+        s.selectedKeyId = null
+        s.clipPlaying = false
+        s.clipStartedAt = 0
+        s.clipTime = null
+        // The imported project must win the next autosave — without this the debounced
+        // writer never fires (nothing else here flags dirty) and a reload restores the
+        // previous project from localStorage instead.
+        s.dirty = true
       })
       // An imported project opens grounded — one project's slice never leaks into the next.
       useAppStore.getState().resetPlaneToGround()

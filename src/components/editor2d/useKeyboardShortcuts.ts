@@ -17,6 +17,8 @@ const TOOL_KEYS: Record<string, ToolId> = {
   d: 'marker',
   w: 'wand',
   b: 'rigbox',
+  o: 'pose',
+  g: 'offset',
 }
 
 /**
@@ -35,8 +37,9 @@ const TOOL_KEYS: Record<string, ToolId> = {
  * actions (its own separate undo/redo history and texel selection/clipboard). Tool switching is
  * shared. Called once from MainLayout (not the 2D canvases) so bindings stay live in 3D-only mode.
  *
- * Spring-loaded pivot (Animate mode): holding Alt with the rig tool active temporarily switches
- * to the pivot tool; releasing Alt restores the rig tool (see altPivotRestore below).
+ * Spring-loaded pivot (Animate mode): holding Alt with a rig/pose/select tool active
+ * temporarily switches to the pivot tool; releasing Alt restores the armed tool
+ * (see altPivotRestore below).
  */
 let altPivotRestore: ToolId | null = null
 
@@ -51,17 +54,17 @@ function endAltPivotSwitch() {
 export function useKeyboardShortcuts() {
   useEffect(() => {
     function onKeyDown(e: KeyboardEvent) {
-      // Spring-loaded pivot: lone Alt with the rig tool active (Animate mode) arms the pivot
-      // tool until Alt releases. This sits above the INPUT/TEXTAREA guard on purpose: a lone
-      // Alt press never produces text, so arming from inside a field (e.g. the rig-name input)
-      // is harmless — it restores on keyup — and without this the switch silently fails there,
-      // sending Alt+clicks to the rig tool instead of pinning. Guarded to a clean press (no
-      // repeat, no chord) so Alt+arrows plane navigation just flickers the toolbar instead of
-      // sticking.
+      // Spring-loaded pivot: lone Alt with a rig/pose/select tool active (Animate mode)
+      // arms the pivot tool until Alt releases. This sits above the INPUT/TEXTAREA guard on
+      // purpose: a lone Alt press never produces text, so arming from inside a field (e.g.
+      // the rig-name input) is harmless — it restores on keyup — and without this the switch
+      // silently fails there, sending Alt+clicks to the rig tool instead of pinning. Guarded
+      // to a clean press (no repeat, no chord) so Alt+arrows plane navigation just flickers
+      // the toolbar instead of sticking.
       if (e.key.toLowerCase() === 'alt') {
         const store = useAppStore.getState()
-        if (!e.repeat && !e.shiftKey && !e.ctrlKey && !e.metaKey && store.mode === 'animate' && store.activeTool === 'rigbox') {
-          altPivotRestore = 'rigbox'
+        if (!e.repeat && !e.shiftKey && !e.ctrlKey && !e.metaKey && store.mode === 'animate' && (store.activeTool === 'rigbox' || store.activeTool === 'pose' || store.activeTool === 'offset' || store.activeTool === 'select')) {
+          altPivotRestore = store.activeTool
           store.setActiveTool('pivot')
           e.preventDefault()
         }
@@ -148,6 +151,10 @@ export function useKeyboardShortcuts() {
         // case outside model-mode 3D gestures).
         store.clearSelectedCells()
         if (!isTexture && !isAnimate) store.selectMarker(null)
+        // Animate: Escape stops transport, leaving the frozen frame showing and the key
+        // selection intact — every edit lands in a keyframe, so there is no staged pose
+        // to drop.
+        if (isAnimate && store.clipPlaying) store.setClipPlaying(false)
         e.preventDefault()
         return
       }
@@ -195,9 +202,10 @@ export function useKeyboardShortcuts() {
       }
 
       const tool = TOOL_KEYS[key]
-      // Animate mode's toolbar is rigbox + pivot only — other tool letters stay inert there
-      // rather than switching to a tool with no animate-mode handler.
-      if (tool && (!isAnimate || tool === 'pivot' || tool === 'rigbox')) {
+      // Animate mode's toolbar is rigbox + pivot, select, or pose depending on the
+      // panel tab — other tool letters stay inert there rather than switching to a tool
+      // with no animate-mode handler.
+      if (tool && (!isAnimate || tool === 'pivot' || tool === 'rigbox' || tool === 'pose' || tool === 'offset' || tool === 'select')) {
         store.setActiveTool(tool)
         e.preventDefault()
         return

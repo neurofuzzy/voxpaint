@@ -1,11 +1,34 @@
 import type { AnimationType, AnimationSpeed } from '@/engine/animation/types'
-import type { Axis, BBox, ChamferClassification, GridExtent, Orientation, VoxelScaleY } from '@/engine/grid/types'
+import type { AnimationMode, ClipKey, RigTween } from '@/engine/rigging/types'
+import type { Axis, BBox, ChamferClassification, GridExtent, Orientation, SplitAxis, VoxelScaleY } from '@/engine/grid/types'
 import type { SerializedMarkerPosition } from '@/engine/markers/types'
 import type { PaletteSlotRef, PaletteState } from '@/engine/palette/types'
 import type { BoxFace } from '@/engine/texture/types'
 import type { GltfExportAnchor } from '@/engine/export/gltfExport'
 
-export const CURRENT_SCHEMA_VERSION = 13 as const
+export const CURRENT_SCHEMA_VERSION = 19 as const
+
+/** One keyframe on a clip timeline (see `RigClip` / `ClipKey` in engine/rigging/types.ts):
+ * the pose IS the key — it owns its joint angles (radians, intrinsic XYZ) directly. */
+export type SerializedClipKey = {
+  id: string
+  /** UI-only (never exported); absent on hand-edited files, defaulting to 'Key'. */
+  name?: string
+  time: number
+  ease: ClipKey['ease']
+  joints: Record<string, [number, number, number]>
+  /** Optional root-joint translation offsets in voxels. */
+  offsets?: Record<string, [number, number, number]>
+}
+
+/** A named keyed-pose timeline: one exported action (`walk`, `idle`, `dodge`). */
+export type SerializedClip = {
+  id: string
+  name: string
+  loop: boolean
+  duration: number
+  keys: SerializedClipKey[]
+}
 
 export type ViewSettings = {
   ambientOcclusion: boolean
@@ -30,6 +53,12 @@ export type ViewSettings = {
   exportIncludeAOMaps?: boolean
   /** GLTF export: emit design markers as empty nodes. Defaults true. */
   exportIncludeMarkers?: boolean
+  /** GLTF export: emit animation clips for slice loops, tween stacks, and the pose cycle.
+   * Defaults true. */
+  exportIncludeAnimations?: boolean
+  /** GLTF export: bake the assembly pose (the first clip's initial keyframe) into the
+   * joints' base transforms. Defaults false. */
+  exportBakeAssemblyPose?: boolean
 }
 
 export type ProjectMeta = {
@@ -48,8 +77,15 @@ export type ProjectMeta = {
   voxelScaleY: VoxelScaleY
   /** Texels per voxel along each axis (1/2/4, default 4). Changing it resamples the box-map
    * faces (see `resampleTextureModel`) — unlike `voxelScaleY` it touches texture data, but the
-   * voxel model is unaffected. Absent on older files, defaulting to 4. */
+   * voxel model is untouched. Absent on older files, defaulting to 4. */
   texelScale?: number
+  /** Timeline/export frame rate (frames per second, 1–120). Drives the timeline grid,
+   * key-time snapping, and the baked GLB sample rate. Absent on older files, defaulting
+   * to 30 (the rate every previous version baked at, so old files evaluate identically). */
+  fps?: number
+  /** Which animation system this project uses: per-joint looping tweens (machines) or keyed
+   * pose clips (characters), never both. Absent on older files, defaulting to `'tweens'`. */
+  animationMode?: AnimationMode
 }
 
 export type SerializedColorCell = { x: number; y: number; z: number; paletteSlot: PaletteSlotRef }
@@ -62,6 +98,23 @@ export type SerializedChamferCell = {
   /** Null if this cell hadn't resolved a shape yet when the project was saved — it stays
    * unresolved (rendered as a plain cube) until enough neighbors are painted around it. */
   resolvedTo: ChamferClassification | null
+}
+/** One subdivided voxel: the parent's integer coords, the split world axes, and the per-child
+ * entries (`null` = empty). Child chamfers are frozen shapes, restored verbatim. */
+export type SerializedSubdivChild = {
+  slot: PaletteSlotRef
+  chamfer?: Omit<SerializedChamferCell, 'x' | 'y' | 'z'>
+}
+export type SerializedSubdivCell = {
+  x: number
+  y: number
+  z: number
+  split: SplitAxis[]
+  children: (SerializedSubdivChild | null)[]
+  /** Legacy (early v19, never written now): the parent's original slot. Ignored on load. */
+  slot?: PaletteSlotRef
+  /** Legacy (early v19, never written now): the empty-space scaffold flag. Ignored on load. */
+  scaffold?: boolean
 }
 
 /** The box-mapped texture, serialized: per-face grayscale texel arrays as base64. `texelScale` and
@@ -111,6 +164,10 @@ export type SerializedRigBox = {
   parentId?: string | null
   /** Absent on pre-pivot (v12) files — loads as the box center. */
   pivot?: [number, number, number] | null
+  /** Ordered tween stack (v15+; replaces v14's single `loop`). Absent = static joint. */
+  tweens?: RigTween[]
+  /** v14 single loop — removed in v15 (folded into `tweens` by the migration). */
+  loop?: unknown
 }
 
 export type VoxPaintProjectFileV1 = {
@@ -170,7 +227,29 @@ export type VoxPaintProjectFileV2 = {
  * files load with no rig boxes.
  *
  * v12 → v13: rig boxes gain an optional `pivot` rotation-center override. Older files load
- * with every pivot unset (box center), matching their pre-pivot behavior. */
+ * with every pivot unset (box center), matching their pre-pivot behavior.
+ *
+ * v13 → v14: rig boxes gain an optional `loop` procedural motion. Older files load
+ * with no loop (static joints), matching their pre-loop behavior.
+ *
+ * v14 → v15: the single `loop` becomes an ordered `tweens` stack (one entry per old loop,
+ * enabled). Older files load with equivalent motion under the new composition.
+ *
+ * v15 → v16: named joint snapshots (`poses`) plus the pose-cycle definition (`poseCycle`)
+ * are added. Older files load with an empty library and no cycle.
+ *
+ * v16 → v17: the pose cycle becomes the first keyed-pose `clips` entry (name `cycle`) and
+ * `poseCycle` is dropped; `meta.animationMode` records the project's animation system
+ * (`'tweens'` for tweened/empty projects, `'poses'` for pose-cycle ones). Older files load
+ * through `MIGRATIONS[16]`, which converts and stamps both.
+ *
+ * v17 → v18: keyframes own their joint angles directly (the pose is the keyframe) — each
+ * key embeds the referenced pose's `joints`/`offsets` and inherits its name, and the
+ * `poses` library is dropped. Older files load through `MIGRATIONS[17]`, which embeds
+ * and drops.
+ *
+ * v18 → v19: the `subdivCells` array is added for one-level detail voxels (see
+ * engine/grid/subdiv.ts). Older files simply contain no subdivisions. */
 export type VoxPaintProjectFile = {
   schemaVersion: typeof CURRENT_SCHEMA_VERSION
   meta: ProjectMeta
@@ -179,6 +258,7 @@ export type VoxPaintProjectFile = {
     bounds: BBox | null
     colorCells: SerializedColorCell[]
     chamferCells: SerializedChamferCell[]
+    subdivCells: SerializedSubdivCell[]
   }
   texture?: SerializedTexture
   view?: ViewSettings
@@ -187,4 +267,5 @@ export type VoxPaintProjectFile = {
   pivots?: SerializedSlicePivot[]
   markers?: SerializedMarkerPosition[]
   rigBoxes?: SerializedRigBox[]
+  clips?: SerializedClip[]
 }

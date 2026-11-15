@@ -1,11 +1,12 @@
 import { describe, expect, it } from 'vitest'
 import * as THREE from 'three'
 import { emptyModel, encodeKey, recomputeBounds } from '@/engine/grid/GridStore'
+import { subdivideCell } from '@/engine/grid/subdiv'
 import type { ChamferShapeKind, Rotation, VoxelModel } from '@/engine/grid/types'
 import { DEFAULT_PALETTE } from '@/engine/palette/defaultPalette'
 import { buildOptimizedVoxelGroups } from '@/engine/instancing/voxelMeshBuilder'
 import { unwrapGeometries, type UnwrappedAtlas } from './uvUnwrap'
-import { bakeAOToAtlas, bakeOccupancyField, makeSpecularNoiseTexture } from './bakeAO'
+import { bakeAOToAtlas, bakeOccupancyField, buildOccGrid, makeSpecularNoiseTexture } from './bakeAO'
 
 function bakeForModel(model: VoxelModel): { data: Uint8ClampedArray; width: number; height: number } {
   const { groups } = buildOptimizedVoxelGroups(model, DEFAULT_PALETTE)
@@ -58,6 +59,67 @@ describe('bakeAOToAtlas', () => {
       expect(data[i]).toBeGreaterThanOrEqual(0)
       expect(data[i]).toBeLessThanOrEqual(255)
     }
+  })
+
+  it('a detail bevel never occludes its own slope (like a whole bevel voxel)', () => {
+    for (const shapeKind of ['ramp', 'convex', 'concave'] as const) {
+      const model = emptyModel()
+      const children: Array<{ slot: { kind: 'base'; index: number }; chamfer?: never } | null> = Array.from({ length: 8 }, () => null)
+      ;(children as unknown[])[0] = {
+        slot: { kind: 'base', index: 0 },
+        chamfer: { planeAxis: 'y', planeOrientation: 1, resolvedTo: { shapeKind, rotation: 0 } },
+      }
+      model.subdiv.set(encodeKey(0, 0, 0), { split: ['x', 'y', 'z'], children: children as never })
+      model.bounds = recomputeBounds(model)
+      const { data } = bakeForModel(model)
+      let min = 255
+      for (let i = 0; i < data.length; i += 4) min = Math.min(min, data[i])
+      expect(min, shapeKind).toBe(255)
+    }
+  })
+
+  it('a detail bevel still lets its plain siblings and neighbours cast as before', () => {
+    // A plain half block next to a taller neighbour keeps its contact shadow (children occupy).
+    const model = modelFrom([[1, 0, 0], [1, 0, 1]])
+    model.subdiv.set(encodeKey(0, 0, 0), {
+      split: ['x', 'y', 'z'],
+      children: [
+        { slot: { kind: 'base', index: 0 } }, { slot: { kind: 'base', index: 0 } }, null, null,
+        { slot: { kind: 'base', index: 0 } }, { slot: { kind: 'base', index: 0, }, chamfer: { planeAxis: 'y', planeOrientation: 1, resolvedTo: { shapeKind: 'ramp', rotation: 0 } } }, null, null,
+      ],
+    })
+    model.bounds = recomputeBounds(model)
+    const occ = buildOccGrid(model)!
+    const at = (x: number, y: number, z: number) => occ.grid[(x - occ.min[0] * 4) + (y - occ.min[1] * 4) * occ.gx + (z - occ.min[2] * 4) * occ.gx * occ.gy]
+    expect(at(0, 0, 0)).toBe(1) // child 0 (plain) occupies its half block
+    expect(at(2, 0, 2)).toBe(0) // child 5 (bevel, x-high z-high) does not
+  })
+
+  it('bakes identical occlusion for a subdivided cell as for the plain cube it replaced', () => {
+    // The 8 half-cubes occupy exactly the plain cube's volume (half-unit blocks at exact-half
+    // origins tile the full-unit block), so the marched occupancy field is byte-identical and
+    // every surface texel computes the same occlusion. Compared at the grid level rather than
+    // the baked atlas: the CSG union splits neighbor faces at half-lines, which defeats the
+    // coplanar weld and packs the atlas into more rects (same area, more padding) — the
+    // occlusion values match, but the texel multisets legitimately differ in size.
+    const plain = modelFrom([[0, 0, 0], [1, 0, 0], [1, 0, 1]])
+    const detailed = modelFrom([[0, 0, 0], [1, 0, 0], [1, 0, 1]])
+    expect(subdivideCell(detailed, [0, 0, 0])).toBe(true)
+    detailed.bounds = recomputeBounds(detailed)
+    const plainOcc = buildOccGrid(plain)!
+    const detailedOcc = buildOccGrid(detailed)!
+    expect(detailedOcc.gx).toBe(plainOcc.gx)
+    expect(detailedOcc.gy).toBe(plainOcc.gy)
+    expect(detailedOcc.gz).toBe(plainOcc.gz)
+    expect(detailedOcc.min).toEqual(plainOcc.min)
+    expect(detailedOcc.grid).toEqual(plainOcc.grid)
+    // And the full pipeline still casts the contact shadow through the detail.
+    const { data } = bakeForModel(detailed)
+    let min = 255
+    for (let i = 0; i < data.length; i += 4) {
+      if (data[i] < min) min = data[i]
+    }
+    expect(min).toBeLessThan(255)
   })
 })
 

@@ -1,6 +1,7 @@
 import * as THREE from 'three'
 import { GLTFExporter } from 'three/addons/exporters/GLTFExporter.js'
 import { decodeKey, viewOriginShift } from '@/engine/grid/GridStore'
+import { voxelKeys } from '@/engine/grid/subdiv'
 import { outwardNormal } from '@/engine/plane/planeGeometry'
 import type { Axis, VoxelModel, CellKey, Coord, GridExtent, VoxelScaleY } from '@/engine/grid/types'
 import type { Marker } from '@/engine/markers/types'
@@ -20,7 +21,10 @@ import { buildEmissiveAnimIndex } from '@/engine/palette/emissiveAnimation'
 import type { SliceAnimSettings, SliceKey } from '@/engine/animation/types'
 import { assignVoxelsToNodes, hasActiveAnimations, resolveAnimCenter } from '@/engine/animation/animationLayers'
 import { buildAllAnimationClips, type AnimNodeInfo } from '@/engine/animation/animationGLTF'
-import { rigIdForCoord, rigPivotOf, sanitizeRigName, type RigBox } from '@/engine/rigging/types'
+import { normalizeFps, rigIdForCoord, rigPivotOf, sanitizeRigName, type AnimationMode, type RigBox, type RigClip } from '@/engine/rigging/types'
+import { bakeRigAction, boxHasActiveTweens, composeTweenMatrices, jointLocalDecomposed, TWEEN_CYCLE_SECONDS } from '@/engine/rigging/rigLoop'
+import { composePoseMatrices } from '@/engine/rigging/pose'
+import { evaluateClip } from '@/engine/rigging/clip'
 import { registerEmissiveAnimationExtension, type EmissiveAnimExportTarget } from './emissiveAnimationExport'
 import { scaleGeometryY } from './scaleGeometry'
 
@@ -113,12 +117,32 @@ export type GltfExportOptions = {
   markers?: Marker[]
   /** Emit the `markers` as empty nodes (default true). Off skips them — the .glb carries voxels only. */
   includeMarkers?: boolean
+  /** Emit animation clips for slice loops, tween stacks, and keyframe clips (default true).
+   * Off exports the same joint/node structure posed at bind with no `animations` — useful
+   * for downstream tools that can't consume clips or when only the static model matters. */
+  includeAnimations?: boolean
   /** Named rig bounding boxes: voxels inside a box export under a `Group` named for the box
    * (deepest containing box wins on overlap, list order breaks ties); voxels outside all
    * boxes export as today. Boxes are model-decoupled bboxes — containment is tested at
-   * export time. Rigged voxels are excluded from slice-loop nodes (rig wins) so the joint
-   * tree stays independent of procedural animation. */
+   * export time. Rigged voxels are excluded from slice assignment upstream, so joint meshes
+   * never land under slice nodes — the tree mounts at the root under one Rig container. */
   rigBoxes?: RigBox[]
+  /** Which animation system to bake: `'tweens'` emits one `loop` clip over the universal
+   * 2 s cycle; `'poses'` emits one clip per `clips` entry, named for it. Defaults to
+   * `'tweens'` (like persisted projects without a stamped mode). */
+  animationMode?: AnimationMode
+  /** Keyed-pose timelines, baked one action each in poses mode (ignored in tweens mode). */
+  clips?: RigClip[]
+  /** Bake the assembly pose (the resolved clip's initial keyframe, t = 0) into the joints'
+   * base transforms (poses mode only, default false). With animations on, clips still export —
+   * they start from that same key, so the base and the clips agree with no pop. */
+  bakeAssemblyPose?: boolean
+  /** Which clip supplies the assembly pose: the given id, falling back to the first clip.
+   * The dialog always passes the first clip — drag the Motion list to choose it. */
+  assemblyClipId?: string | null
+  /** Bake sample rate in frames per second (defaults to the project's timeline rate,
+   * 30 when unstamped). Keys and durations are seconds; tracks sample at this rate. */
+  fps?: number
 }
 
 const hex6 = (colorKey: number) => colorKey.toString(16).padStart(6, '0')
@@ -140,7 +164,7 @@ export function buildRigAssignment(model: VoxelModel, rigBoxes: RigBox[] | undef
     used.add(candidate)
     names.set(box.id, candidate)
   }
-  for (const key of model.color.keys()) {
+  for (const key of voxelKeys(model)) {
     const rigId = rigIdForCoord(rigBoxes, decodeKey(key))
     if (rigId) assignment.set(key, rigId)
   }
@@ -317,7 +341,8 @@ export async function exportModelToGlb(
   const emissiveAnimIndex = buildEmissiveAnimIndex(palette)
   const emissiveAnimTargets: EmissiveAnimExportTarget[] = []
 
-  const hasAnimations = !!animSettings && hasActiveAnimations(animSettings)
+  const includeAnimations = options.includeAnimations ?? true
+  const hasAnimations = includeAnimations && !!animSettings && hasActiveAnimations(animSettings)
   let nodeAssignment: Map<CellKey, SliceKey> | undefined
   let sliceNodeInfo: Map<SliceKey, { cellKeys: CellKey[]; axis: Axis; offset: number }> | undefined
   let animNodes: AnimNodeInfo[] | undefined
@@ -354,6 +379,34 @@ export async function exportModelToGlb(
       ? buildRigTree(options.rigBoxes, rigNames, options.voxelScaleY ?? 1)
       : null
   if (rigTree) root.add(rigTree.root)
+  // Assembly bake: pose the joint tree at the resolved clip's initial keyframe (t = 0) and
+  // freeze it into the nodes' base transforms — the exported static model shows the parts
+  // brought together. Same local math as the clip baker (shared helper), so the base and
+  // any exported clips agree exactly. Meshes parent under their joints, so they follow
+  // with no vertex changes.
+  if (rigTree && options.bakeAssemblyPose && (options.animationMode ?? 'tweens') === 'poses') {
+    const boxes = options.rigBoxes ?? []
+    const clips = options.clips ?? []
+    const assembly = clips.find((c) => c.id === options.assemblyClipId) ?? clips[0]
+    if (assembly && assembly.keys.length > 0) {
+      const frame = evaluateClip(boxes, assembly, 0)
+      const worlds = composePoseMatrices(boxes, frame.rot, frame.off)
+      const byId = new Map(boxes.map((b) => [b.id, b]))
+      const identity = new THREE.Matrix4()
+      for (const [id, group] of rigTree.groups) {
+        const box = byId.get(id)
+        if (!box) continue
+        // Same fallback rule as buildRigTree: dangling/self parents attach at the root.
+        const parent =
+          box.parentId && box.parentId !== box.id && byId.has(box.parentId) ? byId.get(box.parentId) : undefined
+        const self = worlds.get(id) ?? identity
+        const parentWorld = parent ? (worlds.get(parent.id) ?? identity) : identity
+        const { position, quaternion } = jointLocalDecomposed(box, parent, self, parentWorld)
+        group.position.set(position.x, position.y * (options.voxelScaleY ?? 1), position.z)
+        group.quaternion.copy(quaternion)
+      }
+    }
+  }
   const rigContextFor = (rigId: string | undefined): RigAttachContext | undefined => {
     if (!rigId || !rigTree || !rigTree.groups.has(rigId)) return undefined
     return { rigId, groups: rigTree.groups, scaledPivots: rigTree.scaledPivots }
@@ -601,6 +654,44 @@ export async function exportModelToGlb(
   // Build animation clips — GLTFExporter reads these from `options.animations`, not
   // `Object3D.animations` (which it ignores entirely).
   const clips = animNodes && animNodes.length > 0 ? buildAllAnimationClips(animNodes) : []
+  // Rig motion bakes to one clip per action, gated by the project's animation mode (only
+  // the active mode's motion exports — the other mode's data sits muted in the file):
+  // - tweens mode: one `loop` clip with a channel per tweened joint, sampled over the
+  //   universal 2 s cycle every enabled speed divides into;
+  // - poses mode: one clip per `RigClip`, named for it (sanitized, deduped), at the
+  //   clip's own duration, with a channel per joint keyed anywhere in that clip.
+  // Legacy slice-loop clips above are untouched. With `includeAnimations: false` the
+  // joint/node structure still exports, posed at bind.
+  if (rigTree && includeAnimations) {
+    const boxes = options.rigBoxes ?? []
+    const fps = normalizeFps(options.fps)
+    if ((options.animationMode ?? 'tweens') === 'poses') {
+      const used = new Set<string>()
+      for (const clip of options.clips ?? []) {
+        const base = sanitizeRigName(clip.name, 'clip')
+        let candidate = base
+        let i = 2
+        while (used.has(candidate)) candidate = `${base}-${i++}`
+        used.add(candidate)
+        const animatedIds = new Set<string>()
+        for (const key of clip.keys) {
+          for (const id of Object.keys(key.joints)) animatedIds.add(id)
+          for (const id of Object.keys(key.offsets ?? {})) animatedIds.add(id)
+        }
+        if (animatedIds.size === 0) continue
+        const sampleWorlds = (t: number) => {
+          const frame = evaluateClip(boxes, clip, t)
+          return composePoseMatrices(boxes, frame.rot, frame.off)
+        }
+        clips.push(bakeRigAction(candidate, boxes, rigTree.groups, voxelScaleY, fps, clip.duration, sampleWorlds, animatedIds))
+      }
+    } else {
+      const tweened = new Set(boxes.filter(boxHasActiveTweens).map((b) => b.id))
+      if (tweened.size > 0) {
+        clips.push(bakeRigAction('loop', boxes, rigTree.groups, voxelScaleY, fps, TWEEN_CYCLE_SECONDS, (t) => composeTweenMatrices(boxes, t), tweened))
+      }
+    }
+  }
 
   const scale = (options.scaleFactor ?? 100) / 100
   const anchor = options.anchor ?? 'center'

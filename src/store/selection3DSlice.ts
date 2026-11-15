@@ -4,10 +4,13 @@ import type { CellKey, Coord } from '@/engine/grid/types'
 import { axisIndex } from '@/engine/plane/planeGeometry'
 import type { ConstructionPlane } from '@/engine/plane/types'
 import { gridCoordFromPixel, pixelFromGridCoord } from '@/engine/plane/constructionPlane'
+import { coverageKeys, fineDivisionFor, forEachFineCell, isWholeDivision, regionFromFineCells } from '@/engine/tools/fineSelection'
+import { planeFrame } from '@/engine/grid/cellBox'
+import { floodFineCells, fineCellColor } from '@/engine/tools/fineWand'
 import { floodFillOccupied3D, floodFillRegion, floodFillRegion3D } from '@/engine/tools/floodFill'
 import { WAND_DOUBLE_TAP_MS, regionForFloodedCells } from '@/engine/tools/wandTool'
 import { showToast } from '@/components/ui/toastBus'
-import type { AppState, Selection3DSlice } from './types'
+import type { AppState, Fine3DSelection, Selection3DSlice } from './types'
 
 type Slice = StateCreator<AppState, [['zustand/immer', never]], [], Selection3DSlice>
 
@@ -16,10 +19,36 @@ type Slice = StateCreator<AppState, [['zustand/immer', never]], [], Selection3DS
 // re-render subscribers.
 let lastWandAt: number | null = null
 let lastWandCell: Coord | null = null
+// The sub-voxel wand's own two-stage memory (fine cell + time).
+let lastFineWand: { time: number; cell: [number, number] } | null = null
+
+/**
+ * The sub-voxel refinement of the 3D selection, or null when there is none or it went stale. It is
+ * live only while `selectedCells` still equals the coverage it was made with, so every other write
+ * to the set (wand, reorient, project switch, a lift) silently retires it.
+ */
+export function liveFineSelection3D(s: Pick<AppState, 'selectedFine' | 'selectedCells'>): Fine3DSelection | null {
+  const fine = s.selectedFine
+  if (!fine) return null
+  const keys = coverageKeys(fine.plane, fine.region)
+  if (keys.length !== s.selectedCells.size) return null
+  return keys.every((k) => s.selectedCells.has(k)) ? fine : null
+}
 
 export const createSelection3DSlice: Slice = (set, get) => ({
   selectedCells: new Set<CellKey>(),
   selectedCellsPreview: null,
+  selectedFine: null,
+  selectedFinePreview: null,
+  setSelectedFine: (fine) => {
+    get().bakeFloatIfAny()
+    get().clearStatusAlert()
+    set((state) => {
+      state.selectedCells = new Set(coverageKeys(fine.plane, fine.region))
+      state.selectedFine = fine
+    })
+  },
+  setSelectedFinePreview: (fine) => set((state) => { state.selectedFinePreview = fine }),
 
   // A fresh 3D selection bakes any pending float first, mirroring setSelection's rule — a
   // pending float never survives a selection change. Always replace wholesale (never mutate in
@@ -36,9 +65,54 @@ export const createSelection3DSlice: Slice = (set, get) => ({
     set((state) => { state.selectedCellsPreview = cells ? new Set(cells) : null })
   },
 
-  applyWandAt: (start) => {
-    const { model, plane, meta, layoutMode } = get()
+  applyWandAt: (start, fineStart) => {
+    const { model, plane, meta, layoutMode, gridSplit } = get()
+    // Grid not whole: the wand works at the grid's resolution, flooding fine cells on the plane slice.
+    const div = fineDivisionFor(plane, gridSplit)
+    if (!isWholeDivision(div)) {
+      const { u, v } = pixelFromGridCoord(plane, start)
+      const f: [number, number] = fineStart ?? [u * div.su, v * div.sv]
+      if (fineCellColor(model, plane, div, f[0], f[1], meta.gridExtent) === null) {
+        lastFineWand = null
+        get().bakeFloatIfAny()
+        if (layoutMode === '3d-only') get().clearSelectedCells()
+        else get().setSelection(null)
+        return
+      }
+      const now = Date.now()
+      let mode: 'color' | 'occupied' = 'color'
+      let cells = floodFineCells(model, plane, div, f, 'color', meta.gridExtent)
+      if (lastFineWand && now - lastFineWand.time <= WAND_DOUBLE_TAP_MS) {
+        const occupied = floodFineCells(model, plane, div, f, 'occupied', meta.gridExtent)
+        const [pu, pv] = lastFineWand.cell
+        if (occupied.some(([a, b]) => a === pu && b === pv)) {
+          mode = 'occupied'
+          cells = occupied
+        }
+      }
+      lastFineWand = { time: now, cell: f }
+      const region = regionFromFineCells(div, cells)
+      if (!region) return
+      if (layoutMode === '3d-only') get().setSelectedFine({ region, plane: { ...plane } })
+      else get().setSelection(region)
+      showToast(
+        mode === 'occupied'
+          ? `Wand: ${cells.length} sub-voxel cells (whole component)`
+          : `Wand: ${cells.length} sub-voxel cell${cells.length === 1 ? '' : 's'} (color-connected) — re-tap quickly for the whole component`,
+      )
+      return
+    }
     const startKey = encodeKey(...start)
+    // Subdivided parents flood as one atomic cell: detail has no color entry, so without this
+    // the wand would silently select nothing on a detail tap.
+    if (model.subdiv.has(startKey)) {
+      lastWandAt = null
+      lastWandCell = null
+      if (layoutMode === '3d-only') get().setSelectedCells(new Set([startKey]))
+      else get().setSelection(regionForFloodedCells(plane, [startKey]))
+      showToast('Wand: 1 voxel (subdivided detail selects whole)')
+      return
+    }
     if (!model.color.has(startKey)) {
       lastWandAt = null
       lastWandCell = null
@@ -95,11 +169,46 @@ export const createSelection3DSlice: Slice = (set, get) => ({
    * legitimate grab, not a spill. With `union`, the flood merges into the existing selection
    * (shift-double-click) instead of replacing it.
    */
-  applySliceWandAt: (start, union = false) => {
-    const { model, plane, meta, layoutMode } = get()
+  applySliceWandAt: (start, union = false, bits = null) => {
+    const { model, plane, meta, layoutMode, gridSplit } = get()
+    const ai = axisIndex(plane.axis)
     const startKey = encodeKey(...start)
+    // Grid armed: flood the slice at the grid's resolution, on the slab the tap hit (the plane's
+    // own slab without a hit point).
+    const onActive = start[ai] === plane.offset
+    const fineSlice: ConstructionPlane = { axis: plane.axis, orientation: plane.orientation, offset: start[ai], half: onActive ? plane.half : null }
+    const div = fineDivisionFor(fineSlice, gridSplit)
+    if (!isWholeDivision(div)) {
+      if (div.slab !== null) {
+        if (bits) div.slab = bits[ai] as 0 | 1
+        fineSlice.half = div.slab
+      }
+      const { uA, vA, uPos, vPos } = planeFrame(plane.axis)
+      const { u, v } = pixelFromGridCoord(fineSlice, start)
+      const f: [number, number] = [
+        u * div.su + (div.su === 2 && bits ? (uPos ? bits[uA] : 1 - bits[uA]) : 0),
+        v * div.sv + (div.sv === 2 && bits ? (vPos ? bits[vA] : 1 - bits[vA]) : 0),
+      ]
+      if (fineCellColor(model, fineSlice, div, f[0], f[1], meta.gridExtent) === null) return
+      const cells = floodFineCells(model, fineSlice, div, f, 'color', meta.gridExtent)
+      if (union) {
+        // Merge into an existing selection made at the same resolution on the same slab and slice.
+        const prev = layoutMode === '3d-only' ? liveFineSelection3D(get()) : (get().selection ? { region: get().selection!, plane } : null)
+        const pf = prev?.region.fine
+        const samePlace = prev && pf && pf.su === div.su && pf.sv === div.sv && pf.slab === div.slab
+          && prev.plane.axis === fineSlice.axis && prev.plane.orientation === fineSlice.orientation
+          && (layoutMode !== '3d-only' || prev.plane.offset === fineSlice.offset)
+        if (samePlace) forEachFineCell(prev.region, (fu, fv) => cells.push([fu, fv]))
+      }
+      const region = regionFromFineCells(div, cells)
+      if (!region) return
+      if (layoutMode === '3d-only') get().setSelectedFine({ region, plane: { ...fineSlice } })
+      else get().setSelection(region)
+      showToast(`Selected ${region.fine ? 'sub-voxel cells' : 'voxels'} on this slice (color-connected)`)
+      return
+    }
     if (!model.color.has(startKey)) return
-    const slice: ConstructionPlane = { axis: plane.axis, orientation: plane.orientation, offset: start[axisIndex(plane.axis)] }
+    const slice: ConstructionPlane = { axis: plane.axis, orientation: plane.orientation, offset: start[ai], half: null }
     const { u, v } = pixelFromGridCoord(slice, start)
     const keys = floodFillRegion(model, slice, u, v, meta.gridExtent)
       .map(([cu, cv]) => encodeKey(...gridCoordFromPixel(slice, cu, cv)))

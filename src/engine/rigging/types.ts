@@ -1,4 +1,5 @@
-import type { Coord, GridExtent } from '@/engine/grid/types'
+import type { Axis, Coord, GridExtent } from '@/engine/grid/types'
+import type { JointEuler } from './pose'
 import { effectiveExtent } from '@/engine/grid/GridStore'
 import type { ConstructionPlane } from '@/engine/plane/types'
 import { toDisplayGridlineU, toDisplayGridlineV } from '@/engine/plane/planeDisplay'
@@ -28,18 +29,255 @@ export type RigBox = {
   parentId: string | null
   /** Rotation-center grid point override, or null for the box center. */
   pivot: Coord | null
+  /** Ordered tween stack — absent/empty for a static (pose-only) joint. Stack order is
+   * composition order (top-first); see `engine/rigging/rigLoop.ts`. */
+  tweens?: RigTween[]
 }
 
-/** Serialized rig box (project file v12+; `pivot` added in v13). Coords are plain triples. */
-export type SerializedRigBox = {
+/**
+ * One looping procedural motion ("tween") on a rig box (Animate mode): a turntable spin,
+ * a pendulum swing, or an axial shuttle, cycling forever. `axis` is the world axis the
+ * motion runs on, `direction` flips its sense (CW vs CCW, ± slide; normal pendulum
+ * starts at minAngle, reverse starts at maxAngle), `speed` is the 1x/2x/3x cycle-rate multiplier shared with
+ * slice loops, and `amount` is the slide amplitude in voxels (unused by rotate/pendulum).
+ * A pendulum swings between `minAngle` and `maxAngle` (degrees, like the slice-loop
+ * pendulum's ±swing). A box holds an ordered stack — all enabled tweens evaluate at time
+ * t and compose top-first (stack order is load-bearing: rotations don't commute).
+ * `enabled: false` keeps the tween's params while muting it.
+ */
+export type RigTweenKind = 'rotate' | 'pendulum' | 'slide'
+export type RigTween = {
+  id: string
+  kind: RigTweenKind
+  axis: Axis
+  direction: 1 | -1
+  speed: import('@/engine/animation/types').AnimationSpeed
+  /** Slide amplitude in voxels (unused by rotate/pendulum). */
+  amount: number
+  /** Pendulum swing endpoints in degrees (unused by rotate/slide). */
+  minAngle: number
+  maxAngle: number
+  enabled: boolean
+}
+
+/** Pendulum endpoint clamp, matching the slice-loop pendulum's ±90° range. */
+export const PENDULUM_TWEEN_ANGLE_MIN = -90
+export const PENDULUM_TWEEN_ANGLE_MAX = 90
+/** Default swing, mirroring the slice-loop pendulum's 30° default amplitude. */
+export const DEFAULT_PENDULUM_MIN = -30
+export const DEFAULT_PENDULUM_MAX = 30
+
+/**
+ * Per-box local rotations (radians, intrinsic XYZ — the representation the pose gizmo
+ * drags in). Sparse — only non-bind joints are stored; absent entries ARE bind.
+ */
+export type KeyJoints = Record<string, JointEuler>
+
+/** Per-box translation offsets in voxels (hip bob, crouch, assembly shifts — a child
+ * shift composes inside its parent's chain). Sparse like joints. */
+export type KeyOffsets = Record<string, Coord>
+
+/** Sanitizes a joints record (hand-edited files): finite triples only, sparseness kept. */
+export function sanitizeKeyJoints(raw: unknown): KeyJoints {
+  const joints: KeyJoints = {}
+  if (!raw || typeof raw !== 'object') return joints
+  for (const [boxId, euler] of Object.entries(raw as Record<string, unknown>)) {
+    if (!Array.isArray(euler) || euler.length !== 3 || !euler.every((n) => Number.isFinite(n))) continue
+    joints[boxId] = [euler[0], euler[1], euler[2]]
+  }
+  return joints
+}
+
+/** Sanitizes an offsets record like joints (finite triples); omitted when empty. */
+export function sanitizeKeyOffsets(raw: unknown): KeyOffsets | undefined {
+  if (!raw || typeof raw !== 'object') return undefined
+  let offsets: KeyOffsets | undefined
+  for (const [boxId, off] of Object.entries(raw as Record<string, unknown>)) {
+    if (!Array.isArray(off) || off.length !== 3 || !off.every((n) => Number.isFinite(n))) continue
+    if (!offsets) offsets = {}
+    offsets[boxId] = [off[0], off[1], off[2]]
+  }
+  return offsets
+}
+
+/**
+ * Per-project animation system: per-joint looping tweens (machines) or keyed pose clips
+ * (characters), never both. Step 1 adds the type only — mode selection lands in step 2.
+ */
+export type AnimationMode = 'tweens' | 'poses'
+
+/**
+ * Per-key easing preset, applied to the phase between a key and the next: linear motion,
+ * smooth in-out, ease-in, ease-out, or hold (a step — the pose freezes until the next key).
+ */
+export type KeyEase = 'linear' | 'inOut' | 'in' | 'out' | 'hold'
+
+/**
+ * One keyframe on a clip timeline: the pose IS the key — it owns its joint angles
+ * directly (no library reference). `name` is UI-only (never exported); `ease` carries
+ * the segment LEAVING this key toward the next (the last key's ease carries a looping
+ * clip's wrap back to the first).
+ */
+export type ClipKey = {
   id: string
   name: string
-  min: [number, number, number]
-  max: [number, number, number]
-  /** Absent on pre-hierarchy files — loads as a root box. */
-  parentId?: string | null
-  /** Absent on pre-pivot (v12) files — loads as the box center. */
-  pivot?: [number, number, number] | null
+  /** Seconds from the clip start, snapped to 1/30 s; the first key is always 0. */
+  time: number
+  ease: KeyEase
+  joints: KeyJoints
+  /** Optional per-box translation offsets (hip bob, crouch, assembly shifts — children
+   * compose inside the parent chain). */
+  offsets?: KeyOffsets
+}
+
+/**
+ * A named keyed-pose timeline (one exported action: `walk`, `idle`, `dodge`). Keys are
+ * sorted by time with the first locked at 0; a looping clip eases the last key back to
+ * the first over `duration − lastKey.time`.
+ */
+export type RigClip = {
+  id: string
+  name: string
+  loop: boolean
+  /** Seconds; always ≥ the last key time and > 0. */
+  duration: number
+  keys: ClipKey[]
+}
+
+/** Export frame-rate grid for clip key times: keys snap to 1/30 s (the bake sample rate). */
+export const CLIP_FRAME_SECONDS = 1 / 30
+
+/** Default timeline/export frame rate (frames per second) when a project doesn't stamp one. */
+export const DEFAULT_FPS = 30
+
+/** Normalizes a frame rate: integers 1–120, anything else falls back to the default. */
+export function normalizeFps(fps: unknown): number {
+  return typeof fps === 'number' && Number.isFinite(fps) ? Math.min(120, Math.max(1, Math.round(fps))) : DEFAULT_FPS
+}
+
+/**
+ * Snaps a clip-local time onto the export frame grid (nearest frame), normalizing
+ * -0 so strict equality never distinguishes it from 0. Non-finite input reads as 0.
+ */
+export function snapClipTime(t: number, fps: number = DEFAULT_FPS): number {
+  if (!Number.isFinite(t)) return 0
+  const frame = 1 / normalizeFps(fps)
+  const s = Math.round(t / frame) * frame
+  return s === 0 ? 0 : s
+}
+
+export function newClipId(): string {
+  try {
+    return `clip-${crypto.randomUUID().slice(0, 8)}`
+  } catch {
+    return `clip-${Date.now().toString(36)}-${Math.floor(Math.random() * 0xffff).toString(16)}`
+  }
+}
+
+export function newKeyId(): string {
+  try {
+    return `key-${crypto.randomUUID().slice(0, 8)}`
+  } catch {
+    return `key-${Date.now().toString(36)}-${Math.floor(Math.random() * 0xffff).toString(16)}`
+  }
+}
+
+const KEY_EASES: KeyEase[] = ['linear', 'inOut', 'in', 'out', 'hold']
+
+/**
+ * Sanitizes a deserialized clip (hand-edited files): keys carry their own joints, so
+ * nothing dangles — malformed keys (bad time) are dropped, bad joint entries are
+ * skipped within the key. Survivors sort by time with the first forced to 0, and the
+ * duration clamps to ≥ the last key time (plus one frame when looping, so the wrap
+ * segment back to the first key never collapses to zero) and ≥ one frame. A clip whose
+ * key array survives empty (authored empty) materializes a bind frame-1 anchor —
+ * every loaded clip has a keyframe at 0. Returns null only when nothing usable
+ * survives (not an object, no key array at all). Times snap to the given frame
+ * rate's grid.
+ */
+export function sanitizeRigClip(raw: unknown, fps: number = DEFAULT_FPS): RigClip | null {
+  if (!raw || typeof raw !== 'object') return null
+  const frame = 1 / normalizeFps(fps)
+  const c = raw as Partial<RigClip>
+  if (!Array.isArray(c.keys)) return null
+  const keys: ClipKey[] = []
+  for (const entry of c.keys) {
+    if (!entry || typeof entry !== 'object') continue
+    const k = entry as Partial<ClipKey>
+    if (typeof k.time !== 'number' || !Number.isFinite(k.time)) continue
+    const offsets = sanitizeKeyOffsets(k.offsets)
+    keys.push({
+      id: typeof k.id === 'string' && k.id.length > 0 ? k.id.slice(0, 64) : newKeyId(),
+      name: (typeof k.name === 'string' ? k.name.slice(0, 64) : '') || 'Key',
+      time: Math.max(0, snapClipTime(k.time, fps)),
+      ease: KEY_EASES.includes(k.ease as KeyEase) ? (k.ease as KeyEase) : 'inOut',
+      joints: sanitizeKeyJoints(k.joints),
+      ...(offsets ? { offsets } : {}),
+    })
+  }
+  if (keys.length === 0) {
+    // A usable clip shell with no keyed poses yet (authored empty, or every key's pose
+    // deleted): land a bind frame-1 anchor so the clip is never keyless — save/load
+    // never eats in-progress work, and the timeline always has something to show.
+    // Malformed shells (no id/name shape at all) still read through — ids and names
+    // self-heal below.
+    const rawDuration = typeof c.duration === 'number' && Number.isFinite(c.duration) ? c.duration : 1
+    return {
+      id: typeof c.id === 'string' && c.id.length > 0 ? c.id.slice(0, 64) : newClipId(),
+      name: (typeof c.name === 'string' ? c.name.slice(0, 64) : '') || 'clip',
+      loop: c.loop !== false,
+      duration: Math.max(snapClipTime(rawDuration, fps), frame),
+      keys: [{ id: newKeyId(), name: 'Key 1', time: 0, ease: 'inOut' as KeyEase, joints: {} }],
+    }
+  }
+  keys.sort((a, b) => a.time - b.time)
+  keys[0].time = 0
+  const lastKeyTime = keys[keys.length - 1].time
+  const rawDuration = typeof c.duration === 'number' && Number.isFinite(c.duration) ? c.duration : 0
+  const loop = c.loop !== false
+  // Round snapping can land microscopically below an off-grid authored duration — bump one
+  // frame so the sanitizer never shortens a clip (on-grid values are unaffected). A looping
+  // clip additionally holds ≥ last key + one frame so the wrap segment never pops.
+  let duration = Math.max(snapClipTime(rawDuration, fps), lastKeyTime, frame)
+  if (loop) duration = Math.max(duration, snapClipTime(lastKeyTime + frame, fps))
+  if (duration < rawDuration) duration = snapClipTime(duration + frame, fps)
+  return {
+    id: typeof c.id === 'string' && c.id.length > 0 ? c.id.slice(0, 64) : newClipId(),
+    name: (typeof c.name === 'string' ? c.name.slice(0, 64) : '') || 'clip',
+    loop,
+    duration,
+    keys,
+  }
+}
+
+export function newTweenId(): string {
+  try {
+    return `tw-${crypto.randomUUID().slice(0, 8)}`
+  } catch {
+    return `tw-${Date.now().toString(36)}-${Math.floor(Math.random() * 0xffff).toString(16)}`
+  }
+}
+
+/** Sanitizes a deserialized tween (hand-edited files): unknown shapes fall back to null. */
+export function sanitizeRigTween(raw: unknown): RigTween | null {
+  if (!raw || typeof raw !== 'object') return null
+  const l = raw as Partial<RigTween>
+  if (l.kind !== 'rotate' && l.kind !== 'pendulum' && l.kind !== 'slide') return null
+  if (l.axis !== 'x' && l.axis !== 'y' && l.axis !== 'z') return null
+  if (l.direction !== 1 && l.direction !== -1) return null
+  if (l.speed !== 1 && l.speed !== 2 && l.speed !== 3) return null
+  if (typeof l.amount !== 'number' || !Number.isFinite(l.amount)) return null
+  const amount = Math.max(1, Math.min(8, l.amount))
+  // Pendulum endpoints: non-finite values fall back to the default swing (v15 files
+  // predate the kind, so every missing/invalid pair degrades to the same swing).
+  const clampAngle = (n: unknown, fallback: number) =>
+    typeof n === 'number' && Number.isFinite(n)
+      ? Math.max(PENDULUM_TWEEN_ANGLE_MIN, Math.min(PENDULUM_TWEEN_ANGLE_MAX, n))
+      : fallback
+  const minAngle = clampAngle(l.minAngle, DEFAULT_PENDULUM_MIN)
+  const maxAngle = clampAngle(l.maxAngle, DEFAULT_PENDULUM_MAX)
+  const id = typeof l.id === 'string' && l.id.length > 0 ? l.id.slice(0, 64) : newTweenId()
+  return { id, kind: l.kind, axis: l.axis, direction: l.direction, speed: l.speed, amount, minAngle, maxAngle, enabled: l.enabled !== false }
 }
 
 /** GLTF-safe mesh name: letters, digits, `_`, `-` ( Blender/Unity-friendly). */
@@ -231,6 +469,58 @@ export function boxSliceFootprint(
 }
 
 /**
+ * A box's composed keyframe-offset translation: its own offset plus every ancestor's
+ * (ancestor offsets ride the whole subtree along — see `parentChainMatrix`). Rotations
+ * are ignored, so this is exact for pure-translation posing (assembly nudges, hip bobs)
+ * and a translation-only approximation otherwise. Used to shift 2D footprints/pivots so
+ * the editor agrees with the 3D preview about where an offset box is. Pure.
+ */
+export function composedKeyOffset(
+  boxes: RigBox[],
+  box: RigBox,
+  offsets?: Record<string, Coord>,
+): Coord {
+  if (!offsets) return [0, 0, 0]
+  const byId = new Map(boxes.map((b) => [b.id, b]))
+  const out: Coord = [0, 0, 0]
+  let cur: RigBox | undefined = box
+  const seen = new Set<string>()
+  while (cur && !seen.has(cur.id)) {
+    seen.add(cur.id)
+    const o = offsets[cur.id]
+    if (o) {
+      out[0] += o[0]
+      out[1] += o[1]
+      out[2] += o[2]
+    }
+    cur = cur.parentId ? byId.get(cur.parentId) : undefined
+  }
+  return out
+}
+
+/**
+ * `boxSliceFootprint` for the box as the selected keyframe poses it: shifted by its
+ * composed key-offset translation, so 2D hit-testing and drawing agree with the 3D
+ * preview. Null when the shifted box misses the slice (an offset can carry a box off
+ * its bind slice — same as the 3D view). Pure.
+ */
+export function posedBoxSliceFootprint(
+  boxes: RigBox[],
+  box: RigBox,
+  plane: ConstructionPlane,
+  offsets?: Record<string, Coord>,
+): { uMin: number; uMax: number; vMin: number; vMax: number } | null {
+  const shift = composedKeyOffset(boxes, box, offsets)
+  if (shift[0] === 0 && shift[1] === 0 && shift[2] === 0) return boxSliceFootprint(box, plane)
+  const moved: RigBox = {
+    ...box,
+    min: [box.min[0] + shift[0], box.min[1] + shift[1], box.min[2] + shift[2]],
+    max: [box.max[0] + shift[0], box.max[1] + shift[1], box.max[2] + shift[2]],
+  }
+  return boxSliceFootprint(moved, plane)
+}
+
+/**
  * Rounds onto the 2x placement lattice (cell centers and boundary intersections alike),
  * normalizing -0 so strict equality never distinguishes it from 0.
  */
@@ -267,7 +557,7 @@ export function placePivotOnPlane(box: RigBox, plane: ConstructionPlane, cu: num
  * different surviving box (dangling and self parents are skipped — same guards as the outline
  * list). Grid coordinates; the view adds +0.5 per axis for world space, mirroring rigPivotOf.
  */
-export type RigPivotLink = { childId: string; from: Coord; to: Coord }
+export type RigPivotLink = { childId: string; parentId: string; from: Coord; to: Coord }
 
 export function rigPivotLinks(boxes: RigBox[]): RigPivotLink[] {
   const byId = new Map(boxes.map((b) => [b.id, b]))
@@ -276,9 +566,44 @@ export function rigPivotLinks(boxes: RigBox[]): RigPivotLink[] {
     if (!box.parentId || box.parentId === box.id) continue
     const parent = byId.get(box.parentId)
     if (!parent) continue
-    links.push({ childId: box.id, from: rigPivotOf(parent), to: rigPivotOf(box) })
+    links.push({ childId: box.id, parentId: parent.id, from: rigPivotOf(parent), to: rigPivotOf(box) })
   }
   return links
+}
+
+/**
+ * Clamps a requested subtree shift so every moved box AND every moved voxel stays inside
+ * the working cube: per axis, the result is the largest shift that fits all of them (relatives
+ * never distort). Voxel coords are cell centers (same integer lattice as box min/max), so one
+ * shared fit keeps boxes and voxels in lockstep. Returns the applied integer delta.
+ */
+export function clampPartDelta(
+  boxes: RigBox[],
+  id: string,
+  voxelCoords: ReadonlyArray<Coord>,
+  delta: Coord,
+  gridExtent: GridExtent,
+): Coord {
+  const moving = rigSubtreeIds(boxes, id)
+  const half = effectiveExtent(gridExtent) / 2
+  const lo = -half
+  const hi = half - 1
+  // Per axis, the shift must satisfy lo <= min + d and max + d <= hi for every moved box and
+  // every moved voxel.
+  return [0, 1, 2].map((a) => {
+    let allowLo = -Infinity
+    let allowHi = Infinity
+    for (const b of boxes) {
+      if (!moving.has(b.id)) continue
+      allowLo = Math.max(allowLo, lo - b.min[a])
+      allowHi = Math.min(allowHi, hi - b.max[a])
+    }
+    for (const c of voxelCoords) {
+      allowLo = Math.max(allowLo, lo - c[a])
+      allowHi = Math.min(allowHi, hi - c[a])
+    }
+    return Math.max(allowLo, Math.min(allowHi, delta[a]))
+  }) as Coord
 }
 
 /**
@@ -296,21 +621,10 @@ export function translateRigSubtree(
 ): RigBox[] | null {
   if (!boxes.some((b) => b.id === id)) return null
   const moving = rigSubtreeIds(boxes, id)
+  const applied = clampPartDelta(boxes, id, [], delta, gridExtent)
+  if (applied[0] === 0 && applied[1] === 0 && applied[2] === 0) return null
   const half = effectiveExtent(gridExtent) / 2
   const lo = -half
-  const hi = half - 1
-  // Per axis, the shift must satisfy lo <= min + d and max + d <= hi for every moved box.
-  const applied: [number, number, number] = [0, 1, 2].map((a) => {
-    let allowLo = -Infinity
-    let allowHi = Infinity
-    for (const b of boxes) {
-      if (!moving.has(b.id)) continue
-      allowLo = Math.max(allowLo, lo - b.min[a])
-      allowHi = Math.min(allowHi, hi - b.max[a])
-    }
-    return Math.max(allowLo, Math.min(allowHi, delta[a]))
-  }) as [number, number, number]
-  if (applied[0] === 0 && applied[1] === 0 && applied[2] === 0) return null
   // Pivots are grid points, not cells: they may sit on the cube's outer gridlines (half),
   // one half-step beyond the last cell center.
   const pclamp = (v: number) => Math.max(lo, Math.min(half, v))

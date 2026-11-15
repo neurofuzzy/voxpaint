@@ -1,7 +1,7 @@
 import type { CellKey, Coord, GridExtent, VoxelModel } from '@/engine/grid/types'
 import type { PaletteSlotRef } from '@/engine/palette/types'
 import type { ConstructionPlane } from '@/engine/plane/types'
-import { encodeKey, withinWorkingBounds } from '@/engine/grid/GridStore'
+import { effectiveExtent, encodeKey, withinWorkingBounds } from '@/engine/grid/GridStore'
 import { gridCoordFromPixel } from '@/engine/plane/constructionPlane'
 
 function slotsEqual(a: PaletteSlotRef | undefined, b: PaletteSlotRef | undefined): boolean {
@@ -14,6 +14,9 @@ function slotsEqual(a: PaletteSlotRef | undefined, b: PaletteSlotRef | undefined
  * chamfer fill is excluded). Bounded to the plane's displayed span and the model's 64^3 growth
  * cap. Returns the (u,v) cells to recolor; painting is left to the caller so it can run inside
  * one Immer producer/undo stroke.
+ *
+ * Subdivided parents read as occupied boundaries: detail is never traversed and never filled
+ * (per-quadrant paint owns detail edits, and bulk ops must not silently destroy them).
  *
  * `within` optionally constrains traversal to an explicit mask (e.g. the active selection) —
  * cells outside it are never visited, so the fill can't leak past the mask's own boundary even
@@ -30,6 +33,7 @@ export function floodFillRegion(
   const half = gridExtent / 2
   const inSpan = (u: number, v: number) => u >= -half && u < half && v >= -half && v < half
   const colorAt = (u: number, v: number) => model.color.get(encodeKey(...gridCoordFromPixel(plane, u, v)))?.paletteSlot
+  const subdivAt = (u: number, v: number) => model.subdiv.has(encodeKey(...gridCoordFromPixel(plane, u, v)))
 
   const target = colorAt(startU, startV)
   const visited = new Set<string>()
@@ -43,6 +47,7 @@ export function floodFillRegion(
     visited.add(key)
     if (!inSpan(u, v)) continue
     if (within && !within(u, v)) continue
+    if (subdivAt(u, v)) continue
     if (!slotsEqual(colorAt(u, v), target)) continue
 
     const coord = gridCoordFromPixel(plane, u, v)
@@ -61,7 +66,8 @@ export function floodFillRegion(
  * rather than a deliberate edge-to-edge fill. Callers use this to reject the fill outright.
  */
 export function fillLeaksToEdges(cells: Array<[number, number]>, gridExtent: GridExtent): boolean {
-  const half = gridExtent / 2
+  // The working span (odd extents round up — `effectiveExtent`), so the edges are integer cells.
+  const half = effectiveExtent(gridExtent) / 2
   let touchesMinU = false, touchesMaxU = false, touchesMinV = false, touchesMaxV = false
   for (const [u, v] of cells) {
     if (u === -half) touchesMinU = true

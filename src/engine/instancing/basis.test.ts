@@ -4,7 +4,7 @@ import type { Axis, Coord, Orientation } from '@/engine/grid/types'
 import { mirrorVGeometry, rampGeometry } from '@/engine/chamfer/chamferGeometry'
 import { planeLogicalBasis } from '@/engine/plane/constructionPlane'
 import { ALL_AXES, outwardNormal } from '@/engine/plane/planeGeometry'
-import { chamferBasisIsReflected, chamferInstanceMatrix } from './basis'
+import { chamferBasisIsReflected, chamferInstanceMatrix, scaledChamferInstanceMatrix } from './basis'
 
 const ORIENTATIONS: Orientation[] = [1, -1]
 const ROTATIONS = [0, 1, 2, 3] as const
@@ -76,5 +76,73 @@ describe('chamferInstanceMatrix — the reflection fix preserves placement', () 
     const proper = transformedVertexSet(rampGeometry(0), chamferInstanceMatrix(coord, 'y', 1, 2))
     const raw = transformedVertexSet(rampGeometry(0), rawReflectedMatrix(coord, 'y', 1, 2))
     expect(proper).toEqual(raw)
+  })
+})
+
+describe('scaledChamferInstanceMatrix — the scaled prefab fills exactly its subcell box', () => {
+  // Regression: the scale used to compose before the spin (T·Basis·Rz·S), rotating the squash
+  // axes with the shape — odd rotations in anisotropic boxes came out narrow on one world
+  // axis and overflowing their box on the other (a mirrored half-height stern wedge rendered
+  // 0.5 wide and a full voxel tall). The matrix maps the unit prefab, so its unit-cube image
+  // must be the box itself for every axis, orientation, rotation, and split shape.
+  function unitCubeImage(axis: Axis, orientation: Orientation, rotation: (typeof ROTATIONS)[number], origin: Coord, size: [number, number, number]): THREE.Box3 {
+    const m = scaledChamferInstanceMatrix(origin, size, axis, orientation, rotation, new THREE.Matrix4())
+    const box = new THREE.Box3()
+    for (const x of [-0.5, 0.5]) {
+      for (const y of [-0.5, 0.5]) {
+        for (const z of [-0.5, 0.5]) {
+          box.expandByPoint(new THREE.Vector3(x, y, z).applyMatrix4(m))
+        }
+      }
+    }
+    return box
+  }
+
+  function expectFillsBox(axis: Axis, orientation: Orientation, rotation: (typeof ROTATIONS)[number], origin: Coord, size: [number, number, number]): void {
+    const box = unitCubeImage(axis, orientation, rotation, origin, size)
+    const tag = `${axis} o=${orientation} r=${rotation} origin=${origin} size=${size}`
+    for (const a of [0, 1, 2] as const) {
+      expect(box.min.getComponent(a), `${tag} min[${a}]`).toBeCloseTo(origin[a], 9)
+      expect(box.max.getComponent(a), `${tag} max[${a}]`).toBeCloseTo(origin[a] + size[a], 9)
+    }
+  }
+
+  it('fills a y-split half box at every rotation (mirrored barge-stern wedge)', () => {
+    // Stern cell from the barge report: y-split low half holding a z-faced wedge; the mirror
+    // lands it on odd rotations, which was exactly the broken case.
+    for (const rotation of ROTATIONS) {
+      expectFillsBox('z', 1, rotation, [3, -8, 0], [1, 0.5, 1])
+    }
+  })
+
+  it('fills every anisotropic split shape on every axis, orientation, and rotation', () => {
+    const sizes: Array<[number, number, number]> = [
+      [0.5, 1, 1],
+      [1, 0.5, 1],
+      [1, 1, 0.5],
+      [0.5, 0.5, 1],
+      [0.5, 0.5, 0.5],
+      [1, 1, 1],
+    ]
+    for (const axis of ALL_AXES) {
+      for (const orientation of ORIENTATIONS) {
+        for (const rotation of ROTATIONS) {
+          for (const size of sizes) {
+            expectFillsBox(axis, orientation, rotation, [-5, -8, -1], size)
+          }
+        }
+      }
+    }
+  })
+
+  it('keeps a positive determinant (proper rotation times positive scale)', () => {
+    for (const axis of ALL_AXES) {
+      for (const orientation of ORIENTATIONS) {
+        for (const rotation of ROTATIONS) {
+          const m = scaledChamferInstanceMatrix([3, -8, 0], [1, 0.5, 1], axis, orientation, rotation)
+          expect(linearDeterminant(m), `${axis} o=${orientation} r=${rotation}`).toBeCloseTo(0.5, 9)
+        }
+      }
+    }
   })
 })

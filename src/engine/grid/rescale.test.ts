@@ -4,6 +4,8 @@ import type { Axis, ChamferShapeKind, Coord, Orientation, Rotation, VoxelModel }
 import { planeLogicalBasis } from '@/engine/plane/constructionPlane'
 import { outwardNormal } from '@/engine/plane/planeGeometry'
 import { rescaleCoord, rescaleTargetExtent, rescaleVoxelModel } from './rescale'
+import { subdivideCell } from '@/engine/grid/subdiv'
+import { setDetailChild } from '@/engine/grid/subdivFixtures'
 
 const SLOT = { kind: 'base', index: 0 } as const
 
@@ -180,6 +182,53 @@ describe('rescaleVoxelModel', () => {
       expect(outcomeOf(next, childAt(base, 'z', 1, du, dv, dw))).toBe(want)
     }
     expect(outcomeOf(next, childAt(base, 'z', 1, 1, 0, 1))).toBe('empty')
+  })
+
+  it('decomposes a tricorner-0 into smaller tricorners plus a triconcave', () => {
+    // Hand-derived in the z logical frame for the SW-apex tetrahedron ({w ≤ v−u}): the three
+    // children straddling the slope plane keep smaller tricorners; the (0,1,0) child matches a
+    // triconcave exactly (same half-space, {u−v+w ≤ 1} in the child frame). Volumes:
+    // 3×(1/6)+5/6 = 8/6.
+    const base: Coord = [0, 0, 0]
+    const next = rescaleVoxelModel(singleVoxel(base, { axis: 'z', orientation: 1, kind: 'tricorner', rotation: 0 }))
+    expect(next.color.size).toBe(4)
+    const expected: Array<[number, number, number, string]> = [
+      [0, 0, 0, 'tricorner:0'],
+      [1, 1, 0, 'tricorner:0'],
+      [0, 1, 1, 'tricorner:0'],
+      [0, 1, 0, 'triconcave:0'],
+    ]
+    for (const [du, dv, dw, want] of expected) {
+      expect(outcomeOf(next, childAt(base, 'z', 1, du, dv, dw))).toBe(want)
+    }
+  })
+
+  it('decomposes a triconcave-0 into cubes, smaller triconcaves and a tricorner', () => {
+    // Hand-derived in the z logical frame for the flat-cut notch ({u−v+w ≤ 1}): the four
+    // children fully inside stay cubes, three cut children keep smaller triconcaves, and the
+    // (1,0,1) child matches a tricorner exactly. Volumes: 4+3×(5/6)+1/6 = 20/3 = 8×(5/6).
+    const base: Coord = [0, 0, 0]
+    const next = rescaleVoxelModel(singleVoxel(base, { axis: 'z', orientation: 1, kind: 'triconcave', rotation: 0 }))
+    expect(next.color.size).toBe(8)
+    const expected: Array<[number, number, number, string]> = [
+      [0, 0, 0, 'cube'],
+      [0, 1, 0, 'cube'],
+      [1, 1, 0, 'cube'],
+      [0, 1, 1, 'cube'],
+      [1, 0, 0, 'triconcave:0'],
+      [0, 0, 1, 'triconcave:0'],
+      [1, 1, 1, 'triconcave:0'],
+      [1, 0, 1, 'tricorner:0'],
+    ]
+    for (const [du, dv, dw, want] of expected) {
+      const coord = childAt(base, 'z', 1, du, dv, dw)
+      expect(outcomeOf(next, coord)).toBe(want)
+      if (want !== 'cube') {
+        const cell = next.chamfer.get(encodeKey(...coord))
+        expect(cell?.planeAxis).toBe('z')
+        expect(cell?.planeOrientation).toBe(1)
+      }
+    }
   })
 
   it('turns a rotated ramp with its slope (ramp-1 opens south)', () => {    // Knife edge moves east→south: cubes gather at dv=0,dw=0, empties at dv=1,dw=1, all rotation 1.
@@ -359,10 +408,10 @@ describe('rescaleVoxelModel', () => {
     // children are empty on both sides of the equation. Child cells are the same world size as
     // the parent's, so volumes compare directly.
     const volume: Record<string, number> = {
-      cube: 1, ramp: 1 / 2, wedge: 1 / 2, convex: 1 / 3, concave: 2 / 3, thin: 1 / 2, half: 1 / 2,
+      cube: 1, ramp: 1 / 2, wedge: 1 / 2, convex: 1 / 3, concave: 2 / 3, tricorner: 1 / 6, triconcave: 5 / 6, thin: 1 / 2, half: 1 / 2,
       post: 1 / 4, quarter: 1 / 4, flat: 0, flatwedge: 0,
     }
-    const kinds: ChamferShapeKind[] = ['ramp', 'wedge', 'convex', 'concave', 'thin', 'half', 'post', 'quarter', 'flat', 'flatwedge']
+    const kinds: ChamferShapeKind[] = ['ramp', 'wedge', 'convex', 'concave', 'tricorner', 'triconcave', 'thin', 'half', 'post', 'quarter', 'flat', 'flatwedge']
     for (const kind of kinds) {
       for (const rotation of [0, 1, 2, 3] as const) {
         const next = rescaleVoxelModel(singleVoxel([0, 0, 0], { axis: 'z', orientation: 1, kind, rotation }))
@@ -374,5 +423,73 @@ describe('rescaleVoxelModel', () => {
         expect(sum, `${kind} r=${rotation}`).toBeCloseTo(8 * volume[kind], 10)
       }
     }
+  })
+
+  it('dissolves subdivided parents into plain doubled-lattice cubes', () => {
+    // A subdiv parent's 8 half-cells land exactly on doubled-lattice unit cells, so rescale
+    // turns detail into ordinary cubes: erased children stay empty, live children keep slots.
+    const model = emptyModel()
+    model.color.set(encodeKey(1, 0, -1), { paletteSlot: { ...SLOT } })
+    model.color.set(encodeKey(0, 0, 0), { paletteSlot: { ...SLOT } })
+    subdivideCell(model, [0, 0, 0])
+    setDetailChild(model, [0, 0, 0], 7, { slot: { kind: 'base', index: 3 } })
+    setDetailChild(model, [0, 0, 0], 0, null)
+    const next = rescaleVoxelModel(model)
+    expect(next.subdiv.size).toBe(0)
+    // Plain cube at (1,0,-1) still doubles normally: 8 cubes.
+    expect(next.color.size).toBe(8 + 7)
+    // Subdiv children land at (2x+dx, 2y+dy, 2z+dz) = (dx, dy, dz) here.
+    for (let i = 0; i < 8; i++) {
+      const key = encodeKey(i & 1, (i >> 1) & 1, (i >> 2) & 1)
+      if (i === 0) {
+        expect(next.color.has(key)).toBe(false)
+      } else if (i === 7) {
+        expect(next.color.get(key)).toEqual({ paletteSlot: { kind: 'base', index: 3 } })
+      } else {
+        expect(next.color.get(key)).toEqual({ paletteSlot: { kind: 'base', index: 0 } })
+      }
+    }
+    expect(next.chamfer.size).toBe(0)
+  })
+})
+
+describe('rescale with partial splits', () => {
+  it('expands partial-split children over their doubled footprint as plain cubes', () => {
+    // u-split children are 0.5×1×1: doubled, each fills 1×2×2 plain cubes.
+    const model = emptyModel()
+    model.color.set(encodeKey(0, 0, 0), { paletteSlot: { ...SLOT } })
+    subdivideCell(model, [0, 0, 0], ['x'])
+    setDetailChild(model, [0, 0, 0], 1, { slot: { kind: 'base', index: 3 } })
+    setDetailChild(model, [0, 0, 0], 0, null)
+    const next = rescaleVoxelModel(model)
+    expect(next.subdiv.size).toBe(0)
+    // Child 1 (x-high half) fills doubled cells x=1, y,z ∈ {0,1} with its slot.
+    for (const y of [0, 1]) {
+      for (const z of [0, 1]) {
+        expect(next.color.get(encodeKey(1, y, z)), `1,${y},${z}`).toEqual({ paletteSlot: { kind: 'base', index: 3 } })
+      }
+    }
+    // Erased child 0's footprint stays empty.
+    for (const y of [0, 1]) {
+      for (const z of [0, 1]) {
+        expect(next.color.has(encodeKey(0, y, z)), `0,${y},${z}`).toBe(false)
+      }
+    }
+    expect(next.chamfer.size).toBe(0)
+  })
+
+  it('blockifies bevel detail into plain cubes (documented approximation)', () => {
+    const model = emptyModel()
+    model.color.set(encodeKey(0, 0, 0), { paletteSlot: { ...SLOT } })
+    subdivideCell(model, [0, 0, 0])
+    setDetailChild(model, [0, 0, 0], 0, {
+      slot: { kind: 'base', index: 0 },
+      chamfer: { planeAxis: 'y', planeOrientation: 1, resolvedTo: { shapeKind: 'ramp', rotation: 0 } },
+    })
+    const next = rescaleVoxelModel(model)
+    expect(next.subdiv.size).toBe(0)
+    // The beveled child's footprint fills with plain cubes — no chamfer entries survive.
+    expect(next.color.size).toBe(8)
+    expect(next.chamfer.size).toBe(0)
   })
 })

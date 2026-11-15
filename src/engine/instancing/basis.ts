@@ -36,6 +36,20 @@ export function cubeInstanceMatrix(coord: Coord, out = new THREE.Matrix4()): THR
 }
 
 /**
+ * Placement matrix for one half-scale detail child. `origin` is the child's world-space
+ * minimum corner (see subdiv.ts's `splitChildOrigin` — exact halves), so the instance origin
+ * is origin + (size/2) with a per-axis scale on the shared unit-cube geometry. Defaults to
+ * the 8-split half-cube.
+ */
+export function subCubeInstanceMatrix(
+  origin: [x: number, y: number, z: number],
+  size: [x: number, y: number, z: number] = [0.5, 0.5, 0.5],
+  out = new THREE.Matrix4(),
+): THREE.Matrix4 {
+  return out.makeScale(size[0], size[1], size[2]).setPosition(origin[0] + size[0] / 2, origin[1] + size[1] / 2, origin[2] + size[2] / 2)
+}
+
+/**
  * True when `makeBasis(worldU, worldV, outward)` for this plane is a reflection (negative
  * determinant) rather than a proper rotation. Happens for exactly the (axis, orientation) combos
  * where the 2D editor's u/v frame is left-handed about the outward normal: +Z, +X, and -Y.
@@ -51,6 +65,43 @@ export function chamferBasisIsReflected(planeAxis: Axis, planeOrientation: Orien
   setFromCoord(scratchOutward, outwardNormal(planeAxis, planeOrientation))
   scratchCross.crossVectors(worldV, scratchOutward)
   return worldU.dot(scratchCross) < 0
+}
+
+/**
+ * Placement matrix for a chamfer prefab scaled to fill an arbitrary subcell box. Same
+ * convention as `chamferInstanceMatrix` (proper rotation, mirrored-variant geometry for
+ * reflected planes), composed as T(center)·S·Basis·Rz: the shape spins in unit space,
+ * lands on its world axes via the basis, and only then stretches along the world axes
+ * into the box — so the stretched shape always fills exactly the subcell box regardless
+ * of which world axes are split. (Scaling before the spin instead — T·Basis·Rz·S —
+ * rotates the squash axes with the shape, so odd rotations in anisotropic boxes come
+ * out narrow on one world axis and overflowing their box on the other.)
+ */
+export function scaledChamferInstanceMatrix(
+  origin: [x: number, y: number, z: number],
+  size: [x: number, y: number, z: number],
+  planeAxis: Axis,
+  planeOrientation: Orientation,
+  rotation: 0 | 1 | 2 | 3,
+  out = new THREE.Matrix4(),
+): THREE.Matrix4 {
+  const { worldU, worldV } = PLANE_BASIS[planeAxis]
+  setFromCoord(scratchOutward, outwardNormal(planeAxis, planeOrientation))
+
+  const sign = chamferBasisIsReflected(planeAxis, planeOrientation) ? -1 : 1
+  scratchV.copy(worldV).multiplyScalar(sign)
+  scratchBasis.makeBasis(worldU, scratchV, scratchOutward)
+  // Rotation-only here: the translation is set on `out` below, after the world-axis
+  // scale is folded in (makeBasis leaves translation untouched, so clear any stale one
+  // from this shared scratch matrix instead of scaling it into the result).
+  scratchBasis.setPosition(0, 0, 0)
+
+  scratchRotZ.makeRotationZ((sign * rotation * Math.PI) / 2)
+  return out
+    .makeScale(size[0], size[1], size[2])
+    .multiply(scratchBasis)
+    .multiply(scratchRotZ)
+    .setPosition(origin[0] + size[0] / 2, origin[1] + size[1] / 2, origin[2] + size[2] / 2)
 }
 
 /**

@@ -1,10 +1,13 @@
 import { useRef, useState } from 'react'
 import { ChevronDown, ChevronUp, FlipHorizontal, Paintbrush } from 'lucide-react'
-import { effectiveExtent } from '@/engine/grid/GridStore'
+import { clampPlaneOffset, effectiveExtent } from '@/engine/grid/GridStore'
 import type { Axis } from '@/engine/grid/types'
+import { gridSplitsAxis, stepHalfStop } from '@/store/planeSlice'
 import { useAppStore } from '@/store/useAppStore'
 
-/** Finger travel per construction-plane layer — ~40 layers fit in a full-height iPad drag. */
+/** Finger travel per construction-plane layer — ~40 layers fit in a full-height iPad drag.
+ * Dragging walks the grid's stops: whole layers, or with the grid cutting the plane's axis
+ * half-voxel stops (low slab → high slab → next layer's low slab), each half this travel. */
 const PX_PER_LAYER = 20
 
 const AXES: Axis[] = ['x', 'y', 'z']
@@ -18,10 +21,10 @@ const ROUND_BTN =
 /**
  * Touch strip pinned to the far right edge of the window (over the 3D viewport's right edge —
  * it lives in MainLayout, not Editor2D): slide a finger up/down to step the
- * construction-plane offset (up = +1, down = −1), the touch equivalent of Shift+wheel.
- * Pointer-capture drag accumulates travel into whole layers, so slow drags are
- * precise and long drags traverse the whole working cube in one gesture. Keyboard-focusable
- * (Up/Down arrows) for the same reason.
+ * construction-plane offset by the grid's stops (whole voxels, or half-voxel when the grid
+ * cuts the plane's axis). Pointer-capture drag accumulates travel from the
+ * anchor (not incrementally) so each stop is crossed exactly once. Keyboard-focusable
+ * (Up/Down arrows step whole layers) for the same reason.
  *
  * This strip carries no readout of its own except a transient bubble while dragging. Narrow and
  * translucent so it costs almost no canvas space; it sits under the 3D view's top-right and
@@ -35,6 +38,7 @@ export function PlaneEdgeSlider() {
   const offset = useAppStore((s) => s.plane.offset)
   const planeAxis = useAppStore((s) => s.plane.axis)
   const planeOrientation = useAppStore((s) => s.plane.orientation)
+  const splitsAxis = useAppStore((s) => gridSplitsAxis(s.gridSplit, s.plane.axis))
   const gridExtent = useAppStore((s) => s.meta.gridExtent)
   const mode = useAppStore((s) => s.mode)
   const layoutMode = useAppStore((s) => s.layoutMode)
@@ -43,23 +47,40 @@ export function PlaneEdgeSlider() {
   const setTouchPaintHold = useAppStore((s) => s.setTouchPaintHold)
   const setStatusMessage = useAppStore((s) => s.setStatusMessage)
   const [dragging, setDragging] = useState(false)
-  // Drag anchor: the touch point and plane offset the gesture started from. Steps accumulate
+  // Drag anchor: the touch point and plane stop the gesture started from. Steps accumulate
   // from the anchor (not incrementally) so each layer boundary is crossed exactly once.
-  const dragRef = useRef<{ startY: number; startOffset: number } | null>(null)
+  const dragRef = useRef<{ startY: number; startOffset: number; startHalf: 0 | 1 | null } | null>(null)
 
   const half = effectiveExtent(gridExtent) / 2
-  const atTop = offset >= half - 1
-  const atBottom = offset <= -half
+  const planeHalf = useAppStore((s) => s.plane.half)
+  // The ends are where the NEXT grid step would leave the bounds (a slab can remain at the top layer).
+  const blocked = (dir: 1 | -1) => {
+    const next = stepHalfStop(offset, planeHalf, dir, planeOrientation, splitsAxis)
+    return clampPlaneOffset(next.offset, gridExtent) !== next.offset
+  }
+  const atTop = blocked(1)
+  const atBottom = blocked(-1)
 
   function stepFrom(clientY: number) {
     const anchor = dragRef.current
     if (!anchor) return
-    const steps = Math.round((anchor.startY - clientY) / PX_PER_LAYER)
-    const { plane, setPlaneOffset } = useAppStore.getState()
-    const next = anchor.startOffset + steps
-    // setPlaneOffset clamps to the project bounds; guard the call itself so hovering between
-    // layer boundaries doesn't churn the store (each call bakes floats / clears object targets).
-    if (next !== plane.offset) setPlaneOffset(next)
+    const steps = Math.round((anchor.startY - clientY) / (splitsAxis ? PX_PER_LAYER / 2 : PX_PER_LAYER))
+    const { plane, gridSplit, setPlaneOffset, setPlaneHalf } = useAppStore.getState()
+    const splits = gridSplitsAxis(gridSplit, plane.axis)
+    // Walk the grid's stops from the anchor (absolute, not incremental).
+    let offset = anchor.startOffset
+    let half: 0 | 1 | null = anchor.startHalf
+    const dir = steps >= 0 ? 1 : -1
+    for (let i = 0; i < Math.abs(steps); i++) {
+      const next = stepHalfStop(offset, half, dir, plane.orientation, splits)
+      if (clampPlaneOffset(next.offset, gridExtent) !== next.offset) break // pin at the bounds
+      ;({ offset, half } = next)
+    }
+    const clamped = offset
+    // Guard the calls themselves so hovering between stops doesn't churn the store
+    // (each call bakes floats / clears object targets).
+    if (clamped !== plane.offset) setPlaneOffset(clamped)
+    if (half !== plane.half) setPlaneHalf(half)
   }
 
   function stepperButton(
@@ -75,7 +96,7 @@ export function PlaneEdgeSlider() {
         title={label}
         disabled={disabled}
         onPointerDown={(e) => e.stopPropagation()}
-        onClick={() => useAppStore.getState().setPlaneOffset(offset + direction)}
+        onClick={() => useAppStore.getState().stepPlaneHalf(direction)}
         onPointerEnter={() => setStatusMessage(hint)}
         onPointerLeave={() => setStatusMessage(null)}
         className={ROUND_BTN}
@@ -130,14 +151,14 @@ export function PlaneEdgeSlider() {
       tabIndex={0}
       onKeyDown={(e) => {
         if (e.key === 'ArrowUp' || e.key === 'ArrowDown') {
-          useAppStore.getState().setPlaneOffset(offset + (e.key === 'ArrowUp' ? 1 : -1))
+          useAppStore.getState().stepPlaneHalf(e.key === 'ArrowUp' ? 1 : -1)
           e.preventDefault()
         }
       }}
       onPointerDown={(e) => {
         // Mouse drags work too (harmless on desktop); the primary target is touch.
         e.currentTarget.setPointerCapture(e.pointerId)
-        dragRef.current = { startY: e.clientY, startOffset: useAppStore.getState().plane.offset }
+        dragRef.current = { startY: e.clientY, startOffset: useAppStore.getState().plane.offset, startHalf: useAppStore.getState().plane.half }
         setDragging(true)
         setStatusMessage('Slide up/down to move the construction plane')
       }}
@@ -185,7 +206,7 @@ export function PlaneEdgeSlider() {
           <FlipHorizontal size={16} />,
         )}
         <div className="h-px w-6 bg-neutral-700/60" />
-        {stepperButton(1, 'Increase offset', 'Click to move the plane forward one layer', atTop, ChevronUp)}
+        {stepperButton(1, 'Increase offset', 'Click to move the plane forward one grid step', atTop, ChevronUp)}
         {/* Grip hint — translucent until hovered/dragged so it reads as chrome, not canvas. */}
         <div
           className={
@@ -204,7 +225,7 @@ export function PlaneEdgeSlider() {
           </div>
           <div className={`h-6 w-1 rounded-full ${atBottom && !dragging ? 'bg-neutral-700' : 'bg-neutral-400'}`} />
         </div>
-        {stepperButton(-1, 'Decrease offset', 'Click to move the plane back one layer', atBottom, ChevronDown)}
+        {stepperButton(-1, 'Decrease offset', 'Click to move the plane back one grid step', atBottom, ChevronDown)}
         {showTouchPaint && (
           <>
             <div className="h-px w-6 bg-neutral-700/60" />

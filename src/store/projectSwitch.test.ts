@@ -64,12 +64,12 @@ describe('project switch hygiene', () => {
 
     useAppStore.getState().newProject('Fresh', 16)
 
-    expect(useAppStore.getState().plane).toEqual({ axis: 'y', orientation: 1, offset: -8 })
+    expect(useAppStore.getState().plane).toEqual({ axis: 'y', orientation: 1, offset: -8, half: null })
   })
 
   it('newProject grounds the plane on the even working grid for odd sizes', () => {
     useAppStore.getState().newProject('Fresh', 9)
 
-    expect(useAppStore.getState().plane).toEqual({ axis: 'y', orientation: 1, offset: -5 })
+    expect(useAppStore.getState().plane).toEqual({ axis: 'y', orientation: 1, offset: -5, half: null })
   })
 })

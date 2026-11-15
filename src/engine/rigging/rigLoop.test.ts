@@ -1,0 +1,467 @@
+import { describe, expect, it } from 'vitest'
+import * as THREE from 'three'
+import type { Coord } from '@/engine/grid/types'
+import type { RigBox, RigClip, RigTween } from './types'
+import { sanitizeRigTween } from './types'
+import {
+  activeTweens,
+  bakeRigAction,
+  boxHasActiveTweens,
+  boxTweenMatrix,
+  composeAnimatedMatrices,
+  composeTweenMatrices,
+  hasActiveTweens,
+  isTweenActive,
+  localTweenMatrix,
+  newRigTween,
+  pivotWorldFromMatrix,
+  TWEEN_CYCLE_SECONDS,
+} from './rigLoop'
+import { composePoseMatrices } from './pose'
+import { evaluateClip } from './clip'
+
+function tween(over: Partial<RigTween> = {}): RigTween {
+  return { id: 'tw-1', kind: 'rotate', axis: 'y', direction: 1, speed: 1, amount: 4, minAngle: -30, maxAngle: 30, enabled: true, ...over }
+}
+
+function box(id: string, parentId: string | null = null, tweens: RigTween[] = []): RigBox {
+  return { id, name: id, min: [0, 0, 0], max: [2, 2, 2], parentId, pivot: null, tweens }
+}
+
+function apply(m: THREE.Matrix4, p: Coord): [number, number, number] {
+  const v = new THREE.Vector3(p[0], p[1], p[2]).applyMatrix4(m)
+  return [v.x, v.y, v.z]
+}
+
+describe('rig tweens', () => {
+  it('defaults to an enabled 1x turntable spin about Y', () => {
+    const t = newRigTween()
+    expect(t.kind).toBe('rotate')
+    expect(t.axis).toBe('y')
+    expect(t.enabled).toBe(true)
+    expect(t.minAngle).toBe(-30)
+    expect(t.maxAngle).toBe(30)
+    expect(t.id.length).toBeGreaterThan(0)
+  })
+
+  it('treats absent/disabled tweens as static', () => {
+    expect(isTweenActive(null)).toBe(false)
+    expect(isTweenActive(undefined)).toBe(false)
+    expect(isTweenActive(tween({ enabled: false }))).toBe(false)
+    expect(boxHasActiveTweens(box('a'))).toBe(false)
+    expect(boxHasActiveTweens(box('a', null, [tween({ enabled: false })]))).toBe(false)
+    expect(hasActiveTweens([box('a', null, [tween()])])).toBe(true)
+    expect(activeTweens(box('a', null, [tween({ id: 'x' }), tween({ id: 'y', enabled: false })])).map((t) => t.id)).toEqual(['x'])
+  })
+
+  it('sanitizes hand-edited tweens, clamping the slide amount', () => {
+    expect(sanitizeRigTween({ id: 't', kind: 'rotate', axis: 'x', direction: -1, speed: 2, amount: 3 })).toEqual(
+      { id: 't', kind: 'rotate', axis: 'x', direction: -1, speed: 2, amount: 3, minAngle: -30, maxAngle: 30, enabled: true },
+    )
+    expect(sanitizeRigTween(null)).toBeNull()
+    expect(sanitizeRigTween({ kind: 'spin', axis: 'y', direction: 1, speed: 1, amount: 4 })).toBeNull()
+    expect(sanitizeRigTween({ kind: 'slide', axis: 'y', direction: 1, speed: 1, amount: 99 })?.amount).toBe(8)
+  })
+
+  it('sanitizes pendulum endpoints, defaulting and clamping them', () => {
+    // Missing endpoints (pre-pendulum files) degrade to the default swing.
+    expect(sanitizeRigTween({ kind: 'pendulum', axis: 'y', direction: 1, speed: 1, amount: 4 })).toEqual(
+      expect.objectContaining({ kind: 'pendulum', minAngle: -30, maxAngle: 30 }),
+    )
+    // Out-of-range endpoints clamp to ±90°, like the slice-loop pendulum.
+    const clamped = sanitizeRigTween({ kind: 'pendulum', axis: 'y', direction: 1, speed: 1, amount: 4, minAngle: -200, maxAngle: 200 })!
+    expect(clamped.minAngle).toBe(-90)
+    expect(clamped.maxAngle).toBe(90)
+    // Non-finite endpoints fall back to the default swing.
+    const fallback = sanitizeRigTween({ kind: 'pendulum', axis: 'y', direction: 1, speed: 1, amount: 4, minAngle: NaN, maxAngle: Infinity })!
+    expect(fallback.minAngle).toBe(-30)
+    expect(fallback.maxAngle).toBe(30)
+  })
+
+  it('is identity at rest and for disabled tweens', () => {
+    const m = localTweenMatrix(box('a'), tween(), 0)
+    expect(apply(m, [5, -3, 9])).toEqual([5, -3, 9])
+    const s = localTweenMatrix(box('a'), tween({ enabled: false }), 1.23)
+    expect(apply(s, [5, -3, 9])).toEqual([5, -3, 9])
+  })
+
+  it('rotates a full turn per cycle about the pivot', () => {
+    // 2s cycle at 1x: half cycle (t=1) = π about Y through (1.5,1.5,1.5).
+    const m = localTweenMatrix(box('a'), tween(), 1)
+    const [x, y, z] = apply(m, [2.5, 1.5, 1.5])
+    expect(x).toBeCloseTo(0.5, 10)
+    expect(y).toBeCloseTo(1.5, 10)
+    expect(z).toBeCloseTo(1.5, 10)
+  })
+
+  it('swings a pendulum between its min/max angles, starting at min', () => {
+    // Symmetric ±30° about Y through the box center (1.5,1.5,1.5): starts at min,
+    // passes mid at the quarter cycle, peaks at max halfway — pivot-relative like spin.
+    const pend = tween({ kind: 'pendulum', axis: 'y', minAngle: -30, maxAngle: 30 })
+    // t=0: −30° about Y maps +x toward +z: (1.5+cos30, 1.5+sin30).
+    const atMin = apply(localTweenMatrix(box('a'), pend, 0), [2.5, 1.5, 1.5])
+    expect(atMin[0]).toBeCloseTo(1.5 + Math.cos(Math.PI / 6), 10)
+    expect(atMin[1]).toBeCloseTo(1.5, 10)
+    expect(atMin[2]).toBeCloseTo(1.5 + Math.sin(Math.PI / 6), 10)
+    // Quarter cycle: mid-swing (bind) — the joint passes through rest.
+    const atMid = apply(localTweenMatrix(box('a'), pend, 0.5), [2.5, 1.5, 1.5])
+    expect(atMid[0]).toBeCloseTo(2.5, 10)
+    expect(atMid[2]).toBeCloseTo(1.5, 10)
+    // Half cycle: +30° mirrors the start.
+    const atMax = apply(localTweenMatrix(box('a'), pend, 1), [2.5, 1.5, 1.5])
+    expect(atMax[0]).toBeCloseTo(1.5 + Math.cos(Math.PI / 6), 10)
+    expect(atMax[2]).toBeCloseTo(1.5 - Math.sin(Math.PI / 6), 10)
+    // Seam continuity: the loop ends where it starts (at min), so no pop.
+    const atSeam = apply(localTweenMatrix(box('a'), pend, 2), [2.5, 1.5, 1.5])
+    expect(atSeam[0]).toBeCloseTo(atMin[0], 10)
+    expect(atSeam[2]).toBeCloseTo(atMin[2], 10)
+  })
+
+  it('starts a reversed pendulum at max', () => {
+    const pend = tween({ kind: 'pendulum', axis: 'y', direction: -1, minAngle: -30, maxAngle: 30 })
+    // t=0 sits at max (+30°), half cycle swings down to min (−30°).
+    const atMax = apply(localTweenMatrix(box('a'), pend, 0), [2.5, 1.5, 1.5])
+    expect(atMax[0]).toBeCloseTo(1.5 + Math.cos(Math.PI / 6), 10)
+    expect(atMax[2]).toBeCloseTo(1.5 - Math.sin(Math.PI / 6), 10)
+    const atMin = apply(localTweenMatrix(box('a'), pend, 1), [2.5, 1.5, 1.5])
+    expect(atMin[0]).toBeCloseTo(1.5 + Math.cos(Math.PI / 6), 10)
+    expect(atMin[2]).toBeCloseTo(1.5 + Math.sin(Math.PI / 6), 10)
+  })
+
+  it('offsets an asymmetric pendulum swing around its midpoint', () => {
+    // 10°..50° never rests at bind: t=0 sits at the 10° min endpoint.
+    const pend = tween({ kind: 'pendulum', axis: 'y', minAngle: 10, maxAngle: 50 })
+    const [x, y, z] = apply(localTweenMatrix(box('a'), pend, 0), [2.5, 1.5, 1.5])
+    expect(x).toBeCloseTo(1.5 + Math.cos(THREE.MathUtils.degToRad(10)), 8)
+    expect(y).toBeCloseTo(1.5, 10)
+    expect(z).toBeCloseTo(1.5 - Math.sin(THREE.MathUtils.degToRad(10)), 8)
+    // The joint's own swing never moves its own pivot.
+    const m = localTweenMatrix(box('a'), pend, 0.5)
+    const [px, py, pz] = pivotWorldFromMatrix(m, box('a'))
+    expect(px).toBeCloseTo(1.5, 10)
+    expect(py).toBeCloseTo(1.5, 10)
+    expect(pz).toBeCloseTo(1.5, 10)
+  })
+
+  it('slides sinusoidally along its axis', () => {
+    const sl = tween({ kind: 'slide', axis: 'x', amount: 4 })
+    const m = localTweenMatrix(box('a'), sl, 0.5)
+    const [x, y, z] = apply(m, [1.5, 1.5, 1.5])
+    expect(x).toBeCloseTo(5.5, 10)
+    expect(y).toBeCloseTo(1.5, 10)
+    expect(z).toBeCloseTo(1.5, 10)
+  })
+
+  it('folds the stack top-first: order changes the composed motion', () => {
+    // Spin about Y then shuttle along X ≠ shuttle along X then spin about Y.
+    const spinY = tween({ id: 's', kind: 'rotate', axis: 'y' })
+    const slideX = tween({ id: 'x', kind: 'slide', axis: 'x', amount: 2 })
+    const a = boxTweenMatrix(box('a', null, [spinY, slideX]), 0.5)
+    const b = boxTweenMatrix(box('a', null, [slideX, spinY]), 0.5)
+    // t=0.5s of the 2s cycle = quarter cycle: spin π/2, slide +2x (sin peak).
+    // m = A·B applies B first.
+    const pa = apply(a, [1.5, 1.5, 1.5])
+    const pb = apply(b, [1.5, 1.5, 1.5])
+    expect(pa).not.toEqual(pb)
+    // [spin, slide]: slide first → (3.5,1.5,1.5), then π/2 about Y swings +x to −z
+    // around the center → (1.5,1.5,−0.5).
+    expect(pa[0]).toBeCloseTo(1.5, 10)
+    expect(pa[2]).toBeCloseTo(-0.5, 10)
+    // [slide, spin]: spin first (center fixed) → (1.5,1.5,1.5), then +2x → (3.5,1.5,1.5).
+    expect(pb[0]).toBeCloseTo(3.5, 10)
+    expect(pb[2]).toBeCloseTo(1.5, 10)
+  })
+
+  it('carries a static child inside a tweened parent', () => {
+    const parent = box('p', null, [tween({ kind: 'slide', axis: 'x', amount: 2 })])
+    const child = box('c', 'p')
+    const out = composeTweenMatrices([parent, child], 0.5)
+    const [x] = apply(out.get('c')!, [1.5, 1.5, 1.5])
+    expect(x).toBeCloseTo(3.5, 10)
+  })
+
+  it('composes tween × pose per box in one call', () => {
+    const parent = box('p', null, [tween({ kind: 'slide', axis: 'x', amount: 2 })])
+    const child = box('c', 'p')
+    const boxes = [parent, child]
+    const pose = new Map([['c', [0, 0, Math.PI / 2] as [number, number, number]]])
+    const out = composeAnimatedMatrices(boxes, pose, 0.5)
+    // Quarter cycle: slide +2x on the parent, then the child's own π/2 about Z.
+    // Parent chain carries the pivot: (1.5,1.5,1.5) → slide → (3.5,1.5,1.5), and the
+    // child's rotation about Z through its own pivot leaves its pivot fixed there.
+    const [x, y, z] = apply(out.get('c')!, [1.5, 1.5, 1.5])
+    expect(x).toBeCloseTo(3.5, 10)
+    expect(y).toBeCloseTo(1.5, 10)
+    expect(z).toBeCloseTo(1.5, 10)
+    // A non-pivot point shows both motions, child-local first: (2.5,1.5,1.5) rotates
+    // π/2 about Z around the child's own pivot → (1.5,2.5,1.5), then the parent slide
+    // carries it +2x → (3.5,2.5,1.5).
+    const [rx, ry] = apply(out.get('c')!, [2.5, 1.5, 1.5])
+    expect(rx).toBeCloseTo(3.5, 10)
+    expect(ry).toBeCloseTo(2.5, 10)
+  })
+
+  it('pins a joint pivot under its own motion and carries it with ancestors', () => {
+    const parent = box('p', null, [tween({ kind: 'slide', axis: 'x', amount: 2 })])
+    const child = box('c', 'p')
+    const boxes = [parent, child]
+    const matrices = composeAnimatedMatrices(boxes, new Map(), 0.5)
+    // Slide translates everything, pivot included — the child's pivot rides the parent.
+    const [cx, cy, cz] = pivotWorldFromMatrix(matrices.get('c')!, child)
+    expect(cx).toBeCloseTo(3.5, 10)
+    expect(cy).toBeCloseTo(1.5, 10)
+    expect(cz).toBeCloseTo(1.5, 10)
+    // Rotate-about-own-pivot never moves it: quarter-cycle π/2 about Y fixes the center.
+    const spinner = box('s', null, [tween({ kind: 'rotate', axis: 'y' })])
+    const sm = composeAnimatedMatrices([spinner], new Map(), 0.5)
+    const [sx, sy, sz] = pivotWorldFromMatrix(sm.get('s')!, spinner)
+    expect(sx).toBeCloseTo(1.5, 10)
+    expect(sy).toBeCloseTo(1.5, 10)
+    expect(sz).toBeCloseTo(1.5, 10)
+  })
+})
+
+describe('bakeRigAction (tweens)', () => {
+  function groupsFor(boxes: RigBox[]): Map<string, THREE.Group> {
+    const map = new Map<string, THREE.Group>()
+    for (const b of boxes) {
+      const g = new THREE.Group()
+      g.name = b.name
+      map.set(b.id, g)
+    }
+    return map
+  }
+
+  it('emits one 2s LINEAR clip per tweened joint and none for static joints', () => {
+    const boxes = [
+      box('p', null, [tween({ id: 's', kind: 'rotate', axis: 'y' })]),
+      box('c', 'p', [tween({ id: 'x', kind: 'slide', axis: 'x', amount: 3 })]),
+      box('still'),
+    ]
+    const clip = bakeRigAction('loop', boxes, groupsFor(boxes), 1, 30, TWEEN_CYCLE_SECONDS, (t) => composeTweenMatrices(boxes, t), new Set(['p', 'c']))
+    expect(clip.name).toBe('loop')
+    expect(clip.duration).toBeCloseTo(TWEEN_CYCLE_SECONDS, 10)
+    expect(clip.tracks.map((t) => t.name).sort()).toEqual(['c.position', 'c.quaternion', 'p.position', 'p.quaternion'])
+    const rotTrack = clip.tracks.find((t) => t.name === 'p.quaternion')!
+    expect(rotTrack).toBeDefined()
+  })
+
+  it('bakes rest-pose endpoints: no pop at the loop seam', () => {
+    const boxes = [box('p', null, [tween({ kind: 'slide', axis: 'x', amount: 3 })])]
+    const clip = bakeRigAction('loop', boxes, groupsFor(boxes), 1, 30, TWEEN_CYCLE_SECONDS, (t) => composeTweenMatrices(boxes, t), new Set(['p']))
+    const posTrack = clip.tracks.find((t) => t.name.endsWith('.position'))!
+    const values = (posTrack as unknown as { values: ArrayLike<number> }).values
+    // First and last keys both equal the rest local position (parentless → pivot world point).
+    expect(values[0]).toBeCloseTo(1.5, 5)
+    expect(values[1]).toBeCloseTo(1.5, 5)
+    expect(values[2]).toBeCloseTo(1.5, 5)
+    const n = values.length
+    expect(values[n - 3]).toBeCloseTo(1.5, 5)
+    expect(values[n - 2]).toBeCloseTo(1.5, 5)
+    expect(values[n - 1]).toBeCloseTo(1.5, 5)
+  })
+
+  it('matches the live preview matrices through the cycle (bake ≡ preview parity)', () => {
+    const parent = box('p', null, [tween({ id: 's', kind: 'rotate', axis: 'y', speed: 2 })])
+    const child = box('c', 'p', [tween({ id: 'x', kind: 'slide', axis: 'x', amount: 2, speed: 3 })])
+    const boxes = [parent, child]
+    // Bake with the full outline (the child clip is parent-frame-relative).
+    const clip = bakeRigAction('loop', boxes, groupsFor(boxes), 1, 30, TWEEN_CYCLE_SECONDS, (t) => composeTweenMatrices(boxes, t), new Set(['p', 'c']))
+    // Evaluate the baked child's local track at t and compare against the analytic
+    // composition: local(t) = T(−pp) · parentMotion⁻¹(t) · selfMotion(t) · T(p).
+    const posTrack = clip.tracks.find((t) => t.name === 'c.position')! as unknown as { times: ArrayLike<number>; values: ArrayLike<number> }
+    const quatTrack = clip.tracks.find((t) => t.name === 'c.quaternion')! as unknown as { times: ArrayLike<number>; values: ArrayLike<number> }
+    const sample = (track: { times: ArrayLike<number>; values: ArrayLike<number> }, size: number, t: number) => {
+      // Piecewise-linear lookup on the baked keys.
+      const times = track.times
+      let i = 0
+      while (i < times.length - 2 && times[i + 1] < t) i++
+      const t0 = times[i]
+      const t1 = times[i + 1]
+      const f = t1 > t0 ? (t - t0) / (t1 - t0) : 0
+      const out: number[] = []
+      for (let k = 0; k < size; k++) out.push(track.values[i * size + k] * (1 - f) + track.values[(i + 1) * size + k] * f)
+      return out
+    }
+    for (const t of [0.13, 0.5, 1.17, 1.9]) {
+      const worlds = composeTweenMatrices(boxes, t)
+      const expected = new THREE.Matrix4()
+        .makeTranslation(-1.5, -1.5, -1.5)
+        .multiply(new THREE.Matrix4().copy(worlds.get('p')!).invert())
+        .multiply(worlds.get('c')!)
+        .multiply(new THREE.Matrix4().makeTranslation(1.5, 1.5, 1.5))
+      const ep = new THREE.Vector3()
+      const eq = new THREE.Quaternion()
+      expected.decompose(ep, eq, new THREE.Vector3())
+      const [px, py, pz] = sample(posTrack, 3, t)
+      // LINEAR keys at 30fps approximate the analytic sine — sub-voxel (5%-of-voxel) error.
+      expect(px).toBeCloseTo(ep.x, 1)
+      expect(py).toBeCloseTo(ep.y, 1)
+      expect(pz).toBeCloseTo(ep.z, 1)
+      const [qx, qy, qz, qw] = sample(quatTrack, 4, t)
+      // Quaternion double-cover: compare with sign normalized.
+      const dot = qx * eq.x + qy * eq.y + qz * eq.z + qw * eq.w
+      expect(Math.abs(dot)).toBeCloseTo(1, 2)
+    }
+  })
+})
+
+describe('bakeRigAction (poses)', () => {
+  function groupsFor(boxes: RigBox[]): Map<string, THREE.Group> {
+    const map = new Map<string, THREE.Group>()
+    for (const b of boxes) {
+      const g = new THREE.Group()
+      g.name = b.name
+      map.set(b.id, g)
+    }
+    return map
+  }
+
+  const walk: RigClip = {
+    id: 'walk',
+    name: 'walk',
+    loop: false,
+    duration: 2,
+    keys: [
+      { id: 'k0', name: 'A', time: 0, ease: 'inOut', joints: {} },
+      { id: 'k1', name: 'B', time: 2, ease: 'inOut', joints: { c: [0, Math.PI / 2, 0] } },
+    ],
+  }
+  const sampleWorldsFor = (boxes: RigBox[]) => (t: number) => {
+    const frame = evaluateClip(boxes, walk, t)
+    return composePoseMatrices(boxes, frame.rot, frame.off)
+  }
+
+  it('emits tracks for posed joints even with no tweens, sized to the clip', () => {
+    // No tweens anywhere — the posed child still bakes at the clip's own duration; the
+    // static parent gets no channels (it rides the hierarchy).
+    const boxes = [box('p'), box('c', 'p')]
+    const action = bakeRigAction('walk', boxes, groupsFor(boxes), 1, 30, walk.duration, sampleWorldsFor(boxes), new Set(['c']))
+    expect(action.name).toBe('walk')
+    expect(action.duration).toBeCloseTo(2, 10)
+    expect(action.tracks.map((t) => t.name).sort()).toEqual(['c.position', 'c.quaternion'])
+  })
+
+  it('matches the live posed preview (bake ≡ preview parity)', () => {
+    // A posed child under a static parent: the baked child clip must carry its own pose
+    // offset in the parent-relative frame.
+    const parent = box('p')
+    const child = box('c', 'p')
+    const boxes = [parent, child]
+    const clip = bakeRigAction('walk', boxes, groupsFor(boxes), 1, 30, walk.duration, sampleWorldsFor(boxes), new Set(['c']))
+    expect(clip.tracks.map((t) => t.name).sort()).toEqual(['c.position', 'c.quaternion'])
+    const posTrack = clip.tracks.find((t) => t.name.endsWith('.position'))! as unknown as { times: ArrayLike<number>; values: ArrayLike<number> }
+    const quatTrack = clip.tracks.find((t) => t.name.endsWith('.quaternion'))! as unknown as { times: ArrayLike<number>; values: ArrayLike<number> }
+    const sample = (track: { times: ArrayLike<number>; values: ArrayLike<number> }, size: number, t: number) => {
+      const times = track.times
+      let i = 0
+      while (i < times.length - 2 && times[i + 1] < t) i++
+      const t0 = times[i]
+      const t1 = times[i + 1]
+      const f = t1 > t0 ? (t - t0) / (t1 - t0) : 0
+      const out: number[] = []
+      for (let k = 0; k < size; k++) out.push(track.values[i * size + k] * (1 - f) + track.values[(i + 1) * size + k] * f)
+      return out
+    }
+    for (const t of [0.25, 0.75, 1.5]) {
+      const frame = evaluateClip(boxes, walk, t)
+      const animated = composePoseMatrices(boxes, frame.rot, frame.off)
+      const expected = new THREE.Matrix4()
+        .makeTranslation(-1.5, -1.5, -1.5)
+        .multiply(new THREE.Matrix4().copy(animated.get('p')!).invert())
+        .multiply(animated.get('c')!)
+        .multiply(new THREE.Matrix4().makeTranslation(1.5, 1.5, 1.5))
+      const ep = new THREE.Vector3()
+      const eq = new THREE.Quaternion()
+      expected.decompose(ep, eq, new THREE.Vector3())
+      const [px, py, pz] = sample(posTrack, 3, t)
+      expect(px).toBeCloseTo(ep.x, 1)
+      expect(py).toBeCloseTo(ep.y, 1)
+      expect(pz).toBeCloseTo(ep.z, 1)
+      const [qx, qy, qz, qw] = sample(quatTrack, 4, t)
+      const dot = qx * eq.x + qy * eq.y + qz * eq.z + qw * eq.w
+      expect(Math.abs(dot)).toBeCloseTo(1, 2)
+    }
+  })
+})
+
+describe('bakeRigAction', () => {
+  function groupsFor(boxes: RigBox[]): Map<string, THREE.Group> {
+    const map = new Map<string, THREE.Group>()
+    for (const b of boxes) {
+      const g = new THREE.Group()
+      g.name = b.name
+      map.set(b.id, g)
+    }
+    return map
+  }
+
+  function trackValues(clip: THREE.AnimationClip, name: string): { times: number[]; values: number[] } {
+    const track = clip.tracks.find((t) => t.name === name)! as unknown as { times: ArrayLike<number>; values: ArrayLike<number> }
+    expect(track).toBeDefined()
+    return { times: Array.from(track.times), values: Array.from(track.values) }
+  }
+
+  it('bakes ONE named clip with a position + quaternion track per animated joint', () => {
+    const boxes = [
+      box('p', null, [tween({ id: 's', kind: 'rotate', axis: 'y' })]),
+      box('c', 'p', [tween({ id: 'x', kind: 'slide', axis: 'x', amount: 3 })]),
+      box('still'),
+    ]
+    const clip = bakeRigAction(
+      'walk',
+      boxes,
+      groupsFor(boxes),
+      1,
+      30,
+      TWEEN_CYCLE_SECONDS,
+      (t) => composeTweenMatrices(boxes, t),
+      new Set(['p', 'c']),
+    )
+    expect(clip).toBeInstanceOf(THREE.AnimationClip)
+    expect(clip.name).toBe('walk')
+    expect(clip.duration).toBeCloseTo(TWEEN_CYCLE_SECONDS, 10)
+    // Two tracks (position + quaternion) per animated joint; the static joint is absent.
+    expect(clip.tracks.map((t) => t.name).sort()).toEqual(
+      ['c.position', 'c.quaternion', 'p.position', 'p.quaternion'],
+    )
+    // 30 fps over 2 s samples 61 keys per track.
+    for (const track of clip.tracks) {
+      const times = (track as unknown as { times: ArrayLike<number> }).times
+      expect(times.length).toBe(61)
+      expect(times[0]).toBeCloseTo(0, 10)
+      expect(times[times.length - 1]).toBeCloseTo(2, 10)
+    }
+  })
+
+  it('bakes only the listed joints and skips joints without groups', () => {
+    const boxes = [
+      box('p', null, [tween()]),
+      box('c', 'p', [tween({ id: 'x', kind: 'slide', axis: 'x', amount: 2 })]),
+    ]
+    const groups = groupsFor(boxes)
+    groups.delete('c')
+    const clip = bakeRigAction('loop', boxes, groups, 1, 30, 2, (t) => composeTweenMatrices(boxes, t), new Set(['p', 'c']))
+    // 'c' is animated but has no group (nothing to bind the track to); only 'p' survives.
+    expect(clip.tracks.map((t) => t.name).sort()).toEqual(['p.position', 'p.quaternion'])
+    // An empty selection still returns one (trackless) clip rather than throwing.
+    const empty = bakeRigAction('loop', boxes, groups, 1, 30, 2, (t) => composeTweenMatrices(boxes, t), new Set())
+    expect(empty.tracks).toHaveLength(0)
+    expect(empty.duration).toBeCloseTo(2, 10)
+  })
+
+  it('scales baked Y positions to export space, leaving X/Z alone', () => {
+    const boxes = [box('p', null, [tween({ kind: 'slide', axis: 'y', amount: 2 })])]
+    const sample = (t: number) => composeTweenMatrices(boxes, t)
+    const flat = bakeRigAction('loop', boxes, groupsFor(boxes), 1, 30, 2, sample, new Set(['p']))
+    const tall = bakeRigAction('loop', boxes, groupsFor(boxes), 2, 30, 2, sample, new Set(['p']))
+    const f = trackValues(flat, 'p.position')
+    const s = trackValues(tall, 'p.position')
+    expect(f.values.length).toBe(s.values.length)
+    for (let i = 0; i < f.values.length; i += 3) {
+      expect(s.values[i]).toBeCloseTo(f.values[i], 6)
+      expect(s.values[i + 1]).toBeCloseTo(f.values[i + 1] * 2, 6)
+      expect(s.values[i + 2]).toBeCloseTo(f.values[i + 2], 6)
+    }
+  })
+})

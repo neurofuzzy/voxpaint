@@ -1,6 +1,7 @@
-import type { Axis, CellKey, ChamferCell, Coord, GridExtent, Orientation, Rotation, VoxelModel, VoxelScaleY } from '@/engine/grid/types'
+import type { Axis, CellKey, ChamferCell, Coord, GridExtent, GridFamily, Orientation, Rotation, SplitAxis, SubdivCell, VoxelModel, VoxelScaleY } from '@/engine/grid/types'
 import type { Marker } from '@/engine/markers/types'
-import type { RigBox } from '@/engine/rigging/types'
+import type { AnimationMode, ClipKey, KeyEase, KeyJoints, KeyOffsets, RigBox, RigClip, RigTween } from '@/engine/rigging/types'
+import type { JointEuler } from '@/engine/rigging/pose'
 import type { GltfExportAnchor } from '@/engine/export/gltfExport'
 import type { EmissiveAnimMode, PaletteSlotRef, PaletteState } from '@/engine/palette/types'
 import type { ConstructionPlane } from '@/engine/plane/types'
@@ -9,8 +10,24 @@ import type { BoxFace, TexelScale, TextureModel } from '@/engine/texture/types'
 import type { TexelClip } from '@/engine/texture/texelOps'
 import type { SliceAnimSettings, SliceKey } from '@/engine/animation/types'
 
-export type ToolId = 'paint' | 'erase' | 'eyedropper' | 'select' | 'fill' | 'move' | 'material' | 'pivot' | 'textureface' | 'marker' | 'wand' | 'rigbox'
-export type VoxelKind = 'cube' | 'ramp' | 'convex' | 'concave' | 'wedge' | 'thin' | 'half' | 'post' | 'quarter' | 'flat' | 'flatwedge'
+export type ToolId = 'paint' | 'erase' | 'eyedropper' | 'select' | 'fill' | 'move' | 'material' | 'pivot' | 'textureface' | 'marker' | 'wand' | 'rigbox' | 'pose' | 'offset'
+export type VoxelKind = 'cube' | 'ramp' | 'convex' | 'concave' | 'wedge' | 'tricorner' | 'triconcave' | 'thin' | 'half' | 'post' | 'quarter' | 'flat' | 'flatwedge'
+
+/**
+ * Sub-voxel refinement of a selection, present only when the grid division was not whole when the
+ * region was made. The region's own `originU/originV/width/height/mask` stay whole-cell COVERAGE
+ * (every cell any fine cell touches), so consumers that are not sub-voxel-aware keep working on
+ * whole cells; the fine mask says exactly which parts of those cells are selected.
+ */
+export type FineSelection = {
+  /** Fine cells per voxel along logical u / v: 2 where the grid cuts that axis, else 1. */
+  su: 1 | 2
+  sv: 1 | 2
+  /** The plane-axis slab the selection covers (the grid cuts the plane's axis), else null = full depth. */
+  slab: 0 | 1 | null
+  /** Row-major over (width*su) x (height*sv) fine units from the region origin. */
+  mask: Uint8Array
+}
 
 export type SelectionRegion = {
   originU: number
@@ -18,6 +35,7 @@ export type SelectionRegion = {
   width: number
   height: number
   mask: Uint8Array
+  fine?: FineSelection
 }
 
 export type ClipboardCell = {
@@ -27,14 +45,18 @@ export type ClipboardCell = {
    * `copyPlaneOffset` for bbox-anchored exact-set content, the destination slice for
    * slice-anchored region content) — 0 for the lift slice / bbox-min itself. Set on every cell
    * (including empty ones) by deep (Alt-drag) lifts, which project the selection window through
-   * the whole model; shallow lifts record 0. A cell with neither `color` nor `chamfer` is an
-   * explicitly empty voxel: dropping it clears whatever it lands on (replace, not merge). */
+   * the whole model; shallow lifts record 0. A cell with neither `color`/`chamfer` nor `subdiv`
+   * is an explicitly empty voxel: dropping it clears whatever it lands on (replace, not merge). */
   dw: number
   color?: { paletteSlot: PaletteSlotRef }
   /** The source cell's full chamfer data (plane basis + resolved shape), copied verbatim and
    * restored on paste with no reclassification — the pasted shape exactly matches the source. A
    * chamfer only ever (re)resolves when the user edits that specific voxel. */
   chamfer?: ChamferCell
+  /** A subdivided parent's detail, deep-copied and restored verbatim — moves/pastes carry
+   * detail atomically. Mutually exclusive with `color`/`chamfer`: a cell with neither `color`
+   * nor `subdiv` is an explicitly empty voxel that clears whatever it lands on (replace, not merge). */
+  subdiv?: SubdivCell
 }
 
 export type ClipboardData = {
@@ -53,6 +75,11 @@ export type ClipboardData = {
    * content that was never copied off a plane. */
   copyPlaneAxis?: Axis
   copyPlaneOrientation?: Orientation
+  /** Sub-voxel footprint when this was copied from a sub-voxel selection: which fine cells of the
+   * `width` x `height` cell frame the content covers (mask is (width*su) x (height*sv), relative to
+   * the frame's origin). Cells then hold only the selected parts (as detail), and a drop clears
+   * exactly this footprint instead of whole cells — see `engine/tools/fineFloat.ts`. */
+  fine?: FineSelection
   /** The copy plane's offset at lift time — the depth anchor every cell's `dw` is relative to
    * for bbox-anchored exact-set content (see `depthAnchor`). The plane can't change while a float
    * is pending, so at bake time this equals the live offset for same-plane floats; region pastes
@@ -67,6 +94,10 @@ export type ClipboardData = {
    * lifted 3D volume in UV must not collapse it onto the construction plane). Omitted means
    * slice-anchored. Cross-plane rebases always reset to slice-anchored. */
   depthAnchor?: 'slice' | 'bbox'
+  /** The copy plane's half-voxel stop at copy time (`ConstructionPlane.half`; null/absent = a
+   * whole stop). Slice-anchored pastes keep content at the same depth relative to the plane's
+   * stop, half voxels included (see `clipboardHalfShift`). Reset by cross-plane rebases. */
+  copyPlaneHalf?: 0 | 1 | null
 }
 
 export type ProjectSlice = {
@@ -86,6 +117,14 @@ export type ProjectSlice = {
    * touches no grid/texture data and clears no history — the grid stays integer and only
    * presentation (3D scene, 2D X/Z-plane views, baked exports) stretches. */
   setVoxelScaleY: (k: VoxelScaleY) => void
+  /** Sets the timeline/export frame rate (integer 1–120, normalized; defaults to 30).
+   * Not undoable and takes effect immediately, like `setVoxelScaleY` — sets dirty. */
+  setFps: (fps: number) => void
+  /** Sets the project's animation system (tweens for machines, poses for characters). The
+   * other mode's data stays in the file, muted; export writes only the active mode. Like
+   * `setVoxelScaleY` this is not undoable — but it stops transport and steps off the
+   * timeline, so the gizmo never shows a stale frame after the switch. */
+  setAnimationMode: (mode: AnimationMode) => void
   /** Sets the project-level texels-per-voxel scale (1/2/4, Project Settings). Resamples the
    * box-map faces with nearest-neighbor (quantized, never blurred) as one texture-undo step, and
    * clears the texel selection and pending floats — the voxel model and its history are untouched.
@@ -138,6 +177,20 @@ export type PlaneSlice = {
   objectModeTarget: ObjectModeTarget | null
   setPlaneAxisOrientation: (axis: ConstructionPlane['axis'], orientation: ConstructionPlane['orientation']) => void
   setPlaneOffset: (offset: number) => void
+  /**
+   * Sets the half-voxel stop (0/1 world-axis bit, null = whole stop) without moving the frame:
+   * no float bake, no selection change. Callers follow with `snapPlaneToGrid`.
+   */
+  setPlaneHalf: (half: 0 | 1 | null) => void
+  /**
+   * Steps the plane by the grid's stops (`stepHalfStop`): whole layers, or — when the grid cuts
+   * the plane's axis — half-voxel stops (low slab → high slab → next voxel's low slab; no whole
+   * stop in between). Used by the edge dragger, stepper buttons, and Shift+wheel. `count` walks
+   * that many stops in one undo-neutral update (single bake + persist).
+   */
+  stepPlaneHalf: (direction: 1 | -1, count?: number) => void
+  /** After a grid change: leave a slab the grid no longer cuts for the nearest whole voxel. */
+  snapPlaneToGrid: () => void
   /** Grounds the plane (Y-up at the lowest layer for the current extent) and persists it —
    * the project-switch reset, so one project's slice never leaks into the next. Used by
    * new-project and project-import. */
@@ -145,34 +198,63 @@ export type PlaneSlice = {
   /**
    * Handles a 3D face-click on a voxel (spec: first click lands the construction plane on the
    * clicked voxel's own slice; clicking the SAME voxel again advances the plane one step forward
-   * through that same face, into the adjacent empty slice).
+   * through that same face, into the adjacent empty slice). A `half` of 0/1 lands on that slab
+   * of the voxel's own layer (callers compute it from the hit detail child); either way the stop
+   * is then snapped to the grid, which alone decides whether half stops exist.
    */
-  handleVoxelFaceClick: (cellKey: CellKey, axis: Axis, orientation: Orientation, offset: number) => void
+  handleVoxelFaceClick: (cellKey: CellKey, axis: Axis, orientation: Orientation, offset: number, half?: 0 | 1 | null) => void
 }
+
+export type AnimateTab = 'rig' | 'tweens' | 'poses'
 
 export type ToolSlice = {
   activeTool: ToolId
+  /** Which Animate-panel tab is focused. Drives the contextual toolbar: rig → rigbox +
+   * pivot, tweens → select, poses → pose. Ignored outside Animate mode. */
+  animateTab: AnimateTab
+  /** Switches the panel tab and arms that tab's primary tool (rig→rigbox,
+   * tweens→select, poses→pose), so the tool can never go stale for the tab. */
+  setAnimateTab: (tab: AnimateTab) => void
   activeVoxelKind: VoxelKind
   activePaletteSlot: PaletteSlotRef
   /** Brush rotation in quarter-turns (0-3), applied additively at paint time for orientable
    * kinds (ramp/wedge/quarter/flatwedge). 0 = legacy autotile/fresh-0 behavior exactly. */
   brushRotation: Rotation
+  /** The armed edit grid (the toolbar's 4-way picker): the world axes every edit writes at
+   * (null = whole voxels). The picker family is derived (`gridFamilyOf`); clicking the active
+   * family advances its division (X → Y → Z; leave-X → leave-Y → leave-Z); octal is singular.
+   * The grid is the control: paint, erase, recolor, and fill all write grid-resolution boxes,
+   * and "whole" writes whole voxels (folding any detail underneath). */
+  gridSplit: SplitAxis[] | null
   /** 3D shift-paint line anchor: the last 3D-painted cell plus the plane frame it was painted
    * in. Every 3D paint tap re-establishes it (fast chaining); a shift-tap draws the
    * dominant-axis line from it. Null until the first tap; stale frames (plane axis/orientation
    * changed since) fall back to a single paint. Session state, never persisted. */
-  paintLineAnchor: { coord: Coord; axis: Axis; orientation: Orientation } | null
+  /** Last 3D paint tap, for shift-click lines: its voxel and (when known) the world half-bits of the
+   * tapped point, so lines under an armed grid run on the grid's cells. */
+  paintLineAnchor: { coord: Coord; axis: Axis; orientation: Orientation; bits?: Coord | null } | null
   setActiveTool: (tool: ToolId) => void
   setActiveVoxelKind: (kind: VoxelKind) => void
   setActivePaletteSlot: (slot: PaletteSlotRef) => void
+  /** Arms an explicit division (normalized; null = whole) and snaps the plane to its stops. */
+  setGridSplit: (split: SplitAxis[] | null) => void
+  /** Arms a grid family: whole clears the division; otherwise arms the first division,
+   * or advances within the family when it's already active (re-click cycles globally). */
+  setGridDivision: (family: GridFamily) => void
   setBrushRotation: (r: Rotation) => void
   /** Steps the brush rotation ±1 quarter-turn (wraps mod 4). */
   rotateBrush: (dir: 1 | -1) => void
-  setPaintLineAnchor: (anchor: { coord: Coord; axis: Axis; orientation: Orientation }) => void
+  setPaintLineAnchor: (anchor: { coord: Coord; axis: Axis; orientation: Orientation; bits?: Coord | null }) => void
   clearPaintLineAnchor: () => void
 }
 
-export type FloatOrigin = { originU: number; originV: number }
+/**
+ * Where a pending float sits. `subU`/`subV` shift a sub-voxel float by that many fine units
+ * (0 .. su-1) past the cell origin; `subW` shifts any float by half voxels (−1, 0, +1) along the
+ * world plane axis — how a paste follows a construction plane that sits on a different half-voxel
+ * stop than the copy did. Any non-zero `subW` drops the float as pieces (`floatIsPieced`).
+ */
+export type FloatOrigin = { originU: number; originV: number; subU?: number; subV?: number; subW?: -1 | 0 | 1 }
 
 export type SelectionSlice = {
   selection: SelectionRegion | null
@@ -201,7 +283,20 @@ export type SelectionSlice = {
  * persisted, never undoable — same as the 2D selection); only model mutations take undo steps.
  * Always replace the set wholesale (`new Set`) so subscribers see the change.
  */
+/** A sub-voxel window selection made in 3D-only layout: the fine region plus the plane frame it was
+ * drawn on (the region's u/v are in that plane's logical frame). Always accompanies a
+ * `selectedCells` COVERAGE set holding the whole voxels it touches; it is only live while that set
+ * still equals its coverage (see `liveFineSelection3D`), so any other write to the set drops it. */
+export type Fine3DSelection = { region: SelectionRegion; plane: ConstructionPlane }
+
 export type Selection3DSlice = {
+  /** Sub-voxel refinement of `selectedCells` (use `liveFineSelection3D`, never read this raw). */
+  selectedFine: Fine3DSelection | null
+  /** Live sub-voxel marquee while it is being dragged in 3D-only layout. */
+  selectedFinePreview: Fine3DSelection | null
+  /** Commit a sub-voxel window: sets the fine selection and its coverage set together. */
+  setSelectedFine: (fine: Fine3DSelection) => void
+  setSelectedFinePreview: (fine: Fine3DSelection | null) => void
   /**
    * Explicitly selected voxels. Window selections cover their full slice rect, so the set may
    * hold keys for empty cells alongside occupied ones — every consumer already skips missing
@@ -230,22 +325,30 @@ export type Selection3DSlice = {
    * reset the stage. The wand tool stays active throughout (no handoff) so re-taps land on it.
    * Writes the 3D voxel set in 3D-only layout, the 2D footprint region in split layout.
    */
-  applyWandAt: (start: Coord) => void
+  applyWandAt: (start: Coord, fine?: [number, number]) => void
   /**
    * Plane-constrained wand for the 3D-only window-select tool's double-click: selects the
    * color-connected region on the seed voxel's own slice (same frame as the active plane,
    * which is never moved). Single-stage and idempotent; empty seeds are a no-op. With
    * `union` (shift-double-click) the region merges into the existing selection instead of
    * replacing it. Writes the 3D voxel set in 3D-only layout, the 2D footprint region in
-   * split layout.
+   * split layout. With a grid armed the flood runs at the grid's resolution (a sub-voxel
+   * selection) from the grid cell `bits` (world half-bits of the tapped point) lies in, on that slab.
    */
-  applySliceWandAt: (start: Coord, union?: boolean) => void
+  applySliceWandAt: (start: Coord, union?: boolean, bits?: Coord | null) => void
 }
 
 /** The specific voxel face currently under the pointer in the 3D view — live, updates on every
  * hover move (including between faces of the same voxel). Drives VoxelFaceHighlight; a click
  * commits the plane to whichever face is current at click time (see handleVoxelFaceClick). */
-export type HoveredFace = { cellKey: CellKey; axis: Axis; orientation: Orientation }
+export type HoveredFace = {
+  cellKey: CellKey
+  axis: Axis
+  orientation: Orientation
+  /** The 3D ray's hit point in grid space (on the face), when known — locates the grid cell a
+   * voxel tap (erase/recolor) addresses and the face highlight's exact depth on detail. */
+  point?: [number, number, number]
+}
 
 /** Baked-grain cell size in atlas texels, shared by the AO noise and the metal specular noise:
  * 1 = per-texel grain, 2/4 = chunkier 2×2 / 4×4 quantized blocks (nearest, never blurred). */
@@ -265,6 +368,11 @@ export type ViewSlice = {
    * the live layout to split without touching this. */
   modelLayout: 'split' | '3d-only'
   hoverCell: Coord | null
+  /** World half-bits of the pointer inside the hovered cell (in-plane axes), from whichever view
+   * the pointer is in: the 2D quadrant, or the 3D ray's crossing of the construction plane.
+   * With the hovered cell and the grid, it fixes the box a paint tap writes (`gridBox`) — the
+   * ghost, the 2D gold footprint, and the write all read it. Null when unknown. */
+  hoverBits: Coord | null
   chamferHoverValid: boolean | null
   hoveredFace: HoveredFace | null
   /** 3D preview: render the mesh as wireframe (applies to both the instanced and optimized views). */
@@ -326,12 +434,20 @@ export type ViewSlice = {
   /** GLTF export: emit design markers as empty nodes with `extras.voxpaint` payloads
    * (default true). Off exports voxels only. */
   exportIncludeMarkers: boolean
+  /** GLTF export: emit animation clips for slice loops, tween stacks, and the pose cycle
+   * (default true). Off exports the same joint/node structure posed at bind. */
+  exportIncludeAnimations: boolean
+  /** GLTF export: bake the assembly pose (the first clip's initial keyframe) into the
+   * joints' base transforms (default false). With animations on, clips still export — they
+   * start from that same key, so there is no pop. */
+  exportBakeAssemblyPose: boolean
   setFullscreen: (v: boolean) => void
   /** Sets the pane layout. Requests for 3D-only outside Model mode land on split instead —
    * Animate/Texture have no 3D-only editing surface. Model-mode changes also record Model's
    * remembered layout (restored when returning to Model). */
   setLayoutMode: (v: 'split' | '3d-only') => void
   setHoverCell: (coord: Coord | null, chamferValid: boolean | null) => void
+  setHoverBits: (bits: Coord | null) => void
   setHoveredFace: (face: HoveredFace | null) => void
   /** How the voxel model renders in Animate mode's 3D view. Pure view pref (persisted). */
   animateModelView: AnimateModelVisibility
@@ -366,6 +482,8 @@ export type ViewSlice = {
   setExportIncludeTextureMaps: (v: boolean) => void
   setExportIncludeAOMaps: (v: boolean) => void
   setExportIncludeMarkers: (v: boolean) => void
+  setExportIncludeAnimations: (v: boolean) => void
+  setExportBakeAssemblyPose: (v: boolean) => void
 }
 
 export type PersistenceSlice = {
@@ -379,11 +497,13 @@ export type PersistenceSlice = {
 
 export type PaintActionsSlice = {
   /**
-   * Paints a cell at plane-space (u,v) using the active vault kind and palette slot.
-   * 'cube' writes only color (deletes any existing chamfer). 'ramp' writes both color and chamfer
-   * (auto-resolved from neighbors). Returns false if out of bounds.
+   * Paints at plane-space (u,v) with the active kind and palette slot, at the armed grid's
+   * resolution: the whole voxel under the whole grid (replacing any detail), else the grid cell
+   * under logical quadrant (qu, qv) — its full in-plane extent when qu/qv are absent — at the
+   * plane's slab when the grid cuts the plane axis. 'cube' writes color only; shape kinds write
+   * a bevel (auto-resolved for ramp/wedge). Returns false if out of bounds or selection-clipped.
    */
-  paintCell: (u: number, v: number) => boolean
+  paintCell: (u: number, v: number, qu?: number, qv?: number) => boolean
   /**
    * End-of-stroke correction pass for bevel (ramp) cells painted since `beginStroke()`: re-runs
    * neighbor classification against the stroke's final color layer and overwrites each
@@ -395,29 +515,23 @@ export type PaintActionsSlice = {
    * contract is untouched. No-op outside an open stroke.
    */
   correctChamferStroke: () => void
-  /** Erases both color and chamfer layers at a cell. */
-  eraseCell: (coord: Coord) => void
+  /** Erases at a cell, at the armed grid's resolution (whole voxel, or the grid cell under
+   * logical quadrant qu/qv — the rest of the voxel is kept). Selection-clipped. */
+  eraseCell: (coord: Coord, qu?: number, qv?: number) => void
   /**
    * Direct-3D paint at an explicit grid coordinate, using the caller-supplied axis/orientation
    * as the chamfer context (3D-only taps pass the active construction plane, so orientation
-   * always matches the brush preview — never the raycast face). Same write path as `paintCell`,
-   * but with no 2D selection clip — the selection mask lives in the active plane's frame.
+   * always matches the brush preview — never the raycast face). Same write as `paintCell`; `bits`
+   * are the pointer's world half-bits (in-plane axes) picking the grid cell, null spans the
+   * extent. No 2D selection clip — the selection mask lives in the active plane's frame.
    * Returns false if out of bounds.
    */
-  paintCellAtCoord: (coord: Coord, faceAxis: Axis, faceOrientation: Orientation) => boolean
-  /**
-   * 3D paint-tap gesture (3D-only layout): plain taps paint one cell, shift-taps paint the
-   * dominant-axis line in the construction plane from the line anchor (Zanpo-style lock —
-   * anchor-excluded, endpoint-included; same-cell re-taps paint once with re-click semantics).
-   * Every call re-establishes the anchor at the tap (fast chaining). Without a usable anchor
-   * (none yet, or the plane frame changed since) — or when the target sits off the active
-   * slice (out-of-plane stacking) — it paints one cell. Unlocked taps never overwrite occupied
-   * cells (matching single-tap semantics); locked taps replace on-slice. One undo stroke;
-   * fully-skipped lines record nothing. Returns false if out of bounds.
-   */
-  paintLineAtCoord: (coord: Coord, extend: boolean) => boolean
-  /** Direct-3D erase at an explicit grid coordinate (3D-only taps). No selection clip. */
-  eraseCellAtCoord: (coord: Coord) => void
+  paintCellAtCoord: (coord: Coord, faceAxis: Axis, faceOrientation: Orientation, bits?: Coord | null) => boolean
+  paintLineAtCoord: (coord: Coord, extend: boolean, bits?: Coord | null) => boolean
+  /** Direct-3D erase at an explicit grid coordinate (3D-only taps): the grid cell holding the
+   * clicked point's world half-bits `bits` (whole voxel when absent or under the whole grid).
+   * No selection clip. */
+  eraseCellAtCoord: (coord: Coord, bits?: Coord | null) => void
   /**
    * Stamps the active brush (voxel kind + palette slot) over the whole active selection in one
    * undo stroke — the 3D selection set in 3D-only layout, the 2D window's cells in split layout
@@ -428,12 +542,14 @@ export type PaintActionsSlice = {
   fillSelection: () => void
   /**
    * Recolors the voxel at plane-space (u,v) with the active palette slot — existing voxels only,
-   * never adds or deletes cells, never touches chamfer. No-op (false) on empty/out-of-bounds
+   * never adds, deletes, or reshapes anything. Recolors the grid cell under logical quadrant
+   * qu/qv (a bevel the grid would cut recolors whole). No-op (false) on empty/out-of-bounds
    * cells or when the slot already matches (so drags don't record junk undo steps).
    */
-  paintMaterialCell: (u: number, v: number) => boolean
-  /** Direct-3D recolor at an explicit grid coordinate (3D-only taps). No selection clip. */
-  paintMaterialAtCoord: (coord: Coord) => boolean
+  paintMaterialCell: (u: number, v: number, qu?: number, qv?: number) => boolean
+  /** Direct-3D recolor at an explicit grid coordinate (3D-only taps): the grid cell holding the
+   * clicked point's half-bits `bits` (whole voxel when absent). No selection clip. */
+  paintMaterialAtCoord: (coord: Coord, bits?: Coord | null) => boolean
   /**
    * Re-authors the ramp, wedge, or thin slab at plane-space (u,v) onto the active construction
    * plane's basis, reproducing its exact solid so only its box-mapped texture face changes (a
@@ -455,19 +571,24 @@ export type ToolActionsSlice = {
   /** Flood fill (color layer only, spec §2) starting at plane-space (u,v). One undo stroke.
    * No-op if the region leaks across all 4 edges of the plane's span (see `fillLeaksToEdges`) —
    * unless (u,v) lands inside the active selection, which bounds the fill to its own mask (no
-   * painted enclosure needed) and skips the leak guard. */
-  floodFill: (u: number, v: number) => void
+   * painted enclosure needed) and skips the leak guard. Runs at the armed grid's resolution on
+   * the plane's slab (`engine/tools/gridFlood.ts`): `qu`/`qv` is the logical quadrant the click
+   * landed in (omitted → the cell's low quadrant). */
+  floodFill: (u: number, v: number, qu?: number, qv?: number) => void
   /** 6-connected flood fill through the full 3D model (not just the current plane), color layer
-   * only. No-op unless (u,v) lands on an already-occupied voxel. One undo stroke. */
-  floodFill3D: (u: number, v: number) => void
+   * only, at the armed grid's resolution. No-op unless the clicked grid cell holds content. One
+   * undo stroke. */
+  floodFill3D: (u: number, v: number, qu?: number, qv?: number) => void
   /** Fill from a 3D-viewport tap in 3D-only layout (the split 3D view only ever sets the
    * construction plane — it never calls this). A tap on a voxel floods its volume, color layer
    * only (geometry untouched, like the material tool): the color-connected region normally, the
    * whole touching component on Alt (mirroring the wand's two stages). A tap on empty space
    * fills the plane slice at that UV instead; Alt on empty space does nothing. Volume floods
    * clip to the 3D selection set with a blocked-toast when nothing overlaps, and slice fills
-   * keep the 2D leak guard. One undo stroke. The tap path never moves the construction plane. */
-  floodFillCellsAt: (coord: Coord, alt: boolean) => void
+   * keep the 2D leak guard. One undo stroke. The tap path never moves the construction plane.
+   * Floods run at the armed grid's resolution; `bits` are the world half-bits of the hit inside
+   * `coord` (face-hit bits for a voxel, plane-crossing bits for empty space). */
+  floodFillCellsAt: (coord: Coord, alt: boolean, bits?: Coord | null) => void
   copySelection: () => void
   cutSelection: () => void
   deleteSelection: () => void
@@ -494,9 +615,9 @@ export type ToolActionsSlice = {
    * selected or a float is already pending. */
   liftSelectionToFloat: (deep?: boolean) => void
   /** Repositions the pending float. Pure — no model writes, no undo-stroke activity. */
-  moveFloatTo: (originU: number, originV: number) => void
+  moveFloatTo: (originU: number, originV: number, subU?: number, subV?: number) => void
   /** Repositions the pending float without touching the 2D selection (3D exact-set moves). */
-  moveFloatCellsTo: (originU: number, originV: number) => void
+  moveFloatCellsTo: (originU: number, originV: number, subU?: number, subV?: number) => void
   /** Lifts an explicit voxel set into the float buffer (3D selection moves): snapshots the live
    * cells anchored at their bbox-min, clears them from the model, and opens an undo stroke that
    * stays uncommitted until `bakeFloatIfAny()`. Missing keys are skipped; no-op on an empty set
@@ -535,10 +656,13 @@ export type ToolActionsSlice = {
 }
 
 export type MoveActionsSlice = {
-  /** Starts a Move-tool drag: snapshots the cells to translate (current plane slice, or the whole
-   * model when `wholeModel`) and opens one undo stroke. No selection, no float. */
+  /** Starts a Move-tool drag: lifts the content to translate (current plane slice — just the
+   * plane's slab when the grid cuts the plane axis — or the whole model when `wholeModel`) and
+   * opens one undo stroke. No selection, no float. */
   beginMove: (wholeModel: boolean) => void
-  /** Live-translates the snapshotted cells by a plane-space (du,dv) offset from the drag start. */
+  /** Live-translates the lifted content by a plane-space (du,dv) offset from the drag start, in
+   * the grid's in-plane step units (`floatDragStep` at press time: half voxels along each
+   * in-plane axis the grid cuts, whole voxels otherwise). */
   updateMove: (du: number, dv: number) => void
   /** Ends the Move drag and commits the undo stroke. */
   endMove: () => void
@@ -546,6 +670,23 @@ export type MoveActionsSlice = {
    * undo step, leaving no selection behind. Model mode only. Chamfer shapes ride along renumbered
    * exactly like a select-all + transform + bake would — markers are untouched. */
   transformWholeModel: (kind: SelectionTransformKind) => void
+}
+
+/** Animate-mode "move the part" gesture: dragging a rig-box footprint relocates the box, its
+ * whole subtree, AND the voxels inside them as one part (bind edit, not a pose). One
+ * Animate-stack undo entry carries boxes + voxels together (see AnimSnapshot.model). */
+export type PartMoveActionsSlice = {
+  /** Freezes the occupied cells inside the box's subtree volumes and opens the undo stroke.
+   * Returns false on unknown ids (no gesture armed). Bakes any pending float first. */
+  beginPartMove: (id: string) => boolean
+  /** Live-translates the frozen cells and the boxes by the absolute world-space `delta` from
+   * the drag start, shrunk to the largest shift fitting everything in the working cube.
+   * Overlap fuses on drop: covered cells are stashed and restored while scrubbing, so the
+   * drag itself never loses anything. Repeat calls with the same effective shift are no-ops. */
+  updatePartMove: (delta: Coord) => void
+  /** Ends the part-move drag and commits the single undo entry (nothing recorded when the
+   * drag never moved). */
+  endPartMove: () => void
 }
 
 /** The top-level authoring mode. `model` = voxel modeling (the original app); `animate` = per-slice
@@ -682,13 +823,19 @@ export type UiSlice = {
   tourPrev: () => void
 }
 
-/** One Animate-mode undo/redo snapshot: animation settings, mask paint state, pivots, and
- * rigging boxes travel together. */
+/** One Animate-mode undo/redo snapshot: animation settings, mask paint state, pivots,
+ * rigging boxes, and keyframe clips travel together. A part-move drag additionally carries
+ * the voxel model (only then): box and voxel writes undo as one gesture, since undo is
+ * mode-routed and a split-brain entry would strand half the move a mode-switch away. */
 export type AnimSnapshot = {
   animSettings: Map<SliceKey, SliceAnimSettings>
   sliceMasks: Map<SliceKey, Set<CellKey>>
   slicePivots: Map<SliceKey, CellKey>
   rigBoxes: RigBox[]
+  clips: RigClip[]
+  /** Pre-gesture voxel model, present only on part-move entries (reference-shared, never
+   * mutated in place — same discipline as HistorySlice baselines). */
+  model?: VoxelModel
 }
 
 export type MarkerSlice = {
@@ -739,6 +886,28 @@ export type RiggingSlice = {
   /** Sets a box's rotation-center grid point (null = box center). Integers are cell centers,
    * half-integers are cell boundaries. No-op on unknown ids. Self-brackets undo. */
   setRigPivot: (id: string, pivot: Coord | null) => void
+  /** Appends a tween (default spin) to the box's stack. Returns the tween id, or null on
+   * unknown box. Self-brackets undo. */
+  addTween: (boxId: string) => string | null
+  /** Removes a tween from the stack. No-op on unknown ids. Self-brackets undo. */
+  removeTween: (boxId: string, tweenId: string) => void
+  /** Reorders within the stack (±1): stack order is composition order (first = outermost).
+   * No-op at the ends or on unknown ids. Self-brackets undo. */
+  moveTween: (boxId: string, tweenId: string, dir: -1 | 1) => void
+  /** Duplicates a tween onto the same stack, inserted right after the original with a
+   * fresh id. Returns the new id, or null on unknown ids. Self-brackets undo. */
+  duplicateTween: (boxId: string, tweenId: string) => string | null
+  /** Moves a tween across stacks (drag a row onto another box's group): removed from the
+   * source, inserted into the destination at `index` (end when omitted; clamped). A
+   * same-box move reorders — the index counts pre-removal rows, like a visual drop slot.
+   * Selects the destination box. No-op on unknown ids. Self-brackets undo. */
+  moveTweenToBox: (srcBoxId: string, tweenId: string, dstBoxId: string, index?: number) => void
+  /** Mutes/unmutes a tween (params kept). No-op on unknown ids. Self-brackets undo. */
+  setTweenEnabled: (boxId: string, tweenId: string, enabled: boolean) => void
+  /** Patches tween params through the nesting-aware stroke: lone calls record one undo
+   * entry; drag callers bracket externally (begin on down, commit on up) to coalesce the
+   * whole gesture into one. */
+  patchTween: (boxId: string, tweenId: string, patch: Partial<Omit<RigTween, 'id'>>) => void
   /**
    * Pivot setter for whichever box is selected (the Pivot tool's target in 2D and 3D):
    * toasts a hint and returns false when nothing is selected, otherwise sets the pivot
@@ -763,6 +932,107 @@ export type RiggingSlice = {
   applyRigBoxAt: (start: Coord) => void
 }
 
+/** Optional birth payload for `addKeyframe`: frozen joints/offsets plus the outgoing
+ * ease (defaults: bind pose, `inOut`). Used when keying a sampled mid-tween blend. */
+export type KeyInit = {
+  joints?: KeyJoints
+  offsets?: KeyOffsets
+  ease?: KeyEase
+}
+
+export type PoseSlice = {
+  /** Keyframe timelines (one exported action each). Undoable + persisted. Each keyframe
+   * IS its pose: it owns its joint angles directly, so editing a key edits just that key.
+   * There is no staging area — every edit lands in the selected keyframe. */
+  clips: RigClip[]
+  /** Clip under edit in the Clips section, or null. Session-only (defaults to the first). */
+  activeClipId: string | null
+  /** Keyframe under edit in the keyframe card, or null. Session-only. */
+  selectedKeyId: string | null
+  /** Clip transport: playing flag + start timestamp + playhead (seconds, clip-local).
+   * Ephemeral (not undoable, not persisted). `clipTime` is null when off the timeline
+   * (the preview shows the selected key); pausing or scrubbing sets a number, so the
+   * paused/scrubbed frame keeps showing. */
+  clipPlaying: boolean
+  clipStartedAt: number
+  clipTime: number | null
+  /** Adds a new clip (1 s, looping) with its frame-1 anchor key already in place, and
+   * selects both. Self-brackets undo. */
+  addClip: () => string
+  /** Renames a clip (glTF-safe via `sanitizeRigName`, uniquified; no-op on empty/unknown).
+   * Self-brackets undo. */
+  renameClip: (id: string, name: string) => void
+  /** Deletes a clip (clears the active/selected key when they pointed into it).
+   * Self-brackets undo. */
+  deleteClip: (id: string) => void
+  /** Reorders the clip list by drag: `before`/`after` land beside the target row, `null`
+   * target appends at the end. Order matters — the first clip supplies the assembly pose
+   * on export. Session selection is untouched. Self-brackets undo. */
+  moveClip: (dragId: string, targetId: string | null, position: 'before' | 'after') => void
+  /** Patches a clip's loop flag and/or duration (seconds, snapped to 1/30 s; a looping
+   * clip holds ≥ last key + one frame). Self-brackets undo. */
+  patchClip: (id: string, patch: { loop?: boolean; duration?: number }) => void
+  /** Selects the clip under edit (no-op on unknown ids) and its first key, so there
+   * is always a key under edit. Session-only. */
+  setActiveClip: (id: string | null) => void
+  /** Selects the key under edit (no-op on unknown ids). Session-only. */
+  setSelectedKey: (id: string | null) => void
+  /** Guarantees a key under edit for a pointer grab: no-op when one is selected,
+   * otherwise selects the active (else first) clip's first key, creating the assembly
+   * clip when none exists. Returns false only if that fails. */
+  ensureKeyframeSelected: () => boolean
+  /** Starts/stops clip transport (play resumes from `clipTime ?? 0`; pause freezes the
+   * playhead there as a number). */
+  setClipPlaying: (playing: boolean) => void
+  /** Seeks the playhead onto the timeline (seconds, snapped to 1/30 s). Session-only. */
+  setClipTime: (time: number) => void
+  /** Keys a bind (rest-pose) frame at `time` (playhead, else last key + 0.5 s) and
+   * selects it — the way to start a pose from nothing. Pass `init` to key a sampled
+   * mid-tween blend instead (joints/offsets frozen verbatim, ease usually inherited
+   * from the split segment so the curve survives). Self-brackets undo. */
+  addKeyframe: (clipId: string, time?: number, init?: KeyInit) => string | null
+  /** Patches a key's name (uniquified within the clip), time (snapped with `clampKeyTime`;
+   * the first key stays locked at 0), and/or ease. Self-brackets undo. */
+  patchKey: (clipId: string, keyId: string, patch: { name?: string; time?: number; ease?: ClipKey['ease'] }) => void
+  /** Removes a key, re-pointing the selection at the nearest survivor (or null when
+   * the clip empties). The frame-1 anchor (first key) refuses with a toast — reset it
+   * to bind instead. Self-brackets undo. */
+  removeKey: (clipId: string, keyId: string) => void
+  /** Writes one joint of a keyframe (no-op on unknown ids; near-zero collapses to bind).
+   * Brackets through the nesting-aware stroke like `patchTween`: UI pointer-down → N
+   * updates → pointer-up records ONE undo entry, while a lone call records exactly one. */
+  setKeyJoint: (clipId: string, keyId: string, jointId: string, euler: JointEuler) => void
+  /** Writes one offset of a keyframe in voxels (hip bob, crouch, assembly shifts — any
+   * box; a child shift composes inside its parent's chain. No-op on unknown ids;
+   * near-zero collapses to absent). Same stroke bracketing as `setKeyJoint`. */
+  setKeyOffset: (clipId: string, keyId: string, jointId: string, offset: Coord) => void
+  /** Starts an offset drag on a box: snapshots the key's current offset and opens one
+   * undo stroke (self-heals the key selection first, like gizmo grabs). No-op false on
+   * unknown boxes. Offsets live in keyframes — edits land in the key under edit. */
+  beginOffsetMove: (id: string) => boolean
+  /** Live-translates the dragged box's offset by the absolute world-space `delta` from
+   * the drag start. The written total snaps to the third-step lattice live, so the 2D
+   * drag visibly steps through thirds (the release snap is then a no-op safety net).
+   * Repeat calls with the same delta are no-ops. */
+  updateOffsetMove: (delta: Coord) => void
+  /** Ends the offset drag: snaps to the third-step lattice and commits the single undo
+   * entry (nothing recorded when the drag never moved). */
+  endOffsetMove: () => void
+  /** Duplicates a keyframe (same pose, one frame later, clamped; name uniquified) and
+   * selects the copy. Self-brackets undo. Returns the new id, or null on unknown ids. */
+  duplicateKey: (clipId: string, keyId: string) => string | null
+  /** Mirrors a keyframe across X in place (paired joints swap negated, the rest
+   * negate in place; name, time, and selection untouched). Self-brackets undo.
+   * Returns the key id, or null on unknown ids. */
+  mirrorKey: (clipId: string, keyId: string) => string | null
+  /** Clears a keyframe back to bind (joints + offsets dropped). Self-brackets undo. */
+  resetKey: (clipId: string, keyId: string) => void
+  /** True while a gizmo drag is open — keeps the pose view mounted through exact-zero
+   * crossings (which collapse back to bind mid-drag) instead of flickering view swaps. */
+  poseDragging: boolean
+  setPoseDragging: (dragging: boolean) => void
+}
+
 export type AppState = ProjectSlice &
   HistorySlice &
   PlaneSlice &
@@ -774,9 +1044,11 @@ export type AppState = ProjectSlice &
   PaintActionsSlice &
   ToolActionsSlice &
   MoveActionsSlice &
+  PartMoveActionsSlice &
   ModeSlice &
   TextureSlice &
   AnimationSlice &
   MarkerSlice &
   RiggingSlice &
+  PoseSlice &
   UiSlice

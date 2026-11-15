@@ -11,7 +11,7 @@ export function LeftPanel() {
       {mode !== 'animate' && (
         <>
           <div className="mx-2 my-1 border-t border-neutral-800" />
-          <div className="flex justify-center p-2">
+          <div className="flex flex-col items-center gap-2 p-2">
             <VoxelKindToggle />
           </div>
         </>

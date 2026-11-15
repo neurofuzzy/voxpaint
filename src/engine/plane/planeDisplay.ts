@@ -1,6 +1,6 @@
 import type { ConstructionPlane } from './types'
 import type { Coord } from '@/engine/grid/types'
-import { pixelFromGridCoord } from './constructionPlane'
+import { pixelFromGridCoord, planeLogicalBasis } from './constructionPlane'
 import { axisIndex } from './planeGeometry'
 
 /**
@@ -94,6 +94,32 @@ export function displayPointForGridPoint(plane: ConstructionPlane, point: Coord)
       break
   }
   return { u: toDisplayGridlineU(plane, lu), v: toDisplayGridlineV(plane, lv) }
+}
+
+/**
+ * World-space translation for a continuous display-space drag delta (sub-cell pointer
+ * movement, e.g. the Offset tool's 2D drag — the counterpart of integer `gridCoordFromPixel`
+ * diffs, which quantize to whole cells). Mirroring only flips signs (the cell transforms'
+ * `-1` corner corrections are constants that cancel out of a delta), so a display delta
+ * maps back to a logical delta by un-flipping each axis, then fans out along the plane's
+ * logical basis (`planeLogicalBasis` — the same u/v→world mapping the cell path uses, so
+ * fractional and integer drags can never disagree on direction). The offset-axis component
+ * is inherently 0 — drags stay on the slice. Pure.
+ */
+export function worldDeltaFromDisplayDelta(plane: ConstructionPlane, dcu: number, dcv: number): Coord {
+  const su = toDisplayU(plane, 0) === 0 ? 1 : -1
+  const sv = toDisplayV(plane, 0) === 0 ? 1 : -1
+  const { uDir, vDir } = planeLogicalBasis(plane.axis)
+  const dlu = dcu * su
+  const dlv = dcv * sv
+  // Endpoint negation above can produce -0 — normalize so strict equality (and serialized
+  // output) never distinguishes it from 0.
+  const norm = (n: number) => (n === 0 ? 0 : n)
+  return [
+    norm(dlu * uDir[0] + dlv * vDir[0]),
+    norm(dlu * uDir[1] + dlv * vDir[1]),
+    norm(dlu * uDir[2] + dlv * vDir[2]),
+  ]
 }
 
 /**

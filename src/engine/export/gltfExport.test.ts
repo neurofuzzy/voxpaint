@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest'
+import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js'
 import { emptyModel, encodeKey, recomputeBounds } from '@/engine/grid/GridStore'
 import type { VoxelModel } from '@/engine/grid/types'
 import { DEFAULT_PALETTE } from '@/engine/palette/defaultPalette'
@@ -7,6 +8,7 @@ import type { TextureModel } from '@/engine/texture/types'
 import { emptyTextureModel } from '@/engine/texture/TextureStore'
 import { MARKER_COLORS } from '@/engine/markers/types'
 import { defaultAnimationSettings, encodeSliceKey } from '@/engine/animation/animationLayers'
+import type { RigBox, RigClip } from '@/engine/rigging/types'
 import { exportModelToGlb } from './gltfExport'
 
 // three's GLTFExporter rasterizes every texture image through a 2D canvas — also absent in
@@ -72,7 +74,7 @@ interface GlbJson {
   images?: unknown[]
   textures?: unknown[]
   samplers?: unknown[]
-  accessors?: Array<{ count?: number }>
+  accessors?: Array<{ count?: number; max?: number[] }>
   materials?: Array<{
     name?: string
     baseColorTexture?: unknown
@@ -83,6 +85,11 @@ interface GlbJson {
     pbrMetallicRoughness?: { baseColorFactor?: number[] }
   }>
   meshes?: Array<{ primitives: Array<{ attributes: Record<string, number> }> }>
+  animations?: Array<{
+    name?: string
+    channels?: Array<{ sampler?: number; target?: { node?: number; path?: string } }>
+    samplers?: Array<{ input?: number; interpolation?: string }>
+  }>
 }
 
 /** Parse the JSON chunk out of a binary .glb buffer. */
@@ -92,6 +99,20 @@ function glbJson(buffer: ArrayBuffer): GlbJson {
   const jsonLength = view.getUint32(12, true)
   const jsonBytes = new Uint8Array(buffer, 20, jsonLength)
   return JSON.parse(new TextDecoder().decode(jsonBytes)) as GlbJson
+}
+
+/** Baked length of a JSON-chunk animation: the max key time across its sampler inputs
+ * (glTF carries no top-level duration — the loader computes the same from these). */
+function animationDuration(json: GlbJson, name: string): number {
+  const clip = (json.animations ?? []).find((c) => c.name === name)
+  expect(clip).toBeDefined()
+  let max = 0
+  for (const sampler of clip!.samplers ?? []) {
+    const input = sampler.input
+    const hi = input !== undefined ? json.accessors?.[input]?.max?.[0] : undefined
+    if (hi !== undefined) max = Math.max(max, hi)
+  }
+  return max
 }
 
 /** Translation of the named export-root node (absent = identity, i.e. unshifted). The exporter
@@ -445,6 +466,67 @@ describe('exportModelToGlb rig boxes', () => {
     expect(meshTranslation(torsoMesh)).toEqual([0, -1, 0])
   })
 
+  it('bakes the assembly pose into the joint base transforms when enabled', async () => {
+    const boxes: RigBox[] = [
+      { id: 'part-id', name: 'part', min: [0, 0, 0] as [number, number, number], max: [0, 0, 0] as [number, number, number], parentId: null, pivot: null },
+      { id: 'tip-id', name: 'tip', min: [2, 0, 0] as [number, number, number], max: [2, 0, 0] as [number, number, number], parentId: 'part-id', pivot: null },
+    ]
+    const clip: RigClip = {
+      id: 'clip-id', name: 'asm', loop: false, duration: 1,
+      keys: [{ id: 'k0', name: 'Key 1', time: 0, ease: 'inOut', joints: {}, offsets: { 'part-id': [1, 0, 0], 'tip-id': [0, 2, 0] } }],
+    }
+    const json = glbJson(
+      await exportModelToGlb(limbModel(), DEFAULT_PALETTE, 16, undefined, {
+        includeTextureMaps: false, rigBoxes: boxes, animationMode: 'poses', clips: [clip],
+        bakeAssemblyPose: true, assemblyClipId: 'clip-id', includeAnimations: true,
+      }),
+    )
+    const nodes = namedNodes(json)
+    // Hand-derived from jointLocalDecomposed (T(−parentPivot)·parent⁻¹·self·T(pivot)):
+    // part: T([1,0,0])·T([0.5,0.5,0.5]); tip: T(−0.5)·T(−1,0,0)·T(1,2,0)·T(2.5,0.5,0.5).
+    expect(translationOf(nodes, 'part')).toEqual([1.5, 0.5, 0.5])
+    expect(translationOf(nodes, 'tip')).toEqual([2, 2, 0])
+    // The clip still exports (its t=0 matches the baked base, so there is no pop).
+    expect((json.animations ?? []).map((a) => a.name)).toContain('asm')
+  })
+
+  it('falls back to the first clip for an unknown assembly id, and to bind with no clips', async () => {
+    const boxes: RigBox[] = [
+      { id: 'part-id', name: 'part', min: [0, 0, 0] as [number, number, number], max: [0, 0, 0] as [number, number, number], parentId: null, pivot: null },
+    ]
+    const clip: RigClip = {
+      id: 'clip-id', name: 'asm', loop: false, duration: 1,
+      keys: [{ id: 'k0', name: 'Key 1', time: 0, ease: 'inOut', joints: {}, offsets: { 'part-id': [1, 0, 0] } }],
+    }
+    const opts = {
+      includeTextureMaps: false, rigBoxes: boxes, animationMode: 'poses' as const, clips: [clip],
+      bakeAssemblyPose: true, includeAnimations: false,
+    }
+    const fallback = glbJson(await exportModelToGlb(limbModel(), DEFAULT_PALETTE, 16, undefined, { ...opts, assemblyClipId: 'nope' }))
+    expect(translationOf(namedNodes(fallback), 'part')).toEqual([1.5, 0.5, 0.5])
+    const bind = glbJson(await exportModelToGlb(limbModel(), DEFAULT_PALETTE, 16, undefined, { ...opts, clips: [] }))
+    expect(translationOf(namedNodes(bind), 'part')).toEqual([0, 0, 0])
+  })
+
+  it('leaves the bind base transforms alone when assembly baking is off', async () => {
+    const boxes: RigBox[] = [
+      { id: 'part-id', name: 'part', min: [0, 0, 0] as [number, number, number], max: [0, 0, 0] as [number, number, number], parentId: null, pivot: null },
+      { id: 'tip-id', name: 'tip', min: [2, 0, 0] as [number, number, number], max: [2, 0, 0] as [number, number, number], parentId: 'part-id', pivot: null },
+    ]
+    const clip: RigClip = {
+      id: 'clip-id', name: 'asm', loop: false, duration: 1,
+      keys: [{ id: 'k0', name: 'Key 1', time: 0, ease: 'inOut', joints: {}, offsets: { 'part-id': [1, 0, 0], 'tip-id': [0, 2, 0] } }],
+    }
+    const json = glbJson(
+      await exportModelToGlb(limbModel(), DEFAULT_PALETTE, 16, undefined, {
+        includeTextureMaps: false, rigBoxes: boxes, animationMode: 'poses', clips: [clip], includeAnimations: false,
+      }),
+    )
+    const nodes = namedNodes(json)
+    expect(translationOf(nodes, 'part')).toEqual([0, 0, 0])
+    expect(translationOf(nodes, 'tip')).toEqual([2, 0, 0])
+  })
+
   it('excludes rigged voxels from slice nodes (rig wins)', async () => {
     const animSettings = new Map([
       [encodeSliceKey('z', 0), { ...defaultAnimationSettings(), animationType: 'rotate-cw' as const }],
@@ -470,6 +552,108 @@ describe('exportModelToGlb rig boxes', () => {
     expect(nodes[arm].children ?? []).not.toEqual([])
     const rig = indexOf(nodes, 'Rig')
     expect(nodes[rig].children).toContain(arm)
+  })
+
+  it('exports exactly one 2s loop clip in a tweens project (a channel per tweened joint)', async () => {
+    const boxes: RigBox[] = [
+      { id: 'torso-id', name: 'torso', min: [-1, -1, -1] as [number, number, number], max: [3, 1, 1] as [number, number, number], parentId: null, pivot: null, tweens: [{ id: 'tw-1', kind: 'rotate', axis: 'y', direction: 1, speed: 1, amount: 4, minAngle: -30, maxAngle: 30, enabled: true }] },
+      // Stacked spin + shuttle on the child: a single clip carrying both.
+      { id: 'arm-id', name: 'arm', min: [2, 0, 0] as [number, number, number], max: [2, 0, 0] as [number, number, number], parentId: 'torso-id', pivot: null, tweens: [{ id: 'tw-2', kind: 'rotate', axis: 'y', direction: 1, speed: 1, amount: 4, minAngle: -30, maxAngle: 30, enabled: true }, { id: 'tw-3', kind: 'slide', axis: 'x', direction: -1, speed: 2, amount: 3, minAngle: -30, maxAngle: 30, enabled: true }] },
+    ]
+    const json = glbJson(
+      await exportModelToGlb(limbModel(), DEFAULT_PALETTE, 16, undefined, { includeTextureMaps: false, rigBoxes: [...boxes], animationMode: 'tweens' }),
+    )
+    const nodes = namedNodes(json)
+    const torso = indexOf(nodes, 'torso')
+    const arm = indexOf(nodes, 'arm')
+    const clips = json.animations ?? []
+    expect(clips.map((c) => c.name)).toEqual(['loop'])
+    // The one clip drives both TRS channels of both joints with LINEAR baked samples.
+    const [loop] = clips
+    expect(animationDuration(json, 'loop')).toBeCloseTo(2, 2)
+    const paths = (loop!.channels ?? []).map((ch) => ch.target?.path).sort()
+    expect(loop!.channels).toHaveLength(4)
+    expect(paths).toEqual(['rotation', 'rotation', 'translation', 'translation'])
+    expect(loop!.channels?.every((ch) => ch.target?.node === torso || ch.target?.node === arm)).toBe(true)
+    expect(loop!.samplers?.every((s) => s.interpolation === 'LINEAR')).toBe(true)
+    // Muted tweens and static rigs export no clips at all.
+    const muted = glbJson(
+      await exportModelToGlb(limbModel(), DEFAULT_PALETTE, 16, undefined, {
+        includeTextureMaps: false,
+        animationMode: 'tweens',
+        rigBoxes: boxes.map((b) => ({ ...b, tweens: (b.tweens ?? []).map((t) => ({ ...t, enabled: false })) })),
+      }),
+    )
+    expect(muted.animations ?? []).toEqual([])
+    const still = glbJson(
+      await exportModelToGlb(limbModel(), DEFAULT_PALETTE, 16, undefined, { includeTextureMaps: false, animationMode: 'tweens', rigBoxes }),
+    )
+    expect(still.animations ?? []).toEqual([])
+  })
+
+  it('bakes one clip per RigClip in a poses project, named for it', async () => {
+    const boxes: RigBox[] = [
+      { id: 'arm-id', name: 'arm', min: [2, 0, 0] as [number, number, number], max: [2, 0, 0] as [number, number, number], parentId: null, pivot: null, tweens: [] },
+    ]
+    const clips: RigClip[] = [
+      { id: 'c1', name: 'walk', loop: true, duration: 2, keys: [{ id: 'k0', name: 'Bind', time: 0, ease: 'inOut', joints: {} }, { id: 'k1', name: 'Wave', time: 1, ease: 'inOut', joints: { 'arm-id': [0, Math.PI / 2, 0] } }] },
+      { id: 'c2', name: 'idle', loop: false, duration: 3, keys: [{ id: 'k2', name: 'Wave', time: 0, ease: 'linear', joints: { 'arm-id': [0, Math.PI / 2, 0] } }] },
+    ]
+    const json = glbJson(
+      await exportModelToGlb(limbModel(), DEFAULT_PALETTE, 16, undefined, { includeTextureMaps: false, rigBoxes: boxes, animationMode: 'poses', clips }, undefined, undefined, undefined),
+    )
+    const nodes = namedNodes(json)
+    const arm = indexOf(nodes, 'arm')
+    const exported = json.animations ?? []
+    expect(exported.map((c) => c.name)).toEqual(['walk', 'idle'])
+    expect(animationDuration(json, 'walk')).toBeCloseTo(2, 2)
+    expect(animationDuration(json, 'idle')).toBeCloseTo(3, 2)
+    // Each clip drives both TRS channels of every joint keyed anywhere in it.
+    for (const clip of exported) {
+      expect(clip!.channels?.every((ch) => ch.target?.node === arm)).toBe(true)
+      const paths = (clip!.channels ?? []).map((ch) => ch.target?.path).sort()
+      expect(paths).toEqual(['rotation', 'translation'])
+      expect(clip!.samplers?.every((s) => s.interpolation === 'LINEAR')).toBe(true)
+    }
+    // No clips defined → no animations.
+    const noClips = glbJson(
+      await exportModelToGlb(limbModel(), DEFAULT_PALETTE, 16, undefined, { includeTextureMaps: false, rigBoxes: boxes, animationMode: 'poses', clips: [] }, undefined, undefined, undefined),
+    )
+    expect(noClips.animations ?? []).toEqual([])
+  })
+
+  it('dedupes sanitized poses-mode clip names', async () => {
+    const boxes: RigBox[] = [
+      { id: 'arm-id', name: 'arm', min: [2, 0, 0] as [number, number, number], max: [2, 0, 0] as [number, number, number], parentId: null, pivot: null, tweens: [] },
+    ]
+    const clips: RigClip[] = [
+      { id: 'c1', name: 'my walk', loop: true, duration: 1, keys: [{ id: 'k0', name: 'A', time: 0, ease: 'linear', joints: { 'arm-id': [0.5, 0, 0] } }] },
+      { id: 'c2', name: 'my_walk', loop: true, duration: 1, keys: [{ id: 'k1', name: 'A', time: 0, ease: 'linear', joints: { 'arm-id': [0.5, 0, 0] } }] },
+    ]
+    const json = glbJson(
+      await exportModelToGlb(limbModel(), DEFAULT_PALETTE, 16, undefined, { includeTextureMaps: false, rigBoxes: boxes, animationMode: 'poses', clips }, undefined, undefined, undefined),
+    )
+    expect((json.animations ?? []).map((c) => c.name)).toEqual(['my_walk', 'my_walk-2'])
+  })
+
+  it('emits no animation clips with includeAnimations:false, joints still export', async () => {
+    const boxes: RigBox[] = [
+      { id: 'arm-id', name: 'arm', min: [2, 0, 0] as [number, number, number], max: [2, 0, 0] as [number, number, number], parentId: null, pivot: null, tweens: [{ id: 'tw-1', kind: 'rotate', axis: 'y', direction: 1, speed: 1, amount: 4, minAngle: -30, maxAngle: 30, enabled: true }] },
+    ]
+    const clips: RigClip[] = [
+      { id: 'c1', name: 'walk', loop: true, duration: 2, keys: [{ id: 'k0', name: 'Bind', time: 0, ease: 'inOut', joints: {} }, { id: 'k1', name: 'Wave', time: 1, ease: 'inOut', joints: { 'arm-id': [0, Math.PI / 2, 0] } }] },
+    ]
+    const sliceAnims = new Map([
+      [encodeSliceKey('z', 0), { ...defaultAnimationSettings(), animationType: 'rotate-cw' as const }],
+    ])
+    const json = glbJson(
+      await exportModelToGlb(limbModel(), DEFAULT_PALETTE, 16, undefined, { includeTextureMaps: false, includeAnimations: false, rigBoxes: boxes, animationMode: 'poses', clips }, sliceAnims, undefined, undefined),
+    )
+    expect(json.animations ?? []).toEqual([])
+    // The joint structure still exports — posed at bind.
+    const nodes = namedNodes(json)
+    expect(nodes.findIndex((n) => n.name === 'arm')).toBeGreaterThanOrEqual(0)
+    expect(nodes.findIndex((n) => n.name?.startsWith('arm_') && n.mesh !== undefined)).toBeGreaterThanOrEqual(0)
   })
 
   it('keeps cross-rig interfaces with default culling (PBR)', async () => {
@@ -522,6 +706,53 @@ describe('exportModelToGlb rig boxes', () => {
     )
     const nodes = namedNodes(json)
     expect(nodes.some((n) => n.name === 'ghost')).toBe(true)
+  })
+})
+
+/** Parses a binary .glb back through three's own loader and returns its animations. */
+function loadAnimations(buffer: ArrayBuffer): Promise<Array<{ name: string; duration: number }>> {
+  return new Promise((resolve, reject) => {
+    new GLTFLoader().parse(
+      buffer,
+      '',
+      (gltf) => resolve(gltf.animations.map((a) => ({ name: a.name, duration: a.duration }))),
+      (err) => reject(err instanceof Error ? err : new Error(String(err))),
+    )
+  })
+}
+
+describe('exportModelToGlb animation round-trip (GLTFLoader.parse)', () => {
+  /** Two voxels in different base slots (separate color groups): limb at x=0, hand at x=2. */
+  function roundTripModel(): VoxelModel {
+    const model = emptyModel()
+    model.color.set(encodeKey(0, 0, 0), { paletteSlot: base0 })
+    model.color.set(encodeKey(2, 0, 0), { paletteSlot: { kind: 'base', index: 1 } })
+    return { ...model, bounds: recomputeBounds(model) }
+  }
+
+  it('tweens project parses to exactly one 2 s loop clip', async () => {
+    const boxes: RigBox[] = [
+      { id: 'arm-id', name: 'arm', min: [2, 0, 0] as [number, number, number], max: [2, 0, 0] as [number, number, number], parentId: null, pivot: null, tweens: [{ id: 'tw-1', kind: 'rotate', axis: 'y', direction: 1, speed: 1, amount: 4, minAngle: -30, maxAngle: 30, enabled: true }] },
+    ]
+    const glb = await exportModelToGlb(roundTripModel(), DEFAULT_PALETTE, 16, undefined, { includeTextureMaps: false, rigBoxes: boxes, animationMode: 'tweens' })
+    const anims = await loadAnimations(glb)
+    expect(anims.map((a) => a.name)).toEqual(['loop'])
+    expect(anims[0].duration).toBeCloseTo(2, 2)
+  })
+
+  it('poses project parses to one clip per action, named with its duration', async () => {
+    const boxes: RigBox[] = [
+      { id: 'arm-id', name: 'arm', min: [2, 0, 0] as [number, number, number], max: [2, 0, 0] as [number, number, number], parentId: null, pivot: null, tweens: [] },
+    ]
+    const clips: RigClip[] = [
+      { id: 'c1', name: 'walk', loop: true, duration: 2, keys: [{ id: 'k0', name: 'Bind', time: 0, ease: 'inOut', joints: {} }, { id: 'k1', name: 'Wave', time: 1, ease: 'inOut', joints: { 'arm-id': [0, Math.PI / 2, 0] } }] },
+      { id: 'c2', name: 'idle', loop: false, duration: 3, keys: [{ id: 'k2', name: 'Wave', time: 0, ease: 'linear', joints: { 'arm-id': [0, Math.PI / 2, 0] } }] },
+    ]
+    const glb = await exportModelToGlb(roundTripModel(), DEFAULT_PALETTE, 16, undefined, { includeTextureMaps: false, rigBoxes: boxes, animationMode: 'poses', clips }, undefined, undefined, undefined)
+    const anims = await loadAnimations(glb)
+    expect(anims.map((a) => a.name)).toEqual(['walk', 'idle'])
+    expect(anims.find((a) => a.name === 'walk')!.duration).toBeCloseTo(2, 2)
+    expect(anims.find((a) => a.name === 'idle')!.duration).toBeCloseTo(3, 2)
   })
 })
 

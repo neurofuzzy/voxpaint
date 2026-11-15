@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import * as THREE from 'three'
-import { concaveCornerGeometry, convexCornerGeometry, flatGeometry, flatWedgeGeometry, halfGeometry, mirrorVGeometry, postGeometry, quarterGeometry, rampGeometry, unitCubeGeometry, wedgeGeometry } from './chamferGeometry'
+import { concaveCornerGeometry, convexCornerGeometry, flatGeometry, flatWedgeGeometry, halfGeometry, mirrorVGeometry, postGeometry, quarterGeometry, rampGeometry, triconcaveGeometry, tricornerGeometry, unitCubeGeometry, wedgeGeometry } from './chamferGeometry'
 
 type Vec = [number, number, number]
 
@@ -68,6 +68,8 @@ const GEOMETRIES = {
   convex: convexCornerGeometry(),
   concave: concaveCornerGeometry(),
   wedge: wedgeGeometry(),
+  tricorner: tricornerGeometry(),
+  triconcave: triconcaveGeometry(),
 }
 
 describe('chamfer geometry — centering & footprint (etc/chamfer-tests.md: origin is the voxel center)', () => {
@@ -92,6 +94,8 @@ describe('chamfer geometry — triangle counts (etc/chamfer-tests.md MODELS)', (
     ['convex', GEOMETRIES.convex, 6],
     ['concave', GEOMETRIES.concave, 10],
     ['wedge', GEOMETRIES.wedge, 8],
+    ['tricorner', GEOMETRIES.tricorner, 4],
+    ['triconcave', GEOMETRIES.triconcave, 10],
   ] as const)('%s has %i triangles', (_name, geometry, count) => {
     expect(triangles(geometry).length).toBe(count)
   })
@@ -106,6 +110,8 @@ describe('chamfer geometry — outward-facing windings', () => {
     convex: [-0.25, 0.25, -0.3], // under the SW hip, above the base
     concave: [-0.25, 0.25, -0.25], // deep in the un-notched SW/base corner
     wedge: [-0.25, 0.25, 0], // on the SW side of the NW-SE diagonal cut, mid-height (full-height solid)
+    tricorner: [-0.25, 0.25, -0.25], // centroid of the SW-apex tetrahedron
+    triconcave: [0, 0, 0], // cube centre: strictly inside the flat-cut solid
   }
 
   it.each(Object.keys(GEOMETRIES) as (keyof typeof GEOMETRIES)[])('%s: every triangle is wound outward', (name) => {
@@ -194,6 +200,56 @@ describe('chamfer geometry — canonical (rotation-0) topology matches etc/chamf
     expect(has(g, topNW)).toBe(true)
     expect(has(g, baseNW)).toBe(true)
   })
+
+  it('tricorner: cut at NE has no vertex at all, top or bottom — like the wedge — with a single SW top vertex like the convex corner', () => {
+    const g = tricornerGeometry()
+    const baseNE: Vec = [0.5, -0.5, -0.5]
+    const baseSE: Vec = [0.5, 0.5, -0.5]
+    const baseSW: Vec = [-0.5, 0.5, -0.5]
+    const baseNW: Vec = [-0.5, -0.5, -0.5]
+    expect(has(g, topNE)).toBe(false)
+    expect(has(g, baseNE)).toBe(false)
+    expect(has(g, topSE)).toBe(false)
+    expect(has(g, baseSE)).toBe(true)
+    expect(has(g, topSW)).toBe(true) // the single apex
+    expect(has(g, baseSW)).toBe(true)
+    expect(has(g, topNW)).toBe(false)
+    expect(has(g, baseNW)).toBe(true)
+  })
+
+  it('tricorner rotation 1 (+90°) moves the apex from SW to NW and the open corner from NE to SE', () => {
+    const g = tricornerGeometry(1)
+    const tops = uniqueVertices(g).filter((v) => round(v[2]) === 0.5)
+    expect(tops.map((v) => `${round(v[0])},${round(v[1])}`)).toEqual(['-0.5,-0.5']) // single NW apex
+    const bases = uniqueVertices(g).filter((v) => round(v[2]) === -0.5)
+    const baseKeys = new Set(bases.map((v) => `${round(v[0])},${round(v[1])}`))
+    // SW/NW/NE present, SE (the rotated-open corner) absent.
+    expect(baseKeys).toEqual(new Set(['-0.5,0.5', '-0.5,-0.5', '0.5,-0.5']))
+  })
+
+  it('triconcave: notched at NE-top only — every base vertex and every other top vertex present', () => {
+    const g = triconcaveGeometry()
+    const baseNE: Vec = [0.5, -0.5, -0.5]
+    const baseSE: Vec = [0.5, 0.5, -0.5]
+    const baseSW: Vec = [-0.5, 0.5, -0.5]
+    const baseNW: Vec = [-0.5, -0.5, -0.5]
+    expect(has(g, topNE)).toBe(false) // the notch: no top NE
+    expect(has(g, baseNE)).toBe(true) // ...but the base NE is kept (unlike the wedge cut)
+    expect(has(g, topSE)).toBe(true)
+    expect(has(g, baseSE)).toBe(true)
+    expect(has(g, topSW)).toBe(true)
+    expect(has(g, baseSW)).toBe(true)
+    expect(has(g, topNW)).toBe(true)
+    expect(has(g, baseNW)).toBe(true)
+  })
+
+  it('triconcave rotation 1 (+90°) moves the notch from NE-top to SE-top', () => {
+    const g = triconcaveGeometry(1)
+    const tops = uniqueVertices(g).filter((v) => round(v[2]) === 0.5)
+    const topKeys = new Set(tops.map((v) => `${round(v[0])},${round(v[1])}`))
+    // NE, SW, NW present; SE (the rotated notch) absent.
+    expect(topKeys).toEqual(new Set(['0.5,-0.5', '-0.5,0.5', '-0.5,-0.5']))
+  })
 })
 
 describe('chamfer geometry — v-mirrored variants (reflected-plane pools)', () => {
@@ -202,6 +258,8 @@ describe('chamfer geometry — v-mirrored variants (reflected-plane pools)', () 
     ['convex', convexCornerGeometry(), [-0.25, -0.25, -0.3] as Vec],
     ['concave', concaveCornerGeometry(), [-0.25, -0.25, -0.25] as Vec],
     ['wedge', wedgeGeometry(), [-0.25, -0.25, 0] as Vec],
+    ['tricorner', tricornerGeometry(), [-0.25, -0.25, -0.25] as Vec],
+    ['triconcave', triconcaveGeometry(), [0, 0, 0] as Vec],
   ] as const)('mirrorVGeometry(%s) stays centered with outward windings', (_name, geometry, insideMirrored) => {
     const m = mirrorVGeometry(geometry)
 

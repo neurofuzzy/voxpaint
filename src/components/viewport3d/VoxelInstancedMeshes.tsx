@@ -1,6 +1,7 @@
 import { useFrame } from '@react-three/fiber'
 import { forwardRef, useEffect, useMemo } from 'react'
-import { encodeKey } from '@/engine/grid/GridStore'
+import { decodeKey, encodeKey } from '@/engine/grid/GridStore'
+import { childIndex, faceHitBits } from '@/engine/grid/cellBox'
 import { InstancingManager } from '@/engine/instancing/InstancingManager'
 import { useAppStore } from '@/store/useAppStore'
 
@@ -10,6 +11,7 @@ export const VoxelInstancedMeshes = forwardRef<InstancingManager, { visible: boo
   const model = useAppStore((s) => s.model)
   const palette = useAppStore((s) => s.palette)
   const hoverCell = useAppStore((s) => s.hoverCell)
+  const hoveredFace = useAppStore((s) => s.hoveredFace)
   const wireframe = useAppStore((s) => s.wireframe)
 
   useEffect(() => {
@@ -24,8 +26,16 @@ export const VoxelInstancedMeshes = forwardRef<InstancingManager, { visible: boo
   }, [manager, model, palette])
 
   useEffect(() => {
-    manager.setHoveredCell(hoverCell ? encodeKey(...hoverCell) : null)
-  }, [manager, hoverCell])
+    // Detail hovers blink the child under the hit point (synthetic `parent/index` instance
+    // keys); plain-cell hovers resolve as before (subdiv parents have no full-cell instance).
+    const sub = hoveredFace?.point ? model.subdiv.get(hoveredFace.cellKey) : undefined
+    if (hoveredFace?.point && sub) {
+      const bits = faceHitBits(hoveredFace.point, decodeKey(hoveredFace.cellKey), hoveredFace.axis, hoveredFace.orientation)
+      manager.setHoveredCell(`${hoveredFace.cellKey}/${childIndex(sub.split, bits)}`)
+    } else {
+      manager.setHoveredCell(hoverCell ? encodeKey(...hoverCell) : null)
+    }
+  }, [manager, hoverCell, hoveredFace, model])
 
   useEffect(() => {
     manager.setWireframe(wireframe)

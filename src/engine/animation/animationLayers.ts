@@ -1,5 +1,6 @@
 import * as THREE from 'three'
 import { decodeKey } from '@/engine/grid/GridStore'
+import { voxelKeys } from '@/engine/grid/subdiv'
 import type { Axis, CellKey, VoxelModel } from '@/engine/grid/types'
 import { axisIndex } from '@/engine/plane/planeGeometry'
 import { planeLogicalBasis } from '@/engine/plane/constructionPlane'
@@ -59,7 +60,9 @@ export function slideDirection(type: AnimationType, uDir: THREE.Vector3, vDir: T
 export function sliceVoxelKeys(model: VoxelModel, axis: Axis, offset: number): CellKey[] {
   const ai = axisIndex(axis)
   const keys: CellKey[] = []
-  for (const key of model.color.keys()) {
+  // Subdivided parents ride along on their integer parent coord — detail animates atomically
+  // with its parent cell.
+  for (const key of voxelKeys(model)) {
     const coord = decodeKey(key)
     if (coord[ai] === offset) keys.push(key)
   }
@@ -177,7 +180,7 @@ export function assignVoxelsToNodes(
   // Skipped cells fall into `remainder`, which renders/exports static — or under a rig joint.
   const rigged = new Set<CellKey>()
   if (rigBoxes && rigBoxes.length > 0) {
-    for (const key of model.color.keys()) {
+    for (const key of voxelKeys(model)) {
       if (rigIdForCoord(rigBoxes, decodeKey(key))) rigged.add(key)
     }
   }
@@ -216,7 +219,7 @@ export function assignVoxelsToNodes(
   }
 
   const remainder: CellKey[] = []
-  for (const key of model.color.keys()) {
+  for (const key of voxelKeys(model)) {
     if (!assigned.has(key)) remainder.push(key)
   }
 

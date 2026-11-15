@@ -62,7 +62,7 @@ export function pixelFromGridCoord(plane: ConstructionPlane, coord: Coord): { u:
  * which is exactly what caused the mirrored/backwards-axis bugs this module exists to prevent.
  */
 export function planeLogicalBasis(axis: Axis): { uDir: Coord; vDir: Coord } {
-  const probe: ConstructionPlane = { axis, orientation: 1, offset: 0 }
+  const probe: ConstructionPlane = { axis, orientation: 1, offset: 0, half: null }
   const origin = gridCoordFromPixel(probe, 0, 0)
   const uProbe = gridCoordFromPixel(probe, 1, 0)
   const vProbe = gridCoordFromPixel(probe, 0, 1)
@@ -89,5 +89,5 @@ export function planeFromFaceHit(cellCoord: Coord, worldNormal: Coord): Construc
   }
   const i = axisIndex(axis)
   const orientation = worldNormal[i] >= 0 ? 1 : -1
-  return { axis, orientation, offset: cellCoord[i] }
+  return { axis, orientation, offset: cellCoord[i], half: null }
 }

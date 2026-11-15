@@ -1,5 +1,6 @@
 import { useRef } from 'react'
 import { X } from 'lucide-react'
+import { GridFloatingPanel } from '@/components/panels/GridToggle'
 import { FloatingPalette } from '@/components/panels/FloatingPalette'
 import { MarkersPanel } from '@/components/panels/MarkersPanel'
 import { usePlaneLayerScroll } from '@/components/usePlaneLayerScroll'
@@ -37,6 +38,7 @@ export function Editor2D({ onCollapse }: { onCollapse: () => void }) {
           </>
         )}
         <FloatingPalette />
+        <GridFloatingPanel />
         {mode === 'model' && (
           <button
             onClick={onCollapse}

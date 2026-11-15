@@ -1,13 +1,14 @@
 import { beforeEach, describe, expect, it } from 'vitest'
 import { encodeKey } from '@/engine/grid/GridStore'
 import type { Coord } from '@/engine/grid/types'
+import type { ConstructionPlane } from '@/engine/plane/types'
 import { gridCoordFromPixel, pixelFromGridCoord } from '@/engine/plane/constructionPlane'
 import { paintTool } from '@/engine/tools/paintTool'
 import type { ToolContext, ToolDragState } from '@/engine/tools/types'
 import { rectRegion } from '@/engine/tools/selectionMask'
 import { useAppStore } from './useAppStore'
 
-const PLANE = { axis: 'z' as const, orientation: 1 as const, offset: 0 }
+const PLANE: ConstructionPlane = { axis: 'z', orientation: 1, offset: 0, half: null }
 const keyFor = (u: number, v: number) => encodeKey(...gridCoordFromPixel(PLANE, u, v))
 
 /** Drives the real store to verify wedge-voxel painting: always succeeds (no more block-if-
@@ -53,7 +54,7 @@ describe('paintCell wedge handling', () => {
     expect(cell.resolvedTo!.rotation).not.toBeUndefined()
   })
 
-  it('re-painting an unresolved wedge in a later stroke cycles its rotation by 90 degrees', () => {
+  it('re-clicking an unresolved wedge rotates three times, then advances the family', () => {
     const s = useAppStore.getState()
     s.beginStroke()
     s.paintCell(4, 4)
@@ -63,13 +64,20 @@ describe('paintCell wedge handling', () => {
       rotation: 0,
     })
 
-    for (const expected of [1, 2, 3, 0] as const) {
+    for (const expected of [1, 2, 3] as const) {
       useAppStore.getState().beginStroke()
       useAppStore.getState().paintCell(4, 4)
       useAppStore.getState().commitStroke()
       const key = [...useAppStore.getState().model.chamfer.keys()][0]
       expect(useAppStore.getState().model.chamfer.get(key)!.resolvedTo).toEqual({ shapeKind: 'wedge', rotation: expected })
     }
+    // Completing the full turn advances to the next family shape (ramp), stamped
+    // verbatim at the home rotation so the step always lands on something visible.
+    useAppStore.getState().beginStroke()
+    useAppStore.getState().paintCell(4, 4)
+    useAppStore.getState().commitStroke()
+    const key = [...useAppStore.getState().model.chamfer.keys()][0]
+    expect(useAppStore.getState().model.chamfer.get(key)!.resolvedTo).toEqual({ shapeKind: 'ramp', rotation: 0 })
   })
 
   it('freezes a wedge once truly resolved mid-stroke, even if a later neighbor in the same stroke would change the classification', () => {
@@ -244,7 +252,7 @@ describe('direct 3D blocking', () => {
       planeOrientation: 1,
       resolvedTo: null, // lone ramp: no neighbors to resolve against
     })
-    expect(after.plane).toEqual({ axis: 'z', orientation: 1, offset: 0 })
+    expect(after.plane).toEqual({ axis: 'z', orientation: 1, offset: 0, half: null })
   })
 
   it('resolves identically to the equivalent 2D paint on the same plane', () => {
@@ -265,7 +273,7 @@ describe('direct 3D blocking', () => {
     s2.setPlaneOffset(0)
     s2.beginStroke()
     for (const c of cells) {
-      const { u, v } = pixelFromGridCoord({ axis: 'x', orientation: 1, offset: 0 }, c)
+      const { u, v } = pixelFromGridCoord({ axis: 'x', orientation: 1, offset: 0, half: null }, c)
       s2.paintCell(u, v)
     }
     s2.commitStroke()
@@ -889,13 +897,14 @@ describe.each(['convex', 'concave'] as const)('paintCell explicit %s handling', 
     })
   })
 
-  it('re-clicking cycles the corner, wrapping after four', () => {
+  it('re-clicking rotates three times, then advances to the next family shape', () => {
     const s = useAppStore.getState()
     s.beginStroke()
     expect(s.paintCell(4, 4)).toBe(true)
     s.commitStroke()
 
-    for (const rotation of [1, 2, 3, 0]) {
+    const nextShape = kind === 'convex' ? 'concave' : 'wedge'
+    for (const rotation of [1, 2, 3]) {
       useAppStore.getState().beginStroke()
       expect(useAppStore.getState().paintCell(4, 4)).toBe(true)
       useAppStore.getState().commitStroke()
@@ -905,6 +914,15 @@ describe.each(['convex', 'concave'] as const)('paintCell explicit %s handling', 
         resolvedTo: { shapeKind: kind, rotation },
       })
     }
+    // Completing the full turn advances the family instead of wrapping the rotation.
+    useAppStore.getState().beginStroke()
+    expect(useAppStore.getState().paintCell(4, 4)).toBe(true)
+    useAppStore.getState().commitStroke()
+    expect(useAppStore.getState().model.chamfer.get(keyFor(4, 4))).toEqual({
+      planeAxis: 'z',
+      planeOrientation: 1,
+      resolvedTo: { shapeKind: nextShape, rotation: 0 },
+    })
   })
 
   it('re-applying within the same stroke does not cycle it', () => {
@@ -918,6 +936,183 @@ describe.each(['convex', 'concave'] as const)('paintCell explicit %s handling', 
       planeAxis: 'z',
       planeOrientation: 1,
       resolvedTo: { shapeKind: kind, rotation: 0 },
+    })
+  })
+})
+
+/** Paired triangular corner kinds (outer/inner siblings): frozen at paint time with the brush
+ * rotation, never autotiled, never joining the bevel-family cycle — re-clicking rotates, and a
+ * full turn advances to the partner. */
+describe.each(['tricorner', 'triconcave'] as const)('paintCell explicit %s handling', (kind) => {
+  const partner = kind === 'tricorner' ? 'triconcave' : 'tricorner'
+  beforeEach(() => {
+    const s = useAppStore.getState()
+    s.newProject('Test', 16)
+    s.setActiveVoxelKind(kind)
+    s.setBrushRotation(0)
+    s.setPlaneAxisOrientation('z', 1)
+    s.setPlaneOffset(0)
+  })
+
+  it('paints resolved at the brush rotation', () => {
+    const s = useAppStore.getState()
+    s.setBrushRotation(2)
+    s.beginStroke()
+    expect(s.paintCell(4, 4)).toBe(true)
+    s.commitStroke()
+
+    const after = useAppStore.getState()
+    expect(after.model.color.size).toBe(1)
+    expect(after.model.chamfer.get(keyFor(4, 4))).toEqual({
+      planeAxis: 'z',
+      planeOrientation: 1,
+      resolvedTo: { shapeKind: kind, rotation: 2 },
+    })
+  })
+
+  it('never autotiles, even surrounded by neighbors that would classify', () => {
+    useAppStore.getState().setActiveVoxelKind('cube')
+    const s = useAppStore.getState()
+    s.beginStroke()
+    for (const [u, v] of [[3, 4], [5, 4], [4, 3], [4, 5]] as const) expect(s.paintCell(u, v)).toBe(true)
+    s.commitStroke()
+
+    useAppStore.getState().setActiveVoxelKind(kind)
+    useAppStore.getState().beginStroke()
+    expect(useAppStore.getState().paintCell(4, 4)).toBe(true)
+    useAppStore.getState().commitStroke()
+    expect(useAppStore.getState().model.chamfer.get(keyFor(4, 4))).toEqual({
+      planeAxis: 'z',
+      planeOrientation: 1,
+      resolvedTo: { shapeKind: kind, rotation: 0 },
+    })
+  })
+
+  it('re-clicking rotates three times, then advances to the partner shape', () => {
+    const s = useAppStore.getState()
+    s.beginStroke()
+    expect(s.paintCell(4, 4)).toBe(true)
+    s.commitStroke()
+
+    for (const rotation of [1, 2, 3]) {
+      useAppStore.getState().beginStroke()
+      expect(useAppStore.getState().paintCell(4, 4)).toBe(true)
+      useAppStore.getState().commitStroke()
+      expect(useAppStore.getState().model.chamfer.get(keyFor(4, 4))).toEqual({
+        planeAxis: 'z',
+        planeOrientation: 1,
+        resolvedTo: { shapeKind: kind, rotation },
+      })
+    }
+    // Completing the full turn advances to the partner instead of wrapping the rotation.
+    useAppStore.getState().beginStroke()
+    expect(useAppStore.getState().paintCell(4, 4)).toBe(true)
+    useAppStore.getState().commitStroke()
+    expect(useAppStore.getState().model.chamfer.get(keyFor(4, 4))).toEqual({
+      planeAxis: 'z',
+      planeOrientation: 1,
+      resolvedTo: { shapeKind: partner, rotation: 0 },
+    })
+  })
+
+  it('re-applying within the same stroke does not cycle it', () => {
+    const s = useAppStore.getState()
+    s.beginStroke()
+    expect(s.paintCell(4, 4)).toBe(true)
+    expect(s.paintCell(4, 4)).toBe(true)
+    s.commitStroke()
+
+    expect(useAppStore.getState().model.chamfer.get(keyFor(4, 4))).toEqual({
+      planeAxis: 'z',
+      planeOrientation: 1,
+      resolvedTo: { shapeKind: kind, rotation: 0 },
+    })
+  })
+
+  it('a 3D-tap re-click rotates through the same path', () => {
+    const s = useAppStore.getState()
+    const key = encodeKey(4, 4, 0)
+    expect(s.paintLineAtCoord([4, 4, 0], false, null)).toBe(true)
+    expect(useAppStore.getState().model.chamfer.get(key)?.resolvedTo).toEqual({ shapeKind: kind, rotation: 0 })
+    expect(s.paintLineAtCoord([4, 4, 0], false, null)).toBe(true)
+    expect(useAppStore.getState().model.chamfer.get(key)?.resolvedTo).toEqual({ shapeKind: kind, rotation: 1 })
+  })
+})
+
+describe('tri-pair cross-kind behavior', () => {
+  beforeEach(() => {
+    const s = useAppStore.getState()
+    s.newProject('Test', 16)
+    s.setBrushRotation(0)
+    s.setPlaneAxisOrientation('z', 1)
+    s.setPlaneOffset(0)
+  })
+
+  it('painting tricorner over a convex corner replaces it verbatim', () => {
+    useAppStore.getState().setActiveVoxelKind('convex')
+    const s = useAppStore.getState()
+    s.beginStroke()
+    expect(s.paintCell(4, 4)).toBe(true)
+    s.commitStroke()
+
+    useAppStore.getState().setActiveVoxelKind('tricorner')
+    useAppStore.getState().beginStroke()
+    expect(useAppStore.getState().paintCell(4, 4)).toBe(true)
+    useAppStore.getState().commitStroke()
+    expect(useAppStore.getState().model.chamfer.get(keyFor(4, 4))).toEqual({
+      planeAxis: 'z',
+      planeOrientation: 1,
+      resolvedTo: { shapeKind: 'tricorner', rotation: 0 },
+    })
+  })
+
+  it('a convex full turn advances to concave, never to a tri corner', () => {
+    useAppStore.getState().setActiveVoxelKind('convex')
+    const s = useAppStore.getState()
+    s.beginStroke()
+    expect(s.paintCell(4, 4)).toBe(true)
+    s.commitStroke()
+
+    for (let i = 0; i < 4; i++) {
+      useAppStore.getState().beginStroke()
+      expect(useAppStore.getState().paintCell(4, 4)).toBe(true)
+      useAppStore.getState().commitStroke()
+    }
+    expect(useAppStore.getState().model.chamfer.get(keyFor(4, 4))).toEqual({
+      planeAxis: 'z',
+      planeOrientation: 1,
+      resolvedTo: { shapeKind: 'concave', rotation: 0 },
+    })
+  })
+
+  it('a partner full turn cycles back: tricorner to triconcave and back', () => {
+    useAppStore.getState().setActiveVoxelKind('tricorner')
+    const s = useAppStore.getState()
+    s.beginStroke()
+    expect(s.paintCell(4, 4)).toBe(true)
+    s.commitStroke()
+
+    // Four re-clicks: r1, r2, r3, then the partner at home.
+    for (let i = 0; i < 4; i++) {
+      useAppStore.getState().beginStroke()
+      expect(useAppStore.getState().paintCell(4, 4)).toBe(true)
+      useAppStore.getState().commitStroke()
+    }
+    expect(useAppStore.getState().model.chamfer.get(keyFor(4, 4))).toEqual({
+      planeAxis: 'z',
+      planeOrientation: 1,
+      resolvedTo: { shapeKind: 'triconcave', rotation: 0 },
+    })
+    // Four more re-clicks with the tricorner brush still loaded cycle the partner and return.
+    for (let i = 0; i < 4; i++) {
+      useAppStore.getState().beginStroke()
+      expect(useAppStore.getState().paintCell(4, 4)).toBe(true)
+      useAppStore.getState().commitStroke()
+    }
+    expect(useAppStore.getState().model.chamfer.get(keyFor(4, 4))).toEqual({
+      planeAxis: 'z',
+      planeOrientation: 1,
+      resolvedTo: { shapeKind: 'tricorner', rotation: 0 },
     })
   })
 })
@@ -1145,5 +1340,428 @@ describe('3D shift-paint lines', () => {
     const after = useAppStore.getState()
     expect(after.model.color.size).toBe(1)
     expect(after.paintLineAnchor?.coord).toEqual([0, 0, 0])
+  })
+})
+
+/** 2D quadrant addressing of subdivided detail: paint/erase/material act on the hovered
+ * set (front+back pair for 8-splits, fewer for partial splits); chamfer kinds write frozen
+ * explicit shapes; the grid picker arms the just-in-time division (whole paints whole
+ * voxels, halves/quarters/octal split fresh cells on first paint). z-plane
+ * orientation 1 throughout, so display quadrant (0,0) is the (x-lo, y-hi) quarter:
+ * front octant 6, back octant 2. */
+/**
+ * Sub-voxel editing through the grid. On the z/1 plane at offset 0: pixel (0,-1) is voxel
+ * (0,0,0), logical u runs +x and v runs -y, so logical quadrant (qu, qv) is world x = qu,
+ * y = 1 - qv. With the grid cutting z the plane sits on a half stop — the viewer-side high-z
+ * slab — and child indices are x + 2y + 4z on a full split (quadrant (0,0) front = child 6).
+ */
+describe('grid-resolution editing (writeBox)', () => {
+  const SLOT_M = { kind: 'metal', index: 1 } as const
+  const SLOT_B = { kind: 'base', index: 0 } as const
+  const sub0 = () => useAppStore.getState().model.subdiv.get(encodeKey(0, 0, 0))
+  const stroke = (fn: (s: ReturnType<typeof useAppStore.getState>) => void) => {
+    const s = useAppStore.getState()
+    s.beginStroke()
+    fn(s)
+    s.commitStroke()
+  }
+  beforeEach(() => {
+    useAppStore.getState().newProject('Test', 16)
+    useAppStore.getState().setActiveVoxelKind('cube')
+    useAppStore.getState().setActivePaletteSlot(SLOT_B)
+    useAppStore.getState().setPlaneAxisOrientation('z', 1)
+    useAppStore.getState().setPlaneOffset(0)
+    useAppStore.getState().setGridSplit(['x', 'y', 'z'])
+  })
+
+  /** Paints the front slab of (0,0,0) with the full grid armed (no pointer half: full in-plane). */
+  function frontSlab() {
+    stroke((s) => expect(s.paintCell(0, -1)).toBe(true))
+  }
+
+  describe('the grid is the control', () => {
+    it('whole grid paints whole voxels; an armed grid paints one grid cell', () => {
+      useAppStore.getState().setGridDivision('whole')
+      stroke((s) => expect(s.paintCell(0, -1, 0, 0)).toBe(true))
+      expect(useAppStore.getState().model.color.has(encodeKey(0, 0, 0))).toBe(true)
+      expect(useAppStore.getState().model.subdiv.size).toBe(0)
+      useAppStore.getState().setGridDivision('half') // ['x'], doesn't cut z: no half stop
+      expect(useAppStore.getState().plane.half).toBeNull()
+      stroke((s) => expect(s.paintCell(2, -1, 1, 0)).toBe(true))
+      expect(useAppStore.getState().model.subdiv.get(encodeKey(2, 0, 0))).toEqual({ split: ['x'], children: [null, { slot: SLOT_B }] })
+    })
+
+    it('paints exactly the hovered grid cell on the plane slab', () => {
+      useAppStore.getState().setActivePaletteSlot(SLOT_M)
+      stroke((s) => expect(s.paintCell(0, -1, 0, 0)).toBe(true))
+      const sub = sub0()!
+      expect(sub.split).toEqual(['x', 'y', 'z'])
+      expect(sub.children[6]).toEqual({ slot: SLOT_M })
+      expect(sub.children.filter((c) => c !== null)).toHaveLength(1)
+    })
+
+    it('without a pointer half the write spans the in-plane extent at the plane slab', () => {
+      frontSlab()
+      expect(sub0()).toEqual({ split: ['z'], children: [null, { slot: SLOT_B }] })
+    })
+
+    it('the whole grid replaces detail with one voxel', () => {
+      stroke((s) => s.paintCell(0, -1, 0, 0))
+      useAppStore.getState().setGridDivision('whole')
+      useAppStore.getState().setActivePaletteSlot(SLOT_M)
+      stroke((s) => s.paintCell(0, -1, 1, 1))
+      expect(sub0()).toBeUndefined()
+      expect(useAppStore.getState().model.color.get(encodeKey(0, 0, 0))).toEqual({ paletteSlot: SLOT_M })
+    })
+
+    it('the armed grid wins over a voxel’s existing split (it re-splits, keeping detail)', () => {
+      useAppStore.getState().setGridSplit(['y'])
+      stroke((s) => s.paintCell(0, -1, 0, 0)) // y-high half
+      expect(sub0()!.split).toEqual(['y'])
+      useAppStore.getState().setGridSplit(['x'])
+      useAppStore.getState().setActivePaletteSlot(SLOT_M)
+      stroke((s) => s.paintCell(0, -1, 1, 0)) // x-high half
+      const sub = sub0()!
+      expect(sub.split).toEqual(['x', 'y'])
+      // x-high is all M; x-low keeps its y-high B and y-low hole.
+      expect(sub.children).toEqual([null, { slot: SLOT_M }, { slot: SLOT_B }, { slot: SLOT_M }])
+    })
+
+    it('uniform paint folds back to a plain voxel (no redundant subdivision)', () => {
+      useAppStore.getState().setGridSplit(null)
+      stroke((s) => s.paintCell(0, -1))
+      useAppStore.getState().setGridSplit(['x'])
+      stroke((s) => {
+        s.paintCell(0, -1, 0, 0)
+        s.paintCell(0, -1, 1, 0)
+      })
+      expect(sub0()).toBeUndefined()
+      expect(useAppStore.getState().model.color.get(encodeKey(0, 0, 0))).toEqual({ paletteSlot: SLOT_B })
+    })
+
+    it('painting both slabs of a voxel folds it whole', () => {
+      frontSlab()
+      useAppStore.getState().stepPlaneHalf(-1) // high slab → low slab of the same layer
+      expect(useAppStore.getState().plane).toMatchObject({ offset: 0, half: 0 })
+      frontSlab()
+      expect(sub0()).toBeUndefined()
+      expect(useAppStore.getState().model.color.has(encodeKey(0, 0, 0))).toBe(true)
+    })
+
+    it('setGridDivision arms families and re-clicks cycle them globally', () => {
+      const after = () => useAppStore.getState()
+      after().setGridDivision('whole')
+      after().setGridDivision('half')
+      expect(after().gridSplit).toEqual(['x'])
+      after().setGridDivision('half')
+      expect(after().gridSplit).toEqual(['y'])
+      after().setGridDivision('half')
+      expect(after().gridSplit).toEqual(['z'])
+      after().setGridDivision('half')
+      expect(after().gridSplit).toEqual(['x'])
+      after().setGridDivision('quarter')
+      expect(after().gridSplit).toEqual(['y', 'z'])
+      after().setGridDivision('quarter')
+      expect(after().gridSplit).toEqual(['x', 'z'])
+      after().setGridDivision('quarter')
+      expect(after().gridSplit).toEqual(['x', 'y'])
+      after().setGridDivision('octal')
+      expect(after().gridSplit).toEqual(['x', 'y', 'z'])
+      after().setGridDivision('octal')
+      expect(after().gridSplit).toEqual(['x', 'y', 'z'])
+      after().setGridDivision('whole')
+      expect(after().gridSplit).toBeNull()
+    })
+  })
+
+  describe('erase and recolor use the same box', () => {
+    it('erases half of a plain voxel when the grid cuts the plane axis', () => {
+      useAppStore.getState().setGridSplit(null)
+      stroke((s) => s.paintCell(0, -1))
+      useAppStore.getState().setGridSplit(['z'])
+      expect(useAppStore.getState().plane.half).toBe(1)
+      stroke((s) => s.eraseCell([0, 0, 0]))
+      expect(sub0()).toEqual({ split: ['z'], children: [{ slot: SLOT_B }, null] })
+      // Erasing the other half deletes the voxel outright.
+      useAppStore.getState().setPlaneHalf(0)
+      stroke((s) => s.eraseCell([0, 0, 0]))
+      expect(sub0()).toBeUndefined()
+      expect(useAppStore.getState().model.color.has(encodeKey(0, 0, 0))).toBe(false)
+    })
+
+    it('erases one grid cell under the quadrant; the whole grid erases the whole voxel', () => {
+      useAppStore.getState().setGridSplit(['x'])
+      stroke((s) => s.paintCell(0, -1))
+      stroke((s) => s.eraseCell([0, 0, 0], 1, 0))
+      expect(sub0()).toEqual({ split: ['x'], children: [{ slot: SLOT_B }, null] })
+      useAppStore.getState().setGridSplit(null)
+      stroke((s) => s.eraseCell([0, 0, 0], 0, 0))
+      expect(sub0()).toBeUndefined()
+      expect(useAppStore.getState().model.color.size).toBe(0)
+    })
+
+    it('3D erase carves the grid cell under the clicked point', () => {
+      useAppStore.getState().setGridSplit(null)
+      stroke((s) => s.paintCell(0, -1))
+      useAppStore.getState().setGridSplit(['y'])
+      stroke((s) => s.eraseCellAtCoord([0, 0, 0], [0, 1, 0]))
+      expect(sub0()).toEqual({ split: ['y'], children: [{ slot: SLOT_B }, null] })
+    })
+
+    it('recolors only the hovered grid cell, never adding volume', () => {
+      useAppStore.getState().setGridSplit(null)
+      stroke((s) => s.paintCell(0, -1))
+      useAppStore.getState().setGridSplit(['x'])
+      useAppStore.getState().setActivePaletteSlot(SLOT_M)
+      let changed = false
+      stroke((s) => {
+        changed = s.paintMaterialCell(0, -1, 1, 0)
+        expect(s.paintMaterialCell(5, 5, 0, 0)).toBe(false) // empty: nothing to recolor
+      })
+      expect(changed).toBe(true)
+      expect(sub0()).toEqual({ split: ['x'], children: [{ slot: SLOT_B }, { slot: SLOT_M }] })
+      expect(useAppStore.getState().model.color.has(keyFor(5, 5))).toBe(false)
+    })
+
+    it('recolor never cuts a bevel: a chamfer voxel recolors whole', () => {
+      useAppStore.getState().setGridSplit(null)
+      useAppStore.getState().setActiveVoxelKind('convex')
+      stroke((s) => s.paintCell(0, -1))
+      useAppStore.getState().setGridSplit(['x'])
+      useAppStore.getState().setActivePaletteSlot(SLOT_M)
+      stroke((s) => expect(s.paintMaterialCell(0, -1, 1, 0)).toBe(true))
+      const m = useAppStore.getState().model
+      expect(m.subdiv.size).toBe(0)
+      expect(m.color.get(encodeKey(0, 0, 0))).toEqual({ paletteSlot: SLOT_M })
+      expect(m.chamfer.get(encodeKey(0, 0, 0))?.resolvedTo?.shapeKind).toBe('convex')
+    })
+  })
+
+  describe('fills', () => {
+    it('3D volume fill is material-only: bevels survive, nothing subdivides', () => {
+      useAppStore.getState().setGridSplit(null)
+      useAppStore.getState().setActiveVoxelKind('convex')
+      stroke((s) => s.paintCell(0, -1))
+      useAppStore.getState().setGridSplit(['x', 'y', 'z'])
+      useAppStore.getState().setActivePaletteSlot(SLOT_M)
+      useAppStore.getState().floodFillCellsAt([0, 0, 0], false)
+      const m = useAppStore.getState().model
+      expect(m.subdiv.size).toBe(0)
+      expect(m.chamfer.get(encodeKey(0, 0, 0))?.resolvedTo?.shapeKind).toBe('convex')
+      expect(m.color.get(encodeKey(0, 0, 0))).toEqual({ paletteSlot: SLOT_M })
+    })
+
+    it('3D fill on a subdivided voxel recolors the grid cell tapped (it is occupied, not empty space)', () => {
+      stroke((s) => s.paintCell(0, -1, 0, 0))
+      useAppStore.getState().setActivePaletteSlot(SLOT_M)
+      // The tap lands on child 6's surface: world bits x0 y1 z1.
+      useAppStore.getState().floodFillCellsAt([0, 0, 0], false, [0, 1, 1])
+      expect(sub0()!.children[6]).toEqual({ slot: SLOT_M })
+      expect(useAppStore.getState().model.color.size).toBe(0)
+    })
+
+    it('selection fill writes the grid depth: the plane slab under a depth cut, whole otherwise', () => {
+      useAppStore.getState().setSelection({ originU: 0, originV: -1, width: 1, height: 1, mask: new Uint8Array([1]) })
+      useAppStore.getState().fillSelection()
+      expect(sub0()).toEqual({ split: ['z'], children: [null, { slot: SLOT_B }] })
+      useAppStore.getState().setGridSplit(['x'])
+      useAppStore.getState().setSelection({ originU: 0, originV: -1, width: 1, height: 1, mask: new Uint8Array([1]) })
+      useAppStore.getState().fillSelection()
+      expect(sub0()).toBeUndefined()
+      expect(useAppStore.getState().model.color.has(encodeKey(0, 0, 0))).toBe(true)
+    })
+
+    it('flood fill runs at grid resolution: an empty half of a split voxel fills like any grid cell', () => {
+      useAppStore.getState().setGridSplit(null)
+      stroke((s) => {
+        for (const [u, v] of [[-1, -1], [0, -1], [1, -1], [-1, 0], [1, 0], [-1, 1], [0, 1], [1, 1]]) s.paintCell(u, v)
+      })
+      const mid = gridCoordFromPixel(PLANE, 0, 0)
+      useAppStore.getState().setGridSplit(['x'])
+      stroke((s) => s.paintCell(0, 0, 1, 0)) // x-high half of the middle
+      useAppStore.getState().setActivePaletteSlot(SLOT_M)
+      // Click the empty x-low half: only that grid cell is enclosed (ring + the B half).
+      stroke((s) => s.floodFill(0, 0, 0, 0))
+      expect(useAppStore.getState().model.subdiv.get(encodeKey(...mid))!.children).toEqual([{ slot: SLOT_M }, { slot: SLOT_B }])
+      expect(useAppStore.getState().model.color.get(encodeKey(...gridCoordFromPixel(PLANE, -1, 0)))?.paletteSlot).toEqual(SLOT_B)
+    })
+
+    it('a filled half is a wall to an empty fill, and a color fill follows it at grid resolution', () => {
+      useAppStore.getState().setGridSplit(['x'])
+      // Two B halves side by side across a voxel boundary: (0,0) x-high and (1,0) x-low.
+      stroke((s) => {
+        s.paintCell(0, 0, 1, 0)
+        s.paintCell(1, 0, 0, 0)
+      })
+      useAppStore.getState().setActivePaletteSlot(SLOT_M)
+      // Color fill from (0,0)'s x-high half takes exactly the connected B halves.
+      stroke((s) => s.floodFill(0, 0, 1, 0))
+      const m = useAppStore.getState().model
+      expect(m.subdiv.get(encodeKey(...gridCoordFromPixel(PLANE, 0, 0)))!.children).toEqual([null, { slot: SLOT_M }])
+      expect(m.subdiv.get(encodeKey(...gridCoordFromPixel(PLANE, 1, 0)))!.children).toEqual([{ slot: SLOT_M }, null])
+    })
+
+    it('volume fill (Alt) follows the grid through split voxels', () => {
+      useAppStore.getState().setGridSplit(['x'])
+      stroke((s) => {
+        s.paintCell(0, 0, 1, 0)
+        s.paintCell(1, 0, 0, 0)
+        s.paintCell(3, 0, 0, 0) // not connected
+      })
+      useAppStore.getState().setActivePaletteSlot(SLOT_M)
+      useAppStore.getState().floodFill3D(0, 0, 1, 0)
+      const m = useAppStore.getState().model
+      expect(m.subdiv.get(encodeKey(...gridCoordFromPixel(PLANE, 1, 0)))!.children).toEqual([{ slot: SLOT_M }, null])
+      expect(m.subdiv.get(encodeKey(...gridCoordFromPixel(PLANE, 3, 0)))!.children).toEqual([{ slot: SLOT_B }, null])
+    })
+  })
+
+  describe('bevels in grid cells', () => {
+    it('writes explicit kinds as frozen verbatim shapes in exactly the box', () => {
+      frontSlab()
+      useAppStore.getState().setActiveVoxelKind('convex')
+      stroke((s) => expect(s.paintCell(0, -1, 0, 0)).toBe(true))
+      const sub = sub0()!
+      expect(sub.children[6]).toEqual({
+        slot: SLOT_B,
+        chamfer: { planeAxis: 'z', planeOrientation: 1, resolvedTo: { shapeKind: 'convex', rotation: 0 } },
+      })
+      expect(sub.children.filter((c) => c?.chamfer)).toHaveLength(1)
+    })
+
+    it('re-clicking a tri-pair detail bevel cycles it within the pair', () => {
+      frontSlab()
+      useAppStore.getState().setActiveVoxelKind('tricorner')
+      stroke((s) => expect(s.paintCell(0, -1, 0, 0)).toBe(true))
+      expect(sub0()!.children[6]?.chamfer?.resolvedTo).toEqual({ shapeKind: 'tricorner', rotation: 0 })
+      stroke((s) => expect(s.paintCell(0, -1, 0, 0)).toBe(true))
+      expect(sub0()!.children[6]?.chamfer?.resolvedTo).toEqual({ shapeKind: 'tricorner', rotation: 1 })
+      // Two more re-clicks rotate on, and the fourth completes the turn to the partner.
+      stroke((s) => expect(s.paintCell(0, -1, 0, 0)).toBe(true))
+      stroke((s) => expect(s.paintCell(0, -1, 0, 0)).toBe(true))
+      expect(sub0()!.children[6]?.chamfer?.resolvedTo).toEqual({ shapeKind: 'tricorner', rotation: 3 })
+      stroke((s) => expect(s.paintCell(0, -1, 0, 0)).toBe(true))
+      expect(sub0()!.children[6]?.chamfer?.resolvedTo).toEqual({ shapeKind: 'triconcave', rotation: 0 })
+    })
+
+    it('auto-bevels ramps from the subcell neighborhood', () => {
+      frontSlab()
+      useAppStore.getState().setGridSplit(null)
+      stroke((s) => expect(s.paintCell(0, -2)).toBe(true)) // north cube (0,1,0)
+      useAppStore.getState().setGridSplit(['x', 'y', 'z'])
+      useAppStore.getState().setActiveVoxelKind('ramp')
+      stroke((s) => expect(s.paintCell(0, -1, 0, 0)).toBe(true))
+      const sub = sub0()!
+      // N (cube) + S, E (front siblings) filled, W open → rotation 2, on the front child only.
+      expect(sub.children[6]).toEqual({
+        slot: SLOT_B,
+        chamfer: { planeAxis: 'z', planeOrientation: 1, resolvedTo: { shapeKind: 'ramp', rotation: 2 } },
+      })
+      expect(sub.children[2]).toBeNull()
+    })
+
+    it('an unresolved detail ramp resolves only on its own edit, never from later neighbors', () => {
+      frontSlab()
+      stroke((s) => {
+        s.eraseCell([0, 0, 0], 1, 0) // child 7
+        s.eraseCell([0, 0, 0], 1, 1) // child 5
+      })
+      useAppStore.getState().setActiveVoxelKind('ramp')
+      stroke((s) => expect(s.paintCell(0, -1, 0, 0)).toBe(true))
+      expect(sub0()!.children[6]?.chamfer?.resolvedTo).toBeNull()
+      // A later stroke paints N + W: the ramp is not touched (no neighbor propagation).
+      useAppStore.getState().setGridSplit(null)
+      useAppStore.getState().setActiveVoxelKind('cube')
+      stroke((s) => {
+        s.paintCell(0, -2)
+        s.paintCell(-1, -1)
+        s.correctChamferStroke()
+      })
+      expect(sub0()!.children[6]?.chamfer?.resolvedTo).toBeNull()
+      // Editing it resolves it: N + S + W filled, E open → rotation 0.
+      useAppStore.getState().setGridSplit(['x', 'y', 'z'])
+      useAppStore.getState().setActiveVoxelKind('ramp')
+      stroke((s) => s.paintCell(0, -1, 0, 0))
+      expect(sub0()!.children[6]?.chamfer?.resolvedTo).toEqual({ shapeKind: 'ramp', rotation: 0 })
+    })
+
+    it('wedges wait at rotation 0 until the same stroke completes their corner', () => {
+      frontSlab()
+      stroke((s) => s.eraseCell([0, 0, 0], 0, 1)) // child 4: drop S support
+      useAppStore.getState().setActiveVoxelKind('wedge')
+      const s = useAppStore.getState()
+      s.beginStroke()
+      expect(s.paintCell(0, -1, 0, 0)).toBe(true)
+      expect(sub0()!.children[6]?.chamfer?.resolvedTo).toEqual({ shapeKind: 'wedge', rotation: 0 })
+      useAppStore.getState().setGridSplit(null)
+      useAppStore.getState().setActiveVoxelKind('cube')
+      expect(s.paintCell(0, -2)).toBe(true) // north cube → N+E convex
+      s.correctChamferStroke()
+      s.commitStroke()
+      expect(sub0()!.children[6]?.chamfer?.resolvedTo).toEqual({ shapeKind: 'wedge', rotation: 2 })
+    })
+
+    it('3D taps place detail bevels in the pointer’s grid cell', () => {
+      frontSlab()
+      useAppStore.getState().setGridSplit(null)
+      stroke((s) => s.paintCell(0, -2))
+      useAppStore.getState().setGridSplit(['x', 'y', 'z'])
+      useAppStore.getState().setActiveVoxelKind('ramp')
+      stroke((s) => expect(s.paintCellAtCoord([0, 0, 0], 'z', 1, [0, 1, 0])).toBe(true))
+      expect(sub0()!.children[6]?.chamfer?.resolvedTo).toEqual({ shapeKind: 'ramp', rotation: 2 })
+    })
+
+    it('re-clicks rotate detail bevels, then advance the family past a full turn', () => {
+      frontSlab()
+      useAppStore.getState().setGridSplit(null)
+      stroke((s) => s.paintCell(0, -2))
+      useAppStore.getState().setGridSplit(['x', 'y', 'z'])
+      useAppStore.getState().setActiveVoxelKind('ramp')
+      const shape = () => sub0()!.children[6]!.chamfer!.resolvedTo
+      stroke((s) => s.paintCell(0, -1, 0, 0))
+      expect(shape()).toEqual({ shapeKind: 'ramp', rotation: 2 })
+      stroke((s) => s.paintCell(0, -1, 0, 0))
+      expect(shape()).toEqual({ shapeKind: 'ramp', rotation: 3 })
+      stroke((s) => s.paintCellAtCoord([0, 0, 0], 'z', 1, [0, 1, 0])) // 3D re-click cycles too
+      expect(shape()).toEqual({ shapeKind: 'convex', rotation: 0 })
+    })
+
+    it('drag revisits do not advance detail bevels mid-stroke', () => {
+      frontSlab()
+      useAppStore.getState().setGridSplit(null)
+      stroke((s) => s.paintCell(0, -2))
+      useAppStore.getState().setGridSplit(['x', 'y', 'z'])
+      useAppStore.getState().setActiveVoxelKind('ramp')
+      stroke((s) => {
+        s.paintCell(0, -1, 0, 0)
+        s.paintCell(0, -1, 0, 0)
+      })
+      expect(sub0()!.children[6]!.chamfer!.resolvedTo).toEqual({ shapeKind: 'ramp', rotation: 2 })
+    })
+
+    it('painting part of a whole chamfer voxel cuts the bevel to a plain block', () => {
+      useAppStore.getState().setGridSplit(null)
+      useAppStore.getState().setActiveVoxelKind('convex')
+      stroke((s) => s.paintCell(0, -1))
+      useAppStore.getState().setGridSplit(['z'])
+      useAppStore.getState().setActiveVoxelKind('cube')
+      useAppStore.getState().setActivePaletteSlot(SLOT_M)
+      stroke((s) => s.paintCell(0, -1))
+      const m = useAppStore.getState().model
+      expect(m.chamfer.has(encodeKey(0, 0, 0))).toBe(false)
+      expect(sub0()).toEqual({ split: ['z'], children: [{ slot: SLOT_B }, { slot: SLOT_M }] })
+    })
+
+    it('a bevel lands as a plain block where the voxel is cut finer than the grid cell', () => {
+      useAppStore.getState().setGridSplit(['x', 'y'])
+      useAppStore.getState().setActivePaletteSlot(SLOT_M)
+      stroke((s) => s.paintCell(0, -1, 0, 0)) // one x-low quarter
+      useAppStore.getState().setGridSplit(['x'])
+      useAppStore.getState().setActiveVoxelKind('convex')
+      useAppStore.getState().setActivePaletteSlot(SLOT_B)
+      // x-low is cut along y (one quarter), so an x-high bevel can't be a single child: plain block.
+      stroke((s) => s.paintCell(0, -1, 1, 0))
+      expect(sub0()!.children.some((c) => c?.chamfer)).toBe(false)
+    })
   })
 })

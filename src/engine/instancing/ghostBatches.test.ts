@@ -22,7 +22,7 @@ function floatOf(cells: ClipboardData['cells']): ClipboardData {
 }
 
 const ALL_PLANES: ConstructionPlane[] = (['x', 'y', 'z'] as const).flatMap((axis: Axis) =>
-  ([1, -1] as const).map((orientation: Orientation) => ({ axis, orientation, offset: 0 })),
+  ([1, -1] as const).map((orientation: Orientation) => ({ axis, orientation, offset: 0, half: null })),
 )
 
 /** World-space translation of an instance matrix — a cell's 3D center. */
@@ -75,7 +75,7 @@ describe('buildFloatGhostBatches', () => {
   })
 
   it('groups cells by pool so each batch shares one geometry', () => {
-    const plane: ConstructionPlane = { axis: 'z', orientation: 1, offset: 0 }
+    const plane: ConstructionPlane = { axis: 'z', orientation: 1, offset: 0, half: null }
     const batches = buildFloatGhostBatches(
       floatOf([
         { du: 0, dv: 0, dw: 0, color: { paletteSlot: slot } },
@@ -103,7 +103,7 @@ describe('buildFloatGhostBatches', () => {
   })
 
   it('places an unchamfered cell at the same matrix the live renderer would', () => {
-    const plane: ConstructionPlane = { axis: 'z', orientation: 1, offset: 0 }
+    const plane: ConstructionPlane = { axis: 'z', orientation: 1, offset: 0, half: null }
     const [batch] = buildFloatGhostBatches(floatOf([{ du: 0, dv: 0, dw: 0, color: { paletteSlot: slot } }]), origin, plane, palette, EXTENT)
     const model = emptyModel()
     applyClipboardAt(model, plane, floatOf([{ du: 0, dv: 0, dw: 0, color: { paletteSlot: slot } }]), origin.originU, origin.originV, EXTENT)
@@ -138,7 +138,7 @@ describe('placedFloatCoords', () => {
   })
 
   it('skips cells with no color and cells outside the working grid', () => {
-    const plane: ConstructionPlane = { axis: 'z', orientation: 1, offset: 0 }
+    const plane: ConstructionPlane = { axis: 'z', orientation: 1, offset: 0, half: null }
     expect(placedFloatCoords(floatOf([{ du: 0, dv: 0, dw: 0 }]), origin, plane, EXTENT)).toEqual([])
     const far = { originU: 900, originV: 900 }
     expect(
@@ -154,11 +154,11 @@ describe('placedFloatCoords', () => {
       copyPlaneOffset: 0,
     }
     // Same-plane drop re-anchors to the recorded lift slice.
-    const same: ConstructionPlane = { axis: 'z', orientation: 1, offset: 0 }
+    const same: ConstructionPlane = { axis: 'z', orientation: 1, offset: 0, half: null }
     const [at] = placedFloatCoords(content, origin, same, EXTENT)
     expect(at[2]).toBe(2)
     // A move onto a different plane re-anchors to that plane's slice instead.
-    const across: ConstructionPlane = { axis: 'x', orientation: 1, offset: 3 }
+    const across: ConstructionPlane = { axis: 'x', orientation: 1, offset: 3, half: null }
     const [re] = placedFloatCoords(content, origin, across, EXTENT)
     expect(re[0]).toBe(3 + 2)
   })
@@ -166,7 +166,7 @@ describe('placedFloatCoords', () => {
   it('ghost and footprint follow the active slice for region content after the plane moved', () => {
     // Ordinary copy (lift slice 4), then the plane moved to 6 before the paste: all three
     // placements must agree on the live slice, not the stale recorded offset.
-    const plane: ConstructionPlane = { axis: 'z', orientation: 1, offset: 6 }
+    const plane: ConstructionPlane = { axis: 'z', orientation: 1, offset: 6, half: null }
     const content: ClipboardData = {
       width: 1,
       height: 1,
@@ -194,7 +194,7 @@ describe('placedFloatCoords', () => {
     // Exact-set lifts (wand volumes) anchor dw off the set bbox-min, not the plane — unlike
     // region lifts, dw==0 does NOT mean "on the plane". Ghost, box, and bake must all
     // re-anchor off copyPlaneOffset or the bottom layer collapses onto the plane.
-    const plane: ConstructionPlane = { axis: 'z', orientation: 1, offset: 0 }
+    const plane: ConstructionPlane = { axis: 'z', orientation: 1, offset: 0, half: null }
     const model = emptyModel()
     model.color.set(encodeKey(0, 0, 2), { paletteSlot: slot })
     model.color.set(encodeKey(1, 0, 3), { paletteSlot: slot })
@@ -220,7 +220,7 @@ describe('placedFloatCoords', () => {
 })
 
 describe('buildSelectionHighlightBatches', () => {
-  const plane: ConstructionPlane = { axis: 'z', orientation: 1, offset: 0 }
+  const plane: ConstructionPlane = { axis: 'z', orientation: 1, offset: 0, half: null }
 
   /** Fills the model at every (u,v) listed, on `plane`. */
   function modelWith(cells: Array<[number, number]>) {

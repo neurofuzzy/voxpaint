@@ -1,6 +1,7 @@
-import type { Axis, ChamferClassification, Rotation } from '@/engine/grid/types'
+import type { Axis, ChamferClassification, Rotation, SubdivCell } from '@/engine/grid/types'
+import { mirrorSubdivChildren, rotateSubdivChildren } from '@/engine/grid/subdiv'
 import { mirrorChamferCell, rotateChamferCell } from '@/engine/chamfer/chamferTransform'
-import type { ClipboardCell, ClipboardData } from '@/store/types'
+import type { ClipboardCell, ClipboardData, FineSelection } from '@/store/types'
 
 /**
  * Chamfer rotations are numbered in the plane's **logical** u/v frame (N = -v, E = +u, S = +v,
@@ -10,8 +11,8 @@ import type { ClipboardCell, ClipboardData } from '@/store/types'
  * their new positions still bevelling the old way.
  *
  * `ramp` numbers its rotation off the OPEN side shifted by -1 (see `classify`), so it renumbers
- * through the side tables; `convex`, `concave`, `wedge`, `quarter`, and `flatwedge` all number
- * theirs directly off a corner (`quarter`'s is the *occupied* corner, `flatwedge`'s the *open*
+ * through the side tables; `convex`, `concave`, `wedge`, `tricorner`, `triconcave`,
+ * `quarter`, and `flatwedge` all number theirs directly off a corner (`quarter`'s is the *occupied* corner, `flatwedge`'s the *open*
  * corner like the wedge; wedge borrows convex's corner rotation — see paintActions.ts). `thin`,
  * `half`, `post`, and `flat` are invariant under in-plane rotation/mirror (always rotation 0)
  * and pass through untouched.
@@ -58,6 +59,77 @@ function rotationPlaneFor(clipboard: ClipboardData, cell: ClipboardCell): Axis {
 }
 
 /**
+ * Rotates one subdivided entry 90° in the given plane's logical (u,v) frame: children
+ * permute to their rotated positions (the split axes can exchange, as documented on
+ * `rotateSubdivChildren`) and every beveled child's frozen shape renumbers through the
+ * same rigid motion unit voxels use (`rotateChamferCell`), so the detail turns with its
+ * parent instead of bevelling the old way. Returns a fresh entry (slot refs shared —
+ * slots are immutable values).
+ */
+export function rotateSubdivEntry(
+  sub: SubdivCell,
+  planeAxis: Axis,
+  direction: 'cw' | 'ccw' = 'cw',
+): SubdivCell {
+  const rotated = rotateSubdivChildren(sub.children, sub.split, planeAxis, direction)
+  return {
+    split: rotated.split,
+    children: rotated.children.map((child) =>
+      child?.chamfer ? { slot: child.slot, chamfer: rotateChamferCell(child.chamfer, planeAxis, direction) } : child,
+    ),
+  }
+}
+
+/**
+ * Mirrors one subdivided entry in the given plane's logical (u,v) frame — the same
+ * contract as `rotateSubdivEntry`: children permute via `mirrorSubdivChildren`, beveled
+ * children renumber via `mirrorChamferCell`.
+ */
+export function mirrorSubdivEntry(
+  sub: SubdivCell,
+  planeAxis: Axis,
+  mirrorU: boolean,
+  mirrorV: boolean,
+): SubdivCell {
+  return {
+    split: [...sub.split],
+    children: mirrorSubdivChildren(sub.children, sub.split, planeAxis, mirrorU, mirrorV).map((child) =>
+      child?.chamfer ? { slot: child.slot, chamfer: mirrorChamferCell(child.chamfer, planeAxis, mirrorU, mirrorV) } : child,
+    ),
+  }
+}
+
+/** Rotates a sub-voxel footprint 90° with its content: fine extents swap, so su and sv do too. */
+function rotateFineFootprint(fine: FineSelection, width: number, height: number, direction: 'cw' | 'ccw'): FineSelection {
+  const fw = width * fine.su
+  const fh = height * fine.sv
+  const out = new Uint8Array(fw * fh)
+  for (let y = 0; y < fh; y++) {
+    for (let x = 0; x < fw; x++) {
+      if (fine.mask[y * fw + x] !== 1) continue
+      const nx = direction === 'cw' ? fh - 1 - y : y
+      const ny = direction === 'cw' ? x : fw - 1 - x
+      out[ny * fh + nx] = 1
+    }
+  }
+  return { su: fine.sv, sv: fine.su, slab: fine.slab, mask: out }
+}
+
+/** Mirrors a sub-voxel footprint across the frame (horizontal = in u, vertical = in v). */
+function mirrorFineFootprint(fine: FineSelection, width: number, height: number, axis: 'horizontal' | 'vertical'): FineSelection {
+  const fw = width * fine.su
+  const fh = height * fine.sv
+  const out = new Uint8Array(fw * fh)
+  for (let y = 0; y < fh; y++) {
+    for (let x = 0; x < fw; x++) {
+      if (fine.mask[y * fw + x] !== 1) continue
+      out[(axis === 'vertical' ? fh - 1 - y : y) * fw + (axis === 'horizontal' ? fw - 1 - x : x)] = 1
+    }
+  }
+  return { su: fine.su, sv: fine.sv, slab: fine.slab, mask: out }
+}
+
+/**
  * Rotates clipboard content 90° around its own bounding box (width/height swap).
  * `originU`/`originV` are deliberately dropped — they describe a box whose extents just swapped,
  * so transformed content tracks its position via `floatOrigin` instead (see ClipboardData).
@@ -74,12 +146,21 @@ export function rotateClipboard90(clipboard: ClipboardData, direction: 'cw' | 'c
     height: width,
     copyPlaneAxis: clipboard.copyPlaneAxis,
     copyPlaneOrientation: clipboard.copyPlaneOrientation,
-    cells: clipboard.cells.map((cell) => ({
-      ...cell,
-      du: cw ? height - 1 - cell.dv : cell.dv,
-      dv: cw ? cell.du : width - 1 - cell.du,
-      chamfer: cell.chamfer ? rotateChamferCell(cell.chamfer, rotationPlaneFor(clipboard, cell), direction) : undefined,
-    })),
+    ...(clipboard.fine ? { fine: rotateFineFootprint(clipboard.fine, width, height, direction) } : {}),
+    cells: clipboard.cells.map((cell) => {
+      const planeAxis = rotationPlaneFor(clipboard, cell)
+      const rotated = cell.subdiv ? rotateSubdivEntry(cell.subdiv, planeAxis, direction) : undefined
+      return {
+        ...cell,
+        du: cw ? height - 1 - cell.dv : cell.dv,
+        dv: cw ? cell.du : width - 1 - cell.du,
+        chamfer: cell.chamfer ? rotateChamferCell(cell.chamfer, planeAxis, direction) : undefined,
+        // Detail rotates in the same logical frame as the du/dv rotation above; the split
+        // axes can exchange (a u-split turned on its side is a v-split) and beveled
+        // children renumber with it — see `rotateSubdivEntry`.
+        subdiv: rotated,
+      }
+    }),
   }
 }
 
@@ -95,11 +176,16 @@ export function mirrorClipboard(clipboard: ClipboardData, axis: 'horizontal' | '
     height,
     copyPlaneAxis: clipboard.copyPlaneAxis,
     copyPlaneOrientation: clipboard.copyPlaneOrientation,
-    cells: clipboard.cells.map((cell) => ({
-      ...cell,
-      du: mirrorU ? width - 1 - cell.du : cell.du,
-      dv: mirrorU ? cell.dv : height - 1 - cell.dv,
-      chamfer: cell.chamfer ? mirrorChamferCell(cell.chamfer, rotationPlaneFor(clipboard, cell), mirrorU, !mirrorU) : undefined,
-    })),
+    ...(clipboard.fine ? { fine: mirrorFineFootprint(clipboard.fine, width, height, axis) } : {}),
+    cells: clipboard.cells.map((cell) => {
+      const planeAxis = rotationPlaneFor(clipboard, cell)
+      return {
+        ...cell,
+        du: mirrorU ? width - 1 - cell.du : cell.du,
+        dv: mirrorU ? cell.dv : height - 1 - cell.dv,
+        chamfer: cell.chamfer ? mirrorChamferCell(cell.chamfer, planeAxis, mirrorU, !mirrorU) : undefined,
+        subdiv: cell.subdiv ? mirrorSubdivEntry(cell.subdiv, planeAxis, mirrorU, !mirrorU) : undefined,
+      }
+    }),
   }
 }

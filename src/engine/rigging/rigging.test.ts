@@ -5,7 +5,7 @@ import { pixelFromGridCoord } from '@/engine/plane/constructionPlane'
 import { toDisplayU, toDisplayV } from '@/engine/plane/planeDisplay'
 import type { ConstructionPlane } from '@/engine/plane/types'
 import type { RigBox } from './types'
-import { boxSliceFootprint, moveRigBoxInList, placePivotOnPlane, rigDepthOf, rigIdForCoord, rigPivotLinks, rigPivotOf, rigSubtreeIds, snapHalf, translateRigSubtree } from './types'
+import { boxSliceFootprint, clampPartDelta, composedKeyOffset, moveRigBoxInList, placePivotOnPlane, posedBoxSliceFootprint, rigDepthOf, rigIdForCoord, rigPivotLinks, rigPivotOf, rigSubtreeIds, snapHalf, translateRigSubtree } from './types'
 
 const box = (id: string, parentId: string | null = null): RigBox => ({
   id,
@@ -127,29 +127,29 @@ describe('boxSliceFootprint', () => {
   const b: RigBox = { id: 'b', name: 'b', min: [1, 0, 4], max: [2, 0, 5], parentId: null, pivot: null }
 
   it('returns null when the slice misses the box', () => {
-    expect(boxSliceFootprint(b, { axis: 'x', orientation: 1, offset: 99 })).toBeNull()
-    expect(boxSliceFootprint(b, { axis: 'y', orientation: 1, offset: 3 })).toBeNull()
+    expect(boxSliceFootprint(b, { axis: 'x', orientation: 1, offset: 99, half: null })).toBeNull()
+    expect(boxSliceFootprint(b, { axis: 'y', orientation: 1, offset: 3, half: null })).toBeNull()
     // Boundary slices intersect (inclusive bounds).
-    expect(boxSliceFootprint(b, { axis: 'y', orientation: 1, offset: 0 })).not.toBeNull()
-    expect(boxSliceFootprint(b, { axis: 'x', orientation: 1, offset: 1 })).not.toBeNull()
+    expect(boxSliceFootprint(b, { axis: 'y', orientation: 1, offset: 0, half: null })).not.toBeNull()
+    expect(boxSliceFootprint(b, { axis: 'x', orientation: 1, offset: 1, half: null })).not.toBeNull()
   })
 
   it('maps in-plane extents on unmirrored planes', () => {
     // z-plane (offset 4 hits z∈[4,5]), orientation 1: u = x, v = -y - 1.
     // x∈[1,2] → display [1,3); y=0 → display cell -1 → span [-1,0).
-    expect(boxSliceFootprint(b, { axis: 'z', orientation: 1, offset: 4 })).toEqual({
+    expect(boxSliceFootprint(b, { axis: 'z', orientation: 1, offset: 4, half: null })).toEqual({
       uMin: 1, uMax: 3, vMin: -1, vMax: 0,
     })
   })
 
   it('mirrors the range exactly on mirrored planes', () => {
     // z-plane orientation -1: display cells D(1) = -2, D(2) = -3, so the rect is [-3,-1).
-    expect(boxSliceFootprint(b, { axis: 'z', orientation: -1, offset: 4 })).toEqual({
+    expect(boxSliceFootprint(b, { axis: 'z', orientation: -1, offset: 4, half: null })).toEqual({
       uMin: -3, uMax: -1, vMin: -1, vMax: 0,
     })
     // x-plane (offset 1 hits x∈[1,2]), orientation 1: u = z negated
     // (D(4) = -5, D(5) = -6 → [-6,-4)); v = y as above → [-1,0).
-    expect(boxSliceFootprint(b, { axis: 'x', orientation: 1, offset: 1 })).toEqual({
+    expect(boxSliceFootprint(b, { axis: 'x', orientation: 1, offset: 1, half: null })).toEqual({
       uMin: -6, uMax: -4, vMin: -1, vMax: 0,
     })
   })
@@ -162,7 +162,7 @@ describe('boxSliceFootprint', () => {
     const orientations: Orientation[] = [1, -1]
     for (const axis of axes) {
       for (const orientation of orientations) {
-        const plane: ConstructionPlane = { axis, orientation, offset: wide.min[axisIndex(axis)] }
+        const plane: ConstructionPlane = { axis, orientation, offset: wide.min[axisIndex(axis)], half: null }
         const cells: Coord[] = []
         for (let x = wide.min[0]; x <= wide.max[0]; x++) {
           for (let y = wide.min[1]; y <= wide.max[1]; y++) {
@@ -216,6 +216,35 @@ describe('translateRigSubtree', () => {
   })
 })
 
+describe('clampPartDelta', () => {
+  it('passes through a shift that fits every moved box and voxel', () => {
+    const boxes: RigBox[] = [{ ...box('a'), min: [0, 0, 0], max: [1, 1, 1] }]
+    expect(clampPartDelta(boxes, 'a', [[0, 0, 0], [1, 1, 1]], [2, -1, 0], 16)).toEqual([2, -1, 0])
+  })
+
+  it('shrinks to fit the tightest box bound', () => {
+    const boxes: RigBox[] = [{ ...box('a'), min: [5, 0, 0], max: [6, 0, 0] }]
+    // +5 requested, only +1 fits before max hits the working-cube edge (hi = 7).
+    expect(clampPartDelta(boxes, 'a', [], [5, 0, 0], 16)).toEqual([1, 0, 0])
+  })
+
+  it('shrinks to fit a voxel sticking out past its box', () => {
+    // Boxes are binding volumes; voxels are the real payload — a voxel outside the box
+    // still constrains the shared shift so boxes and voxels never desync.
+    const boxes: RigBox[] = [{ ...box('a'), min: [0, 0, 0], max: [1, 1, 1] }]
+    expect(clampPartDelta(boxes, 'a', [[6, 0, 0]], [5, 0, 0], 16)).toEqual([1, 0, 0])
+  })
+
+  it('only constrains on the moved subtree, per axis independently', () => {
+    const boxes: RigBox[] = [
+      { ...box('a'), min: [6, 0, 0], max: [6, 0, 0] },
+      { ...box('b'), min: [-8, 0, 0], max: [-8, 0, 0] },
+    ]
+    // 'a' may only move +1 on x (edge at 7); y is free; 'b' is uninvolved and ignored.
+    expect(clampPartDelta(boxes, 'a', [], [5, 3, 0], 16)).toEqual([1, 3, 0])
+  })
+})
+
 describe('snapHalf', () => {
   it('rounds to the half-step lattice', () => {
     expect(snapHalf(1.2)).toBe(1)
@@ -232,7 +261,7 @@ describe('snapHalf', () => {
 describe('placePivotOnPlane', () => {
   // Box over [0,2] on every axis → default (unset) pivot is its center [1,1,1].
   const b: RigBox = { ...box('b'), min: [0, 0, 0], max: [2, 2, 2] }
-  const zPlane = { axis: 'z', orientation: 1, offset: 0 } as const
+  const zPlane = { axis: 'z', orientation: 1, offset: 0, half: null } as const
 
   it('lands cell centers exactly under the cursor', () => {
     // Display center of logical cell (1,2) is (1.5,2.5) → grid [1,-3], depth kept at 1.
@@ -250,16 +279,16 @@ describe('placePivotOnPlane', () => {
   })
 
   it('mirrors exactly on flipped orientations', () => {
-    const flipped = { axis: 'z', orientation: -1, offset: 0 } as const
+    const flipped = { axis: 'z', orientation: -1, offset: 0, half: null } as const
     // Gridline unmirror: display 1.5 → logical -1.5 → grid x -2.
     expect(placePivotOnPlane(b, flipped, 1.5, 2.5)).toEqual([-2, -3, 1])
   })
 
   it('maps the other plane axes the same way', () => {
-    const yPlane = { axis: 'y', orientation: -1, offset: 0 } as const
+    const yPlane = { axis: 'y', orientation: -1, offset: 0, half: null } as const
     // y-plane: x = lu-0.5, z = -lv-0.5, depth y kept at the box center 1.
     expect(placePivotOnPlane(b, yPlane, 1.5, 2.5)).toEqual([1, 1, -3])
-    const xPlane = { axis: 'x', orientation: 1, offset: 0 } as const
+    const xPlane = { axis: 'x', orientation: 1, offset: 0, half: null } as const
     // x-plane: y = -lv-0.5, z = -lu-0.5, depth x kept at the box center 1.
     expect(placePivotOnPlane(b, xPlane, 1.5, 2.5)).toEqual([1, -3, -2])
   })
@@ -272,7 +301,7 @@ describe('rigPivotLinks', () => {
       { ...box('b', 'a'), min: [0, 0, 0] as Coord, max: [0, 0, 0] as Coord, pivot: [0, 0, 2] as Coord },
     ]
     // a defaults to its box center [1,1,1]; b has an explicit pivot.
-    expect(rigPivotLinks(boxes)).toEqual([{ childId: 'b', from: [1, 1, 1], to: [0, 0, 2] }])
+    expect(rigPivotLinks(boxes)).toEqual([{ childId: 'b', parentId: 'a', from: [1, 1, 1], to: [0, 0, 2] }])
   })
 
   it('skips roots, dangling parents, and self-parents', () => {
@@ -282,5 +311,58 @@ describe('rigPivotLinks', () => {
       { ...box('self', 'self') },
     ]
     expect(rigPivotLinks(boxes)).toEqual([])
+  })
+})
+
+describe('sanitizeKeyJoints / sanitizeKeyOffsets', () => {
+  it('keeps finite triples and drops the rest (unknown ids are harmless — compose ignores them)', async () => {
+    const { sanitizeKeyJoints, sanitizeKeyOffsets } = await import('./types')
+    expect(sanitizeKeyJoints({ arm: [0.5, 0, 0], ghost: [1, 0, 0] })).toEqual({
+      arm: [0.5, 0, 0],
+      ghost: [1, 0, 0],
+    })
+    expect(sanitizeKeyJoints({ arm: [0.5, 'x', 0] })).toEqual({})
+    expect(sanitizeKeyJoints(null)).toEqual({})
+    expect(sanitizeKeyOffsets({ hips: [0, 1.5, 0] })).toEqual({ hips: [0, 1.5, 0] })
+    expect(sanitizeKeyOffsets({ hips: [0, NaN, 0] })).toBeUndefined()
+    expect(sanitizeKeyOffsets(undefined)).toBeUndefined()
+  })
+})
+
+describe('composedKeyOffset / posedBoxSliceFootprint', () => {
+  const plane: ConstructionPlane = { axis: 'z', orientation: 1, offset: 0, half: null }
+
+  it('sums a box’s own offset with its ancestors’ (roots ride along)', () => {
+    const boxes = [box('root'), box('mid', 'root'), box('leaf', 'mid')]
+    const offsets = { root: [1, 0, 0] as Coord, leaf: [0, 0.5, 0] as Coord }
+    expect(composedKeyOffset(boxes, boxes[2], offsets)).toEqual([1, 0.5, 0])
+    expect(composedKeyOffset(boxes, boxes[1], offsets)).toEqual([1, 0, 0])
+    expect(composedKeyOffset(boxes, boxes[0], offsets)).toEqual([1, 0, 0])
+  })
+
+  it('is zero without offsets and immune to parent cycles', () => {
+    const boxes = [box('root'), box('mid', 'root')]
+    expect(composedKeyOffset(boxes, boxes[1])).toEqual([0, 0, 0])
+    expect(composedKeyOffset(boxes, boxes[1], {})).toEqual([0, 0, 0])
+    const cyclic = [box('a', 'b'), box('b', 'a')]
+    expect(composedKeyOffset(cyclic, cyclic[0], { a: [1, 0, 0] })).toEqual([1, 0, 0])
+  })
+
+  it('shifts the footprint by the composed offset, exactly like a moved bind box', () => {
+    const boxes = [box('root'), box('leaf', 'root')]
+    boxes[1].min = [2, 0, 0]
+    boxes[1].max = [3, 1, 0]
+    // z-plane: display u = x, footprint covers x 2..4.
+    expect(posedBoxSliceFootprint(boxes, boxes[1], plane, undefined)).toEqual(boxSliceFootprint(boxes[1], plane))
+    const shifted = posedBoxSliceFootprint(boxes, boxes[1], plane, { leaf: [1, 0, 0] })
+    const movedBox: RigBox = { ...boxes[1], min: [3, 0, 0], max: [4, 1, 0] }
+    expect(shifted).toEqual(boxSliceFootprint(movedBox, plane))
+  })
+
+  it('returns null when the offset carries the box off the slice', () => {
+    const boxes = [box('a')]
+    expect(posedBoxSliceFootprint(boxes, boxes[0], plane, undefined)).not.toBeNull()
+    // Box spans z 0..1; shifting +2 in z leaves slice 0 behind.
+    expect(posedBoxSliceFootprint(boxes, boxes[0], plane, { a: [0, 0, 2] })).toBeNull()
   })
 })

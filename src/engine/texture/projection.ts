@@ -1,5 +1,7 @@
 import { decodeKey } from '@/engine/grid/GridStore'
+import { forEachSubdivChild } from '@/engine/grid/subdiv'
 import type { GridExtent, VoxelModel } from '@/engine/grid/types'
+import type { PaletteSlotRef } from '@/engine/palette/types'
 import { resolveSlotColor } from '@/engine/palette/palette'
 import type { PaletteState } from '@/engine/palette/types'
 import { axisIndex } from '@/engine/plane/planeGeometry'
@@ -33,7 +35,7 @@ const DIM_FRONT = 0.62
 export function projectModelToFace(model: VoxelModel, palette: PaletteState, face: BoxFace, gridExtent: GridExtent, texelScale: number = TEXEL_SCALE): (string | null)[] {
   const faceSize = faceSizeFor(gridExtent, texelScale)
   const out = new Array<string | null>(faceSize * faceSize).fill(null)
-  if (!model.bounds || model.color.size === 0) return out
+  if (!model.bounds || (model.color.size === 0 && model.subdiv.size === 0)) return out
 
   const { axis, orientation } = BOX_FACE_AXIS[face]
   const ai = axisIndex(axis)
@@ -42,20 +44,21 @@ export function projectModelToFace(model: VoxelModel, palette: PaletteState, fac
   const span = Math.max(1, maxC - minC)
   const best = new Float64Array(faceSize * faceSize).fill(-Infinity)
 
-  for (const [key, cell] of model.color) {
-    const c = decodeKey(key)
-    // A voxel spans one cell = texelScale texels; its two in-plane corners bound its texel block.
-    const [u0, v0] = worldToTexel(face, c[0], c[1], c[2], gridExtent, texelScale)
-    const [u1, v1] = worldToTexel(face, c[0] + 1, c[1] + 1, c[2] + 1, gridExtent, texelScale)
+  /** Splat one (possibly sub-cell) voxel's in-plane footprint, frontmost-wins per texel. */
+  const splatCell = (cx: number, cy: number, cz: number, sx: number, sy: number, sz: number, slot: PaletteSlotRef): void => {
+    // A voxel spans its size in cells = size × texelScale texels; its two in-plane corners
+    // bound its texel block.
+    const [u0, v0] = worldToTexel(face, cx, cy, cz, gridExtent, texelScale)
+    const [u1, v1] = worldToTexel(face, cx + sx, cy + sy, cz + sz, gridExtent, texelScale)
     const tuMin = Math.round(Math.min(u0, u1))
     const tuMax = Math.round(Math.max(u0, u1))
     const tvMin = Math.round(Math.min(v0, v1))
     const tvMax = Math.round(Math.max(v0, v1))
 
-    const depth = c[ai]
+    const depth = [cx, cy, cz][ai]
     const metric = orientation === 1 ? depth : -depth // larger = frontmost (outward)
     const norm = orientation === 1 ? (depth - minC) / span : (maxC - depth) / span
-    const shaded = multiplyHex(resolveSlotColor(palette, cell.paletteSlot), DIM_BACK + (DIM_FRONT - DIM_BACK) * norm)
+    const shaded = multiplyHex(resolveSlotColor(palette, slot), DIM_BACK + (DIM_FRONT - DIM_BACK) * norm)
 
     for (let tv = tvMin; tv < tvMax; tv++) {
       for (let tu = tuMin; tu < tuMax; tu++) {
@@ -68,5 +71,15 @@ export function projectModelToFace(model: VoxelModel, palette: PaletteState, fac
       }
     }
   }
+
+  for (const [key, cell] of model.color) {
+    const c = decodeKey(key)
+    splatCell(c[0], c[1], c[2], 1, 1, 1, cell.paletteSlot)
+  }
+  // Detail children splat at their fractional size (2×2 texels at the default scale for
+  // halves) — the guide stays aligned with the subcells exactly like full cells.
+  forEachSubdivChild(model, (_parentKey, _index, origin, size, child) => {
+    splatCell(origin[0], origin[1], origin[2], size[0], size[1], size[2], child.slot)
+  })
   return out
 }

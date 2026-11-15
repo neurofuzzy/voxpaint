@@ -1,152 +1,172 @@
 import type { StateCreator } from 'zustand'
+import { showToast } from '@/components/ui/toastBus'
 import { encodeKey, expandBounds } from '@/engine/grid/GridStore'
 import type { CellKey } from '@/engine/grid/types'
 import { gridCoordFromPixel, pixelFromGridCoord } from '@/engine/plane/constructionPlane'
 import { rebaseChamferCell } from '@/engine/chamfer/faceBasis'
-import { fillLeaksToEdges, floodFillOccupied3D, floodFillRegion, floodFillRegion3D } from '@/engine/tools/floodFill'
-import { applyClipboardAt, clipboardDepthBase, clearRegion, copyRegionToClipboard, transformClipboardToPlane } from '@/engine/tools/clipboard'
+import { fillLeaksToEdges } from '@/engine/tools/floodFill'
+import { fillUnits, floodPlanarUnits, floodVolumeUnits, gridRes, planeUnitAt, unitAt, unitBox, unitColor, unitPlaneCells, unitQuadrant, type Unit } from '@/engine/tools/gridFlood'
+import { isSelectedAt } from '@/engine/tools/fineSelection'
+import { clipboardDepthBase, clipboardHalfShift, clearRegion, copyRegionToClipboard, transformClipboardToPlane } from '@/engine/tools/clipboard'
 import { copyCellsToClipboard, isCoplanarWithPlane, rotateCellsInPlane, selectionMatchesClipboard, selectionRegionFromCoplanarCells, snapshotCells } from '@/engine/tools/cellSetOps'
 import { placedFloatCoords } from '@/engine/instancing/ghostBatches'
 import { mirrorClipboard, rotateClipboard90 } from '@/engine/tools/transform'
-import { forEachSelectedCell, isCellSelected, mirrorRegion, rotateRegion90 } from '@/engine/tools/selectionMask'
-import type { AppState, SelectionTransformKind, ToolActionsSlice } from './types'
+import { forEachSelectedCell, mirrorRegion, rotateRegion90 } from '@/engine/tools/selectionMask'
+import { clearFineRegion } from '@/engine/grid/fineOps'
+import { liveFineSelection3D } from './selection3DSlice'
+import { applyFloatAt, fineFloatAtomic, floatFootprintRegion, placeFloat, settleFloatOrigin } from '@/engine/tools/fineFloat'
+import { childBox, planeFrame, worldBitsFromQuad } from '@/engine/grid/cellBox'
+import type { AppState, FloatOrigin, SelectionRegion, SelectionTransformKind, ToolActionsSlice } from './types'
 
 type Slice = StateCreator<AppState, [['zustand/immer', never]], [], ToolActionsSlice>
+
+/**
+ * A 2D selection as the grid addresses it: on a half-voxel stop (the grid cuts the plane axis) a
+ * whole-cell selection — select-all, a whole paste footprint, one made before the grid changed —
+ * covers the plane's slab only, exactly like a selection drawn there. Full-depth (Alt) lifts keep
+ * whole voxels. Applied where a selection is consumed (copy, delete, lift).
+ */
+function gridSelection(selection: SelectionRegion, plane: AppState['plane']): SelectionRegion {
+  if (selection.fine || plane.half === null) return selection
+  return { ...selection, fine: { su: 1, sv: 1, slab: plane.half, mask: new Uint8Array(selection.mask) } }
+}
+
+/** The 2D selection a float at `o` shows: its exact fine footprint when the content or the
+ * position is sub-voxel, else null (callers keep the whole-cell region). */
+function floatSelection(plane: AppState['plane'], clip: NonNullable<AppState['floatContent']>, o: FloatOrigin) {
+  if (!clip.fine && !o.subU && !o.subV) return null
+  return floatFootprintRegion(plane, clip, o.originU, o.originV, o.subU ?? 0, o.subV ?? 0)
+}
+
+/** The whole-cell selection of a float's cells at `o` (every clipboard cell's du/dv). */
+function cellsRegion(clip: NonNullable<AppState['floatContent']>, o: FloatOrigin) {
+  const mask = new Uint8Array(clip.width * clip.height)
+  for (const c of clip.cells) mask[c.dv * clip.width + c.du] = 1
+  return { originU: o.originU, originV: o.originV, width: clip.width, height: clip.height, mask }
+}
+
+/**
+ * The half-voxel depth shift a paste takes so it sits at the same depth relative to the plane's
+ * stop as the copy did (`clipboardHalfShift`). Content holding whole chamfer cells has no
+ * half-voxel position (`fineFloatAtomic`), so it stays on the whole-voxel layer — said once.
+ */
+function pasteHalfShift(plane: AppState['plane'], clipboard: NonNullable<AppState['clipboard']>): -1 | 0 | 1 {
+  const shift = clipboardHalfShift(plane, clipboard)
+  if (shift === 0 || !fineFloatAtomic(clipboard)) return shift
+  showToast('Whole bevels sit on whole voxels — pasted on the voxel layer, not the half step')
+  return 0
+}
 
 // Invariant: every model-mutating action in this store must call `get().bakeFloatIfAny()` as its
 // first line (before its own beginStroke()), so a pending float never gets silently dropped or
 // desynced from the model. `undo`/`redo` (historySlice.ts) and `paintCell`/
 // `eraseCell` (paintActions.ts) follow the same rule.
-export const createToolActionsSlice: Slice = (set, get) => ({
-  floodFill: (u, v) => {
-    get().bakeFloatIfAny()
-    const { model, plane, activePaletteSlot, selection, meta } = get()
-    // A click inside the active selection treats the selection mask itself as the bound:
-    // traversal never leaves the mask, so no painted enclosure is needed and the edge-leak
-    // guard (which would reject the fill on an empty plane) is skipped.
-    const inSelection = !!selection && isCellSelected(selection, u, v)
-    let cells = inSelection
-      ? floodFillRegion(model, plane, u, v, meta.gridExtent, (cu, cv) => isCellSelected(selection, cu, cv))
-      : floodFillRegion(model, plane, u, v, meta.gridExtent)
+export const createToolActionsSlice: Slice = (set, get) => {
+  /**
+   * Planar flood write at grid resolution (`floodPlanarUnits`): the flooded units are either all
+   * empty (painted) or all one colour (recolored) — the grid's cells on the plane's slab. A start
+   * inside `within` (the selection) bounds the fill to it, skipping the edge-leak guard; otherwise
+   * a region reaching all 4 edges of the plane's span is rejected as a leak, and the result clips
+   * to `within` (a fill clipped to nothing flashes the selection-blocked alert).
+   */
+  const planarFill = (start: Unit, within: ((unit: Unit) => boolean) | null) => {
+    const { model, plane, activePaletteSlot, meta, gridSplit } = get()
+    const res = gridRes(gridSplit)
+    const inSelection = !!within && within(start)
+    let units = floodPlanarUnits(model, plane, res, start, meta.gridExtent, inSelection ? within! : undefined)
     if (!inSelection) {
-      // A region that reaches all 4 edges of the plane almost certainly leaked through a gap rather
-      // than being deliberately enclosed — reject it outright rather than repaint the whole plane.
-      if (fillLeaksToEdges(cells, meta.gridExtent)) {
-        if (selection) get().flashSelectionBlocked()
+      if (fillLeaksToEdges(unitPlaneCells(plane, res, units), meta.gridExtent)) {
+        if (within) get().flashSelectionBlocked()
         return
       }
-      // An active selection clips the fill to its mask: a click outside it that filters down to
-      // nothing was blocked by the selection, not by an empty region — say so in the footer.
-      if (selection) {
-        cells = cells.filter(([cu, cv]) => isCellSelected(selection, cu, cv))
-        if (cells.length === 0) {
+      if (within) {
+        units = units.filter(within)
+        if (units.length === 0) {
           get().flashSelectionBlocked()
           return
         }
       }
     }
-    if (cells.length === 0) return
+    if (units.length === 0) return
     get().beginStroke()
     set((state) => {
-      for (const [cu, cv] of cells) {
-        const coord = gridCoordFromPixel(state.plane, cu, cv)
-        state.model.color.set(encodeKey(...coord), { paletteSlot: activePaletteSlot })
-        state.model.bounds = expandBounds(state.model.bounds, coord)
+      fillUnits(state.model, res, units, activePaletteSlot)
+      state.meta.modifiedAt = new Date().toISOString()
+      state.dirty = true
+    })
+    get().commitStroke()
+  }
+
+  return {
+  floodFill: (u, v, qu, qv) => {
+    get().bakeFloatIfAny()
+    const { plane, selection, gridSplit } = get()
+    const res = gridRes(gridSplit)
+    const bits = qu === undefined || qv === undefined ? null : worldBitsFromQuad(plane, qu, qv)
+    const start = planeUnitAt(res, plane, gridCoordFromPixel(plane, u, v), bits)
+    // The 2D selection as a unit mask (fine selections per sub-cell, on their own slab).
+    const within = selection
+      ? (unit: Unit) => {
+        const { u: pu, v: pv } = pixelFromGridCoord(plane, unitBox(res, unit).cell)
+        const q = unitQuadrant(plane, res, unit)
+        return isSelectedAt(selection, plane, pu, pv, q.qu, q.qv)
       }
+      : null
+    planarFill(start, within)
+  },
+
+  floodFill3D: (u, v, qu, qv) => {
+    get().bakeFloatIfAny()
+    const { model, plane, activePaletteSlot, meta, gridSplit } = get()
+    const res = gridRes(gridSplit)
+    const bits = qu === undefined || qv === undefined ? null : worldBitsFromQuad(plane, qu, qv)
+    const start = planeUnitAt(res, plane, gridCoordFromPixel(plane, u, v), bits)
+    // Only fills from existing content; recolors at grid resolution, never reshapes.
+    const units = floodVolumeUnits(model, res, start, 'color', meta.gridExtent)
+    if (units.length === 0) return
+    get().beginStroke()
+    set((state) => {
+      fillUnits(state.model, res, units, activePaletteSlot)
       state.meta.modifiedAt = new Date().toISOString()
       state.dirty = true
     })
     get().commitStroke()
   },
 
-  floodFill3D: (u, v) => {
+  floodFillCellsAt: (coord, alt, bits = null) => {
     get().bakeFloatIfAny()
-    const { model, plane, activePaletteSlot, meta } = get()
-    const startCoord = gridCoordFromPixel(plane, u, v)
-    if (!model.color.has(encodeKey(...startCoord))) return // only fills from an existing voxel
-    const keys = floodFillRegion3D(model, startCoord, meta.gridExtent)
-    if (keys.length === 0) return
-    get().beginStroke()
-    set((state) => {
-      for (const key of keys) {
-        state.model.color.set(key, { paletteSlot: activePaletteSlot })
-      }
-      state.meta.modifiedAt = new Date().toISOString()
-      state.dirty = true
-    })
-    get().commitStroke()
-  },
-
-  floodFillCellsAt: (coord, alt) => {
-    get().bakeFloatIfAny()
-    const { model, activePaletteSlot, selectedCells, meta } = get()
-    // Voxel tap: material-only volume fill — recolors, never touches geometry (chamfer) and
-    // never moves the plane (the 3D tap path returns before plane-setting). Plain floods the
-    // color-connected volume; Alt takes the whole touching component regardless of color,
-    // mirroring the wand's two stages.
-    if (model.color.has(encodeKey(...coord))) {
-      let keys = alt
-        ? floodFillOccupied3D(model, coord, meta.gridExtent)
-        : floodFillRegion3D(model, coord, meta.gridExtent)
+    const { model, activePaletteSlot, selectedCells, meta, gridSplit, plane } = get()
+    const res = gridRes(gridSplit)
+    // Voxel tap: material-only volume fill at grid resolution — recolors, never touches geometry
+    // (chamfer) and never moves the plane (the 3D tap path returns before plane-setting). Plain
+    // floods the color-connected volume; Alt takes the whole touching component regardless of
+    // color, mirroring the wand's two stages. The tapped grid cell is the one the hit is in.
+    const tapped = unitAt(res, coord, bits)
+    if (unitColor(model, res, tapped) !== null) {
+      let units = floodVolumeUnits(model, res, tapped, alt ? 'occupied' : 'color', meta.gridExtent)
       if (selectedCells.size > 0) {
-        keys = keys.filter((key) => selectedCells.has(key))
-        if (keys.length === 0) {
+        units = units.filter((unit) => selectedCells.has(encodeKey(...unitBox(res, unit).cell)))
+        if (units.length === 0) {
           get().flashSelectionBlocked()
           return
         }
       }
-      if (keys.length === 0) return
+      if (units.length === 0) return
       get().beginStroke()
       set((state) => {
-        for (const key of keys) {
-          state.model.color.set(key, { paletteSlot: activePaletteSlot })
-        }
+        fillUnits(state.model, res, units, activePaletteSlot)
         state.meta.modifiedAt = new Date().toISOString()
         state.dirty = true
       })
       get().commitStroke()
       return
     }
-    // Empty-space tap: Alt does nothing; otherwise the planar slice fill at the plane UV
-    // (leak-guarded), same contract as the 2D `floodFill`.
+    // Empty-space tap: Alt does nothing; otherwise the planar slice fill at the plane cell (at the
+    // plane's slab), same contract as the 2D `floodFill`. The 3D selection is planar (window
+    // select never leaves the slice), so the set reads as a cell mask on the active plane.
     if (alt) return
-    const { plane } = get()
-    // The 3D selection is planar (window select never leaves the slice), so the set reads as
-    // a UV mask on the active plane for the slice fill below.
-    const inSet = (cu: number, cv: number) => selectedCells.has(encodeKey(...gridCoordFromPixel(plane, cu, cv)))
-    const { u, v } = pixelFromGridCoord(plane, coord)
-    // Same contract as the 2D `floodFill`, masked by the 3D set: a tap inside the window
-    // treats the window itself as the bound (no leak guard needed); otherwise the leak
-    // guard applies and the result clips to the window.
-    const inSelection = selectedCells.size > 0 && inSet(u, v)
-    let cells = inSelection
-      ? floodFillRegion(model, plane, u, v, meta.gridExtent, inSet)
-      : floodFillRegion(model, plane, u, v, meta.gridExtent)
-    if (!inSelection) {
-      if (fillLeaksToEdges(cells, meta.gridExtent)) {
-        if (selectedCells.size > 0) get().flashSelectionBlocked()
-        return
-      }
-      if (selectedCells.size > 0) {
-        cells = cells.filter(([cu, cv]) => inSet(cu, cv))
-        if (cells.length === 0) {
-          get().flashSelectionBlocked()
-          return
-        }
-      }
-    }
-    if (cells.length === 0) return
-    get().beginStroke()
-    set((state) => {
-      for (const [cu, cv] of cells) {
-        const c = gridCoordFromPixel(state.plane, cu, cv)
-        state.model.color.set(encodeKey(...c), { paletteSlot: activePaletteSlot })
-        state.model.bounds = expandBounds(state.model.bounds, c)
-      }
-      state.meta.modifiedAt = new Date().toISOString()
-      state.dirty = true
-    })
-    get().commitStroke()
+    const within = selectedCells.size > 0 ? (unit: Unit) => selectedCells.has(encodeKey(...unitBox(res, unit).cell)) : null
+    planarFill(planeUnitAt(res, plane, coord, bits), within)
   },
 
   copySelection: () => {
@@ -155,7 +175,7 @@ export const createToolActionsSlice: Slice = (set, get) => ({
     get().bakeFloatIfAny()
     const { model, plane, selection } = get()
     if (!selection) return
-    const clipboard = copyRegionToClipboard(model, plane, selection)
+    const clipboard = copyRegionToClipboard(model, plane, gridSelection(selection, plane))
     set((state) => {
       state.clipboard = clipboard
     })
@@ -169,11 +189,13 @@ export const createToolActionsSlice: Slice = (set, get) => ({
 
   deleteSelection: () => {
     get().bakeFloatIfAny()
-    const { selection } = get()
-    if (!selection) return
+    const { selection: raw, plane } = get()
+    if (!raw) return
+    const selection = gridSelection(raw, plane)
     get().beginStroke()
     set((state) => {
-      clearRegion(state.model, state.plane, selection)
+      if (selection.fine) clearFineRegion(state.model, state.plane, selection)
+      else clearRegion(state.model, state.plane, selection)
       state.meta.modifiedAt = new Date().toISOString()
       state.dirty = true
     })
@@ -192,11 +214,28 @@ export const createToolActionsSlice: Slice = (set, get) => ({
       // so anything off-slice is outside what's actually selected.
       forEachSelectedCell(selection, (u, v) => {
         const coord = gridCoordFromPixel(state.plane, u, v)
-        const cell = state.model.chamfer.get(encodeKey(...coord))
+        const key = encodeKey(...coord)
+        const cell = state.model.chamfer.get(key)
         // Plain cubes sample texture by face normal — never mis-faced, silently ignored.
-        if (!cell) return
-        if (rebaseChamferCell(cell, state.plane.axis, state.plane.orientation)) faced++
-        else skipped++
+        if (cell) {
+          if (rebaseChamferCell(cell, state.plane.axis, state.plane.orientation)) faced++
+          else skipped++
+          return
+        }
+        // Detail bevels: each beveled grid cell the selection covers (its sub-cell, on the slab).
+        const sub = state.model.subdiv.get(key)
+        if (!sub) return
+        const { uA, vA, wA, uPos, vPos } = planeFrame(state.plane.axis)
+        sub.children.forEach((child, i) => {
+          if (!child?.chamfer) return
+          const box = childBox(sub.split, i)
+          if (box[wA] !== null && state.plane.half !== null && box[wA] !== state.plane.half) return
+          const qu = box[uA] === null ? undefined : uPos ? box[uA]! : 1 - box[uA]!
+          const qv = box[vA] === null ? undefined : vPos ? box[vA]! : 1 - box[vA]!
+          if (!isSelectedAt(selection, state.plane, u, v, qu, qv)) return
+          if (rebaseChamferCell(child.chamfer, state.plane.axis, state.plane.orientation)) faced++
+          else skipped++
+        })
       })
       if (faced > 0) {
         state.meta.modifiedAt = new Date().toISOString()
@@ -220,11 +259,24 @@ export const createToolActionsSlice: Slice = (set, get) => ({
     get().bakeFloatIfAny()
     const { clipboard, plane } = get()
     if (!clipboard) return
+    if (clipboard.fine && (clipboard.copyPlaneAxis !== plane.axis || clipboard.copyPlaneOrientation !== plane.orientation)) {
+      // A sub-voxel copy is expressed in its source plane's frame; re-framing it is not built yet.
+      showToast('Sub-voxel content can only be pasted onto the plane it was copied from')
+      return
+    }
+    // Depth follows the plane's stop exactly, half voxels included (computed off the clipboard
+    // as copied — the cross-plane rebase below resets its source stop).
+    const subW = pasteHalfShift(plane, clipboard)
     const transformedClipboard = transformClipboardToPlane(clipboard, plane)
     get().beginStroke()
     set((state) => {
       state.floatContent = transformedClipboard
-      state.floatOrigin = { originU: u, originV: v }
+      if (transformedClipboard.fine) {
+        state.floatOrigin = { originU: u, originV: v, subU: 0, subV: 0, ...(subW ? { subW } : {}) }
+        state.selection = floatFootprintRegion(plane, transformedClipboard, u, v, 0, 0)
+        return
+      }
+      state.floatOrigin = { originU: u, originV: v, ...(subW ? { subW } : {}) }
       state.selection = {
         originU: u,
         originV: v,
@@ -236,8 +288,26 @@ export const createToolActionsSlice: Slice = (set, get) => ({
   },
 
   liftSelectionToFloat: (deep = false) => {
-    const { model, plane, selection, floatContent, meta } = get()
-    if (!selection || floatContent) return
+    const { model, plane, selection: raw, floatContent, meta } = get()
+    if (!raw || floatContent) return
+    const selection = deep ? raw : gridSelection(raw, plane)
+    if (selection.fine) {
+      if (deep) {
+        showToast('Full-depth lifts are whole-voxel: turn the grid to whole, or lift without Alt')
+        return
+      }
+      // Sub-voxel lift: copy exactly the selected parts, clear exactly those fine cells.
+      const fineContent = copyRegionToClipboard(model, plane, selection)
+      get().beginStroke()
+      set((state) => {
+        clearFineRegion(state.model, state.plane, selection)
+        state.floatContent = fineContent
+        state.floatOrigin = { originU: selection.originU, originV: selection.originV, subU: 0, subV: 0 }
+        state.meta.modifiedAt = new Date().toISOString()
+        state.dirty = true
+      })
+      return
+    }
     const content = copyRegionToClipboard(model, plane, selection, deep, meta.gridExtent)
     get().beginStroke()
     set((state) => {
@@ -250,34 +320,52 @@ export const createToolActionsSlice: Slice = (set, get) => ({
     // Deliberately no commitStroke() — this stroke stays open until bakeFloatIfAny().
   },
 
-  moveFloatTo: (originU, originV) => {
-    if (!get().floatContent) return
+  moveFloatTo: (originU, originV, subU = 0, subV = 0) => {
+    const { floatContent, floatOrigin, plane } = get()
+    if (!floatContent) return
+    const at = settleFloatOrigin(floatContent, { originU, originV, subU, subV, subW: floatOrigin?.subW })
     set((state) => {
-      state.floatOrigin = { originU, originV }
-      state.selection = { ...state.selection!, originU, originV }
+      state.floatOrigin = at
+      // The selection tracks the float's exact footprint (fine when it sits off the voxel grid).
+      // Back on the voxel grid: whole cells (re-derived when the previous footprint was fine).
+      state.selection = floatSelection(plane, floatContent, at)
+        ?? (state.selection?.fine ? cellsRegion(floatContent, at) : { ...state.selection!, originU: at.originU, originV: at.originV })
     })
   },
 
-  moveFloatCellsTo: (originU, originV) => {
+  moveFloatCellsTo: (originU, originV, subU = 0, subV = 0) => {
     // 3D exact-set moves: reposition the pending float without touching the 2D selection
     // (the 3D set tracks position separately — see the drop handler in Viewport3D.tsx).
-    if (!get().floatContent) return
+    const fc = get().floatContent
+    if (!fc) return
+    const at = settleFloatOrigin(fc, { originU, originV, subU, subV, subW: get().floatOrigin?.subW })
     set((state) => {
-      state.floatOrigin = { originU, originV }
+      state.floatOrigin = at
     })
   },
 
   transformFloat: (kind) => {
     get().liftSelectionToFloat() // no-op if already floating
-    const { floatContent, selection } = get()
+    const { floatContent, selection, floatOrigin, plane } = get()
     if (!floatContent || !selection) return
     const spin = kind === 'rotate' ? 'cw' : kind === 'rotate-ccw' ? 'ccw' : null
     const flip = kind === 'mirror-h' ? 'horizontal' : 'vertical'
     const transformedContent = spin ? rotateClipboard90(floatContent, spin) : mirrorClipboard(floatContent, flip)
+    const o = floatOrigin ?? { originU: selection.originU, originV: selection.originV }
+    if (transformedContent.fine || o.subU || o.subV) {
+      // Off-grid float: rotate/mirror in place about its frame; the selection is its new footprint.
+      const at = settleFloatOrigin(transformedContent, o)
+      set((state) => {
+        state.floatContent = transformedContent
+        state.floatOrigin = at
+        state.selection = floatSelection(plane, transformedContent, at)
+      })
+      return
+    }
     const transformedRegion = spin ? rotateRegion90(selection, spin) : mirrorRegion(selection, flip)
     set((state) => {
       state.floatContent = transformedContent
-      state.floatOrigin = { originU: transformedRegion.originU, originV: transformedRegion.originV }
+      state.floatOrigin = settleFloatOrigin(transformedContent, { originU: transformedRegion.originU, originV: transformedRegion.originV, subW: o.subW })
       state.selection = transformedRegion
     })
   },
@@ -286,7 +374,7 @@ export const createToolActionsSlice: Slice = (set, get) => ({
     const { floatContent, floatOrigin, plane, meta } = get()
     if (!floatContent || !floatOrigin) return
     set((state) => {
-      applyClipboardAt(state.model, plane, floatContent, floatOrigin.originU, floatOrigin.originV, meta.gridExtent)
+      placeFloat(state.model, plane, floatContent, floatOrigin, meta.gridExtent)
       state.meta.modifiedAt = new Date().toISOString()
       state.dirty = true
     })
@@ -301,7 +389,25 @@ export const createToolActionsSlice: Slice = (set, get) => ({
     get().bakeFloatIfAny()
     const { model, plane, floatContent } = get()
     if (cells.size === 0 || floatContent) return
-    const live = [...cells].filter((key) => model.color.has(key))
+    const fine3 = liveFineSelection3D(get())
+    if (fine3) {
+      if (fine3.plane.axis !== plane.axis || fine3.plane.orientation !== plane.orientation) {
+        showToast('Sub-voxel selections move on the plane they were drawn on')
+        return
+      }
+      // Sub-voxel lift: take exactly the selected parts; the float lands via the fine bake.
+      const fineContent = copyRegionToClipboard(model, plane, fine3.region)
+      get().beginStroke()
+      set((state) => {
+        clearFineRegion(state.model, plane, fine3.region)
+        state.floatContent = fineContent
+        state.floatOrigin = { originU: fine3.region.originU, originV: fine3.region.originV, subU: 0, subV: 0 }
+        state.meta.modifiedAt = new Date().toISOString()
+        state.dirty = true
+      })
+      return
+    }
+    const live = [...cells].filter((key) => model.color.has(key) || model.subdiv.has(key))
     if (live.length === 0) return // every key stale — nothing to lift, no stroke
     const content = copyCellsToClipboard(model, live, plane)
     get().beginStroke()
@@ -309,6 +415,7 @@ export const createToolActionsSlice: Slice = (set, get) => ({
       for (const key of live) {
         state.model.color.delete(key)
         state.model.chamfer.delete(key)
+        state.model.subdiv.delete(key)
       }
       state.floatContent = content
       state.floatOrigin = { originU: content.originU ?? 0, originV: content.originV ?? 0 }
@@ -322,12 +429,20 @@ export const createToolActionsSlice: Slice = (set, get) => ({
     get().bakeFloatIfAny()
     const { model, plane, selectedCells } = get()
     if (selectedCells.size === 0) return
+    const fine = liveFineSelection3D(get())
+    if (fine) {
+      // Sub-voxel window: copy just its parts, off the plane it was drawn on.
+      const clipboard = copyRegionToClipboard(model, fine.plane, fine.region)
+      if (clipboard.cells.length === 0) return
+      set((state) => { state.clipboard = clipboard })
+      return
+    }
     // Parity rule: a selection lying entirely on the active construction plane copies
     // through the 2D slice-anchored path, so moving the plane then pasting lands the
     // content on the new plane (`clipboardDepthBase` follows the destination slice).
     // Multi-depth selections fall back to the bbox-anchored volumetric copy below.
     if (isCoplanarWithPlane(selectedCells, plane)) {
-      const live = [...selectedCells].filter((key) => model.color.has(key))
+      const live = [...selectedCells].filter((key) => model.color.has(key) || model.subdiv.has(key))
       if (live.length === 0) return
       const region = selectionRegionFromCoplanarCells(live, plane)
       if (!region) return
@@ -355,7 +470,14 @@ export const createToolActionsSlice: Slice = (set, get) => ({
     get().bakeFloatIfAny()
     const { clipboard, plane, meta, model, selectedCells } = get()
     if (!clipboard || clipboard.cells.length === 0) return
-    // Same rebase as the 2D paste path so cross-plane pastes land on screen correctly.
+    if (clipboard.fine) {
+      // A sub-voxel copy pastes as a sub-voxel float in the same frame (drag it, then drop).
+      get().pasteClipboardInPlace()
+      return
+    }
+    // Same rebase as the 2D paste path so cross-plane pastes land on screen correctly; depth
+    // follows the plane's stop exactly, half voxels included (off the clipboard as copied).
+    const subW = pasteHalfShift(plane, clipboard)
     const transformed = transformClipboardToPlane(clipboard, plane)
     const originU = transformed.originU ?? 0
     const originV = transformed.originV ?? 0
@@ -363,7 +485,7 @@ export const createToolActionsSlice: Slice = (set, get) => ({
     // Targeted paste: a selection holding no live voxels whose frame matches the clipboard's
     // dimensions is a paste destination, not something to preserve — stamp into it directly
     // (one undo step; an empty frame has nothing to stomp) and keep the selection.
-    const hasLive = [...selectedCells].some((key) => model.color.has(key))
+    const hasLive = [...selectedCells].some((key) => model.color.has(key) || model.subdiv.has(key))
     const match = !hasLive ? selectionMatchesClipboard(selectedCells, transformed, plane) : null
     if (match) {
       // Same depth base `applyClipboardAt` will land on, so the min-dw shift below is exact.
@@ -376,7 +498,8 @@ export const createToolActionsSlice: Slice = (set, get) => ({
       }
       get().beginStroke()
       set((state) => {
-        applyClipboardAt(state.model, state.plane, shifted, match.originU, match.originV, meta.gridExtent)
+        const at = { originU: match.originU, originV: match.originV, ...(subW ? { subW } : {}) }
+        placeFloat(state.model, state.plane, shifted, at, meta.gridExtent)
         state.meta.modifiedAt = new Date().toISOString()
         state.dirty = true
       })
@@ -388,11 +511,11 @@ export const createToolActionsSlice: Slice = (set, get) => ({
     // copy+paste+drag duplicates instead of stomping the source — and select its footprint.
     // The 3D view ghosts the float and select/wand drags inside its footprint move it; the
     // drop (or any bake trigger) stamps it. Opens an undo stroke like every other lift/paste.
-    const footprint = placedFloatCoords(transformed, { originU, originV }, plane, meta.gridExtent)
+    const footprint = placedFloatCoords(transformed, { originU, originV, ...(subW ? { subW } : {}) }, plane, meta.gridExtent)
     get().beginStroke()
     set((state) => {
       state.floatContent = transformed
-      state.floatOrigin = { originU, originV }
+      state.floatOrigin = { originU, originV, ...(subW ? { subW } : {}) }
       state.selectedCells = new Set(footprint.map((c) => encodeKey(...c)))
     })
     // Deliberately no commitStroke() — this stroke stays open until bakeFloatIfAny().
@@ -400,14 +523,26 @@ export const createToolActionsSlice: Slice = (set, get) => ({
 
   deleteCells3D: () => {
     get().bakeFloatIfAny()
+    const fine = liveFineSelection3D(get())
+    if (fine) {
+      get().beginStroke()
+      set((state) => {
+        clearFineRegion(state.model, fine.plane, fine.region)
+        state.meta.modifiedAt = new Date().toISOString()
+        state.dirty = true
+      })
+      get().commitStroke()
+      return
+    }
     const { model, selectedCells } = get()
-    const live = [...selectedCells].filter((key) => model.color.has(key))
+    const live = [...selectedCells].filter((key) => model.color.has(key) || model.subdiv.has(key))
     if (live.length === 0) return
     get().beginStroke()
     set((state) => {
       for (const key of live) {
         state.model.color.delete(key)
         state.model.chamfer.delete(key)
+        state.model.subdiv.delete(key)
       }
       state.meta.modifiedAt = new Date().toISOString()
       state.dirty = true
@@ -417,6 +552,26 @@ export const createToolActionsSlice: Slice = (set, get) => ({
 
   rotateCells3D: (kind: SelectionTransformKind) => {
     get().bakeFloatIfAny()
+    const fine3 = liveFineSelection3D(get())
+    if (fine3) {
+      // Sub-voxel transform in place: lift the selected parts, turn them about their frame, drop.
+      const { model, meta } = get()
+      const content = copyRegionToClipboard(model, fine3.plane, fine3.region)
+      const spin = kind === 'rotate' ? 'cw' : kind === 'rotate-ccw' ? 'ccw' : null
+      const transformed = spin ? rotateClipboard90(content, spin) : mirrorClipboard(content, kind === 'mirror-h' ? 'horizontal' : 'vertical')
+      const { originU, originV } = fine3.region
+      const region = floatFootprintRegion(fine3.plane, transformed, originU, originV, 0, 0)
+      get().beginStroke()
+      set((state) => {
+        clearFineRegion(state.model, fine3.plane, fine3.region)
+        applyFloatAt(state.model, fine3.plane, transformed, { originU, originV }, meta.gridExtent)
+        state.meta.modifiedAt = new Date().toISOString()
+        state.dirty = true
+      })
+      get().commitStroke()
+      if (region) get().setSelectedFine({ region, plane: fine3.plane })
+      return
+    }
     const { model, plane, meta, selectedCells } = get()
     const entries = snapshotCells(model, selectedCells)
     if (entries.length === 0) return
@@ -427,13 +582,21 @@ export const createToolActionsSlice: Slice = (set, get) => ({
       for (const key of selectedCells) {
         state.model.color.delete(key)
         state.model.chamfer.delete(key)
+        state.model.subdiv.delete(key)
       }
       for (const e of moved) {
         const key = encodeKey(...e.coord)
-        state.model.color.set(key, { paletteSlot: e.paletteSlot })
+        if (e.subdiv) {
+          state.model.subdiv.set(key, e.subdiv)
+          state.model.color.delete(key)
+          state.model.chamfer.delete(key)
+        } else {
+          state.model.color.set(key, { paletteSlot: e.paletteSlot })
+          state.model.subdiv.delete(key)
+          if (e.chamfer) state.model.chamfer.set(key, e.chamfer)
+          else state.model.chamfer.delete(key)
+        }
         state.model.bounds = expandBounds(state.model.bounds, e.coord)
-        if (e.chamfer) state.model.chamfer.set(key, e.chamfer)
-        else state.model.chamfer.delete(key)
         placed.push(key)
       }
       state.selectedCells = new Set(placed)
@@ -455,9 +618,17 @@ export const createToolActionsSlice: Slice = (set, get) => ({
       // cell is judged on its own basis — plain cubes need no facing and are skipped silently.
       for (const key of selectedCells) {
         const cell = state.model.chamfer.get(key)
-        if (!cell) continue
-        if (rebaseChamferCell(cell, state.plane.axis, state.plane.orientation)) faced++
-        else skipped++
+        if (cell) {
+          if (rebaseChamferCell(cell, state.plane.axis, state.plane.orientation)) faced++
+          else skipped++
+          continue
+        }
+        // Detail bevels inside a selected voxel are faced too.
+        for (const child of state.model.subdiv.get(key)?.children ?? []) {
+          if (!child?.chamfer) continue
+          if (rebaseChamferCell(child.chamfer, state.plane.axis, state.plane.orientation)) faced++
+          else skipped++
+        }
       }
       if (faced > 0) {
         state.meta.modifiedAt = new Date().toISOString()
@@ -467,4 +638,5 @@ export const createToolActionsSlice: Slice = (set, get) => ({
     get().commitStroke()
     return { faced, skipped }
   },
-})
+}
+}

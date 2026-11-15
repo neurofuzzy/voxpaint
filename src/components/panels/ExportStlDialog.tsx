@@ -36,7 +36,7 @@ export function ExportStlDialog({ open, onOpenChange }: { open: boolean; onOpenC
 
   async function run() {
     const { model, palette } = useAppStore.getState()
-    if (model.color.size === 0) {
+    if (model.color.size === 0 && model.subdiv.size === 0) {
       showToast('Nothing to export — the model is empty.')
       onOpenChange(false)
       return

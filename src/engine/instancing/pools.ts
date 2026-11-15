@@ -1,7 +1,7 @@
 import * as THREE from 'three'
-import type { ChamferCell } from '@/engine/grid/types'
-import { concaveCornerGeometry, convexCornerGeometry, flatGeometry, flatWedgeGeometry, halfGeometry, mirrorVGeometry, postGeometry, quarterGeometry, rampGeometry, thinGeometry, unitCubeGeometry, wedgeGeometry } from '@/engine/chamfer/chamferGeometry'
-import { chamferBasisIsReflected } from './basis'
+import type { ChamferCell, DetailChild } from '@/engine/grid/types'
+import { concaveCornerGeometry, convexCornerGeometry, flatGeometry, flatWedgeGeometry, halfGeometry, mirrorVGeometry, postGeometry, quarterGeometry, rampGeometry, thinGeometry, triconcaveGeometry, tricornerGeometry, unitCubeGeometry, wedgeGeometry } from '@/engine/chamfer/chamferGeometry'
+import { chamferBasisIsReflected, scaledChamferInstanceMatrix, subCubeInstanceMatrix } from './basis'
 
 /**
  * The instancing pools every voxel render path draws from — the live `InstancingManager` and the
@@ -12,15 +12,35 @@ import { chamferBasisIsReflected } from './basis'
  * use the mirrored geometry so every rendered instance stays a proper rotation and lights
  * correctly. See basis.ts's `chamferBasisIsReflected` and chamferGeometry.ts's `mirrorVGeometry`.
  */
-export type PoolId = 'cube' | 'ramp' | 'convex' | 'concave' | 'wedge' | 'thin' | 'half' | 'post' | 'quarter' | 'flat' | 'flatwedge' | 'rampM' | 'convexM' | 'concaveM' | 'wedgeM' | 'thinM' | 'halfM' | 'postM' | 'quarterM' | 'flatM' | 'flatwedgeM'
+export type PoolId = 'cube' | 'ramp' | 'convex' | 'concave' | 'wedge' | 'tricorner' | 'triconcave' | 'thin' | 'half' | 'post' | 'quarter' | 'flat' | 'flatwedge' | 'rampM' | 'convexM' | 'concaveM' | 'wedgeM' | 'tricornerM' | 'triconcaveM' | 'thinM' | 'halfM' | 'postM' | 'quarterM' | 'flatM' | 'flatwedgeM'
 
-export const POOL_IDS: PoolId[] = ['cube', 'ramp', 'convex', 'concave', 'wedge', 'thin', 'half', 'post', 'quarter', 'flat', 'flatwedge', 'rampM', 'convexM', 'concaveM', 'wedgeM', 'thinM', 'halfM', 'postM', 'quarterM', 'flatM', 'flatwedgeM']
+export const POOL_IDS: PoolId[] = ['cube', 'ramp', 'convex', 'concave', 'wedge', 'tricorner', 'triconcave', 'thin', 'half', 'post', 'quarter', 'flat', 'flatwedge', 'rampM', 'convexM', 'concaveM', 'wedgeM', 'tricornerM', 'triconcaveM', 'thinM', 'halfM', 'postM', 'quarterM', 'flatM', 'flatwedgeM']
 
 /** The pool a color cell belongs to, accounting for its baked shape and plane handedness. */
 export function poolIdFor(chamfer: ChamferCell | undefined): PoolId {
   if (!chamfer?.resolvedTo) return 'cube'
   const kind = chamfer.resolvedTo.shapeKind
   return chamferBasisIsReflected(chamfer.planeAxis, chamfer.planeOrientation) ? (`${kind}M` as PoolId) : kind
+}
+
+/**
+ * The pool and instance matrix of one detail child (a scaled bevel, or a scaled box for plain and
+ * unresolved children) at its world box — the single mapping every instanced detail renderer
+ * (InstancingManager, float ghost, selection highlight) shares. Writes into `out`.
+ */
+export function detailInstance(
+  origin: [number, number, number],
+  size: [number, number, number],
+  child: Pick<DetailChild, 'chamfer'>,
+  out = new THREE.Matrix4(),
+): { poolId: PoolId; matrix: THREE.Matrix4 } {
+  const chamfer = child.chamfer
+  if (chamfer?.resolvedTo) {
+    scaledChamferInstanceMatrix(origin, size, chamfer.planeAxis, chamfer.planeOrientation, chamfer.resolvedTo.rotation, out)
+    return { poolId: poolIdFor(chamfer), matrix: out }
+  }
+  subCubeInstanceMatrix(origin, size, out)
+  return { poolId: 'cube', matrix: out }
 }
 
 /**
@@ -32,6 +52,8 @@ export function buildPoolGeometries(): Record<PoolId, THREE.BufferGeometry> {
   const convex = convexCornerGeometry(0)
   const concave = concaveCornerGeometry(0)
   const wedge = wedgeGeometry(0)
+  const tricorner = tricornerGeometry(0)
+  const triconcave = triconcaveGeometry(0)
   const thin = thinGeometry()
   const half = halfGeometry()
   const post = postGeometry()
@@ -44,6 +66,8 @@ export function buildPoolGeometries(): Record<PoolId, THREE.BufferGeometry> {
     convex,
     concave,
     wedge,
+    tricorner,
+    triconcave,
     thin,
     half,
     post,
@@ -54,6 +78,8 @@ export function buildPoolGeometries(): Record<PoolId, THREE.BufferGeometry> {
     convexM: mirrorVGeometry(convex),
     concaveM: mirrorVGeometry(concave),
     wedgeM: mirrorVGeometry(wedge),
+    tricornerM: mirrorVGeometry(tricorner),
+    triconcaveM: mirrorVGeometry(triconcave),
     // Symmetric slab: mirrorV is the same shape, but keeps reflected-plane instances det=+1 and
     // correctly lit on the same path as the chamfer pools.
     thinM: mirrorVGeometry(thin),
